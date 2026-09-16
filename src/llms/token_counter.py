@@ -12,6 +12,26 @@ from .llm import LLM
 logger = logging.getLogger(__name__)
 
 
+def apply_deepseek_cache(usage: Dict[str, Any], token_info: Dict[str, Any]) -> None:
+    """Fold DeepSeek's cache spellings into ``cached_tokens``/``cache_miss_tokens``.
+
+    DeepSeek names prefix-cache hits ``prompt_cache_hit_tokens`` and misses
+    ``prompt_cache_miss_tokens`` instead of reusing the OpenAI ``cached_tokens``
+    detail. Both spellings turn up on its OpenAI-compatible endpoint and, as an
+    extra usage field, on the Anthropic-compatible one this deployment uses — so
+    reading only the Anthropic shape reports a 0% hit rate and hides whether the
+    prompt prefix is actually being reused.
+    """
+    if not isinstance(usage, Dict):
+        return
+    hit = usage.get("prompt_cache_hit_tokens")
+    miss = usage.get("prompt_cache_miss_tokens")
+    if hit is not None:
+        token_info["cached_tokens"] = hit
+    if miss is not None:
+        token_info["cache_miss_tokens"] = miss
+
+
 def extract_cache_from_details(details: Dict[str, Any]) -> Dict[str, Any]:
     """Extract cache token counts from a LangChain input_token_details dict.
 
@@ -121,6 +141,9 @@ def extract_token_usage(response: Any) -> Dict[str, Any]:
                     if audio_tokens is not None:
                         token_info['audio_input_tokens'] = audio_tokens
 
+            # DeepSeek reports prefix-cache hits under its own names.
+            apply_deepseek_cache(token_usage, token_info)
+
             # Extract completion token details (Standard API format)
             if 'completion_tokens_details' in token_usage:
                 details = token_usage['completion_tokens_details']
@@ -158,6 +181,10 @@ def extract_token_usage(response: Any) -> Dict[str, Any]:
                 cache_read = usage.get('cache_read_input_tokens')
                 if cache_read is not None:
                     token_info['cached_tokens'] = cache_read
+
+            # DeepSeek's own spellings, when the endpoint adds them alongside
+            # the Anthropic-shaped fields.
+            apply_deepseek_cache(usage, token_info)
 
             # Anthropic: cache creation with ephemeral breakdown
             if 'cache_creation' in usage:
