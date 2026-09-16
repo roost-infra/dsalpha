@@ -101,6 +101,19 @@ async def _build_tickertick_news_source() -> NewsDataSource:
     return TickerTickNewsSource()
 
 
+async def _build_astock_news_source() -> NewsDataSource:
+    from .astock.news_source import AstockNewsSource
+
+    return AstockNewsSource()
+
+
+def _astock_available() -> bool:
+    """Needs a hub token; the endpoint itself has a working default."""
+    from .astock.news_source import available
+
+    return available()
+
+
 # ---------------------------------------------------------------------------
 # Source registries — map config name → (availability_check, async_constructor)
 # ---------------------------------------------------------------------------
@@ -116,6 +129,10 @@ _NEWS_SOURCE_REGISTRY: dict[str, tuple[Any, Any]] = {
     "fmp": (_fmp_available, _build_fmp_news_source),
     "yfinance": (_yfinance_available, _build_yfinance_news_source),
     "tickertick": (_tickertick_available, _build_tickertick_news_source),
+    # Chinese A-share sources via the causal-memory hub. Listed after the
+    # English ones so an explicit ?provider=astock selects it without removing
+    # the default chain.
+    "astock": (_astock_available, _build_astock_news_source),
 }
 
 # ---------------------------------------------------------------------------
