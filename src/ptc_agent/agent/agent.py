@@ -113,6 +113,7 @@ from src.tools.market_data.tool import (
     screen_stocks,
 )
 from src.tools.market_watch import watch_market
+from src.tools.knowledge_base.tool import knowledge_base_tools
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.mcp_registry import MCPRegistry
 from ptc_agent.core.sandbox import PTCSandbox
@@ -349,6 +350,11 @@ class PTCAgent:
         if self.config.feature_enabled("market_watch"):
             finance_tools.append(watch_market)  # Market watch start/stop (live price injection)
         tools.extend(finance_tools)
+
+        # Shared markdown vault (athena's knowledge base). Always on: a research
+        # finding that is never written down dies with the thread, and the
+        # vault is where both desks read it back.
+        tools.extend(knowledge_base_tools())
 
         if subagent_names is None:
             subagent_names = self.config.subagents.enabled
