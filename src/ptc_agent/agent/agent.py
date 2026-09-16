@@ -114,6 +114,7 @@ from src.tools.market_data.tool import (
 )
 from src.tools.market_watch import watch_market
 from src.tools.knowledge_base.tool import knowledge_base_tools
+from src.tools.wechat.tool import wechat_tools
 from ptc_agent.config import AgentConfig
 from ptc_agent.core.mcp_registry import MCPRegistry
 from ptc_agent.core.sandbox import PTCSandbox
@@ -355,6 +356,11 @@ class PTCAgent:
         # finding that is never written down dies with the thread, and the
         # vault is where both desks read it back.
         tools.extend(knowledge_base_tools())
+
+        # Push to WeChat. Registered unconditionally and self-reporting when the
+        # user has no bot bound, so a scheduled automation can carry "send the
+        # result to WeChat" in its prompt without platform-side delivery wiring.
+        tools.extend(wechat_tools())
 
         if subagent_names is None:
             subagent_names = self.config.subagents.enabled

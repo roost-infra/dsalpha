@@ -101,6 +101,15 @@ class Binding:
             {"peer": peer, "text": text[:500], "at": time.time(), "dir": direction}
         )
         del self.recent[:-RECENT_LIMIT]
+        # Keep the peer row current too. Without this the row's timestamp stays
+        # at its creation value, and anything that ranks peers by recency —
+        # notably the default recipient for an agent-initiated push — picks the
+        # wrong one (or, for a peer created before the first note, none at all).
+        entry = self.peers.get(peer)
+        if entry is not None:
+            entry.last_message_at = time.time()
+            if direction == "in":
+                entry.messages += 1
 
     def remember_thread(self, peer: str, thread_id: str, display_name: str = "") -> None:
         entry = self.peers.get(peer) or PeerThread(peer=peer, thread_id=thread_id)
