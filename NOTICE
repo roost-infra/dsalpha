@@ -1,0 +1,32 @@
+athena
+Copyright 2026 JingxuanC
+
+This product is a modified version of LangAlpha
+(https://github.com/ginlix-ai/LangAlpha), Copyright Ginlix AI,
+licensed under the Apache License, Version 2.0.
+
+The full text of that license is in the LICENSE file at the root of this
+repository, and it applies to the portions of this work derived from LangAlpha.
+
+Significant modifications made in this repository
+-------------------------------------------------
+
+1. Rebranded the user-visible product to "athena", and replaced the original
+   logo, wordmark and favicon artwork with marks of our own. No trademark or
+   brand asset of the original project is redistributed here.
+
+2. Added knowledge-base tools (src/tools/knowledge_base/) that read and write a
+   shared markdown vault.
+
+3. Added a WeChat channel (src/gateway/ilink/, src/gateway/wechat/): a Python
+   port of the iLink bot client plus a per-user channel that runs agent turns
+   through the app's own HTTP API.
+
+4. Reordered the system prompt so the cacheable prefix comes first, and taught
+   the token counter DeepSeek's cache-hit spellings.
+
+5. Tightened resource limits for containers and the PTC sandbox, and made the
+   sandbox provider configurable per deployment.
+
+6. Added a build-time switch to present only the sign-in methods a deployment
+   actually supports.

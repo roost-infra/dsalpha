@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import { Blocks, BookOpen, Server } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { LangAlphaMark } from '@/components/brand/LangAlphaMark';
+import { AthenaMark } from '@/components/brand/AthenaMark';
 import { TILE_SIZES, type TileSize } from './IdentityTile';
 
 /**
@@ -27,7 +27,7 @@ const KIND_GLYPH: Record<MarkKind, ComponentType<{ className?: string }>> = {
   plugin: Blocks,
   skill: BookOpen,
   server: Server,
-  langalpha: LangAlphaMark,
+  langalpha: AthenaMark,
 };
 
 export type MarkKind = 'plugin' | 'skill' | 'server' | 'langalpha';
