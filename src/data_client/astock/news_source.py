@@ -24,7 +24,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -40,6 +40,11 @@ DEFAULT_MCP_URL = "https://causal-memory.com/hub/mcp/data"
 # open across a long-lived process.
 _TIMEOUT = httpx.Timeout(30.0, read=90.0)
 _PROTOCOL = "2025-06-18"
+
+# The hub's timestamps are Beijing wall-clock. Reading them as UTC put every
+# article eight hours into the future, which the UI rendered as "8小时后" on a
+# feed of things that had already happened.
+_CN_TZ = timezone(timedelta(hours=8))
 
 
 def _endpoint() -> str:
@@ -133,14 +138,15 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
 
 
 def _iso(value: Any) -> str:
-    """Hub timestamps are 'YYYY-MM-DD HH:MM:SS' in Beijing time; the shape
-    expects ISO-8601. Anything already parseable is passed through as UTC."""
+    """Hub timestamps are 'YYYY-MM-DD HH:MM:SS' Beijing wall-clock; the shape
+    wants ISO-8601 with an offset. Parsed as +08:00 so the value is the instant
+    it names, not that instant minus eight hours."""
     if not isinstance(value, str) or not value.strip():
         return ""
     raw = value.strip().replace("/", "-")
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(raw, fmt).replace(tzinfo=_CN_TZ)
             return dt.isoformat()
         except ValueError:
             continue
