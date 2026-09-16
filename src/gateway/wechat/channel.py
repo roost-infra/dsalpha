@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
@@ -35,6 +36,63 @@ _MAX_REPLY_CHARS = 1800
 
 def _self_base_url() -> str:
     return os.environ.get("WECHAT_SELF_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+def extract_reply(lines: Iterable[str]) -> tuple[str, str | None]:
+    """Reduce an SSE turn stream to (reply, error).
+
+    The stream carries far more than the answer, and taking the wrong slice
+    sends the wrong thing to a phone. Three separate traps, all of which were
+    hit before this was a function:
+
+    - reasoning arrives both as its own ``event: reasoning_content`` and as
+      ``message_chunk`` with ``content_type: 'reasoning'``;
+    - the ``tools`` agent reports tool *results* under ``content_type: 'text'``;
+    - the model narrates ("let me search the vault") before calling a tool.
+
+    So: only ``event: message_chunk`` with ``content_type: 'text'`` from a
+    ``model:`` agent, and the buffer is reset at every tool call — the reply is
+    what comes after the last tool result.
+
+    Pure over lines so the rule can be pinned against recorded streams.
+    """
+    chunks: list[str] = []
+    error: str | None = None
+    event_name = ""
+
+    for line in lines:
+        # The event name is its own SSE line and has no counterpart in the JSON
+        # payload, so dropping it loses reasoning_content entirely.
+        if line.startswith("event: "):
+            event_name = line[7:].strip()
+            continue
+        if not line.startswith("data: "):
+            continue
+        try:
+            frame = json.loads(line[6:])
+        except ValueError:
+            continue
+        if not isinstance(frame, dict):
+            continue
+        if frame.get("error"):
+            error = str(frame["error"])
+            continue
+        if event_name in ("tool_calls", "tool_call_chunks", "tool_call_result"):
+            chunks.clear()
+            continue
+        if event_name != "message_chunk":
+            continue
+        if not str(frame.get("agent") or "").startswith("model:"):
+            continue
+        if frame.get("tool_call_id"):
+            continue
+        if frame.get("content_type") != "text":
+            continue
+        content = frame.get("content")
+        if isinstance(content, str):
+            chunks.append(content)
+
+    return "".join(chunks).strip(), error
 
 
 class WeChatChannel:
@@ -169,7 +227,7 @@ class WeChatChannel:
         return str(thread_id)
 
     async def _run_turn(self, thread_id: str, text: str) -> str:
-        """POST the message and read the SSE stream down to the reply text."""
+        """POST the message and stream the turn down to just the reply text."""
         if self._http is None:
             raise RuntimeError("wechat channel is not running")
         payload = {
@@ -180,34 +238,16 @@ class WeChatChannel:
             payload["workspace_id"] = self.workspace_id
 
         url = f"{_self_base_url()}/api/v1/threads/{thread_id}/messages"
-        chunks: list[str] = []
-        error: str | None = None
-
         async with self._http.stream("POST", url, json=payload) as resp:
             if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", "replace")
                 raise RuntimeError(f"turn rejected ({resp.status_code}): {body[:300]}")
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    event = json.loads(line[6:])
-                except ValueError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                if event.get("error"):
-                    error = str(event["error"])
-                    continue
-                content = event.get("content")
-                # reasoning_signal is the model's private channel; only the
-                # answer text is a reply.
-                if isinstance(content, str) and event.get("content_type") != "reasoning_signal":
-                    chunks.append(content)
+            lines = [line async for line in resp.aiter_lines()]
 
+        reply, error = extract_reply(lines)
         if error:
             raise RuntimeError(error)
-        return "".join(chunks).strip()
+        return reply
 
     # ── small HTTP helper ────────────────────────────────────────────────
 
