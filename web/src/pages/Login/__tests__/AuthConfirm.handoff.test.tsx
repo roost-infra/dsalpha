@@ -70,7 +70,7 @@ describe('AuthConfirm shell handoff', () => {
 
     expect(auth.verifyEmailOtp).not.toHaveBeenCalled();
     expect(navigations).toEqual(['langalpha://callback?token_hash=abc123&type=email']);
-    expect(screen.getByText('Opening LangAlpha…')).toBeInTheDocument();
+    expect(screen.getByText('Opening athena…')).toBeInTheDocument();
   });
 
   it('redeems it here when the user says nothing opened', async () => {

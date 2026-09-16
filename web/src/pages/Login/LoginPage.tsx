@@ -261,7 +261,7 @@ function LoginPage() {
         <div className="login-page__auth-inner">
         <div className="login-page__card-header">
           <LogoIcon className="login-page__logo-icon" />
-          <h1 className="login-page__title">LangAlpha</h1>
+          <h1 className="login-page__title">athena</h1>
         </div>
 
         {view === 'method' && (

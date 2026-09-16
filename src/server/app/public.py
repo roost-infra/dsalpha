@@ -303,7 +303,7 @@ def _share_unavailable_page(status_code: int, *, chinese: bool) -> str:
             if status_code == 403
             else "该链接可能已被创建者关闭，或报告已不存在。"
         )
-        link_text = "前往 LangAlpha"
+        link_text = "前往 athena"
     else:
         lang = "en"
         heading = "This shared report isn’t available"
@@ -312,7 +312,7 @@ def _share_unavailable_page(status_code: int, *, chinese: bool) -> str:
             if status_code == 403
             else "The link may have been turned off by its owner, or the report no longer exists."
         )
-        link_text = "Go to LangAlpha"
+        link_text = "Go to athena"
     return f"""<!DOCTYPE html>
 <html lang="{lang}">
 <head>
@@ -361,7 +361,7 @@ def _share_unavailable_page(status_code: int, *, chinese: bool) -> str:
 </head>
 <body>
   <div class="card">
-    <div class="badge">LangAlpha</div>
+    <div class="badge">athena</div>
     <h1>{heading}</h1>
     <p>{detail}</p>
     <a href="/">{link_text}</a>
@@ -895,7 +895,7 @@ async def serve_shared_file(
         False, description="PDF only: draw an 'N / total' footer in the page margin."
     ),
     branding: bool = Query(
-        True, description="PDF only: stamp 'LangAlpha · <date>' in the footer."
+        True, description="PDF only: stamp 'athena · <date>' in the footer."
     ),
 ) -> Response:
     """Serve a shared workspace file inline with a sandboxed CSP. Requires allow_files.

@@ -110,7 +110,7 @@ describe('GettingStartedCard', () => {
     const handle = { opener: window } as unknown as Window;
     const open = vi.spyOn(window, 'open').mockReturnValue(handle);
     renderCard();
-    fireEvent.click(screen.getByRole('button', { name: /Use LangAlpha on other platforms/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Use athena on other platforms/ }));
     expect(completeTask).toHaveBeenCalledWith('integrations');
     expect(open).toHaveBeenCalledWith(expect.stringMatching(/\/integrations$/), '_blank');
     expect(handle.opener).toBeNull();
@@ -120,7 +120,7 @@ describe('GettingStartedCard', () => {
   it('a blocked popup leaves the external task pending so the user can retry', () => {
     vi.spyOn(window, 'open').mockReturnValue(null);
     renderCard();
-    fireEvent.click(screen.getByRole('button', { name: /Use LangAlpha on other platforms/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Use athena on other platforms/ }));
     expect(completeTask).not.toHaveBeenCalled();
   });
 

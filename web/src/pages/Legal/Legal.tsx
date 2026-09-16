@@ -13,11 +13,11 @@ function Legal() {
             className="text-sm hover:underline"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            &larr; Back to LangAlpha
+            &larr; Back to athena
           </Link>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">Legal &amp; Attribution</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            Open-source licenses and third-party credits for the hosted LangAlpha service.
+            Open-source licenses and third-party credits for the hosted athena service.
           </p>
         </header>
 
@@ -94,7 +94,7 @@ Copyright (с) 2025 TradingView, Inc. https://www.tradingview.com/`}</pre>
           <section>
             <h2 className="text-xl font-semibold tracking-tight mb-3">Other credits</h2>
             <p>
-              LangAlpha is built on React, Vite, FastAPI, PostgreSQL, Redis, and many
+              athena is built on React, Vite, FastAPI, PostgreSQL, Redis, and many
               other open-source projects. The complete list of dependencies and their
               licenses is available in the{' '}
               <a

@@ -100,8 +100,8 @@
     "confirming": "Confirming your email…",
     "confirmedSigningIn": "Email confirmed — signing you in…",
     "confirmError": "This link is invalid or has expired.",
-    "shellHandoffTitle": "Opening LangAlpha…",
-    "shellHandoffBody": "We handed this link to the LangAlpha app so you finish signing in there.",
+    "shellHandoffTitle": "Opening athena…",
+    "shellHandoffBody": "We handed this link to the athena app so you finish signing in there.",
     "shellHandoffFallback": "Continue in this browser",
     "requestNewLink": "Request a new link",
     "confirmPassword": "Confirm password",
@@ -399,7 +399,7 @@
     }
   },
   "dashboard": {
-    "title": "LangAlpha",
+    "title": "athena",
     "searchPlaceholder": "Search by symbol or company name...",
     "searching": "Searching...",
     "noResults": "No results found",
@@ -986,7 +986,7 @@
       "conversation": {
         "title": "Workbench",
         "description": "A chat-first console: greeting, live chat input, and one-click resume.",
-        "placeholder": "Put LangAlpha to work — a ticker to unpack, a filing to parse, a thesis to stress-test…",
+        "placeholder": "Put athena to work — a ticker to unpack, a filing to parse, a thesis to stress-test…",
         "resume": "Resume",
         "untitledThread": "Untitled thread",
         "greetingLate": "Up late",
@@ -1237,7 +1237,7 @@
     "workspaceLimitReached": "You've reached your workspace limit.",
     "options": "Options",
     "noWorkspacesFound": "No workspaces found",
-    "welcomeTitle": "Welcome to LangAlpha",
+    "welcomeTitle": "Welcome to athena",
     "welcomeDesc": "Get started by setting up your preferences or creating a workspace.",
     "createWorkspace": "Create Workspace",
     "failedLoadWorkspaces": "Failed to load workspaces. Please refresh the page.",
@@ -2773,7 +2773,7 @@
           "desc": "Choose default models and connect providers in Settings."
         },
         "integrations": {
-          "title": "Use LangAlpha on other platforms",
+          "title": "Use athena on other platforms",
           "desc": "Reach the agent from Slack, email, and more via platform integrations."
         }
       },
@@ -3139,7 +3139,7 @@
     },
     "oauth": {
       "abandonedDesc": "\"{{server}}\" never came back from the provider's sign-in page.",
-      "abandonedDescNeedsDesktop": "\"{{server}}\" never came back from the provider's sign-in page. Some providers only accept desktop apps. Open the LangAlpha desktop app to connect this one.",
+      "abandonedDescNeedsDesktop": "\"{{server}}\" never came back from the provider's sign-in page. Some providers only accept desktop apps. Open the athena desktop app to connect this one.",
       "abandonedTitle": "Connection did not finish",
       "callbackError": {
         "blocked_endpoint": "The provider asked for a token from an address this app will not call.",
@@ -3167,7 +3167,7 @@
       "disconnectedDesc": "\"{{server}}\" is disconnected. Reconnect anytime; agent calls fail until then.",
       "disconnectedTitle": "Disconnected",
       "loopback": {
-        "no-listener": "LangAlpha could not open a local port to receive this broker's reply. Quit any other copy of the desktop app and try again.",
+        "no-listener": "athena could not open a local port to receive this broker's reply. Quit any other copy of the desktop app and try again.",
         "not-minted": "This server has not been set up to send the reply back to the desktop app. Try again in a few minutes.",
         "not-bound": "Another connection was started before this one finished. Try connecting again.",
         "shell-outdated": "This version of the desktop app cannot receive the provider's reply. Update the desktop app, then try again."
@@ -3281,7 +3281,7 @@
       "uninstallConfirm": "Uninstall {{plugin}}? Its servers and skills will be removed from every workspace. Customized components are kept.",
       "uninstallConfirmYes": "Uninstall",
       "uninstallConfirmNo": "Keep",
-      "sourceBundled": "Ships with LangAlpha"
+      "sourceBundled": "Ships with athena"
     },
     "component": {
       "fromPlugin": "Provided by {{plugin}}",

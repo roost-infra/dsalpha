@@ -16,7 +16,7 @@ function PrivacyPolicy() {
             className="text-sm hover:underline"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            &larr; Back to LangAlpha
+            &larr; Back to athena
           </Link>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">Privacy Policy</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -27,22 +27,22 @@ function PrivacyPolicy() {
         <div className="space-y-8 text-base leading-relaxed">
           <Section title="1. Introduction">
             <p>
-              LangAlpha is an AI-powered financial research platform. This Privacy Policy
-              describes what information we collect when you use the hosted LangAlpha service,
+              athena is an AI-powered financial research platform. This Privacy Policy
+              describes what information we collect when you use the hosted athena service,
               how we use it, who we share it with, and the choices you have. By using the
               hosted service, you agree to the practices described here.
             </p>
             <p>
-              <strong>Scope:</strong> This policy applies only to the hosted LangAlpha service
+              <strong>Scope:</strong> This policy applies only to the hosted athena service
               operated at <code>ginlix.ai</code> and <code>langalpha.com</code> (and their
-              related subdomains). LangAlpha&apos;s core agent code is open source. If you
-              self-host LangAlpha or run it from the source repository, this policy does not
+              related subdomains). athena&apos;s core agent code is open source. If you
+              self-host athena or run it from the source repository, this policy does not
               apply to your deployment — you (or the operator of that deployment) are
               responsible for data handling, and the third-party providers you configure are
               governed by their own terms.
             </p>
             <p>
-              LangAlpha is currently operated as an independent project. If you have questions
+              athena is currently operated as an independent project. If you have questions
               about this policy or your data, contact us at{' '}
               <a href="mailto:contact@ginlix.ai" className="underline">
                 contact@ginlix.ai
@@ -79,9 +79,9 @@ function PrivacyPolicy() {
 
           <Section title="3. How We Use Your Information">
             <ul className="list-disc space-y-2 pl-6">
-              <li>To provide, operate, and maintain the LangAlpha service.</li>
+              <li>To provide, operate, and maintain the athena service.</li>
               <li>
-                To improve LangAlpha through anonymized, aggregated analytics.{' '}
+                To improve athena through anonymized, aggregated analytics.{' '}
                 <strong>
                   We do not use your conversations to train AI models.
                 </strong>
@@ -96,7 +96,7 @@ function PrivacyPolicy() {
 
           <Section title="4. AI Processing and Third-Party Model Providers">
             <p>
-              When you send a message to the LangAlpha agent, your message and related context
+              When you send a message to the athena agent, your message and related context
               are processed by third-party large language model (LLM) providers so they can
               generate a response. We route queries to a variety of providers, which may
               include (non-exhaustively): Anthropic (Claude), OpenAI (GPT), Google (Gemini),
@@ -109,7 +109,7 @@ function PrivacyPolicy() {
             <p>
               <strong>Bring Your Own Key (BYOK):</strong> If you configure your own API key
               for a provider, your queries are sent directly to that provider using your key
-              and are governed by your agreement with them. In that case LangAlpha acts only
+              and are governed by your agreement with them. In that case athena acts only
               as a conduit for your requests.
             </p>
             <p>
@@ -123,7 +123,7 @@ function PrivacyPolicy() {
 
           <Section title="5. Code Execution and Sandboxes">
             <p>
-              LangAlpha executes code in isolated sandbox environments on your behalf to
+              athena executes code in isolated sandbox environments on your behalf to
               perform data analysis and generate visualizations. Sandboxes are currently
               provided by{' '}
               <a
@@ -142,14 +142,14 @@ function PrivacyPolicy() {
 
           <Section title="6. Financial Data">
             <p>
-              LangAlpha retrieves public market data (such as prices, fundamentals, news,
+              athena retrieves public market data (such as prices, fundamentals, news,
               and filings) from third-party data providers on your behalf. The specific
               providers may change over time. This data is displayed for informational and
               research purposes only.
             </p>
             <p>
               <strong>
-                LangAlpha does not connect to your bank, brokerage, or personal financial
+                athena does not connect to your bank, brokerage, or personal financial
                 accounts, and we do not collect your personal financial records.
               </strong>
             </p>
@@ -222,7 +222,7 @@ function PrivacyPolicy() {
 
           <Section title="10. Cookies and Local Storage">
             <p>
-              LangAlpha uses browser storage (cookies and <code>localStorage</code>) to keep
+              athena uses browser storage (cookies and <code>localStorage</code>) to keep
               you signed in, remember your preferences (such as theme and language), and
               maintain session state across page loads. We do not use third-party advertising
               or tracking cookies. You can clear this storage at any time through your
@@ -249,7 +249,7 @@ function PrivacyPolicy() {
 
           <Section title="12. Children">
             <p>
-              LangAlpha is not intended for anyone under 13 years old, and we do not knowingly
+              athena is not intended for anyone under 13 years old, and we do not knowingly
               collect personal information from children.
             </p>
           </Section>
@@ -279,7 +279,7 @@ function PrivacyPolicy() {
           style={{ borderColor: 'var(--color-border-subtle)', color: 'var(--color-text-secondary)' }}
         >
           <Link to="/" className="hover:underline">
-            &larr; Back to LangAlpha
+            &larr; Back to athena
           </Link>
         </footer>
       </article>

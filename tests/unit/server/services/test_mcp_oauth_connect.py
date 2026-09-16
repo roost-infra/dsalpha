@@ -579,7 +579,7 @@ class TestRegistrationReuse:
     ) -> OAuthClientMetadata:
         return OAuthClientMetadata.model_validate(
             {
-                "client_name": "LangAlpha",
+                "client_name": "athena",
                 "redirect_uris": [redirect],
                 "grant_types": ["authorization_code", "refresh_token"],
                 "response_types": ["code"],

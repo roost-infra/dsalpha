@@ -458,12 +458,12 @@ export default function SharedChatView() {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen gap-4" style={{ backgroundColor: 'var(--color-bg-page)' }}>
-        <img src={logo} alt="LangAlpha" className="h-8 opacity-60" />
+        <img src={logo} alt="athena" className="h-8 opacity-60" />
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
           {error.includes('404') ? 'This shared conversation is no longer available.' : error}
         </p>
         <Link to="/" className="text-sm underline" style={{ color: 'var(--color-accent-primary)' }}>
-          Go to LangAlpha
+          Go to athena
         </Link>
       </div>
     );
@@ -492,7 +492,7 @@ export default function SharedChatView() {
               to="/"
               className="p-2 rounded-md transition-colors flex-shrink-0"
               style={{ color: 'var(--color-text-primary)' }}
-              title="Back to LangAlpha"
+              title="Back to athena"
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
             >
@@ -580,7 +580,7 @@ export default function SharedChatView() {
                       <span className="text-xs px-1" style={{ color: 'var(--color-text-tertiary)' }}>
                         Powered by{' '}
                         <Link to="/" className="hover:underline" style={{ color: 'var(--color-accent-primary)' }}>
-                          LangAlpha
+                          athena
                         </Link>
                       </span>
                       <button
