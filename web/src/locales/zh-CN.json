@@ -1,4 +1,26 @@
 {
+  "wechat": {
+    "title": "微信通道",
+    "subtitle": "用微信扫码绑定机器人。绑定后直接给机器人发消息，就走这台服务器上的 agent（含沙箱与 hub 工具）。",
+    "scanHint": "用微信扫描二维码完成绑定",
+    "scanned": "已扫描，请在微信中确认",
+    "expired": "二维码已过期，请点击「刷新二维码」",
+    "refresh": "刷新二维码",
+    "showQr": "显示绑定二维码",
+    "loading": "加载中…",
+    "bound": "已绑定",
+    "unbind": "解绑",
+    "account": "机器人账号",
+    "mode": "对话模式",
+    "peers": "微信联系人",
+    "recent": "最近消息",
+    "notEnabled": "微信通道未启用（服务端未设置 WECHAT_ENABLED）。",
+    "errors": {
+      "status": "无法获取微信通道状态",
+      "qrcode": "获取二维码失败",
+      "unbind": "解绑失败"
+    }
+  },
   "common": {
     "staleBuild": {
       "title": "此标签页与服务器版本不一致",
@@ -165,6 +187,7 @@
     "preferences": "偏好设置",
     "model": "模型",
     "experiments": "实验功能",
+    "wechat": "微信",
     "experimentsIntro": "仍在开发中的抢先体验功能。开启后即可为你的账户启用，随时都能关闭。",
     "experimentsEmpty": "暂无可用的实验功能。",
     "experimentTradeoff": "代价",

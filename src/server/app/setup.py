@@ -635,10 +635,29 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Credit gate wiring check failed: {e}")
 
+    # Start the WeChat channel. Off unless a bot is already bound or
+    # WECHAT_ENABLED=1, so an unconfigured deployment opens no socket.
+    try:
+        from src.gateway.wechat import init_channel
+
+        if await init_channel() is not None:
+            logger.info("WeChat channel started")
+    except Exception as e:
+        logger.warning(f"Failed to start WeChat channel: {e}")
+
     yield  # Server is running
 
     # Shutdown
     logger.info("Application shutdown started...")
+
+    # Stop the WeChat poll loop before the rest: it holds a long-poll request
+    # open and a handler mid-turn would otherwise race the teardown below.
+    try:
+        from src.gateway.wechat import shutdown_channel
+
+        await shutdown_channel()
+    except Exception as e:
+        logger.warning(f"Failed to stop WeChat channel: {e}")
 
     # 0.0. Stop the recovery scanner first — no new recovery work while the
     # process drains (live runs hold their guards and are skipped anyway).
@@ -1096,6 +1115,7 @@ from src.server.app.features import router as features_router
 from src.server.app.watchlist import router as watchlist_router
 from src.server.app.portfolio import router as portfolio_router
 from src.server.app.news import router as news_router
+from src.gateway.wechat.router import router as wechat_router
 from src.server.app.calendar import router as calendar_router
 from src.server.app.sec_proxy import router as sec_proxy_router
 from src.server.app.api_keys import router as api_keys_router
@@ -1167,6 +1187,7 @@ app.include_router(
     portfolio_router
 )  # /api/v1/users/me/portfolio/* - Portfolio management
 app.include_router(news_router)  # /api/v1/news - News feed (general + ticker-filtered)
+app.include_router(wechat_router)  # /api/v1/wechat/* - QR bind, status, recent, send
 app.include_router(
     calendar_router
 )  # /api/v1/calendar/* - Economic & earnings calendars

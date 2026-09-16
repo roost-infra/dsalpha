@@ -1,4 +1,26 @@
 {
+  "wechat": {
+    "title": "WeChat channel",
+    "subtitle": "Bind a bot by scanning a QR with WeChat. Message it afterwards and the turn runs on this server's agent (sandbox and hub tools included).",
+    "scanHint": "Scan the QR with WeChat to bind",
+    "scanned": "Scanned — confirm in WeChat",
+    "expired": "QR expired — refresh to get a new one",
+    "refresh": "Refresh QR",
+    "showQr": "Show binding QR",
+    "loading": "Loading…",
+    "bound": "Bound",
+    "unbind": "Unbind",
+    "account": "Bot account",
+    "mode": "Agent mode",
+    "peers": "WeChat contacts",
+    "recent": "Recent messages",
+    "notEnabled": "The WeChat channel is not enabled (WECHAT_ENABLED unset on the server).",
+    "errors": {
+      "status": "Could not read the WeChat channel status",
+      "qrcode": "Could not fetch a QR code",
+      "unbind": "Unbind failed"
+    }
+  },
   "common": {
     "staleBuild": {
       "title": "This tab is out of date with the server",
@@ -165,6 +187,7 @@
     "preferences": "Preferences",
     "model": "Model",
     "experiments": "Experiments",
+    "wechat": "WeChat",
     "experimentsIntro": "Early-access features still in development. Turn one on to enable it for your account — you can switch it off at any time.",
     "experimentsEmpty": "No experiments are available right now.",
     "experimentTradeoff": "Trade-off",

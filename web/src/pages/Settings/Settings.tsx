@@ -8,6 +8,7 @@ import { UserInfoTab } from './panels/UserInfoTab';
 import { PreferencesTab } from './panels/PreferencesTab';
 import { ModelTab } from './panels/ModelTab';
 import { ExperimentsTab } from './panels/ExperimentsTab';
+import { WeChatTab } from './panels/WeChatTab';
 import './Settings.css';
 
 function Settings() {
@@ -91,6 +92,17 @@ function Settings() {
             >
               {t('settings.experiments', 'Experiments')}
             </button>
+            <button
+              type="button"
+              onClick={() => handleTabChange('wechat')}
+              className="px-4 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0"
+              style={{
+                color: activeTab === 'wechat' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+                borderBottom: activeTab === 'wechat' ? '2px solid var(--color-accent-primary)' : '2px solid transparent',
+              }}
+            >
+              {t('settings.wechat', '微信')}
+            </button>
           </div>
 
           <div className="settings-content">
@@ -109,6 +121,8 @@ function Settings() {
             {/* Text-heavy tab: cap the measure so descriptions stay readable
                 instead of spanning the full settings container. */}
             {!isLoading && activeTab === 'experiments' && <ExperimentsTab />}
+
+            {!isLoading && activeTab === 'wechat' && <WeChatTab />}
           </div>
         </div>
       </div>
