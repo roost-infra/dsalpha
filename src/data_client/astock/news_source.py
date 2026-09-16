@@ -144,7 +144,12 @@ def _iso(value: Any) -> str:
     if not isinstance(value, str) or not value.strip():
         return ""
     raw = value.strip().replace("/", "-")
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f",  # research reports carry milliseconds
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+    ):
         try:
             dt = datetime.strptime(raw, fmt).replace(tzinfo=_CN_TZ)
             return dt.isoformat()
@@ -194,6 +199,53 @@ def _is_a_share(symbol: str) -> bool:
     return bool(_A_SHARE_RE.match(symbol.strip().lower()))
 
 
+def _feed(
+    raw: dict[str, Any],
+    *,
+    source: str,
+    tickers: list[str] | None = None,
+    author: str | None = None,
+    keywords: list[str] | None = None,
+) -> dict[str, Any]:
+    """Normalize a row from any of the hub's feeds into the common shape."""
+    url = str(raw.get("url") or raw.get("encodeUrl") or "")
+    title = str(raw.get("title") or "")
+    return {
+        "id": _article_id(url, title),
+        "title": title,
+        "author": author,
+        "description": raw.get("content") or raw.get("summary") or None,
+        "published_at": _iso(raw.get("time") or raw.get("publishDate")),
+        "article_url": url,
+        "image_url": None,
+        "source": {
+            "name": source,
+            "logo_url": None,
+            "homepage_url": None,
+            "favicon_url": None,
+        },
+        "tickers": [t.upper() for t in (tickers or [])],
+        "keywords": [k for k in (keywords or []) if k],
+        "sentiments": None,
+    }
+
+
+def _report_row(raw: dict[str, Any]) -> dict[str, Any]:
+    """A research report. The publishing house is the author, and the industry
+    plus rating are what a reader scans for, so both ride along as keywords."""
+    org = str(raw.get("orgSName") or raw.get("orgName") or "")
+    return _feed(
+        raw,
+        source="行业研报",
+        author=org or None,
+        keywords=[
+            str(raw.get("industryName") or ""),
+            str(raw.get("emRatingName") or ""),
+            str(raw.get("stockName") or ""),
+        ],
+    )
+
+
 def _bare_code(symbol: str) -> str:
     """The hub wants 300750, not sz300750."""
     s = symbol.strip().lower()
@@ -226,31 +278,81 @@ class AstockNewsSource:
             # exception path is for.
             raise ValueError(f"not A-share symbols: {tickers}")
 
+        articles: list[dict[str, Any]] = []
+
         if tickers:
-            # Per-symbol feed; merge a few so one thin stock still fills a list.
-            rows: list[dict[str, Any]] = []
+            # Per-symbol: news, research reports, and announcements. Each is a
+            # separate hub tool, merged here because the provider chain stops at
+            # the first source that answers and so cannot merge for us.
             for symbol in tickers[:5]:
+                code = _bare_code(symbol)
+                tk = [symbol.upper()]
+
                 payload = await _call_tool(
-                    "astock-data-get_a_news",
-                    {"symbol": _bare_code(symbol), "page_size": wanted},
+                    "astock-data-get_a_news", {"symbol": code, "page_size": wanted}
                 )
                 for item in payload if isinstance(payload, list) else []:
                     if isinstance(item, dict):
-                        rows.append({**item, "_ticker": symbol.upper()})
+                        articles.append(_normalize(item, tk))
+
+                payload = await _call_tool(
+                    "astock-data-get_a_reports", {"symbol": code, "max_pages": 1}
+                )
+                for item in payload if isinstance(payload, list) else []:
+                    if isinstance(item, dict):
+                        row = _report_row(item)
+                        row["tickers"] = tk
+                        articles.append(row)
+
+                # Currently failing upstream ("Expecting value: line 1 column 1"),
+                # so this contributes nothing today and starts working the moment
+                # the announcer does — no change needed here.
+                payload = await _call_tool(
+                    "astock-data-get_a_announcements",
+                    {"symbol": code, "page_size": wanted},
+                )
+                for item in payload if isinstance(payload, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+                    row = _feed(item, source="A股公告", tickers=tk)
+                    if row["title"]:
+                        articles.append(row)
         else:
             payload = await _call_tool(
                 "global-data-get_a_global_news", {"page_size": wanted}
             )
-            rows = [i for i in (payload or []) if isinstance(i, dict)]
+            for item in payload if isinstance(payload, list) else []:
+                if isinstance(item, dict):
+                    articles.append(
+                        _feed(item, source=str(item.get("source") or "A股快讯"))
+                    )
 
-        results = []
-        for raw in rows:
-            tk = raw.pop("_ticker", None)
-            results.append(_normalize(raw, [tk] if tk else None))
-        results = results[:wanted]
+            # Industry research, which is market-wide and so belongs on the
+            # general feed. Half the page, so the flash feed keeps room.
+            payload = await _call_tool(
+                "astock-data-get_a_industry_reports",
+                {"industry_code": "*", "max_pages": 1},
+            )
+            for item in payload if isinstance(payload, list) else []:
+                if isinstance(item, dict):
+                    articles.append(_report_row(item))
+
+        # Reserve room for the slower-moving feed. A research report is dated
+        # midnight and flash news is minutes old, so a plain newest-first slice
+        # over equally-sized fetches drops every report — the feed that returns
+        # exactly `wanted` rows always wins the quota. So each block is capped
+        # before interleaving.
+        reports = [a for a in articles if (a.get("source") or {}).get("name") == "行业研报"]
+        others = [a for a in articles if (a.get("source") or {}).get("name") != "行业研报"]
+        reserve = min(len(reports), max(3, wanted // 3))
+
+        articles = others[: wanted - reserve] + reports[:reserve]
+        articles.sort(key=lambda a: a.get("published_at") or "", reverse=True)
+        results = articles[:wanted]
+
         if not results:
-            # Same reasoning as above: an empty page is worse than the English
-            # feed, and a hub hiccup should degrade rather than blank the page.
+            # An empty page is worse than the English feed, and a hub hiccup
+            # should degrade rather than blank the page.
             raise ValueError("astock returned no articles")
 
         # The hub resolves by recency rather than by cursor, so paging past the
