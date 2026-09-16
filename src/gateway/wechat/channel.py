@@ -1,4 +1,4 @@
-"""The WeChat channel: inbound message → agent turn → reply, plus sending.
+"""One user's WeChat channel: inbound message → agent turn → reply, plus sending.
 
 A turn runs by calling this app's own ``/api/v1/threads/...`` over loopback
 rather than by re-entering the agent in-process. That is deliberate: the HTTP
@@ -8,7 +8,8 @@ re-implement all of it and would drift. The cost is one localhost round trip
 per message, which is not the expensive part of a turn.
 
 Each WeChat peer gets one thread, so a conversation on the phone continues the
-same context the web UI shows.
+same context the web UI shows. Each *user* gets their own channel, bot and
+workspace — ``WeChatManager`` owns the set of them.
 """
 
 from __future__ import annotations
@@ -22,11 +23,11 @@ from typing import Any
 
 import httpx
 
-from src.gateway.wechat.state import WeChatState
+from src.gateway.wechat.state import Binding, BindingStore
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["WeChatChannel"]
+__all__ = ["WeChatChannel", "extract_reply"]
 
 # A research turn can legitimately run for minutes (sandbox + MCP tools).
 _TURN_TIMEOUT_SEC = float(os.environ.get("WECHAT_TURN_TIMEOUT_SEC", "900"))
@@ -96,16 +97,43 @@ def extract_reply(lines: Iterable[str]) -> tuple[str, str | None]:
 
 
 class WeChatChannel:
-    """Owns the bot client, the poll loop, and the turn bridge."""
+    """Owns one user's bot client, its poll loop, and the turn bridge."""
 
-    def __init__(self, state: WeChatState) -> None:
-        self.state = state
+    def __init__(self, binding: Binding, store: BindingStore) -> None:
+        self.binding = binding
+        self.store = store
         self._client: Any = None
         self._task: asyncio.Task | None = None
         self._http: httpx.AsyncClient | None = None
-        self.workspace_id = os.environ.get("WECHAT_WORKSPACE_ID", "").strip() or None
-        mode = os.environ.get("WECHAT_AGENT_MODE", "").strip()
-        self.agent_mode = mode or ("ptc" if self.workspace_id else "flash")
+
+    # ── identity ─────────────────────────────────────────────────────────
+
+    @property
+    def user_id(self) -> str:
+        return self.binding.user_id
+
+    @property
+    def workspace_id(self) -> str | None:
+        return self.binding.workspace_id or None
+
+    @property
+    def agent_mode(self) -> str:
+        return self.binding.mode
+
+    def _loopback_headers(self) -> dict[str, str]:
+        """Headers that identify this channel to the app's own API.
+
+        In ``HOST_MODE=oss`` none are needed. In ``platform`` every endpoint
+        resolves a caller from a Bearer JWT, which a server-side channel has no
+        way to hold, so it authenticates as a service instead
+        (``get_current_user_id`` accepts X-Service-Token + X-User-Id). The
+        identity is the binding's own user, so the turn lands in *their*
+        workspace. Without this the channel 401s the moment auth is switched on.
+        """
+        token = os.environ.get("INTERNAL_SERVICE_TOKEN", "").strip()
+        if not token or not self.user_id:
+            return {}
+        return {"X-Service-Token": token, "X-User-Id": self.user_id}
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -120,20 +148,21 @@ class WeChatChannel:
 
         from src.gateway.ilink import ILinkClient
 
-        creds = self.state.creds()
+        creds = self.binding.creds()
         self._client = ILinkClient(
             account_id=creds.account_id if creds else "",
             token=creds.token if creds else "",
             base_url=creds.base_url if creds else "",
         )
         self._task = self._client.start_poll(
-            provider=self.state.creds,
+            provider=self.binding.creds,
             handler=self._handle,
             send_func=self._send_raw,
         )
         logger.info(
-            "wechat channel started (bound=%s mode=%s workspace=%s)",
-            self.state.bound,
+            "wechat channel started for %s (bound=%s mode=%s workspace=%s)",
+            self.user_id,
+            self.binding.bound,
             self.agent_mode,
             self.workspace_id or "-",
         )
@@ -159,7 +188,7 @@ class WeChatChannel:
     async def refresh_creds(self) -> None:
         """Push a fresh binding into the running client (no restart needed)."""
         if self._client is not None:
-            creds = self.state.creds()
+            creds = self.binding.creds()
             if creds is not None:
                 self._client.set_creds(creds.account_id, creds.token, creds.base_url)
 
@@ -173,7 +202,8 @@ class WeChatChannel:
     async def send(self, to: str, text: str) -> None:
         """Send a message the server initiated (endpoint / automation)."""
         await self._send_raw(to, text)
-        await self.state.note_outbound(to, text)
+        self.binding.note("out", to, text)
+        self.store.save(self.binding)
 
     # ── inbound ──────────────────────────────────────────────────────────
 
@@ -186,7 +216,8 @@ class WeChatChannel:
         text = (text or "").strip()
         if not text:
             return None
-        await self.state.note_inbound(from_, text)
+        self.binding.note("in", from_, text)
+        self.store.save(self.binding)
 
         try:
             thread_id = await self._ensure_thread(from_, text)
@@ -202,11 +233,12 @@ class WeChatChannel:
             return None
         if len(reply) > _MAX_REPLY_CHARS:
             reply = reply[: _MAX_REPLY_CHARS - 1].rstrip() + "…"
-        await self.state.note_outbound(from_, reply)
+        self.binding.note("out", from_, reply)
+        self.store.save(self.binding)
         return reply
 
     async def _ensure_thread(self, peer: str, first_query: str) -> str | None:
-        entry = self.state.peer(peer)
+        entry = self.binding.peer(peer)
         if entry is not None and entry.thread_id:
             return entry.thread_id
 
@@ -223,14 +255,15 @@ class WeChatChannel:
         if not thread_id:
             logger.warning("thread create returned no id: %s", str(data)[:200])
             return None
-        await self.state.remember_thread(peer, str(thread_id))
+        self.binding.remember_thread(peer, str(thread_id))
+        self.store.save(self.binding)
         return str(thread_id)
 
     async def _run_turn(self, thread_id: str, text: str) -> str:
         """POST the message and stream the turn down to just the reply text."""
         if self._http is None:
             raise RuntimeError("wechat channel is not running")
-        payload = {
+        payload: dict[str, Any] = {
             "messages": [{"role": "user", "content": text}],
             "agent_mode": self.agent_mode,
         }
@@ -238,7 +271,9 @@ class WeChatChannel:
             payload["workspace_id"] = self.workspace_id
 
         url = f"{_self_base_url()}/api/v1/threads/{thread_id}/messages"
-        async with self._http.stream("POST", url, json=payload) as resp:
+        async with self._http.stream(
+            "POST", url, json=payload, headers=self._loopback_headers()
+        ) as resp:
             if resp.status_code >= 400:
                 body = (await resp.aread()).decode("utf-8", "replace")
                 raise RuntimeError(f"turn rejected ({resp.status_code}): {body[:300]}")
@@ -258,7 +293,11 @@ class WeChatChannel:
             return None
         try:
             resp = await self._http.request(
-                method, f"{_self_base_url()}{path}", json=body, timeout=timeout
+                method,
+                f"{_self_base_url()}{path}",
+                json=body,
+                timeout=timeout,
+                headers=self._loopback_headers(),
             )
             resp.raise_for_status()
             return resp.json()
@@ -268,10 +307,10 @@ class WeChatChannel:
 
     def status(self) -> dict[str, Any]:
         return {
-            "bound": self.state.bound,
-            "account_id": self.state.account_id,
+            "bound": self.binding.bound,
+            "account_id": self.binding.account_id,
             "agent_mode": self.agent_mode,
             "workspace_id": self.workspace_id,
             "running": self._task is not None and not self._task.done(),
-            "peers": len(self.state.peers),
+            "peers": len(self.binding.peers),
         }

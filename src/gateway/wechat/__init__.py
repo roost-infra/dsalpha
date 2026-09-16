@@ -1,8 +1,8 @@
-"""WeChat channel: bind a bot by QR and talk to the agent from WeChat.
+"""WeChat channel: each user binds their own bot and talks to the agent from it.
 
-The channel is off until ``WECHAT_ENABLED`` is set (or a binding already
-exists), so importing this package never opens a socket. ``init_channel`` is
-what the app lifespan calls; ``get_channel`` is what the router reads.
+The manager is off until ``WECHAT_ENABLED`` is set (or at least one binding
+exists on disk), so importing this package never opens a socket. ``init_channel``
+is what the app lifespan calls; ``get_manager`` is what the router reads.
 """
 
 from __future__ import annotations
@@ -11,61 +11,64 @@ import logging
 import os
 
 from src.gateway.wechat.channel import WeChatChannel
-from src.gateway.wechat.state import WeChatState, state_path
+from src.gateway.wechat.manager import WeChatManager
+from src.gateway.wechat.state import Binding, BindingStore, store_root
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "Binding",
+    "BindingStore",
     "WeChatChannel",
-    "WeChatState",
-    "state_path",
+    "WeChatManager",
+    "store_root",
     "init_channel",
-    "get_channel",
+    "get_manager",
     "shutdown_channel",
 ]
 
-_channel: WeChatChannel | None = None
+_manager: WeChatManager | None = None
 
 
 def enabled() -> bool:
     """Whether to run the channel at all.
 
-    An already-bound bot implies on: an operator who scanned a QR expects it to
-    keep working after a restart without also setting a flag.
+    An existing binding implies on: a user who scanned a QR expects their bot to
+    keep working after a restart without anyone also setting a flag.
     """
     flag = os.environ.get("WECHAT_ENABLED", "").strip().lower()
     if flag in ("0", "false", "no"):
         return False
     if flag in ("1", "true", "yes"):
         return True
-    return state_path().is_file()
+    return bool(BindingStore().all())
 
 
-async def init_channel() -> WeChatChannel | None:
-    """Load state and start polling. Returns None when the channel is off."""
-    global _channel
+async def init_channel() -> WeChatManager | None:
+    """Start a channel per binding. Returns None when the channel is off."""
+    global _manager
     if not enabled():
         logger.info("wechat channel disabled (set WECHAT_ENABLED=1 to run it)")
         return None
-    if _channel is not None:
-        return _channel
-    state = await WeChatState().load()
-    _channel = WeChatChannel(state)
+    if _manager is not None:
+        return _manager
+    manager = WeChatManager()
     try:
-        await _channel.start()
+        await manager.start()
     except Exception as exc:  # noqa: BLE001
         # A channel that cannot start must not take the API down with it.
-        logger.exception("wechat channel failed to start: %s", exc)
-        _channel = None
-    return _channel
+        logger.exception("wechat manager failed to start: %s", exc)
+        return None
+    _manager = manager
+    return _manager
 
 
-def get_channel() -> WeChatChannel | None:
-    return _channel
+def get_manager() -> WeChatManager | None:
+    return _manager
 
 
 async def shutdown_channel() -> None:
-    global _channel
-    if _channel is not None:
-        await _channel.stop()
-        _channel = None
+    global _manager
+    if _manager is not None:
+        await _manager.shutdown()
+        _manager = None
