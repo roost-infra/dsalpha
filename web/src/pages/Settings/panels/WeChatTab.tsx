@@ -107,10 +107,21 @@ export function WeChatTab() {
 
   useEffect(() => {
     void (async () => {
+      setError('');
       const s = await loadStatus();
       if (s?.bound) await loadRecent();
     })();
-    return stopPolling;
+    // A failed load is often just a stale session: the panel calls once on
+    // mount, so a 401 there left the error on screen long after the token had
+    // been refreshed. Re-read whenever the tab comes back to the foreground.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void loadStatus();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      stopPolling();
+    };
   }, [loadStatus, loadRecent, stopPolling]);
 
   const unbind = useCallback(async () => {
@@ -144,9 +155,19 @@ export function WeChatTab() {
       </p>
 
       {error && (
-        <p className="text-sm mb-4" style={{ color: 'var(--color-down)' }}>
-          {error}
-        </p>
+        <div className="flex items-center gap-3 mb-4">
+          <p className="text-sm" style={{ color: 'var(--color-down)' }}>
+            {error}
+          </p>
+          <button
+            type="button"
+            onClick={() => void loadStatus()}
+            className="px-2.5 py-1 text-xs rounded-md clips-focus-ring flex-shrink-0"
+            style={{ border: '1px solid var(--color-border-default)', color: 'var(--color-text-primary)' }}
+          >
+            {t('wechat.retry')}
+          </button>
+        </div>
       )}
 
       {!status?.enabled && (

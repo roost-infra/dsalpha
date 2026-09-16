@@ -19,7 +19,8 @@
       "status": "Could not read the WeChat channel status",
       "qrcode": "Could not fetch a QR code",
       "unbind": "Unbind failed"
-    }
+    },
+    "retry": "Retry"
   },
   "common": {
     "staleBuild": {
