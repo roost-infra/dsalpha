@@ -97,6 +97,7 @@
     "resendIn": "{{seconds}} 秒后可重新发送",
     "resendConfirmationCta": "重新发送确认邮件",
     "invalidCredentialsHint": "也可以<1>用 Google 或 GitHub 登录</1>、<2>使用邮箱链接登录</2>，或<3>重置密码</3>。",
+    "invalidCredentialsHintEmailOnly": "也可以<2>使用邮箱链接登录</2>，或<3>重置密码</3>。",
     "confirming": "正在确认邮箱…",
     "confirmedSigningIn": "邮箱已确认，正在登录…",
     "confirmError": "链接无效或已过期。",

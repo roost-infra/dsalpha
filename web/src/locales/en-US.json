@@ -97,6 +97,7 @@
     "resendIn": "Resend in {{seconds}}s",
     "resendConfirmationCta": "Resend confirmation email",
     "invalidCredentialsHint": "You can also <1>sign in with Google or GitHub</1>, <2>email me a sign-in link</2>, or <3>reset your password</3>.",
+    "invalidCredentialsHintEmailOnly": "You can also <2>email me a sign-in link</2>, or <3>reset your password</3>.",
     "confirming": "Confirming your email…",
     "confirmedSigningIn": "Email confirmed — signing you in…",
     "confirmError": "This link is invalid or has expired.",

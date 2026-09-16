@@ -49,6 +49,14 @@ function GitHubIcon() {
 
 type LoginView = 'method' | 'login' | 'signup' | 'magic-link' | 'forgot-password' | 'check-inbox';
 
+/**
+ * Deployments that only accept email + password set this, and the ways in that
+ * cannot work disappear rather than failing on click: an unconfigured OAuth
+ * provider, and sign-up on a project with sign-ups disabled. Build-time
+ * because it is a property of the auth backend, not of the visitor.
+ */
+const EMAIL_ONLY = import.meta.env.VITE_AUTH_EMAIL_ONLY === 'true';
+
 interface SwitchPromptProps {
   i18nKey: string;
   onSwitch: () => void;
@@ -276,24 +284,28 @@ function LoginPage() {
                 <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
                 <span>{t('auth.continueWithEmail')}</span>
               </button>
-              <button
-                type="button"
-                className="login-page__method-btn"
-                onClick={() => handleOAuth('google')}
-                disabled={isSubmitting}
-              >
-                <GoogleIcon />
-                <span>{t('auth.continueWithGoogle')}</span>
-              </button>
-              <button
-                type="button"
-                className="login-page__method-btn"
-                onClick={() => handleOAuth('github')}
-                disabled={isSubmitting}
-              >
-                <GitHubIcon />
-                <span>{t('auth.continueWithGithub')}</span>
-              </button>
+              {!EMAIL_ONLY && (
+                <>
+                  <button
+                    type="button"
+                    className="login-page__method-btn"
+                    onClick={() => handleOAuth('google')}
+                    disabled={isSubmitting}
+                  >
+                    <GoogleIcon />
+                    <span>{t('auth.continueWithGoogle')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="login-page__method-btn"
+                    onClick={() => handleOAuth('github')}
+                    disabled={isSubmitting}
+                  >
+                    <GitHubIcon />
+                    <span>{t('auth.continueWithGithub')}</span>
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="login-page__method-btn"
@@ -303,7 +315,9 @@ function LoginPage() {
                 <span>{t('auth.magicLinkCta')}</span>
               </button>
             </div>
-            <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
+            {!EMAIL_ONLY && (
+              <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
+            )}
           </div>
         )}
 
@@ -368,7 +382,11 @@ function LoginPage() {
                      OAuth-only, to prevent enumeration), so the hint must
                      read right for both cases. */
                   <AccountRecoveryHint
-                    i18nKey="auth.invalidCredentialsHint"
+                    i18nKey={
+                      EMAIL_ONLY
+                        ? 'auth.invalidCredentialsHintEmailOnly'
+                        : 'auth.invalidCredentialsHint'
+                    }
                     onPrimary={() => goToView('method')}
                     onMagic={() => void sendMagicLinkTo(loginEmail)}
                     onReset={() => {
@@ -387,7 +405,9 @@ function LoginPage() {
             >
               {isSubmitting ? t('auth.loggingIn') : t('auth.login')}
             </button>
-            <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
+            {!EMAIL_ONLY && (
+              <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
+            )}
             <button type="button" className="login-page__back" onClick={() => goToView('method')}>
               {t('auth.backToOptions')}
             </button>
