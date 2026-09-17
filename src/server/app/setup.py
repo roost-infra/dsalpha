@@ -1136,6 +1136,7 @@ from src.server.app.mcp_oauth import router as mcp_oauth_router
 from src.server.app.plugins import router as plugins_router
 from src.server.app.user_vault import router as user_vault_router
 from src.server.app.mcp_servers import router as mcp_servers_router
+from src.server.app.factors import router as factors_router
 
 # Conditionally import ginlix-data WS proxy (only when GINLIX_DATA_WS_URL is set)
 from src.config.settings import GINLIX_DATA_ENABLED
@@ -1239,6 +1240,9 @@ app.include_router(
     mcp_servers_router
 )  # /api/v1/workspaces/{id}/mcp/servers - Per-workspace MCP server config
 app.include_router(health_router)  # /health - Health check
+app.include_router(
+    factors_router
+)  # /api/v1/factors/* - Factor Board detection over the factor-miner service
 app.include_router(
     preview_redirect_router
 )  # /api/v1/preview/{workspace_id}/{port} - Unauthenticated preview URL redirect

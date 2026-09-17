@@ -15,6 +15,7 @@ const routeChunks = {
   dashboard: () => import('../../pages/Dashboard/DashboardRouter'),
   chat: () => import('../../pages/ChatAgent/ChatAgent'),
   market: () => import('../../pages/MarketView/MarketView'),
+  factors: () => import('../../pages/FactorBoard/FactorBoard'),
   news: () => import('../../pages/Detail/NewsDetailPage'),
   automations: () => import('../../pages/Automations/Automations'),
   orders: () => import('../../pages/Orders/Orders'),
@@ -27,6 +28,7 @@ const routeChunks = {
 const Dashboard = React.lazy(routeChunks.dashboard);
 const ChatAgent = React.lazy(routeChunks.chat);
 const MarketView = React.lazy(routeChunks.market);
+const FactorBoard = React.lazy(routeChunks.factors);
 const NewsDetailPage = React.lazy(routeChunks.news);
 const Automations = React.lazy(routeChunks.automations);
 const Orders = React.lazy(routeChunks.orders);
@@ -86,6 +88,7 @@ function Main() {
           <Route path="/chat/t/:threadId" element={<ChatAgent />} />
           <Route path="/chat/:workspaceId" element={<ChatAgent />} />
           <Route path="/market" element={<MarketView />} />
+          <Route path="/factors" element={<FactorBoard />} />
           <Route path="/automations" element={<Automations />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/plugins" element={<Plugins />} />

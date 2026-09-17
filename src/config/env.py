@@ -86,3 +86,31 @@ AUTOMATION_WEBHOOK_SECRET: str = os.getenv("AUTOMATION_WEBHOOK_SECRET", "")
 # In Docker, "localhost" means the container — use host.docker.internal to reach the host.
 _IN_DOCKER: bool = os.path.exists("/.dockerenv")
 HOST_IP: str = os.getenv("HOST_IP", "host.docker.internal" if _IN_DOCKER else "localhost")
+
+# Factor miner — the factor-miner-mcp gateway (repo `factor-miner-mcp`, container
+# `mcp-factor-miner`). The Factor Board reads from it: one click posts factor code
+# and pulls back the contract check, the recent-IC decay probe and the
+# out-of-sample comparison.
+#
+# NOT interchangeable with the other service called "factor-mcp": Athena's domain
+# MCP (port 51053) exposes the same tool *names* but answers tools over a
+# different protocol and has no /mcp POST — pointing this at it breaks the board.
+# What this variable needs is specifically the gateway that serves
+# POST /mcp (JSON-RPC) and GET /jobs/<id>. Two of those are reachable today: a
+# self-hosted one (the default) and the hub's aggregated `alpha` group, which
+# authenticates with the token instead of the license key.
+#
+# The default points at the port the gateway binds on the host, because that is
+# where a local deployment runs it; inside Docker that address is the host
+# gateway, which is what HOST_IP already resolves to. An empty base URL disables
+# the board without breaking anything else — every endpoint then answers 503 with
+# the reason instead of a traceback.
+FACTOR_MINER_URL: str = os.getenv("FACTOR_MINER_URL", f"http://{HOST_IP}:50053")
+# Sent as `X-License-Key`. The self-hosted service enforces it only when its own
+# license file is configured; the hub expects `Authorization: Bearer` instead,
+# which FACTOR_MINER_TOKEN supplies.
+FACTOR_MINER_LICENSE_KEY: str = os.getenv("FACTOR_MINER_LICENSE_KEY", "")
+FACTOR_MINER_TOKEN: str = os.getenv("FACTOR_MINER_TOKEN", "")
+# The contract check runs on a small debug panel and returns in seconds; the IC
+# probes scan the full panel and take minutes, so a run is polled, not awaited.
+FACTOR_MINER_TIMEOUT: float = float(os.getenv("FACTOR_MINER_TIMEOUT", "1800"))

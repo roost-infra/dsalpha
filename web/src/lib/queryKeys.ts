@@ -168,6 +168,16 @@ export const queryKeys = {
     all:    ['quote'],
     detail: (symbol: string) => [...queryKeys.quote.all, symbol],
   },
+  // Factor Board: the miner's reachability, its starter scripts, and one entry
+  // per detection. A detection is keyed by run id because each is polled on its
+  // own cadence — under a shared list key every poll would refetch every run.
+  factors: {
+    all:        ['factors'],
+    health:     () => [...queryKeys.factors.all, 'health'],
+    templates:  () => [...queryKeys.factors.all, 'templates'],
+    detections: () => [...queryKeys.factors.all, 'detections'],
+    detection:  (runId: string) => [...queryKeys.factors.detections(), runId],
+  },
 };
 
 /**
