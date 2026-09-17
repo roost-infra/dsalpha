@@ -70,6 +70,24 @@ FACTOR_MINER_TOKEN=mcphub_<key>
 An empty `FACTOR_MINER_URL` disables the board without breaking anything else:
 every endpoint answers `503` with the reason instead of a traceback.
 
+### Reachability is not enough: the credential is a separate deployment step
+
+A self-hosted gateway with a license file configured answers `{"auth": true}` from
+`/health` and rejects every `tools/call` without an `X-License-Key`, so a
+deployment that sets `FACTOR_MINER_URL` and stops there has a board that *looks*
+configured — the health banner reads reachable — and 401s on every detection.
+Both variables are required in that case, and they come from different places:
+
+```bash
+# From the gateway's own license file: {"keys": {"ak_...": {...}}}
+FACTOR_MINER_URL=http://<gateway-host>:50053
+FACTOR_MINER_LICENSE_KEY=ak_<...>
+```
+
+In Docker Compose that means the key belongs in the backend service's `env_file`
+(`.env`), not only in the environment block. This was observed live: a production
+deployment had `FACTOR_MINER_URL` set and the key unset.
+
 ## Known limits
 
 1. **`factor_oos_check` currently fails on the gateway side.** The handler raises
