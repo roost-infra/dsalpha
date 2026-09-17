@@ -148,7 +148,8 @@
     "expand": "Expand sidebar",
     "resize": "Resize sidebar",
     "plugins": "Plugins",
-    "orders": "Orders"
+    "orders": "Orders",
+    "factors": "Factor Board"
   },
   "account": {
     "menuLabel": "Account menu"
@@ -3457,6 +3458,55 @@
       "bulkReset": "Reset to default",
       "bulkClear": "Clear selection",
       "bulkSkipped": "{{count}} skipped, not allowed"
+    }
+  },
+  "factors": {
+    "title": "Factor Board",
+    "subtitle": "Detection · IC · out-of-sample",
+    "health": {
+      "ok": "Miner reachable ({{url}})",
+      "down": "Miner unreachable",
+      "unconfigured": "No factor service configured: set FACTOR_MINER_URL to factor-miner, or use the hub's /hub/mcp/alpha group.",
+      "unreachable": "The factor service is unreachable right now — detections will fail. Check that the mcp-factor-miner container is running."
+    },
+    "editor": {
+      "label": "Factor script",
+      "name": "Factor name",
+      "templates": "Built-in templates",
+      "run": "Detect",
+      "running": "Detecting…"
+    },
+    "report": {
+      "label": "Detection report",
+      "empty": "Paste a factor script, or pick a built-in template, then press Detect.",
+      "failed": "Detection failed",
+      "noVerdict": "No verdict",
+      "elapsed": "{{seconds}}s elapsed"
+    },
+    "progress": {
+      "title": "Detecting {{name}}",
+      "meta": "{{done}}/{{total}} stages done · {{elapsed}}s elapsed",
+      "note": "The IC probes scan the full A-share panel and usually take minutes. You can leave this page and come back to the run by its id."
+    },
+    "contract": {
+      "title": "Contract check",
+      "unknown": "Contract check did not run"
+    },
+    "ic": {
+      "title": "Cross-sectional IC (trailing N trading days)",
+      "window": "last {{days}}d",
+      "none": "no usable IC",
+      "note": "IC is the cross-sectional correlation between the factor and next-day return. |IC| ≥ 0.05 reads as strong, ≥ 0.02 as usable; below 0.02 it rarely clears trading costs."
+    },
+    "oos": {
+      "title": "Out-of-sample check",
+      "metric": "Metric",
+      "mining": "Mining window",
+      "oos": "Out-of-sample",
+      "ic": "IC",
+      "annualized": "Annualized return",
+      "drawdown": "Max drawdown",
+      "decay": "Relative decay: {{value}}"
     }
   }
 }

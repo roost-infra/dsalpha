@@ -1,0 +1,592 @@
+/* The Factor Board: a factor script on the left, what the miner found on the
+   right. The page itself never scrolls — each column owns its own port, so a
+   long report does not push the editor off screen while the reader compares the
+   two. */
+.factor-board {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+  min-height: 0;
+}
+
+.factor-board__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px clamp(16px, 3vw, 28px);
+  border-bottom: 1px solid var(--color-border-muted);
+  flex-wrap: wrap;
+}
+
+.factor-board__title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.factor-board__title h1 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.factor-board__subtitle {
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+}
+
+.factor-board__health {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.factor-board__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.factor-board__dot--ok {
+  background-color: var(--color-success);
+}
+
+.factor-board__dot--bad {
+  background-color: var(--color-icon-danger);
+}
+
+.factor-board__banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px clamp(16px, 3vw, 28px) 0;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--color-warning);
+  background-color: var(--color-warning-soft);
+}
+
+.factor-board__banner--error {
+  margin: 0 0 14px;
+  border-color: var(--color-loss);
+  background-color: var(--color-loss-soft);
+}
+
+.factor-board__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 1fr) minmax(420px, 1.1fr);
+  gap: clamp(16px, 2vw, 24px);
+  padding: clamp(16px, 3vw, 28px);
+}
+
+/* Below the two-column floor, the columns stack and the page scrolls instead:
+   two 380px ports side by side on a laptop would leave neither usable. */
+@media (max-width: 1080px) {
+  .factor-board__body {
+    grid-template-columns: 1fr;
+    overflow-y: auto;
+  }
+}
+
+/* ── Editor ──────────────────────────────────────────────────────────────── */
+
+.factor-board__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.factor-board__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.factor-board__field label,
+.factor-board__templates-label {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.factor-board__field input {
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-input);
+  background-color: var(--color-bg-input);
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+.factor-board__templates {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.factor-board__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.factor-board__chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-muted);
+  background-color: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.factor-board__chip:hover {
+  background-color: var(--color-bg-hover);
+}
+
+.factor-board__chip--active {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-light);
+  background-color: var(--color-accent-soft);
+}
+
+/* The code port: grows into whatever height the column has left, and scrolls
+   internally so the gutter and the text area stay aligned at every length. */
+.factor-board__code {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 8px;
+  overflow: hidden;
+  background-color: var(--color-bg-code);
+}
+
+.factor-board__gutter {
+  flex: none;
+  padding: 10px 8px 10px 10px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+  background-color: var(--color-bg-subtle);
+  user-select: none;
+  overflow: hidden;
+}
+
+.factor-board__gutter span {
+  display: block;
+}
+
+.factor-board__textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.factor-board__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.factor-board__error {
+  font-size: 12.5px;
+  color: var(--color-icon-danger);
+}
+
+/* ── Report port ─────────────────────────────────────────────────────────── */
+
+.factor-board__report {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.factor-board__empty {
+  height: 100%;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.factor-board__empty p {
+  margin: 0;
+  max-width: 320px;
+}
+
+/* ── Verdict ─────────────────────────────────────────────────────────────── */
+
+.factor-verdict {
+  border: 1px solid var(--color-border-muted);
+  border-left-width: 3px;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background-color: var(--color-bg-card);
+}
+
+.factor-verdict--strong {
+  border-left-color: var(--color-success);
+  background-color: var(--color-success-soft);
+}
+
+.factor-verdict--present {
+  border-left-color: var(--color-warning);
+  background-color: var(--color-warning-soft);
+}
+
+.factor-verdict--faint,
+.factor-verdict--unknown {
+  border-left-color: var(--color-text-tertiary);
+}
+
+.factor-verdict--invalid {
+  border-left-color: var(--color-loss);
+  background-color: var(--color-loss-soft);
+}
+
+.factor-verdict__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.factor-verdict__label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.factor-verdict__ic {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.factor-verdict__summary {
+  margin: 7px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.factor-verdict__meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Finding cards ───────────────────────────────────────────────────────── */
+
+.factor-card {
+  border: 1px solid var(--color-border-muted);
+  border-radius: 8px;
+  padding: 13px 15px;
+  margin-bottom: 12px;
+  background-color: var(--color-bg-card);
+}
+
+.factor-card h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.factor-card__note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.factor-contract {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.factor-pre {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background-color: var(--color-bg-code);
+  font-size: 11.5px;
+  line-height: 1.5;
+  overflow-x: auto;
+  max-height: 200px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── IC bars ─────────────────────────────────────────────────────────────── */
+
+.factor-ic {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.factor-ic__row {
+  display: grid;
+  grid-template-columns: 96px 1fr 76px;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+.factor-ic__label {
+  color: var(--color-text-tertiary);
+}
+
+/* Zero-centred: the sign is the factor's direction, so the bar grows outwards
+   from the middle and a negative IC is as visible as a positive one. */
+.factor-ic__track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background-color: var(--color-bg-subtle);
+}
+
+.factor-ic__mid {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background-color: var(--color-border-default);
+}
+
+.factor-ic__bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+.factor-ic__bar--up {
+  background-color: var(--color-profit);
+}
+
+.factor-ic__bar--down {
+  background-color: var(--color-loss);
+}
+
+.factor-ic__value {
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-profit);
+}
+
+.factor-ic__value--down {
+  color: var(--color-loss);
+}
+
+.factor-ic__value--muted {
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+}
+
+/* ── OOS table ───────────────────────────────────────────────────────────── */
+
+.factor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.factor-table th,
+.factor-table td {
+  padding: 7px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+.factor-table th:first-child,
+.factor-table td:first-child {
+  text-align: left;
+  color: var(--color-text-tertiary);
+}
+
+.factor-table th {
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  font-size: 11.5px;
+}
+
+.factor-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.factor-table td {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.factor-table td:first-child {
+  font-family: inherit;
+}
+
+/* ── Progress ────────────────────────────────────────────────────────────── */
+
+.factor-progress__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.factor-progress__head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.factor-progress__meta {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.factor-progress__id {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  background-color: var(--color-bg-subtle);
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+
+.factor-progress__stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.factor-stage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 6px;
+}
+
+.factor-stage--running {
+  background-color: var(--color-bg-subtle);
+}
+
+.factor-stage__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.factor-stage__label {
+  font-size: 13px;
+}
+
+.factor-stage__detail {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factor-stage__elapsed {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.factor-stage--pending .factor-stage__label,
+.factor-stage--skipped .factor-stage__label {
+  color: var(--color-text-tertiary);
+}
+
+.factor-stage__icon--done {
+  color: var(--color-success);
+}
+
+.factor-stage__icon--failed {
+  color: var(--color-loss);
+}
+
+.factor-stage__icon--muted {
+  color: var(--color-text-tertiary);
+}
+
+.factor-progress__note {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.spin {
+  animation: factor-spin 1s linear infinite;
+}
+
+@keyframes factor-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+/* A failed run's own reason, under its verdict. Separated from the summary by a
+   rule because the two answer different questions: what was found, and why the
+   detection could not finish. */
+.factor-verdict__error {
+  margin: 9px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--color-border-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-icon-danger);
+}

@@ -148,7 +148,8 @@
     "expand": "展开侧边栏",
     "resize": "调整侧边栏宽度",
     "plugins": "插件",
-    "orders": "订单"
+    "orders": "订单",
+    "factors": "因子看板"
   },
   "account": {
     "menuLabel": "账号菜单"
@@ -3429,6 +3430,55 @@
       "bulkReset": "恢复默认",
       "bulkClear": "取消选择",
       "bulkSkipped": "{{count}} 项跳过，该方式不被允许"
+    }
+  },
+  "factors": {
+    "title": "因子看板",
+    "subtitle": "因子检测 · IC · 样本外",
+    "health": {
+      "ok": "因子服务已连接（{{url}}）",
+      "down": "因子服务不可达",
+      "unconfigured": "未配置因子服务：请设置 FACTOR_MINER_URL 指向 factor-miner，或使用 hub 的 /hub/mcp/alpha 分组。",
+      "unreachable": "因子服务当前不可达：检测会失败，请检查容器 mcp-factor-miner 是否在运行。"
+    },
+    "editor": {
+      "label": "因子脚本",
+      "name": "因子名称",
+      "templates": "内置模板",
+      "run": "一键检测",
+      "running": "检测中…"
+    },
+    "report": {
+      "label": "检测报告",
+      "empty": "粘贴一个因子脚本，或选一个内置模板，然后点「一键检测」。",
+      "failed": "检测失败",
+      "noVerdict": "无结论",
+      "elapsed": "耗时 {{seconds}}s"
+    },
+    "progress": {
+      "title": "正在检测 {{name}}",
+      "meta": "{{done}}/{{total}} 阶段完成 · 已用 {{elapsed}}s",
+      "note": "IC 检测要扫描全量 A 股面板，通常需要几分钟；可以离开本页，回来后用运行 ID 继续查看。"
+    },
+    "contract": {
+      "title": "契约检查",
+      "unknown": "未执行契约检查"
+    },
+    "ic": {
+      "title": "截面 IC（近 N 个交易日）",
+      "window": "近 {{days}} 日",
+      "none": "无有效 IC",
+      "note": "IC 为因子值与次日收益的截面相关系数。|IC| ≥ 0.05 视为强，≥ 0.02 视为可用，低于 0.02 通常不足以覆盖交易成本。"
+    },
+    "oos": {
+      "title": "样本外检验",
+      "metric": "指标",
+      "mining": "挖掘窗",
+      "oos": "样本外",
+      "ic": "IC",
+      "annualized": "年化收益",
+      "drawdown": "最大回撤",
+      "decay": "相对衰减：{{value}}"
     }
   }
 }
