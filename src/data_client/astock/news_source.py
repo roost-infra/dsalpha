@@ -68,9 +68,23 @@ def _endpoint() -> str:
     return os.environ.get("ASTOCK_MCP_URL", "").strip() or DEFAULT_MCP_URL
 
 
+def _token() -> str:
+    """A key for this traffic.
+
+    Prefers an own key: MCPHub meters tool calls per key per group per day, and
+    the agent's own hub traffic is heavy enough to exhaust the shared bucket, at
+    which point this provider 429s, raises, and the page reverts to English.
+    Falls back to the general key so a deployment without one still works.
+    """
+    return (
+        os.environ.get("NEWS_MCP_TOKEN", "").strip()
+        or os.environ.get("MCPHUB_TOKEN", "").strip()
+    )
+
+
 def available() -> bool:
     """Usable when a hub token is configured — the server address has a default."""
-    return bool(os.environ.get("MCPHUB_TOKEN", "").strip())
+    return bool(_token())
 
 
 def _parse_result_text(body: str) -> str:
@@ -98,7 +112,7 @@ def _parse_result_text(body: str) -> str:
 
 async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
     """Run one MCP tool call and decode its JSON payload, or None."""
-    token = os.environ.get("MCPHUB_TOKEN", "").strip()
+    token = _token()
     if not token:
         return None
     url = _endpoint()
