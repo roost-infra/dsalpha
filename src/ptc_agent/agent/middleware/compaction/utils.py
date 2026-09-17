@@ -708,6 +708,68 @@ def strip_orphan_tool_messages(tail: list[AnyMessage]) -> list[AnyMessage]:
     return [msg for i, msg in enumerate(tail) if i not in orphans]
 
 
+def _unanswered_call_ids(messages: list[AnyMessage]) -> dict[int, list[str]]:
+    """Per assistant position, the call ids no result in this list answers.
+
+    The mirror of ``_orphan_indexes``. That one finds results nobody asked for;
+    this one finds requests nobody answered. A provider rejects both, and only
+    one of the two was repaired — which is why a compaction that landed while a
+    turn was mid-flight produced a history that could not be sent at all.
+    """
+    answered = {
+        m.tool_call_id
+        for m in messages
+        if isinstance(m, ToolMessage) and getattr(m, "tool_call_id", None)
+    }
+    dangling: dict[int, list[str]] = {}
+    for i, msg in enumerate(messages):
+        if not isinstance(msg, AIMessage):
+            continue
+        ids = [
+            c.get("id")
+            for c in (getattr(msg, "tool_calls", None) or [])
+            if isinstance(c, dict)
+        ]
+        missing = [cid for cid in ids if cid and cid not in answered]
+        if missing:
+            dangling[i] = missing
+    return dangling
+
+
+def strip_unanswered_tool_calls(tail: list[AnyMessage]) -> list[AnyMessage]:
+    """Drop tool calls that nothing answers, so no assistant dangles.
+
+    DeepSeek states the rule as "an assistant message with 'tool_calls' must be
+    followed by tool messages responding to each 'tool_call_id'", and the other
+    providers enforce the same one. Only the unanswered calls are removed, so
+    whatever the model actually said survives; a call with neither an answer nor
+    any content around it leaves nothing worth keeping and the message goes too.
+    """
+    dangling = _unanswered_call_ids(tail)
+    if not dangling:
+        return tail
+
+    out: list[AnyMessage] = []
+    for i, msg in enumerate(tail):
+        missing = dangling.get(i)
+        if not missing:
+            out.append(msg)
+            continue
+
+        keep = [c for c in (msg.tool_calls or []) if c.get("id") not in missing]
+        raw = dict(msg.additional_kwargs or {})
+        if isinstance(raw.get("tool_calls"), list):
+            raw["tool_calls"] = [
+                c
+                for c in raw["tool_calls"]
+                if (c.get("id") if isinstance(c, dict) else None) not in missing
+            ]
+        repaired = msg.model_copy(update={"tool_calls": keep, "additional_kwargs": raw})
+        if keep or repaired.content:
+            out.append(repaired)
+    return out
+
+
 def partition_at_cutoff(
     messages: list[AnyMessage], cutoff_index: int
 ) -> tuple[list[AnyMessage], list[AnyMessage]]:
@@ -721,7 +783,10 @@ def partition_at_cutoff(
     the strip is the backstop for the paths that never asked it — a cutoff of 0,
     and checkpoints written before the group-aware cut existed.
     """
-    return messages[:cutoff_index], strip_orphan_tool_messages(messages[cutoff_index:])
+    # Order matters: dropping an unanswered call can strand the results its
+    # siblings did produce, and the orphan strip is what collects those.
+    tail = strip_unanswered_tool_calls(messages[cutoff_index:])
+    return messages[:cutoff_index], strip_orphan_tool_messages(tail)
 
 
 def _resolve_anchor_index(
