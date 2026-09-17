@@ -19,11 +19,13 @@ Both return a JSON array as the text of an MCP tool result.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -45,6 +47,21 @@ _PROTOCOL = "2025-06-18"
 # article eight hours into the future, which the UI rendered as "8小时后" on a
 # feed of things that had already happened.
 _CN_TZ = timezone(timedelta(hours=8))
+
+
+# One MCP session is reused across calls. Handshaking per tool call tripled the
+# request count against a hub that rate-limits by volume, which showed up as a
+# 429 storm: the provider then raised, the chain fell through to the English
+# feeds, and the News page silently reverted to English.
+_session: str | None = None
+
+# MCPHub rate-limits *tool calls*, and this deployment shares its key with the
+# agent's own hub_data/hub_alpha/hub_memory traffic. A busy agent turn could
+# therefore starve the News page, which showed up as the provider falling
+# through to the English feeds. A short cache keeps the page off that budget:
+# the feeds themselves move on the order of minutes, so nothing is lost.
+_CACHE_TTL = 240.0
+_cache: dict[tuple, tuple[float, dict[str, Any]]] = {}
 
 
 def _endpoint() -> str:
@@ -90,42 +107,66 @@ async def _call_tool(name: str, arguments: dict[str, Any]) -> Any:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
+    global _session
+
+    async def _handshake(client: httpx.AsyncClient):
+        """Open a session and return its id, or "" if the hub declines to issue one."""
+        init = await client.post(
+            url,
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": _PROTOCOL,
+                    "capabilities": {},
+                    "clientInfo": {"name": "athena-news", "version": "1"},
+                },
+            },
+        )
+        init.raise_for_status()
+        sid = init.headers.get("mcp-session-id", "")
+        if sid:
+            headers["mcp-session-id"] = sid
+        await client.post(
+            url,
+            headers=headers,
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+        )
+        return sid
+
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            init = await client.post(
-                url,
-                headers=headers,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": _PROTOCOL,
-                        "capabilities": {},
-                        "clientInfo": {"name": "athena-news", "version": "1"},
-                    },
-                },
-            )
-            init.raise_for_status()
-            session = init.headers.get("mcp-session-id", "")
-            if session:
-                headers["mcp-session-id"] = session
-            await client.post(
-                url,
-                headers=headers,
-                json={"jsonrpc": "2.0", "method": "notifications/initialized"},
-            )
-            resp = await client.post(
-                url,
-                headers=headers,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 2,
-                    "method": "tools/call",
-                    "params": {"name": name, "arguments": arguments},
-                },
-            )
-            resp.raise_for_status()
+            if not _session:
+                _session = await _handshake(client)
+            else:
+                headers["mcp-session-id"] = _session
+
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }
+
+            for attempt in (1, 2, 3):
+                resp = await client.post(url, headers=headers, json=payload)
+
+                # A dropped session is cheap to re-establish; a rate limit is not,
+                # so back off rather than retry immediately.
+                if resp.status_code in (400, 404) and _session:
+                    _session = await _handshake(client)
+                    continue
+                if resp.status_code == 429:
+                    await asyncio.sleep(0.8 * attempt)
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                logger.warning("astock news gave up on %s (last status %s)", name, resp.status_code)
+                return None
+
             text = _parse_result_text(resp.text)
     except Exception:  # noqa: BLE001 — a news provider must never break the page
         logger.warning("astock news call failed: %s", name, exc_info=True)
@@ -271,6 +312,12 @@ class AstockNewsSource:
     ) -> dict[str, Any]:
         wanted = max(1, int(limit or 20))
 
+        # Serve a repeated request from cache before spending hub budget on it.
+        cache_key = (tuple(tickers or ()), wanted)
+        hit = _cache.get(cache_key)
+        if hit and (time.monotonic() - hit[0]) < _CACHE_TTL:
+            return hit[1]
+
         if tickers and not any(_is_a_share(t) for t in tickers):
             # The chain stops at the first provider that answers, so a US ticker
             # here would suppress the English feeds and return nothing. Raising
@@ -357,7 +404,9 @@ class AstockNewsSource:
 
         # The hub resolves by recency rather than by cursor, so paging past the
         # first page would repeat it. Report no cursor instead of lying about one.
-        return {"results": results, "count": len(results), "next_cursor": None}
+        payload = {"results": results, "count": len(results), "next_cursor": None}
+        _cache[cache_key] = (time.monotonic(), payload)
+        return payload
 
     async def get_news_article(
         self, article_id: str, user_id: str | None = None
