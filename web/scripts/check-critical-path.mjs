@@ -34,7 +34,15 @@ const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
 // so that check and the page's en-US and zh-CN strings ride the critical path
 // for about +5 kB gz, 4 of it strings. Nothing moved chunks; the eager set is
 // unchanged.
-const MAX_EAGER_KB = 465
+//
+// Raised 465 -> 470 for the factor library board (mean IC/IR columns, the
+// economic-hypothesis form) and the IC/equity-curve copy that shipped with it:
+// measured 466.2 kB gz, so 1.2 kB over. All of it is strings and a few eager
+// helpers — i18n.ts folds every locale's JSON into the entry, and the board's
+// two locales added ~200 keys between them. Nothing moved chunks; the eager set
+// is unchanged. Headroom stays thin on purpose (see above): the next feature to
+// land here should still have to argue for itself.
+const MAX_EAGER_KB = 470
 
 const outDir = process.argv[2] || 'dist'
 const indexPath = join(outDir, 'index.html')
