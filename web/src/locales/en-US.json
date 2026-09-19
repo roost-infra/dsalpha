@@ -2660,10 +2660,11 @@
       "chan": {
         "title": "Chan theory overlays",
         "strokes": "Strokes",
+        "segments": "Segments",
         "zhongshu": "Pivots",
         "fractals": "Fractals",
         "points": "Entry/exit marks",
-        "note": "Strokes and pivots default on; fractals overlap in dense tape, enable on demand."
+        "note": "Strokes and pivots default on; segments are the level above strokes and clutter when both are shown."
       }
     },
     "selection": {

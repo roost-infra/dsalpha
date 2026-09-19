@@ -57,7 +57,7 @@ const fx = (kind: 'top' | 'bottom', index: number, time: number, price: number):
   ({ kind, index, time, price });
 
 function geometryWith(partial: Partial<ChanGeometry>): ChanGeometry {
-  return { merged: [], fractals: [], strokes: [], zhongshu: [], points: [], ...partial };
+  return { merged: [], fractals: [], strokes: [], segments: [], zhongshu: [], points: [], ...partial };
 }
 
 function stroke(from: ChanFractal, to: ChanFractal): ChanStroke {
@@ -202,6 +202,50 @@ describe('ChanPrimitive', () => {
     drawLayer(prim, 1, ctx);
     expect(ctx.fill).toHaveBeenCalledTimes(1);
     expect(ctx.fillText).toHaveBeenCalledWith('B1', 92, 404);
+  });
+
+  it('draws one heavier line per segment, and segments are off by default', () => {
+    expect(DEFAULT_CHAN_LAYERS.segments).toBe(false);
+
+    const prim = new ChanPrimitive();
+    attach(prim);
+    prim.setGeometry(geometryWith({
+      segments: [{
+        direction: 'up', fromTime: 100_000, fromPrice: 10,
+        toTime: 300_000, toPrice: 30, fromStroke: 0, toStroke: 3,
+      }],
+    }));
+    // 关闭时不画
+    const off = makeCtx();
+    drawLayer(prim, 1, off);
+    expect(off.stroke).not.toHaveBeenCalled();
+
+    // 打开后画一条，且线宽比笔更粗（级别区分）
+    prim.setLayers({ ...DEFAULT_CHAN_LAYERS, segments: true });
+    const on = makeCtx();
+    drawLayer(prim, 1, on);
+    expect(on.stroke).toHaveBeenCalledTimes(1);
+    expect(on.moveTo).toHaveBeenCalledWith(100, 390);
+    expect(on.lineTo).toHaveBeenCalledWith(300, 370);
+    expect(on.lineWidth).toBe(2.5);
+  });
+
+  it('skips segments whose endpoints cannot be converted', () => {
+    const prim = new ChanPrimitive();
+    prim.attached({
+      chart: { timeScale: () => ({ timeToCoordinate: () => null }) },
+      series, requestUpdate: vi.fn(),
+    } as never);
+    prim.setGeometry(geometryWith({
+      segments: [{
+        direction: 'up', fromTime: 1, fromPrice: 10,
+        toTime: 2, toPrice: 30, fromStroke: 0, toStroke: 3,
+      }],
+    }));
+    prim.setLayers({ ...DEFAULT_CHAN_LAYERS, segments: true });
+    const ctx = makeCtx();
+    drawLayer(prim, 1, ctx);
+    expect(ctx.stroke).not.toHaveBeenCalled();
   });
 
   it('requests a redraw when geometry, layers or theme change', () => {

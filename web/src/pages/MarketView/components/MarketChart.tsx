@@ -66,6 +66,7 @@ import { useIsMobile } from '@/hooks/useIsMobile';
  *  分型/买卖点是可选增强。 */
 const CHAN_LAYER_ITEMS: Array<{ key: keyof ChanLayers; labelKey: string }> = [
   { key: 'strokes', labelKey: 'marketView.chart.chan.strokes' },
+  { key: 'segments', labelKey: 'marketView.chart.chan.segments' },
   { key: 'zhongshu', labelKey: 'marketView.chart.chan.zhongshu' },
   { key: 'fractals', labelKey: 'marketView.chart.chan.fractals' },
   { key: 'points', labelKey: 'marketView.chart.chan.points' },
@@ -187,7 +188,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const prim = chanPrimitiveRef.current;
     if (!prim) return;
     const l = chanLayersRef.current;
-    const want = l.strokes || l.zhongshu || l.fractals || l.points;
+    const want = l.strokes || l.segments || l.zhongshu || l.fractals || l.points;
     prim.setGeometry(want ? computeChan(lastBarsRef.current) : null);
   }, []);
 
@@ -2265,7 +2266,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               <div className="toolbar-dropdown toolbar-item--chan" ref={chanDropdownRef}>
                 <button
                   type="button"
-                  className={`chart-tool-btn${(chanLayers.strokes || chanLayers.zhongshu || chanLayers.fractals || chanLayers.points) ? ' chart-tool-btn-active' : ''}`}
+                  className={`chart-tool-btn${(chanLayers.strokes || chanLayers.segments || chanLayers.zhongshu || chanLayers.fractals || chanLayers.points) ? ' chart-tool-btn-active' : ''}`}
                   onClick={() => { setChanOpen((v) => !v); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false); }}
                   title={t('marketView.chart.chan.title')}
                 >

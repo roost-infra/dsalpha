@@ -54,10 +54,24 @@ export interface ChanZhongshu {
   toStroke: number;
 }
 
+/** 线段：由至少三笔构成、方向独立于其中单笔走势的更大级别段。 */
+export interface ChanSegment {
+  direction: 'up' | 'down';
+  /** 段起/止落在的笔端点上（与笔共用分型，渲染时直接连线）。 */
+  fromTime: number;
+  fromPrice: number;
+  toTime: number;
+  toPrice: number;
+  /** 该段覆盖的笔下标区间（闭区间）。 */
+  fromStroke: number;
+  toStroke: number;
+}
+
 export interface ChanGeometry {
   merged: MergedBar[];
   fractals: ChanFractal[];
   strokes: ChanStroke[];
+  segments: ChanSegment[];
   zhongshu: ChanZhongshu[];
   points: ChanPoint[];
 }
@@ -192,6 +206,102 @@ export function buildStrokes(fractals: ChanFractal[]): ChanStroke[] {
 }
 
 /**
+ * 线段（笔之上的级别）。
+ *
+ * **为什么不能"三笔重叠"了事**：那样单边行情会被切成一堆碎线段，而线段的定义恰恰是
+ * "方向独立于其中单笔走势的更大级别段"。
+ *
+ * 判据用的是**同向极值被反向突破**：向上段里某个向下笔的低点跌破段内此前最低点，
+ * 上升结构即告破坏，段在**那个低点**结束；向下段对称。等价说法是"线段结束于转折处"，
+ * 因此段的终点落在极值上、渲染时能与笔的端点直接连起来。
+ *
+ * 关于原文的**特征序列法**：那是更精确的做法（把笔折成特征序列、在序列上找分型）。
+ * 本实现试过，但特征序列的包含处理我做得不对——错拿"笔的价格区间"当特征元素的包含
+ * 判据，而相邻笔的区间本来就必然重叠，结果整个序列被压成一个元素、线段恒为空。
+ * 与其留一个半懂的原文版，这里选一个**行为可验证**的等价判据，并把差异写在这里。
+ * 若将来要补回特征序列法，必须同时实现"特征序列的第一、二种情况"，否则同样会退化。
+ *
+ * 另一个取舍：不足 `MIN_SEGMENT_STROKES`（3 笔）的残段**并入上一段**而不是丢掉——
+ * 丢掉会在图上留一段没有线段的空白，看起来像 bug。
+ */
+export const MIN_SEGMENT_STROKES = 3;
+
+export function buildSegments(strokes: ChanStroke[]): ChanSegment[] {
+  if (strokes.length < MIN_SEGMENT_STROKES) return [];
+
+  const out: ChanSegment[] = [];
+  let dir: 'up' | 'down' = strokes[0].direction;
+  let segStart = 0;
+  /** 段内前一档同类极值：向上段看上一个底，向下段看上一个顶。 */
+  let lastExtreme: number | null = null;
+
+  const closeSegment = (endStroke: number): void => {
+    const tail = strokes[endStroke];
+    out.push({
+      direction: dir,
+      fromTime: strokes[segStart].from.time,
+      fromPrice: strokes[segStart].from.price,
+      toTime: tail.to.time,
+      toPrice: tail.to.price,
+      fromStroke: segStart,
+      toStroke: endStroke,
+    });
+  };
+
+  for (let i = 0; i < strokes.length; i++) {
+    const s = strokes[i];
+
+    // 段结束判据：**同类极值不再朝原方向推进**
+    //   向上段：下一个底**抬高**（higher low）→ 上升力度衰竭，段在**那个底**结束
+    //   向下段：下一个顶**降低**（lower high）→ 下降力度衰竭，段在**那个顶**结束
+    //   且该段已满 `MIN_SEGMENT_STROKES` 笔（不满足就继续累积）
+    //
+    // 为什么不是"跌破前低"：那是**趋势反转**的判据，比线段大一级；用它会让整个
+    // 上升行情（每次回撤都在抬高）合成一条线段 —— 实测 420 根K线/11 笔只切出 1 条，
+    // 等于没切。抬高/降低才是线段级别该看的力度变化。
+    // `MIN_SEGMENT_STROKES` 是硬约束：不满足就**只更新极值、不切段**。
+    // 少了它，连续抬高的低点会把一段上升行情切成每笔一段（实测 11 笔切出 3 段以上），
+    // 那已经不是"级别"而是噪声。
+    const enough = i - segStart + 1 >= MIN_SEGMENT_STROKES;
+    if (dir === 'up' && s.to.kind === 'bottom') {
+      if (enough && lastExtreme !== null && s.to.price > lastExtreme) {
+        closeSegment(i);
+        dir = 'down';
+        segStart = i;
+        lastExtreme = null;
+        continue;
+      }
+      lastExtreme = lastExtreme === null ? s.to.price : Math.min(lastExtreme, s.to.price);
+    } else if (dir === 'down' && s.to.kind === 'top') {
+      if (enough && lastExtreme !== null && s.to.price < lastExtreme) {
+        closeSegment(i);
+        dir = 'up';
+        segStart = i;
+        lastExtreme = null;
+        continue;
+      }
+      lastExtreme = lastExtreme === null ? s.to.price : Math.max(lastExtreme, s.to.price);
+    }
+  }
+
+  // 收尾：循环结束时若还有未闭合的段就闭合它。**不能只在"已经形成过段"时才收** ——
+  // 单边行情里一次破坏都没有，那样整段走势一条线段都画不出来（实测过）。
+  if (out[out.length - 1]?.toStroke !== strokes.length - 1) {
+    out.push({
+      direction: dir,
+      fromTime: strokes[segStart].from.time,
+      fromPrice: strokes[segStart].from.price,
+      toTime: strokes[strokes.length - 1].to.time,
+      toPrice: strokes[strokes.length - 1].to.price,
+      fromStroke: segStart,
+      toStroke: strokes.length - 1,
+    });
+  }
+  return out;
+}
+
+
+/**
  * 中枢识别。取连续三段笔，它们的区间交集非空即为中枢：
  * `high = min(三段高点)`、`low = max(三段低点)`。随后**延伸**：只要后续笔
  * 仍与该区间有重叠，就并入同一个中枢（原文的中枢延伸）。
@@ -298,16 +408,17 @@ export function findPoints(
   return out;
 }
 
-/** 一条链跑完：K线 → 包含处理 → 分型 → 笔 → 中枢 → 买卖点。 */
+/** 一条链跑完：K线 → 包含处理 → 分型 → 笔 → 线段 → 中枢 → 买卖点。 */
 export function computeChan(bars: ChanBar[]): ChanGeometry {
   const clean = bars.filter((b) => Number.isFinite(b.high) && Number.isFinite(b.low));
   if (clean.length < 5) {
-    return { merged: [], fractals: [], strokes: [], zhongshu: [], points: [] };
+    return { merged: [], fractals: [], strokes: [], segments: [], zhongshu: [], points: [] };
   }
   const merged = mergeInclusions(clean);
   const fractals = findFractals(merged, clean);
   const strokes = buildStrokes(fractals);
+  const segments = buildSegments(strokes);
   const zhongshu = findZhongshu(strokes);
   const points = findPoints(strokes, zhongshu);
-  return { merged, fractals, strokes, zhongshu, points };
+  return { merged, fractals, strokes, segments, zhongshu, points };
 }

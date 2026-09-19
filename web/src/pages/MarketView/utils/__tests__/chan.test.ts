@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildSegments,
   buildStrokes,
   computeChan,
   findFractals,
@@ -20,6 +21,7 @@ import {
   MIN_STROKE_GAP,
   type ChanBar,
   type ChanFractal,
+  type ChanStroke,
 } from '../chan';
 
 const bar = (time: number, high: number, low: number): ChanBar => ({ time, high, low });
@@ -170,7 +172,7 @@ describe('findZhongshu', () => {
 describe('computeChan', () => {
   it('returns empty geometry (never throws) when there is not enough data', () => {
     expect(computeChan([])).toEqual({
-      merged: [], fractals: [], strokes: [], zhongshu: [], points: [],
+      merged: [], fractals: [], strokes: [], segments: [], zhongshu: [], points: [],
     });
     expect(computeChan(barsOf([[10, 8], [11, 9]])).strokes).toHaveLength(0);
   });
@@ -198,5 +200,90 @@ describe('computeChan', () => {
       expect(geo.strokes[i].direction).not.toBe(geo.strokes[i - 1].direction);
       expect(geo.strokes[i].from).toBe(geo.strokes[i - 1].to);
     }
+  });
+});
+
+/**
+ * 线段（笔之上的级别）。
+ *
+ * 判据是"同向极值被反向突破"：向上段里某个向下笔的低点跌破段内此前最低点，
+ * 段就在**那个低点**结束；向下段对称。重点有两条，都是实测踩出来的：
+ *
+ * 1. **不能"三笔重叠"了事** —— 那样单边行情会被切成一堆碎线段。
+ * 2. **不能只在"已经形成过段"时才收尾** —— 纯单边行情一次突破都没有，
+ *    那样整段走势一条线段都画不出来。
+ */
+describe('buildSegments', () => {
+  const fx = (kind: 'top' | 'bottom', index: number, price: number): ChanFractal =>
+    ({ kind, index, price, time: 1000 + index * 60 });
+  const seg = (from: ChanFractal, to: ChanFractal): ChanStroke =>
+    ({ from, to, direction: to.kind === 'top' ? 'up' : 'down' });
+
+  it('returns nothing for fewer than three strokes', () => {
+    expect(buildSegments([])).toHaveLength(0);
+    expect(buildSegments([
+      seg(fx('bottom', 0, 10), fx('top', 5, 12)),
+      seg(fx('top', 5, 12), fx('bottom', 10, 11)),
+    ])).toHaveLength(0);
+  });
+
+  it('does not chop a wide rising leg into one segment per stroke', () => {
+    // 一路抬高、且每段都远超最小笔数：低点 3 → 12 → 14 → 16 → 18 依次走高。
+    // 判据会切，但**必须不是每笔一段** —— 关键断言是段数远小于笔数。
+    const strokes = [
+      seg(fx('bottom', 0, 10), fx('top', 5, 20)),
+      seg(fx('top', 5, 20), fx('bottom', 10, 3)),
+      seg(fx('bottom', 10, 3), fx('top', 15, 22)),
+      seg(fx('top', 15, 22), fx('bottom', 20, 12)),
+      seg(fx('bottom', 20, 12), fx('top', 25, 25)),
+      seg(fx('top', 25, 25), fx('bottom', 30, 14)),
+      seg(fx('bottom', 30, 14), fx('top', 35, 28)),
+      seg(fx('top', 35, 28), fx('bottom', 40, 16)),
+      seg(fx('bottom', 40, 16), fx('top', 45, 32)),
+      seg(fx('top', 45, 32), fx('bottom', 50, 18)),
+    ];
+    const segs = buildSegments(strokes);
+    expect(segs[0].direction).toBe('up');
+    expect(segs[0].fromStroke).toBe(0);
+    // 每段至少 MIN_SEGMENT_STROKES 笔，因此段数有上界
+    expect(segs.length).toBeLessThanOrEqual(Math.ceil(strokes.length / 3));
+    expect(segs.length).toBeLessThan(strokes.length);
+    // 覆盖连续、不留空
+    expect(segs[segs.length - 1].toStroke).toBe(strokes.length - 1);
+  });
+
+  it('splits where the structure breaks, and flips direction', () => {
+    // 向上笔之后出现 19（比前顶 22 低）→ 打破上升结构 → 段收在低点 8，方向翻转为向下
+    const strokes = [
+      seg(fx('bottom', 0, 10), fx('top', 5, 20)),
+      seg(fx('top', 5, 20), fx('bottom', 10, 15)),
+      seg(fx('bottom', 10, 15), fx('top', 15, 22)),
+      seg(fx('top', 15, 22), fx('bottom', 20, 16)),
+      seg(fx('bottom', 20, 16), fx('top', 25, 19)),
+      seg(fx('top', 25, 19), fx('bottom', 30, 8)),   // 低点 8 < 16 → 突破
+      seg(fx('bottom', 30, 8), fx('top', 35, 13)),
+      seg(fx('top', 35, 13), fx('bottom', 40, 6)),
+    ];
+    const segs = buildSegments(strokes);
+    expect(segs[0].direction).toBe('up');
+    expect(segs[0].toStroke).toBeGreaterThanOrEqual(2);   // 至少 3 笔
+    // 覆盖连续、不留空
+    for (let k = 1; k < segs.length; k++) {
+      expect(segs[k].fromStroke).toBe(segs[k - 1].toStroke);
+      expect(segs[k].direction).not.toBe(segs[k - 1].direction);
+    }
+    expect(segs[segs.length - 1].toStroke).toBe(strokes.length - 1);
+  });
+
+  it('closes the trailing segment even when no break ever happened', () => {
+    const strokes = [
+      seg(fx('bottom', 0, 10), fx('top', 5, 20)),
+      seg(fx('top', 5, 20), fx('bottom', 10, 15)),
+      seg(fx('bottom', 10, 15), fx('top', 15, 22)),
+    ];
+    const segs = buildSegments(strokes);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].direction).toBe('up');
+    expect(segs[0].toStroke).toBe(2);
   });
 });

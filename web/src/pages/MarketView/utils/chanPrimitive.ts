@@ -22,13 +22,15 @@ import type {
 } from 'lightweight-charts';
 import type { CanvasRenderingTarget2D } from 'fancy-canvas';
 
-import type { ChanGeometry, ChanFractal, ChanPoint, ChanZhongshu } from './chan';
+import type { ChanGeometry, ChanFractal, ChanPoint, ChanSegment, ChanZhongshu } from './chan';
 
 export type ChanTheme = 'light' | 'dark';
 
 /** 各层开关。分型默认关：真实行情里它们太密，全开会糊成一片。 */
 export interface ChanLayers {
   strokes: boolean;
+  /** 线段：笔之上的级别。比笔粗，默认关（同时开会糊）。 */
+  segments: boolean;
   zhongshu: boolean;
   fractals: boolean;
   points: boolean;
@@ -36,6 +38,7 @@ export interface ChanLayers {
 
 export const DEFAULT_CHAN_LAYERS: ChanLayers = {
   strokes: true,
+  segments: false,
   zhongshu: true,
   fractals: false,
   points: false,
@@ -45,6 +48,7 @@ export const DEFAULT_CHAN_LAYERS: ChanLayers = {
 const COLOR = {
   light: {
     stroke: 'rgba(190, 120, 20, 0.95)',
+    segment: 'rgba(150, 85, 10, 1)',
     zhongshuFill: 'rgba(190, 120, 20, 0.10)',
     zhongshuBorder: 'rgba(190, 120, 20, 0.55)',
     fractal: 'rgba(150, 95, 15, 0.9)',
@@ -53,6 +57,7 @@ const COLOR = {
   },
   dark: {
     stroke: 'rgba(240, 175, 80, 0.95)',
+    segment: 'rgba(255, 205, 130, 1)',
     zhongshuFill: 'rgba(240, 175, 80, 0.12)',
     zhongshuBorder: 'rgba(240, 175, 80, 0.55)',
     fractal: 'rgba(240, 190, 120, 0.9)',
@@ -185,6 +190,7 @@ export class ChanPrimitive {
         renderer(): ISeriesPrimitivePaneRenderer {
           return {
             draw(target: CanvasRenderingTarget2D): void {
+              source._drawSegments(target);
               source._drawStrokes(target);
               source._drawFractals(target);
               source._drawPoints(target);
@@ -218,6 +224,35 @@ export class ChanPrimitive {
         ctx.strokeRect(box.left, box.top, box.width, box.height);
         ctx.restore();
       }
+    });
+  }
+
+  /**
+   * 线段画在笔**之前**（先画就被笔压住一部分），线更粗、颜色更实 ——
+   * 两者同时开时，粗线是级别、细线是构成它的笔，层次一眼能看出来。
+   */
+  private _drawSegments(target: CanvasRenderingTarget2D): void {
+    const geo = this._geometry;
+    const scale = this._scale();
+    if (!geo || !scale || !this._layers.segments || geo.segments.length === 0) return;
+    const c = COLOR[this._theme];
+    target.useMediaCoordinateSpace(({ context: ctx }) => {
+      ctx.save();
+      ctx.strokeStyle = c.segment;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([]);
+      for (const seg of geo.segments as ChanSegment[]) {
+        const x1 = scale.timeScale.timeToCoordinate(seg.fromTime as unknown as Time);
+        const y1 = scale.series.priceToCoordinate(seg.fromPrice);
+        const x2 = scale.timeScale.timeToCoordinate(seg.toTime as unknown as Time);
+        const y2 = scale.series.priceToCoordinate(seg.toPrice);
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+      ctx.restore();
     });
   }
 
