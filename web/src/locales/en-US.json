@@ -3532,7 +3532,12 @@
       "title": "Cross-sectional IC (trailing N trading days)",
       "window": "last {{days}}d",
       "none": "no usable IC",
-      "note": "IC is the cross-sectional correlation between the factor and next-day return. |IC| ≥ 0.05 reads as strong, ≥ 0.02 as usable; below 0.02 it rarely clears trading costs."
+      "note": "IC is the cross-sectional correlation between the factor and next-day return. |IC| ≥ 0.05 reads as strong, ≥ 0.02 as usable; below 0.02 it rarely clears trading costs.",
+      "last": "last {value}",
+      "peak": "peak {date} {value}",
+      "meanN": "{value} names/day",
+      "points": "{count} trading days",
+      "curveAria": "Per-day IC over the last {days} days, latest {value}, {points} points"
     },
     "oos": {
       "title": "Out-of-sample check",

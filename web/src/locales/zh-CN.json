@@ -3504,7 +3504,12 @@
       "title": "截面 IC（近 N 个交易日）",
       "window": "近 {{days}} 日",
       "none": "无有效 IC",
-      "note": "IC 为因子值与次日收益的截面相关系数。|IC| ≥ 0.05 视为强，≥ 0.02 视为可用，低于 0.02 通常不足以覆盖交易成本。"
+      "note": "IC 为因子值与次日收益的截面相关系数。|IC| ≥ 0.05 视为强，≥ 0.02 视为可用，低于 0.02 通常不足以覆盖交易成本。",
+      "last": "最新 {value}",
+      "peak": "峰值 {date} {value}",
+      "meanN": "日均 {value} 只",
+      "points": "{count} 个交易日",
+      "curveAria": "近 {days} 日逐日 IC 曲线，最新 {value}，共 {points} 个点"
     },
     "oos": {
       "title": "样本外检验",

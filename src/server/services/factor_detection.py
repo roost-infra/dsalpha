@@ -246,15 +246,22 @@ async def _stage_recent_ic(run: DetectionRun, window: int) -> dict[str, Any]:
     ``ok`` is not trusted as the success signal: the service has answered
     ``ok: true`` alongside an ``error`` string, so the probe counts as usable
     only when it actually carries a number.
+
+    ``series`` is the per-day IC breakdown the board draws as a decay curve. It
+    is passed through verbatim (``[{date, ic, n}]``) rather than re-derived here:
+    the miner already computed it from the same groupby that produced ``ic``, so
+    recomputing would mean a second full panel read for no new information.
     """
     payload = await factor_miner.call_tool(
         "factor_recent_ic", {"code": run.code, "name": run.name, "lookback_days": window}
     )
     ic = payload.get("ic")
+    series = payload.get("series")
     return {
         "window": window,
         "ic": float(ic) if isinstance(ic, (int, float)) else None,
         "days": payload.get("days"),
+        "series": series if isinstance(series, list) else [],
         "error": str(payload.get("error") or ""),
     }
 

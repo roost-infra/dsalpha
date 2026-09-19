@@ -1090,3 +1090,84 @@
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
 }
+
+/* ── IC decay curves ─────────────────────────────────────────────────────── */
+
+.factor-ic-curves {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.factor-ic-curve {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.factor-ic-curve--empty {
+  padding: 8px 0;
+}
+
+.factor-ic-curve__caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* preserveAspectRatio="none" lets the curve stretch to the card width, so the
+   stroke must not scale with it or the line thickness becomes uneven. */
+.factor-ic-curve__svg {
+  width: 100%;
+  height: 72px;
+  display: block;
+  overflow: visible;
+}
+
+.factor-ic-curve__line {
+  fill: none;
+  stroke: var(--color-accent-primary);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.factor-ic-curve__dot {
+  fill: var(--color-accent-primary);
+}
+
+.factor-ic-curve__zero {
+  fill: none;
+  stroke: var(--color-border-default);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ±0.02 弱线 / ±0.05 强线：强线略实，弱线几乎看不见但给一个刻度参照 */
+.factor-ic-curve__guide {
+  stroke: var(--color-border-default);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.factor-ic-curve__guide--strong {
+  opacity: 0.9;
+  stroke-dasharray: 4 3;
+}
+
+.factor-ic-curve__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}

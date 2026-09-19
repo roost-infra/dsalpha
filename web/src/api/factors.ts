@@ -24,11 +24,26 @@ export interface ContractFinding {
   dataset?: string;
 }
 
+/** One point of the per-day IC breakdown, for the decay curve. */
+export interface IcPoint {
+  /** ISO `YYYY-MM-DD`. */
+  date: string;
+  ic: number;
+  /** Cross-section size behind this point — a thin day's IC is not comparable. */
+  n?: number | null;
+}
+
 /** One trailing-window cross-sectional IC probe. */
 export interface IcProbe {
   window: number;
   ic: number | null;
   days?: number | null;
+  /**
+   * Per-day IC over the window (ascending by date). Empty when the miner
+   * predates the series field or the probe failed — the board then falls back to
+   * the scalar probe only.
+   */
+  series?: IcPoint[];
   error?: string;
 }
 
