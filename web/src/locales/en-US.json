@@ -2656,7 +2656,15 @@
       "clearAnnotations": "Clear",
       "clearAnnotationsTitle": "Clear annotations from the chart (kept in chat — click the artifact to restore)",
       "modeLabel": "Mode",
-      "newsEventAria": "News event: {{title}}"
+      "newsEventAria": "News event: {{title}}",
+      "chan": {
+        "title": "Chan theory overlays",
+        "strokes": "Strokes",
+        "zhongshu": "Pivots",
+        "fractals": "Fractals",
+        "points": "Entry/exit marks",
+        "note": "Strokes and pivots default on; fractals overlap in dense tape, enable on demand."
+      }
     },
     "selection": {
       "toolTooltip": "Select a region or price level to ask the agent",

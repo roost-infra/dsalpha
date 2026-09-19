@@ -2635,7 +2635,15 @@
       "clearAnnotations": "清除",
       "clearAnnotationsTitle": "从图表中清除标注（已保留在对话中，点击该结果可恢复）",
       "modeLabel": "模式",
-      "newsEventAria": "新闻事件：{{title}}"
+      "newsEventAria": "新闻事件：{{title}}",
+      "chan": {
+        "title": "缠论画线",
+        "strokes": "笔",
+        "zhongshu": "中枢",
+        "fractals": "分型",
+        "points": "买卖点",
+        "note": "笔与中枢默认开启；分型在密集行情下会重叠，按需再开。"
+      }
     },
     "selection": {
       "toolTooltip": "选择一个区域或价格水平，向智能体提问",

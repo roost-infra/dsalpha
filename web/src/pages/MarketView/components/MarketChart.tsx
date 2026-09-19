@@ -20,6 +20,9 @@ import VenueClock from './VenueClock';
 import { useQuote } from '@/lib/quotes';
 import { calculateMA, calculateRSI, updateRSIIncremental } from '../utils/chartHelpers';
 import type { RSIState, OHLCDataPoint } from '../utils/chartHelpers';
+import { computeChan } from '../utils/chan';
+import { ChanPrimitive, DEFAULT_CHAN_LAYERS } from '../utils/chanPrimitive';
+import type { ChanLayers } from '../utils/chanPrimitive';
 import {
   getChartTheme,
   INTERVALS, PRIMARY_INTERVAL_KEYS, SCROLL_CHUNK_DAYS,
@@ -55,8 +58,18 @@ import { SlidersHorizontal, Settings2, Maximize2, Minimize2, ChevronDown, Plus, 
 import { loadPref, savePref } from '../utils/prefs';
 import type { SnapshotData } from '@/types/market';
 import type { BarData } from '../hooks/useMarketDataWS';
+import { Waypoints } from 'lucide-react';
 import { useOnClickOutside } from '@/hooks/useOnClickOutside';
 import { useIsMobile } from '@/hooks/useIsMobile';
+
+/** 缠论分层开关的展示顺序与 i18n key。顺序即重要性：笔是骨架，中枢是最常看的，
+ *  分型/买卖点是可选增强。 */
+const CHAN_LAYER_ITEMS: Array<{ key: keyof ChanLayers; labelKey: string }> = [
+  { key: 'strokes', labelKey: 'marketView.chart.chan.strokes' },
+  { key: 'zhongshu', labelKey: 'marketView.chart.chan.zhongshu' },
+  { key: 'fractals', labelKey: 'marketView.chart.chan.fractals' },
+  { key: 'points', labelKey: 'marketView.chart.chan.points' },
+];
 
 interface ChartDataBar {
   time: number;
@@ -161,6 +174,23 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const baselineSeriesRef = useRef<any>(null);
   const extHoursBgRef = useRef<ExtendedHoursBgPrimitive | null>(null);
   const selectionPrimitiveRef = useRef<SelectionPrimitive | null>(null);
+  const chanPrimitiveRef = useRef<ChanPrimitive | null>(null);
+  // 分层开关的 ref 镜像：updateSeriesData 是 useCallback，闭包里的 state 会过期，
+  // 所以它读 ref。
+  const chanLayersRef = useRef<ChanLayers>(DEFAULT_CHAN_LAYERS);
+  // 最近一次喂给图表的K线。开关打开时要能立刻按当前数据重算几何，
+  // 不能等下一次滚动加载。
+  const lastBarsRef = useRef<Array<{ time: number; high: number; low: number }>>([]);
+
+  /** 按当前分层开关与最近一次K线，重算并下发缠论几何。 */
+  const applyChanGeometry = useCallback(() => {
+    const prim = chanPrimitiveRef.current;
+    if (!prim) return;
+    const l = chanLayersRef.current;
+    const want = l.strokes || l.zhongshu || l.fractals || l.points;
+    prim.setGeometry(want ? computeChan(lastBarsRef.current) : null);
+  }, []);
+
   const extCloseLineRef = useRef<any>(null);
   // Signature of the last-applied session presentation (priceMark + close-line
   // price) — makes applySessionPresentation idempotent across its call sites.
@@ -207,6 +237,12 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const [priceScaleMode, setPriceScaleMode] = useState<number>(() => loadPref('priceScaleMode', PriceScaleMode.Normal));
   const [magnetMode, setMagnetMode] = useState<boolean>(() => loadPref('magnetMode', false));
   const [showBaseline, setShowBaseline] = useState<boolean>(false);
+  // 缠论：默认只开「笔 + 中枢」。分型在真实行情里太密（全开会糊成一片），
+  // 买卖点需要使用者有判断力，两者都默认关、各自可开。
+  const [chanLayers, setChanLayers] = useState<ChanLayers>(() => ({
+    ...DEFAULT_CHAN_LAYERS,
+    ...(loadPref('chanLayers', DEFAULT_CHAN_LAYERS) as Partial<ChanLayers>),
+  }));
   const [annotationsVisible, setAnnotationsVisible] = useState<boolean>(() => loadPref('annotationsVisible', false));
   // User chart-selection tool: drag a region or click a price level to ask the agent.
   const [selectMode, setSelectMode] = useState<'off' | 'region' | 'price_level'>('off');
@@ -244,15 +280,18 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const [toolsOpen, setToolsOpen] = useState<boolean>(false);
   const [intervalsOpen, setIntervalsOpen] = useState<boolean>(false);
   const [viewOpen, setViewOpen] = useState<boolean>(false);
+  const [chanOpen, setChanOpen] = useState<boolean>(false);
   const [disabledTooltip, setDisabledTooltip] = useState<string | null>(null);
   const disabledTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const indicatorsDropdownRef = useRef<HTMLDivElement>(null);
   const toolsDropdownRef = useRef<HTMLDivElement>(null);
   const intervalsDropdownRef = useRef<HTMLDivElement>(null);
   const viewDropdownRef = useRef<HTMLDivElement>(null);
+  const chanDropdownRef = useRef<HTMLDivElement>(null);
   useOnClickOutside(indicatorsDropdownRef, () => setIndicatorsOpen(false), indicatorsOpen);
   useOnClickOutside(toolsDropdownRef, () => setToolsOpen(false), toolsOpen);
   useOnClickOutside(intervalsDropdownRef, () => setIntervalsOpen(false), intervalsOpen);
+  useOnClickOutside(chanDropdownRef, () => setChanOpen(false), chanOpen);
   useOnClickOutside(viewDropdownRef, () => setViewOpen(false), viewOpen);
 
   // Crosshair tooltip state — external store, not useState: the crosshair
@@ -363,6 +402,19 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   useEffect(() => {
     selectionPrimitiveRef.current?.setTheme(theme === 'dark' ? 'dark' : 'light');
   }, [theme]);
+
+  // 缠论 primitive：主题与分层开关都是命令式更新（同 selection 的做法）
+  useEffect(() => {
+    chanPrimitiveRef.current?.setTheme(theme === 'dark' ? 'dark' : 'light');
+  }, [theme]);
+
+  useEffect(() => {
+    chanLayersRef.current = chanLayers;
+    chanPrimitiveRef.current?.setLayers(chanLayers);
+    savePref('chanLayers', chanLayers);
+    // 打开任一层时立刻按现有数据出图，否则要等下一次 K 线更新才出现
+    applyChanGeometry();
+  }, [chanLayers, applyChanGeometry]);
 
   // Render every selection drawn on the current instance (pending + confirmed),
   // emphasizing the one whose editor is open.
@@ -1131,9 +1183,14 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       }
     }
 
+    // 缠论几何：跟着当前可见K线重算。只在开启时才算是刻意的——分析是纯 CPU、
+    // 每次滚动加载都会跑，关着就不该付这份开销。
+    lastBarsRef.current = data.map((d) => ({ time: d.time, high: d.high, low: d.low }));
+    applyChanGeometry();
+
     // Update chart data state for overlay hooks
     setChartDataForHooks(data);
-  }, [applySessionPresentation]);
+  }, [applySessionPresentation, applyChanGeometry]);
 
   // --- Live forming-bar delta-poll (shared controller) ---
   // The hook owns the watermark + reconcile cursors; the component owns bar
@@ -1305,6 +1362,12 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     selectionPrimitiveRef.current = new SelectionPrimitive();
     candlestickSeriesRef.current.attachPrimitive(selectionPrimitiveRef.current);
     selectionPrimitiveRef.current.setTheme(theme === 'dark' ? 'dark' : 'light');
+
+    // 缠论画线（K线包含 → 分型 → 笔 → 中枢 → 买卖点）
+    chanPrimitiveRef.current = new ChanPrimitive();
+    candlestickSeriesRef.current.attachPrimitive(chanPrimitiveRef.current);
+    chanPrimitiveRef.current.setTheme(theme === 'dark' ? 'dark' : 'light');
+    chanPrimitiveRef.current.setLayers(chanLayersRef.current);
 
     // Volume histogram series
     volumeSeriesRef.current = chart.addHistogramSeries({
@@ -2147,7 +2210,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                 <button
                   type="button"
                   className={`chart-tool-btn${indicatorsOpen ? ' chart-tool-btn-active' : ''}`}
-                  onClick={() => { setIndicatorsOpen((v) => !v); setToolsOpen(false); setViewOpen(false); }}
+                  onClick={() => { setIndicatorsOpen((v) => !v); setToolsOpen(false); setViewOpen(false); setChanOpen(false); }}
                   title="Indicators"
                 >
                   <SlidersHorizontal size={14} />
@@ -2198,12 +2261,40 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               <div className="chart-tool-buttons">
                 {renderSelectionButtons()}
               </div>
+              {/* 缠论 dropdown — 分层开关。默认只开笔+中枢，分型/买卖点各自可开。 */}
+              <div className="toolbar-dropdown toolbar-item--chan" ref={chanDropdownRef}>
+                <button
+                  type="button"
+                  className={`chart-tool-btn${(chanLayers.strokes || chanLayers.zhongshu || chanLayers.fractals || chanLayers.points) ? ' chart-tool-btn-active' : ''}`}
+                  onClick={() => { setChanOpen((v) => !v); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false); }}
+                  title={t('marketView.chart.chan.title')}
+                >
+                  <Waypoints size={14} />
+                </button>
+                {chanOpen && (
+                  <div className="toolbar-dropdown-panel toolbar-dropdown-panel--right">
+                    <div className="chan-layer-panel">
+                      {CHAN_LAYER_ITEMS.map(({ key, labelKey }) => (
+                        <label key={key} className="chan-layer-item">
+                          <input
+                            type="checkbox"
+                            checked={chanLayers[key]}
+                            onChange={() => setChanLayers((prev) => ({ ...prev, [key]: !prev[key] }))}
+                          />
+                          <span>{t(labelKey)}</span>
+                        </label>
+                      ))}
+                      <p className="chan-layer-note">{t('marketView.chart.chan.note')}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
               {/* Tools dropdown — inline until tier 3, then into the menu */}
               <div className="toolbar-dropdown toolbar-item--tools" ref={toolsDropdownRef}>
                 <button
                   type="button"
                   className={`chart-tool-btn${toolsOpen ? ' chart-tool-btn-active' : ''}`}
-                  onClick={() => { setToolsOpen((v) => !v); setIndicatorsOpen(false); setViewOpen(false); }}
+                  onClick={() => { setToolsOpen((v) => !v); setIndicatorsOpen(false); setViewOpen(false); setChanOpen(false); }}
                   title="Chart Tools"
                 >
                   <Settings2 size={14} />
