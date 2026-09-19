@@ -272,6 +272,10 @@ async def _stage_oos(run: DetectionRun) -> None:
         "mining": payload.get("mining"),
         "oos": payload.get("oos"),
         "decay": payload.get("decay"),
+        # 两条净值曲线原样透传（miner 已抽稀到 <=400 点）。不在这里加工：曲线的
+        # 日期与数值口径都来自 qlib 那份 report，重算会引入偏差。
+        "mining_net_curve": payload.get("mining_net_curve") or [],
+        "oos_net_curve": payload.get("oos_net_curve") or [],
         # The tool can answer `status: done` while carrying its own failure in
         # `ok`/`error` — that is how a worker-side crash arrives when the queue
         # swallowed the exception. Passed through so the stage can fail loudly

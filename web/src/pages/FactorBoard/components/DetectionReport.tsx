@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { DetectionRun, IcProbe, OosFinding } from '@/api/factors';
 
 import { IcCurveChart } from './IcCurveChart';
+import { NetCurveChart } from './NetCurveChart';
 import { IC_STRONG, maxAbsIc, niceIcBound } from '../utils/icCurve';
 
 /**
@@ -195,6 +196,9 @@ export function DetectionReport({ run }: { run: DetectionRun }) {
               {t('factors.oos.decay', { value: `${(oos.decay * 100).toFixed(1)}%` })}
             </p>
           )}
+          {/* 两条窗口的净值曲线 —— `decay` 的可视化。两个窗口都为空时组件自身
+              返回 null，所以这里不必再判一次长度（老 miner 没有这两个字段）。 */}
+          <NetCurveChart mining={oos.mining_net_curve} oos={oos.oos_net_curve} />
         </section>
       )}
     </div>

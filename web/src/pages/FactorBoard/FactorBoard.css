@@ -1171,3 +1171,35 @@
   color: var(--color-text-tertiary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+
+/* ── Net-value curves (OOS windows) ──────────────────────────────────────── */
+
+.factor-net-curve {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-default);
+}
+
+.factor-net-curve__caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.factor-net-curve__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.factor-net-curve__swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  display: inline-block;
+}

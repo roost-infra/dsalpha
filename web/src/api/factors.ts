@@ -47,11 +47,31 @@ export interface IcProbe {
   error?: string;
 }
 
+/** One point of a backtest net-value curve. */
+export interface NetCurvePoint {
+  /**
+   * ISO `YYYY-MM-DD`, or `null` when the miner could not read trading dates
+   * (it then falls back to `i`, the trading-day index).
+   */
+  date: string | null;
+  /** Trading-day index within the backtest. Kept even when `date` is present. */
+  i: number;
+  /** Account equity as qlib recorded it (not a cumulative product we rebuilt). */
+  value: number;
+}
+
 /** Mining-window vs out-of-sample performance, plus the relative decay. */
 export interface OosFinding {
   mining?: Record<string, number | null> | null;
   oos?: Record<string, number | null> | null;
   decay?: number | null;
+  /**
+   * Equity curves for the two windows, already downsampled by the miner
+   * (<=400 points each). Empty when the window failed or predates this field —
+   * the chart is skipped rather than drawn empty.
+   */
+  mining_net_curve?: NetCurvePoint[] | null;
+  oos_net_curve?: NetCurvePoint[] | null;
   ok?: boolean | null;
   error?: string | null;
 }

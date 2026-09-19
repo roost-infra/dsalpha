@@ -3547,7 +3547,13 @@
       "ic": "IC",
       "annualized": "Annualized return",
       "drawdown": "Max drawdown",
-      "decay": "Relative decay: {{value}}"
+      "decay": "Relative decay: {{value}}",
+      "curve": {
+        "mining": "Mining",
+        "oos": "Out-of-sample",
+        "dayIndex": "day {i}",
+        "note": "Each window is rebased to its own first observation (1.00× = starting equity); the windows start at different absolute equity levels, so raw values cannot share an axis. OOS flattening against mining is what decay looks like."
+      }
     },
     "tabs": {
       "library": "Library",
