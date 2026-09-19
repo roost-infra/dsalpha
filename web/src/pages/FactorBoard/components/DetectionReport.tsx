@@ -3,8 +3,16 @@ import { useTranslation } from 'react-i18next';
 
 import type { DetectionRun, IcProbe, OosFinding } from '@/api/factors';
 
-/** Presentation scale for the IC bars — the same thresholds the verdict uses. */
-const IC_AXIS = 0.06;
+import { IcCurveChart } from './IcCurveChart';
+import { NetCurveChart } from './NetCurveChart';
+import { IC_STRONG, maxAbsIc, niceIcBound } from '../utils/icCurve';
+
+/**
+ * Presentation scale for the IC bars, derived from the strong-IC threshold (with
+ * 20% headroom) so the bars and the verdict read the same scale. The thresholds
+ * themselves live once, in utils/icCurve.ts.
+ */
+const IC_AXIS = IC_STRONG * 1.2;
 
 /** Fields the OOS stage reports, in the order a reader asks for them. */
 const OOS_METRICS: Array<{ key: string; labelKey: string; percent?: boolean }> = [
@@ -102,6 +110,13 @@ export function DetectionReport({ run }: { run: DetectionRun }) {
   const oos = run.findings.oos;
   const level = verdict.level ?? 'unknown';
 
+  // Only probes that actually carry a per-day series get a curve. An older miner
+  // (or a failed probe) has none, and we must not draw an empty chart for it.
+  const curveProbes = probes.filter((p) => (p.series?.length ?? 0) > 0);
+  // Shared y bound across windows; floored at the strong-IC reading so a quiet
+  // factor is still drawn against a meaningful axis.
+  const curveBound = niceIcBound(Math.max(maxAbsIc(curveProbes.map((p) => p.series)), IC_STRONG));
+
   return (
     <div className="factor-report">
       <div className={`factor-verdict factor-verdict--${level}`}>
@@ -151,6 +166,23 @@ export function DetectionReport({ run }: { run: DetectionRun }) {
               <IcBar key={probe.window} probe={probe} />
             ))}
           </div>
+          {/* Decay curves: the per-day IC behind each scalar probe.
+              One shared y bound across windows, otherwise two curves drawn at
+              different scales look equally flat/steep and cannot be compared.
+              Bounded below by the strong-IC reading so a quiet factor still shows
+              its curve against a meaningful axis instead of an amplified flat line. */}
+          {curveProbes.length > 0 && (
+            <div className="factor-ic-curves">
+              {curveProbes.map((probe) => (
+                <IcCurveChart
+                  key={probe.window}
+                  series={probe.series!}
+                  bound={curveBound}
+                  window={probe.window}
+                />
+              ))}
+            </div>
+          )}
           <p className="factor-card__note">{t('factors.ic.note')}</p>
         </section>
       )}
@@ -164,6 +196,9 @@ export function DetectionReport({ run }: { run: DetectionRun }) {
               {t('factors.oos.decay', { value: `${(oos.decay * 100).toFixed(1)}%` })}
             </p>
           )}
+          {/* 两条窗口的净值曲线 —— `decay` 的可视化。两个窗口都为空时组件自身
+              返回 null，所以这里不必再判一次长度（老 miner 没有这两个字段）。 */}
+          <NetCurveChart mining={oos.mining_net_curve} oos={oos.oos_net_curve} />
         </section>
       )}
     </div>

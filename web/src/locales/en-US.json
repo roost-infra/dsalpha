@@ -3532,7 +3532,12 @@
       "title": "Cross-sectional IC (trailing N trading days)",
       "window": "last {{days}}d",
       "none": "no usable IC",
-      "note": "IC is the cross-sectional correlation between the factor and next-day return. |IC| ≥ 0.05 reads as strong, ≥ 0.02 as usable; below 0.02 it rarely clears trading costs."
+      "note": "IC is the cross-sectional correlation between the factor and next-day return. |IC| ≥ 0.05 reads as strong, ≥ 0.02 as usable; below 0.02 it rarely clears trading costs.",
+      "last": "last {value}",
+      "peak": "peak {date} {value}",
+      "meanN": "{value} names/day",
+      "points": "{count} trading days",
+      "curveAria": "Per-day IC over the last {days} days, latest {value}, {points} points"
     },
     "oos": {
       "title": "Out-of-sample check",
@@ -3542,7 +3547,13 @@
       "ic": "IC",
       "annualized": "Annualized return",
       "drawdown": "Max drawdown",
-      "decay": "Relative decay: {{value}}"
+      "decay": "Relative decay: {{value}}",
+      "curve": {
+        "mining": "Mining",
+        "oos": "Out-of-sample",
+        "dayIndex": "day {i}",
+        "note": "Each window is rebased to its own first observation (1.00× = starting equity); the windows start at different absolute equity levels, so raw values cannot share an axis. OOS flattening against mining is what decay looks like."
+      }
     },
     "tabs": {
       "library": "Library",

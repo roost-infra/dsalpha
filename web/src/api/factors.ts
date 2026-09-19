@@ -24,12 +24,40 @@ export interface ContractFinding {
   dataset?: string;
 }
 
+/** One point of the per-day IC breakdown, for the decay curve. */
+export interface IcPoint {
+  /** ISO `YYYY-MM-DD`. */
+  date: string;
+  ic: number;
+  /** Cross-section size behind this point — a thin day's IC is not comparable. */
+  n?: number | null;
+}
+
 /** One trailing-window cross-sectional IC probe. */
 export interface IcProbe {
   window: number;
   ic: number | null;
   days?: number | null;
+  /**
+   * Per-day IC over the window (ascending by date). Empty when the miner
+   * predates the series field or the probe failed — the board then falls back to
+   * the scalar probe only.
+   */
+  series?: IcPoint[];
   error?: string;
+}
+
+/** One point of a backtest net-value curve. */
+export interface NetCurvePoint {
+  /**
+   * ISO `YYYY-MM-DD`, or `null` when the miner could not read trading dates
+   * (it then falls back to `i`, the trading-day index).
+   */
+  date: string | null;
+  /** Trading-day index within the backtest. Kept even when `date` is present. */
+  i: number;
+  /** Account equity as qlib recorded it (not a cumulative product we rebuilt). */
+  value: number;
 }
 
 /** Mining-window vs out-of-sample performance, plus the relative decay. */
@@ -37,6 +65,13 @@ export interface OosFinding {
   mining?: Record<string, number | null> | null;
   oos?: Record<string, number | null> | null;
   decay?: number | null;
+  /**
+   * Equity curves for the two windows, already downsampled by the miner
+   * (<=400 points each). Empty when the window failed or predates this field —
+   * the chart is skipped rather than drawn empty.
+   */
+  mining_net_curve?: NetCurvePoint[] | null;
+  oos_net_curve?: NetCurvePoint[] | null;
   ok?: boolean | null;
   error?: string | null;
 }
