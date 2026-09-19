@@ -239,6 +239,29 @@ export const DEFAULT_MACD_ENABLED = false;
 export const ATR_PERIODS: number[] = [14, 21];
 export const ATR_COLORS = { line: '#a78bfa' } as const;  // purple
 export const DEFAULT_ATR_ENABLED = false;
+/** 以 ATR 为 1R：1R = |入场 - 止损|，止损按 1×ATR 计。 */
+export const ATR_STOP_MULTIPLE = 1;
+export const R_MULTIPLES: number[] = [1, 2, 3];
+
+/**
+ * 堆叠面板中时间轴的归属。
+ *
+ * 面板从上到下是 主图 → RSI → MACD → ATR。只有**最下面一个可见面板**该画时间轴；
+ * 其余必须隐藏，否则三个面板同时开着时中间会多出一条时间轴、而最下面那条反而没有。
+ * 这是纯规则，抽出来是为了能单测 —— 散在三个 createChart 调用里手写必然漂移。
+ */
+export function computePaneAxisVisibility(
+  panes: { has: boolean; visible: boolean }[],
+): boolean[] {
+  const out = panes.map(() => false);
+  for (let i = panes.length - 1; i >= 0; i--) {
+    if (panes[i].has && panes[i].visible) {
+      out[i] = true;
+      break;
+    }
+  }
+  return out;
+}
 
 // Target bar spacing (pixels) per interval for readable candlestick charts.
 // Container width determines how many bars are visible at this spacing.

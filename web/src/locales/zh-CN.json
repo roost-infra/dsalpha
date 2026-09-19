@@ -2654,6 +2654,11 @@
         "title": "MACD",
         "on": "MACD",
         "note": "12/26/9；独立面板，柱为正负能量"
+      },
+      "atr": {
+        "title": "ATR",
+        "on": "ATR",
+        "note": "Wilder ATR；独立面板，读数含以 1×ATR 为 1R 的止损/目标（参考位，非建仓建议）"
       }
     },
     "selection": {

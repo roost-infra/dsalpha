@@ -2675,6 +2675,11 @@
         "title": "MACD",
         "on": "MACD",
         "note": "12/26/9; separate pane, histogram shows momentum"
+      },
+      "atr": {
+        "title": "ATR",
+        "on": "ATR",
+        "note": "Wilder ATR; separate pane, readout shows 1xATR = 1R stops/targets (reference levels, not advice)"
       }
     },
     "selection": {

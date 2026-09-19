@@ -20,7 +20,7 @@ import VenueClock from './VenueClock';
 import { useQuote } from '@/lib/quotes';
 import { calculateMA, calculateRSI, updateRSIIncremental } from '../utils/chartHelpers';
 import type { RSIState, OHLCDataPoint } from '../utils/chartHelpers';
-import { calculateBollinger, calculateMACD, type Bar, type LinePoint } from '../utils/indicators';
+import { calculateATR, calculateBollinger, calculateMACD, projectRiskLevels, type Bar, type LinePoint } from '../utils/indicators';
 import { computeChan } from '../utils/chan';
 import { ChanPrimitive, DEFAULT_CHAN_LAYERS } from '../utils/chanPrimitive';
 import type { ChanLayers } from '../utils/chanPrimitive';
@@ -32,6 +32,8 @@ import {
   MA_CONFIGS, DEFAULT_ENABLED_MA, RSI_PERIODS, BARS_PER_DAY, TARGET_BAR_SPACING,
   BOLL_CONFIG, BOLL_COLORS, DEFAULT_BOLL_ENABLED,
   MACD_CONFIG, MACD_COLORS, DEFAULT_MACD_ENABLED,
+  ATR_PERIODS, ATR_COLORS, DEFAULT_ATR_ENABLED, ATR_STOP_MULTIPLE, R_MULTIPLES,
+  computePaneAxisVisibility,
   INTERVAL_SECONDS, WS_FOLD_INTERVALS,
   OVERLAY_COLORS, OVERLAY_LABELS,
   EXTENDED_HOURS_INTERVALS, getExtendedHoursType, computeExtendedHoursRegions,
@@ -168,6 +170,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const rsiChartContainerRef = useRef<HTMLDivElement>(null);
   const macdChartContainerRef = useRef<HTMLDivElement>(null);
+  const atrChartContainerRef = useRef<HTMLDivElement>(null);
   const lightWrapperRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const rsiChartRef = useRef<IChartApi | null>(null);
@@ -184,6 +187,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // applyMacdData 在图表创建 effect 之后才声明（它是 useCallback），effect 里直接
   // 引用会踩 TDZ。用 ref 转交，effect 只读 ref.current。
   const applyMacdDataRef = useRef<((data: ChartDataBar[]) => void) | null>(null);
+  // ATR 独立面板（第三个 chart 实例）
+  const atrChartRef = useRef<IChartApi | null>(null);
+  const atrSeriesRef = useRef<any>(null);
+  const applyAtrDataRef = useRef<((data: ChartDataBar[]) => void) | null>(null);
+  // 三个下方面板"谁画时间轴"的当前结果 [RSI, MACD, ATR]。图表创建 effect 只在挂载时
+  // 跑一次，读不到之后变化的 state，所以走 ref；规则本身是 computePaneAxisVisibility。
+  const axisVisRef = useRef<[boolean, boolean, boolean]>([true, false, false]);
   const baselineSeriesRef = useRef<any>(null);
   const extHoursBgRef = useRef<ExtendedHoursBgPrimitive | null>(null);
   const selectionPrimitiveRef = useRef<SelectionPrimitive | null>(null);
@@ -271,6 +281,10 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const [macdEnabled, setMacdEnabled] = useState<boolean>(() => loadPref('macdEnabled', DEFAULT_MACD_ENABLED));
   // 面板左上角读数。null 表示预热未完成或已关闭。
   const [macdValues, setMacdValues] = useState<{ dif: number; dea: number; hist: number } | null>(null);
+  // ATR（独立面板）：波动率刻度 + 以 1×ATR 为 1R 的止损/目标读数。
+  const [atrEnabled, setAtrEnabled] = useState<boolean>(() => loadPref('atrEnabled', DEFAULT_ATR_ENABLED));
+  const [atrPeriod, setAtrPeriod] = useState<number>(() => loadPref('atrPeriod', ATR_PERIODS[0]));
+  const [atrValues, setAtrValues] = useState<{ atr: number; lastClose: number; r: number } | null>(null);
 
   // Responsive compact mode — based on actual chart container width, not viewport
   // Toolbar collapse tier by container width. As space shrinks the toolbar
@@ -325,6 +339,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const rsiPeriodRef = useRef(14);
   const bollEnabledRef = useRef(DEFAULT_BOLL_ENABLED);
   const macdEnabledRef = useRef(DEFAULT_MACD_ENABLED);
+  const atrEnabledRef = useRef(DEFAULT_ATR_ENABLED);
+  const atrPeriodRef = useRef(ATR_PERIODS[0]);
 
   // Track current interval for use inside stable callbacks (avoids stale closures)
   const intervalRef = useRef(interval);
@@ -334,6 +350,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   useEffect(() => { rsiPeriodRef.current = rsiPeriod; }, [rsiPeriod]);
   useEffect(() => { bollEnabledRef.current = bollEnabled; }, [bollEnabled]);
   useEffect(() => { macdEnabledRef.current = macdEnabled; }, [macdEnabled]);
+  useEffect(() => { atrEnabledRef.current = atrEnabled; }, [atrEnabled]);
+  useEffect(() => { atrPeriodRef.current = atrPeriod; }, [atrPeriod]);
   useEffect(() => { intervalRef.current = interval; }, [interval]);
   useEffect(() => { quoteDataRef.current = quoteData; }, [quoteData]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
@@ -345,6 +363,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   useEffect(() => { savePref('rsiPeriod', rsiPeriod); }, [rsiPeriod]);
   useEffect(() => { savePref('bollEnabled', bollEnabled); }, [bollEnabled]);
   useEffect(() => { savePref('macdEnabled', macdEnabled); }, [macdEnabled]);
+  useEffect(() => { savePref('atrEnabled', atrEnabled); }, [atrEnabled]);
+  useEffect(() => { savePref('atrPeriod', atrPeriod); }, [atrPeriod]);
   useEffect(() => { savePref('chartMode', chartMode); }, [chartMode]);
   useEffect(() => { savePref('overlayVisibility', overlayVisibility); }, [overlayVisibility]);
   useEffect(() => { savePref('priceScaleMode', priceScaleMode); }, [priceScaleMode]);
@@ -1195,10 +1215,43 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     );
   }, [toLineData]);
 
-  // 把 applyMacdData 交给图表创建 effect（它在 effect 之后声明，见 applyMacdDataRef）。
+  /**
+   * ATR 面板：一条线 + 以 1×ATR 为 1R 的风险读数。
+   * R 位的价格由 projectRiskLevels 算出（纯函数、已单测），这里只做展示。
+   * 用最后收盘价当"若此刻入场"的入场价——这是规划工具，不是建仓建议。
+   */
+  const applyAtrData = useCallback((data: ChartDataBar[]) => {
+    if (!atrSeriesRef.current) return;
+    if (!atrEnabledRef.current) {
+      atrSeriesRef.current.setData([]);
+      setAtrValues(null);
+      return;
+    }
+    if (data.length === 0) return;
+
+    const atr = calculateATR(data as unknown as Bar[], atrPeriodRef.current);
+    atrSeriesRef.current.setData(toLineData(atr));
+
+    const atrLast = lastNonNull(atr);
+    const close = data[data.length - 1].close;
+    if (atrLast === null) {
+      setAtrValues(null);
+      return;
+    }
+    // 1R 止损距离 = ATR_STOP_MULTIPLE × ATR（多头：入场下方）
+    const stop = close - ATR_STOP_MULTIPLE * atrLast;
+    const proj = projectRiskLevels(close, stop, R_MULTIPLES);
+    setAtrValues({ atr: atrLast, lastClose: close, r: proj ? proj.risk : atrLast });
+  }, [toLineData]);
+
+  // 把 applyMacdData / applyAtrData 交给图表创建 effect（它们在 effect 之后声明，
+  // 见 applyMacdDataRef / applyAtrDataRef）。
   useEffect(() => {
     applyMacdDataRef.current = applyMacdData;
   }, [applyMacdData]);
+  useEffect(() => {
+    applyAtrDataRef.current = applyAtrData;
+  }, [applyAtrData]);
 
   const updateSeriesData = useCallback((data: ChartDataBar[]) => {
     const ct = ctRef.current;
@@ -1276,6 +1329,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     if (macdEnabledRef.current) {
       applyMacdData(data);
     }
+    if (atrEnabledRef.current) {
+      applyAtrData(data);
+    }
 
     // RSI — compute and store smoothing state for incremental updates
     const currentRsiPeriod = rsiPeriodRef.current;
@@ -1309,7 +1365,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
     // Update chart data state for overlay hooks
     setChartDataForHooks(data);
-  }, [applySessionPresentation, applyChanGeometry, applyMacdData, toLineData]);
+  }, [applySessionPresentation, applyChanGeometry, applyMacdData, applyAtrData, toLineData]);
 
   // --- Live forming-bar delta-poll (shared controller) ---
   // The hook owns the watermark + reconcile cursors; the component owns bar
@@ -1594,6 +1650,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
           borderColor: t0.grid,
           timeVisible: true,
           secondsVisible: false,
+          // 只有最下面的可见面板画时间轴，见 computePaneAxisVisibility
+          visible: axisVisRef.current[0],
         },
         handleScroll: {
           mouseWheel: false,
@@ -1641,6 +1699,60 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     }, 100);
 
+    return () => {
+      clearTimeout(rsiTimeout);
+
+      // Unsubscribe scroll-load listener
+      if (rangeUnsubRef.current) {
+        rangeUnsubRef.current();
+        rangeUnsubRef.current = null;
+      }
+      if (rangeChangeTimerRef.current) clearTimeout(rangeChangeTimerRef.current);
+
+      extHoursBgRef.current = null;
+      extCloseLineRef.current = null;
+      appliedSessionRef.current = null;
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      baselineSeriesRef.current = null;
+      Object.keys(maSeriesRefs.current).forEach(k => { maSeriesRefs.current[Number(k)] = null; });
+      rsiSeriesRef.current = null;
+
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
+      if (rsiChartRef.current) {
+        rsiChartRef.current.remove();
+        rsiChartRef.current = null;
+      }
+      // MACD/ATR 面板的拆除归独立的 pane effect（它们可以随开关反复创建）
+    };
+    // priceFormatRef is a stable ref (from useCurrencyDisplay) — listed so
+    // exhaustive-deps sees the formatter's read; its identity never changes, so
+    // this stays a mount-only chart-creation effect.
+  }, [priceFormatRef]); // Mount only
+
+  /**
+   * MACD / ATR 独立面板：按开关创建与拆除。
+   *
+   * 为什么不放在上面的图表创建 effect 里：那个 effect 是 mount-only，它的 100ms
+   * timer 在挂载时就跑过了 —— 如果面板当时是关的，容器还不存在，timer 直接
+   * early-return，之后用户再打开开关就**永远没人去建这个面板**。所以面板创建必须是
+   * 自己的 effect，依赖开关本身。
+   *
+   * 也不能图省事把上面那个 effect 的依赖改成 [macdEnabled]：它的 cleanup 会
+   * remove() 主图，等于每次开关面板都重建蜡烛图并丢失滚动位置。
+   *
+   * 时间轴可见性：这里用 axisVisRef 的当前值建图，随后紧跟的 timeScale effect
+   * 会按本轮真实的 [showRsiAxis, showMacdAxis, showAtrAxis] 纠正一次，所以
+   * 创建时的取值只要是"不闪错"的默认即可。
+   */
+  useEffect(() => {
+    if (!macdEnabled && !atrEnabled) return;
+    // 依赖主图实例做区间同步。主图创建 effect 声明在本 effect 之前（同一次 commit
+    // 里按声明顺序执行），所以此刻它已经建好了；直接返回只为让这个前提显式。
+    if (!chartRef.current) return;
     // MACD chart (deferred so DOM is ready). Separate instance because
     // lightweight-charts 4.x has no multi-pane API.
     //
@@ -1671,7 +1783,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
           borderColor: t1.grid,
           timeVisible: true,
           secondsVisible: false,
-          visible: false,
+          visible: axisVisRef.current[1],
         },
         handleScroll: {
           mouseWheel: false,
@@ -1711,7 +1823,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       macdChartRef.current = macdChart;
 
       // 主图驱动 MACD：偏移恒为 0（见上面的对齐说明）。
-      const mainTs2 = chart.timeScale();
+      const mainTs2 = chartRef.current!.timeScale();
       const macdTs = macdChart.timeScale();
       mainTs2.subscribeVisibleLogicalRangeChange((range) => {
         if (!range) return;
@@ -1732,45 +1844,90 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       // 面板创建时补一次数据（此前 applyMacdData 因系列未就绪而跳过）。
       applyMacdDataRef.current?.(allDataRef.current);
     }, 100);
+    // ATR chart (deferred so DOM is ready). 第三个独立实例，理由同 MACD：
+    // 4.x 无多面板 API。ATR 同样是全长度 + 预热 whitespace 下发，
+    // 逻辑下标与主图 1:1，所以同步偏移恒为 0。
+    const atrTimeout = setTimeout(() => {
+      if (!atrChartContainerRef.current || atrChartRef.current) return;
+      const t2 = getChartTheme(theme);
+      const atrChart = createChart(atrChartContainerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: t2.bg },
+          textColor: t2.text,
+        },
+        autoSize: true,
+        grid: {
+          vertLines: { color: t2.grid },
+          horzLines: { color: t2.grid },
+        },
+        rightPriceScale: {
+          borderColor: t2.grid,
+          visible: true,
+          scaleMargins: { top: 0.15, bottom: 0.15 },
+        },
+        timeScale: {
+          borderColor: t2.grid,
+          timeVisible: true,
+          secondsVisible: false,
+          visible: axisVisRef.current[2],
+        },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: false,
+          horzTouchDrag: false,
+          vertTouchDrag: false,
+        },
+        handleScale: {
+          mouseWheel: false,
+          pinch: false,
+          axisPressedMouseMove: false,
+          axisDoubleClickReset: false,
+        },
+      } as any);
+
+      atrSeriesRef.current = atrChart.addLineSeries({
+        color: ATR_COLORS.line,
+        lineWidth: 1.5 as any,
+        title: '',
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      atrChartRef.current = atrChart;
+
+      const mainTs3 = chartRef.current!.timeScale();
+      const atrTs = atrChart.timeScale();
+      mainTs3.subscribeVisibleLogicalRangeChange((range) => {
+        if (!range) return;
+        try {
+          atrTs.setVisibleLogicalRange({ from: range.from, to: range.to });
+        } catch { /* ATR 数据可能还没覆盖该区间 */ }
+      });
+      // 面板创建前主图可能已确立可见区间，补一次（同 MACD）。
+      const currentAtr = mainTs3.getVisibleLogicalRange();
+      if (currentAtr) {
+        try {
+          atrTs.setVisibleLogicalRange({ from: currentAtr.from, to: currentAtr.to });
+        } catch { /* 同上 */ }
+      }
+
+      applyAtrDataRef.current?.(allDataRef.current);
+    }, 100);
 
     return () => {
-      clearTimeout(rsiTimeout);
       clearTimeout(macdTimeout);
-
-      // Unsubscribe scroll-load listener
-      if (rangeUnsubRef.current) {
-        rangeUnsubRef.current();
-        rangeUnsubRef.current = null;
-      }
-      if (rangeChangeTimerRef.current) clearTimeout(rangeChangeTimerRef.current);
-
-      extHoursBgRef.current = null;
-      extCloseLineRef.current = null;
-      appliedSessionRef.current = null;
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      baselineSeriesRef.current = null;
-      Object.keys(maSeriesRefs.current).forEach(k => { maSeriesRefs.current[Number(k)] = null; });
-      rsiSeriesRef.current = null;
-
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-      if (rsiChartRef.current) {
-        rsiChartRef.current.remove();
-        rsiChartRef.current = null;
-      }
+      clearTimeout(atrTimeout);
       if (macdChartRef.current) {
         macdChartRef.current.remove();
         macdChartRef.current = null;
       }
       macdSeriesRefs.current = {};
+      if (atrChartRef.current) {
+        atrChartRef.current.remove();
+        atrChartRef.current = null;
+      }
+      atrSeriesRef.current = null;
     };
-    // priceFormatRef is a stable ref (from useCurrencyDisplay) — listed so
-    // exhaustive-deps sees the formatter's read; its identity never changes, so
-    // this stays a mount-only chart-creation effect.
-  }, [priceFormatRef]); // Mount only
+  }, [macdEnabled, atrEnabled, theme, ct]);
 
   // --- Effect: Update watermark when symbol changes ---
   useEffect(() => {
@@ -1857,6 +2014,17 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         timeScale: { borderColor: ct.grid },
       });
       applyMacdDataRef.current?.(allDataRef.current);
+    }
+    // ATR 面板同理：独立实例，背景/网格/轴色与柱色都要单独重刷。
+    const atrChart = atrChartRef.current;
+    if (atrChart) {
+      atrChart.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
+        grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
+        rightPriceScale: { borderColor: ct.grid },
+        timeScale: { borderColor: ct.grid },
+      });
+      applyAtrDataRef.current?.(allDataRef.current);
     }
   }, [ct]);
 
@@ -1996,6 +2164,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       macdSeriesRefs.current.signal?.setData([]);
       macdSeriesRefs.current.histogram?.setData([]);
       setMacdValues(null);
+      atrSeriesRef.current?.setData([]);
+      setAtrValues(null);
       setChartDataForHooks([]);
       // Reset RSI incremental state on symbol/interval change
       rsiSmoothingRef.current = null;
@@ -2241,6 +2411,23 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
   const isTV = effectiveChartMode === 'tradingview';
 
+  // 时间轴归属：主图不参与（它始终显示自己的轴），只算三个下方面板。
+  // 顺序必须与 JSX 里的堆叠顺序一致：RSI → MACD → ATR。
+  const [showRsiAxis, showMacdAxis, showAtrAxis] = computePaneAxisVisibility([
+    { has: true, visible: true },
+    { has: macdEnabled, visible: macdEnabled },
+    { has: atrEnabled, visible: atrEnabled },
+  ]);
+
+  // 面板开关会改变"谁在最下面"，所以时间轴可见性要跟着重刷。
+  // 创建时的初值用同一个规则算，这里只管后续变化。
+  useEffect(() => {
+    axisVisRef.current = [showRsiAxis, showMacdAxis, showAtrAxis];
+    rsiChartRef.current?.applyOptions({ timeScale: { visible: showRsiAxis } });
+    macdChartRef.current?.applyOptions({ timeScale: { visible: showMacdAxis } });
+    atrChartRef.current?.applyOptions({ timeScale: { visible: showAtrAxis } });
+  }, [showRsiAxis, showMacdAxis, showAtrAxis]);
+
   // --- Toolbar render helpers (shared between wide & compact layouts) ---
 
   const renderIndicatorsContent = () => (
@@ -2303,6 +2490,31 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
           >
             {MACD_CONFIG.fast},{MACD_CONFIG.slow},{MACD_CONFIG.signal}
           </button>
+        </div>
+      </div>
+      <div className="dropdown-section">
+        <span className="indicator-toggles-label">ATR</span>
+        <div className="indicator-toggles">
+          <button
+            type="button"
+            className={`indicator-toggle-btn${atrEnabled ? ' indicator-toggle-active' : ''}`}
+            style={atrEnabled ? { color: ATR_COLORS.line, borderColor: ATR_COLORS.line } : undefined}
+            onClick={() => setAtrEnabled((v) => !v)}
+            title={t('marketView.chart.atr.note')}
+          >
+            {t('marketView.chart.atr.on')}
+          </button>
+          {ATR_PERIODS.map((p) => (
+            <button
+              key={p}
+              type="button"
+              className={`indicator-toggle-btn${atrPeriod === p ? ' indicator-toggle-active' : ''}`}
+              style={atrPeriod === p ? { color: ATR_COLORS.line, borderColor: ATR_COLORS.line } : undefined}
+              onClick={() => setAtrPeriod(p)}
+            >
+              {p}
+            </button>
+          ))}
         </div>
       </div>
       <div className="dropdown-section">
@@ -2745,6 +2957,29 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                     : '\u2014'}
                 </div>
                 <div className="rsi-chart-wrapper" ref={macdChartContainerRef}></div>
+              </div>
+            )}
+            {atrEnabled && (
+              <div className="macd-container">
+                <div className="rsi-label">
+                  ATR ({atrPeriod}): {atrValues ? atrValues.atr.toFixed(3) : '\u2014'}
+                  {atrValues && (
+                    <>
+                      {'  '}1R={atrValues.r.toFixed(3)}
+                      {'  '}
+                      {/* 以最后收盘为"若此刻入场"的参考位，按 R 倍数给出止损/目标 */}
+                      {R_MULTIPLES.map((m) => (
+                        <span key={m}>
+                          {m}R {(atrValues.lastClose + m * atrValues.r).toFixed(2)}
+                          {m < R_MULTIPLES[R_MULTIPLES.length - 1] ? '  ' : ''}
+                        </span>
+                      ))}
+                      {'  止损 '}
+                      {(atrValues.lastClose - ATR_STOP_MULTIPLE * atrValues.atr).toFixed(2)}
+                    </>
+                  )}
+                </div>
+                <div className="rsi-chart-wrapper" ref={atrChartContainerRef}></div>
               </div>
             )}
           </div>
