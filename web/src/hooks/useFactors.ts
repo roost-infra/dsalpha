@@ -11,13 +11,25 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AxiosError } from 'axios';
 
 import {
+  deleteFactorLibraryItem,
+  evaluateFactorLibraryItem,
   getDetection,
+  getFactorLibraryItem,
   getFactorMinerHealth,
   getFactorTemplates,
+  isEvaluationRunning,
   isRunSettled,
+  libraryFilterKey,
+  listFactorLibrary,
+  saveFactorLibraryItem,
+  setFactorLibraryStatus,
   startDetection,
   type DetectionRequest,
   type DetectionRun,
+  type EvaluateFactorRequest,
+  type FactorLibraryFilters,
+  type FactorStatus,
+  type SaveFactorRequest,
 } from '@/api/factors';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -44,6 +56,12 @@ export function detectionErrorMessage(error: unknown): string {
 /** Fast enough that a stage transition lands while the reader is watching, slow
  *  enough that a four-minute run is ~80 requests instead of thousands. */
 const DETECTION_POLL_MS = 3_000;
+
+/** The same cadence for an evaluation: the miner answers in ~40s on the debug
+ *  panel and a couple of minutes on the full one, so a poll per few seconds is
+ *  what makes the difference between "it is done" and "it is still going"
+ *  visible without hammering a service that is busy running the job. */
+const LIBRARY_POLL_MS = 4_000;
 
 /**
  * A refusal the run id will keep getting, however often it is asked.
@@ -126,6 +144,103 @@ export function useStartDetection() {
     onSuccess: (run) => {
       queryClient.setQueryData(queryKeys.factors.detection(run.run_id), run);
       queryClient.invalidateQueries({ queryKey: queryKeys.factors.detections() });
+    },
+  });
+}
+
+// ── Library ──────────────────────────────────────────────────────────────────
+//
+// Every write invalidates the `library()` prefix rather than the exact keys it
+// touched: a save can create a row, change a row's status, or clear its metrics
+// (an edited code invalidates the old evaluation), and the open detail panel and
+// the filtered list both have to reflect whichever of those happened. Naming the
+// prefix is what keeps the writer from having to know.
+
+/** The library table for one filter set. */
+export function useFactorLibrary(filters: FactorLibraryFilters = {}) {
+  return useQuery({
+    queryKey: queryKeys.factors.libraryList(libraryFilterKey(filters)),
+    queryFn: () => listFactorLibrary(filters),
+    // A factor's metrics change only when someone evaluates it, and that path
+    // invalidates this key itself. Re-fetching on every mount would ask the
+    // database a question nobody changed the answer to.
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * One factor, polled only while its evaluation runs.
+ *
+ * The state comes from the row, not from this client, so a page reload, a second
+ * device or a different worker all agree. Once the row settles the poll stops —
+ * leasing a *lost* state (the worker went away) means the poll could otherwise
+ * spin forever on a run nothing is advancing.
+ */
+export function useFactorLibraryItem(factorId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.factors.libraryItem(factorId ?? ''),
+    queryFn: () => getFactorLibraryItem(factorId as string),
+    enabled: !!factorId,
+    retry: false,
+    refetchInterval: (query) =>
+      isEvaluationRunning(query.state.data) ? LIBRARY_POLL_MS : false,
+  });
+}
+
+export function useSaveFactor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SaveFactorRequest) => saveFactorLibraryItem(body),
+    onSuccess: (item) => {
+      queryClient.setQueryData(queryKeys.factors.libraryItem(item.factor_id), item);
+      queryClient.invalidateQueries({ queryKey: queryKeys.factors.library() });
+    },
+  });
+}
+
+export function useDeleteFactor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (factorId: string) => deleteFactorLibraryItem(factorId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.factors.library() });
+    },
+  });
+}
+
+export function useSetFactorStatus() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ factorId, status }: { factorId: string; status: FactorStatus }) =>
+      setFactorLibraryStatus(factorId, status),
+    onSuccess: (item) => {
+      queryClient.setQueryData(queryKeys.factors.libraryItem(item.factor_id), item);
+      queryClient.invalidateQueries({ queryKey: queryKeys.factors.library() });
+    },
+  });
+}
+
+/**
+ * Start an evaluation.
+ *
+ * The 202's body is the row already in `running`, so the cache is seeded with it:
+ * that write is what switches the panel from the button to the live state without
+ * a second round trip, and the item query's poll interval then follows it to a
+ * terminal state on its own.
+ */
+export function useEvaluateFactor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      factorId,
+      body,
+    }: {
+      factorId: string;
+      body?: EvaluateFactorRequest;
+    }) => evaluateFactorLibraryItem(factorId, body ?? {}),
+    onSuccess: (item) => {
+      queryClient.setQueryData(queryKeys.factors.libraryItem(item.factor_id), item);
+      queryClient.invalidateQueries({ queryKey: queryKeys.factors.library() });
     },
   });
 }
