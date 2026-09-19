@@ -123,8 +123,8 @@ function KnowledgeWidget({ instance, updateConfig }: WidgetRenderProps<Knowledge
     whiteSpace: 'nowrap',
     cursor: 'pointer',
     border: '1px solid var(--color-border-default)',
-    background: active ? 'var(--color-accent-subtle, rgba(208,125,51,0.12))' : 'transparent',
-    color: active ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+    background: active ? 'var(--color-accent-soft, rgba(208,125,51,0.12))' : 'transparent',
+    color: active ? 'var(--color-accent-primary)' : 'var(--color-text-secondary)',
   });
 
   if (detail) {
@@ -159,7 +159,7 @@ function KnowledgeWidget({ instance, updateConfig }: WidgetRenderProps<Knowledge
     <div className="flex flex-col h-full min-h-0">
       {/* Header: count + folders */}
       <div className="flex items-center gap-2 px-3 pt-2.5 pb-1.5 flex-shrink-0">
-        <BookOpen size={14} style={{ color: 'var(--color-accent)' }} />
+        <BookOpen size={14} style={{ color: 'var(--color-accent-primary)' }} />
         <span className="text-xs font-medium">
           {summary?.configured
             ? t('dashboard.widgets.knowledge.count', { count: summary.count })
@@ -222,7 +222,7 @@ function KnowledgeWidget({ instance, updateConfig }: WidgetRenderProps<Knowledge
               key={row.path}
               type="button"
               onClick={() => void open(row.path)}
-              className="w-full text-left px-3 py-1.5 hover:bg-[var(--color-surface-hover)] clips-focus-ring block"
+              className="w-full text-left px-3 py-1.5 hover:bg-[var(--color-bg-hover)] clips-focus-ring block"
             >
               <div className="text-xs truncate">{row.title || row.path}</div>
               {'snippet' in row && row.snippet ? (

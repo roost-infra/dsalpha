@@ -2656,7 +2656,31 @@
       "clearAnnotations": "Clear",
       "clearAnnotationsTitle": "Clear annotations from the chart (kept in chat — click the artifact to restore)",
       "modeLabel": "Mode",
-      "newsEventAria": "News event: {{title}}"
+      "newsEventAria": "News event: {{title}}",
+      "chan": {
+        "title": "Chan theory overlays",
+        "strokes": "Strokes",
+        "segments": "Segments",
+        "zhongshu": "Pivots",
+        "fractals": "Fractals",
+        "points": "Entry/exit marks",
+        "note": "Strokes and pivots default on; segments are the level above strokes and clutter when both are shown."
+      },
+      "boll": {
+        "title": "Bollinger Bands",
+        "on": "BOLL",
+        "note": "20-period, ±2σ; overlays price"
+      },
+      "macd": {
+        "title": "MACD",
+        "on": "MACD",
+        "note": "12/26/9; separate pane, histogram shows momentum"
+      },
+      "atr": {
+        "title": "ATR",
+        "on": "ATR",
+        "note": "Wilder ATR; separate pane, readout shows 1xATR = 1R stops/targets (reference levels, not advice)"
+      }
     },
     "selection": {
       "toolTooltip": "Select a region or price level to ask the agent",

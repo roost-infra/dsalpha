@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeExtendedHoursRegions, getExtendedHoursType } from '../chartConstants';
+import { computeExtendedHoursRegions, getExtendedHoursType, computePaneAxisVisibility } from '../chartConstants';
 
 // Timestamps use the "ET stored as UTC" convention of getExtendedHoursType:
 // seconds are interpreted as if the UTC wall clock were ET wall clock.
@@ -148,5 +148,42 @@ describe('getExtendedHoursType', () => {
     expect(getExtendedHoursType(preAt(DAY1_00_00, 9, 30))).toBeNull();
     expect(getExtendedHoursType(preAt(DAY1_00_00, 12, 0))).toBeNull();
     expect(getExtendedHoursType(preAt(DAY1_00_00, 15, 59))).toBeNull();
+  });
+});
+
+describe('computePaneAxisVisibility', () => {
+  const pane = (has: boolean, visible = true) => ({ has, visible });
+
+  it('只有最下面的可见面板画时间轴', () => {
+    // [RSI, MACD, ATR] 都存在 → 只有 ATR 画轴
+    expect(computePaneAxisVisibility([pane(true), pane(true), pane(true)])).toEqual([
+      false, false, true,
+    ]);
+    // 只开 RSI
+    expect(computePaneAxisVisibility([pane(true), pane(false), pane(false)])).toEqual([
+      true, false, false,
+    ]);
+    // RSI + MACD → 时间轴归 MACD
+    expect(computePaneAxisVisibility([pane(true), pane(true), pane(false)])).toEqual([
+      false, true, false,
+    ]);
+    // MACD + ATR（RSI 存在但被隐藏时的极端情况）→ 归 ATR
+    expect(computePaneAxisVisibility([pane(true, false), pane(true), pane(true)])).toEqual([
+      false, false, true,
+    ]);
+  });
+
+  it('全部不可见时不画任何轴，且不抛异常', () => {
+    expect(computePaneAxisVisibility([pane(false), pane(false), pane(false)])).toEqual([
+      false, false, false,
+    ]);
+    expect(computePaneAxisVisibility([])).toEqual([]);
+  });
+
+  it('has=true 但 visible=false 的面板不算作最下面那个', () => {
+    // 中间面板可见时，下面那个虽然存在但没显示，轴应归中间
+    expect(computePaneAxisVisibility([pane(true, false), pane(true), pane(true, false)])).toEqual([
+      false, true, false,
+    ]);
   });
 });

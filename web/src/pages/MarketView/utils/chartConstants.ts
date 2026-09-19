@@ -50,6 +50,9 @@ export interface ChartThemeColors {
   baselineDown: string;
   baselineDownFill1: string;
   baselineDownFill2: string;
+  /** MACD 柱：正/负能量。用 rgba 一次性给足透明度，canvas 侧直接可用。 */
+  macdHistUp: string;
+  macdHistDown: string;
 }
 
 // Canvas config can't read CSS custom properties, so each solid slot names the
@@ -79,6 +82,8 @@ const CHART_SOURCES: Record<'dark' | 'light', ChartThemeColors> = {
     baselineDown: '--color-loss',
     baselineDownFill1: 'rgba(248,81,73,0.02)',
     baselineDownFill2: 'rgba(248,81,73,0.2)',
+    macdHistUp: 'rgba(63,185,80,0.6)',
+    macdHistDown: 'rgba(248,81,73,0.6)',
   },
   light: {
     bg: '--color-bg-card',
@@ -102,6 +107,8 @@ const CHART_SOURCES: Record<'dark' | 'light', ChartThemeColors> = {
     baselineDown: '--color-loss',
     baselineDownFill1: 'rgba(207,34,46,0.02)',
     baselineDownFill2: 'rgba(207,34,46,0.15)',
+    macdHistUp: 'rgba(26,127,55,0.6)',
+    macdHistDown: 'rgba(207,34,46,0.6)',
   },
 };
 
@@ -129,6 +136,8 @@ export const CHART_THEME: Record<'dark' | 'light', ChartThemeColors> = {
     baselineDown: '#F85149',
     baselineDownFill1: 'rgba(248,81,73,0.02)',
     baselineDownFill2: 'rgba(248,81,73,0.2)',
+    macdHistUp: 'rgba(63,185,80,0.6)',
+    macdHistDown: 'rgba(248,81,73,0.6)',
   },
   light: {
     bg: '#FFFFFF',
@@ -152,6 +161,8 @@ export const CHART_THEME: Record<'dark' | 'light', ChartThemeColors> = {
     baselineDown: '#CF222E',
     baselineDownFill1: 'rgba(207,34,46,0.02)',
     baselineDownFill2: 'rgba(207,34,46,0.15)',
+    macdHistUp: 'rgba(26,127,55,0.6)',
+    macdHistDown: 'rgba(207,34,46,0.6)',
   },
 };
 
@@ -197,6 +208,60 @@ export const MA_CONFIGS: MAConfig[] = [
 ];
 export const DEFAULT_ENABLED_MA: number[] = [20, 50];
 export const RSI_PERIODS: number[] = [7, 14, 21];
+
+// --- Bollinger Bands ---
+// Fixed configuration rather than user-tunable periods, matching how RSI_PERIODS
+// is exposed as a small fixed set. 20/2 is the convention charts default to.
+export interface BollConfig {
+  period: number;
+  stdDev: number;
+}
+export const BOLL_CONFIG: BollConfig = { period: 20, stdDev: 2 };
+export const BOLL_COLORS = {
+  upper: '#f472b6',   // pink
+  middle: '#60a5fa',  // blue
+  lower: '#f472b6',
+  fill: 'rgba(244,114,182,0.08)',
+} as const;
+export const DEFAULT_BOLL_ENABLED = false;
+
+// --- MACD ---
+export const MACD_CONFIG = { fast: 12, slow: 26, signal: 9 } as const;
+export const MACD_COLORS = {
+  macd: '#22d3ee',
+  signal: '#fbbf24',
+  histUp: 'rgba(63,185,80,0.6)',
+  histDown: 'rgba(248,81,73,0.6)',
+} as const;
+export const DEFAULT_MACD_ENABLED = false;
+
+// --- ATR (Wilder) ---
+export const ATR_PERIODS: number[] = [14, 21];
+export const ATR_COLORS = { line: '#a78bfa' } as const;  // purple
+export const DEFAULT_ATR_ENABLED = false;
+/** 以 ATR 为 1R：1R = |入场 - 止损|，止损按 1×ATR 计。 */
+export const ATR_STOP_MULTIPLE = 1;
+export const R_MULTIPLES: number[] = [1, 2, 3];
+
+/**
+ * 堆叠面板中时间轴的归属。
+ *
+ * 面板从上到下是 主图 → RSI → MACD → ATR。只有**最下面一个可见面板**该画时间轴；
+ * 其余必须隐藏，否则三个面板同时开着时中间会多出一条时间轴、而最下面那条反而没有。
+ * 这是纯规则，抽出来是为了能单测 —— 散在三个 createChart 调用里手写必然漂移。
+ */
+export function computePaneAxisVisibility(
+  panes: { has: boolean; visible: boolean }[],
+): boolean[] {
+  const out = panes.map(() => false);
+  for (let i = panes.length - 1; i >= 0; i--) {
+    if (panes[i].has && panes[i].visible) {
+      out[i] = true;
+      break;
+    }
+  }
+  return out;
+}
 
 // Target bar spacing (pixels) per interval for readable candlestick charts.
 // Container width determines how many bars are visible at this spacing.

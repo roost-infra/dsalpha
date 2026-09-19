@@ -2635,7 +2635,31 @@
       "clearAnnotations": "清除",
       "clearAnnotationsTitle": "从图表中清除标注（已保留在对话中，点击该结果可恢复）",
       "modeLabel": "模式",
-      "newsEventAria": "新闻事件：{{title}}"
+      "newsEventAria": "新闻事件：{{title}}",
+      "chan": {
+        "title": "缠论画线",
+        "strokes": "笔",
+        "segments": "线段",
+        "zhongshu": "中枢",
+        "fractals": "分型",
+        "points": "买卖点",
+        "note": "笔与中枢默认开启；线段是笔之上的级别，同时开会糊；分型在密集行情下会重叠。"
+      },
+      "boll": {
+        "title": "布林带",
+        "on": "布林带",
+        "note": "20 日 ±2 倍标准差；主图叠加"
+      },
+      "macd": {
+        "title": "MACD",
+        "on": "MACD",
+        "note": "12/26/9；独立面板，柱为正负能量"
+      },
+      "atr": {
+        "title": "ATR",
+        "on": "ATR",
+        "note": "Wilder ATR；独立面板，读数含以 1×ATR 为 1R 的止损/目标（参考位，非建仓建议）"
+      }
     },
     "selection": {
       "toolTooltip": "选择一个区域或价格水平，向智能体提问",
