@@ -3519,6 +3519,104 @@
       "annualized": "Annualized return",
       "drawdown": "Max drawdown",
       "decay": "Relative decay: {{value}}"
+    },
+    "tabs": {
+      "library": "Library",
+      "detect": "Detection"
+    },
+    "library": {
+      "listLabel": "Factor library list",
+      "detailLabel": "Factor detail",
+      "search": "Search name or hypothesis",
+      "filter": {
+        "all": "All {{count}}"
+      },
+      "columns": {
+        "name": "Name",
+        "hypothesis": "Hypothesis",
+        "source": "Source",
+        "status": "Status"
+      },
+      "status": {
+        "candidate": "Candidate",
+        "promoted": "Promoted",
+        "rejected": "Rejected"
+      },
+      "source": {
+        "user": "User",
+        "agent": "Agent",
+        "sota": "SOTA",
+        "athena": "athena"
+      },
+      "empty": {
+        "title": "The library is empty.",
+        "hint": "Add a factor with its economic hypothesis, or run a detection and keep it."
+      },
+      "notEvaluated": "Not evaluated",
+      "notMeasured": "not measured",
+      "monotonic": {
+        "yes": "monotone · {{direction}}",
+        "no": "not monotone · ρ {{rho}}",
+        "up": "rising",
+        "down": "falling"
+      },
+      "turnover": {
+        "top": "Top",
+        "bottom": "Bottom"
+      },
+      "detail": {
+        "hypothesis": "Economic hypothesis",
+        "hypothesisMissing": "(no hypothesis recorded — the evaluation still runs, but saving one should have required it)",
+        "formulation": "Formulation",
+        "code": "Code",
+        "evidence": "Evidence",
+        "pick": "Pick a factor on the left to see its detail.",
+        "dataset": "Dataset",
+        "symbols": "Symbols",
+        "dates": "Trading days",
+        "window": "Window",
+        "windowDays": "Window",
+        "samples": "Samples",
+        "halfLife": "Half-life",
+        "halfLifeNone": "no decay",
+        "days": "{{value}} d",
+        "period": "Horizon"
+      },
+      "evaluation": {
+        "none": "Not evaluated yet. Run it on the debug panel for a quick answer, or pick full for the whole panel.",
+        "running": "Evaluating…",
+        "runningNote": "Scanning the panel for quantile returns and IC: tens of seconds on debug, a few minutes on full.",
+        "failed": "Evaluation failed",
+        "lost": "The evaluation worker is gone (backend restart or timeout)"
+      },
+      "actions": {
+        "new": "New",
+        "evaluate": "Evaluate",
+        "evaluating": "Evaluating…",
+        "datasetDebug": "debug (fast)",
+        "datasetFull": "full (panel)",
+        "promote": "Promote",
+        "reject": "Reject",
+        "delete": "Delete",
+        "confirmDelete": "Delete factor “{{name}}”? This cannot be undone."
+      },
+      "new": {
+        "save": "Save to library",
+        "cancel": "Cancel",
+        "hypothesisPlaceholder": "Why should this factor work? A factor without a hypothesis is data mining."
+      },
+      "charts": {
+        "none": "No evaluation yet.",
+        "quantiles": "Quantile returns ({{period}})",
+        "quantilesNote": "Mean period return per quantile bucket; only strict monotonicity is evidence that the factor ranks returns.",
+        "ic": "IC and decay",
+        "icNote": "The x-axis is the holding period. The days it takes |IC| to halve is the half-life, and it sets the rebalancing frequency.",
+        "icRising": "This factor's IC rises with the holding period (strengthening, not decaying), so it has no half-life.",
+        "longShort": "Long–short spread",
+        "longShortNote": "Mean period return of the top quantile minus the bottom one.",
+        "turnover": "Turnover",
+        "turnoverNote": "Average daily change in bucket membership — the cost side of the factor."
+      }
     }
   }
 }

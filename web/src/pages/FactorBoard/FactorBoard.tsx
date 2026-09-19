@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, FlaskConical, Loader2, Play } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import {
   detectionErrorMessage,
   useDetection,
@@ -12,31 +13,30 @@ import {
 } from '@/hooks/useFactors';
 import type { DetectionRun, FactorTemplate } from '@/api/factors';
 import { DetectionReport } from './components/DetectionReport';
+import { FactorLibraryPanel } from './components/FactorLibraryPanel';
 import { RunProgress } from './components/RunProgress';
 import './FactorBoard.css';
+
+type BoardTab = 'library' | 'detect';
 
 /**
  * /factors — the Factor Board.
  *
- * The desk already mines factors; what it could not do was *look* at one. This
- * page closes that loop: paste (or pick) a factor script, press one button, and
- * get a verdict backed by the miner's own probes — the result.h5 contract check,
- * trailing cross-sectional IC over two horizons, and the sample-out comparison.
+ * Two halves, and the library comes first because it is the one that accumulates.
+ * A detection is an experiment: paste a script, press one button, read a verdict —
+ * and then it is gone, which is exactly why the desk could score a factor and
+ * still have nothing to show for it a month later. The library is where a factor
+ * lives: its economic hypothesis, its last professional evaluation, and its
+ * lifecycle. Detection stays one tab away for the next experiment.
  *
- * Two decisions shape the layout. First, the editor and the report sit side by
- * side rather than in a wizard: the question a factor author asks is "what did
- * this code score", and answering it should not cost a navigation. Second, the
- * poll is the source of truth for everything after submit — the run carries its
- * own stage list, so progress is rendered from the server's account of what it is
- * doing, not from a client-side guess about how long a step should take.
- *
- * The code is held in state per mount and never persisted: a factor board is a
- * scratchpad. A run submitted from this page stays inspectable after a reload
- * only through the server's ledger, which is why the page also accepts a
- * `?run=<id>` deep link — that is how a link to a finished detection is shared.
+ * The two halves keep their own state on purpose. The detection editor holds its
+ * code per mount and never persists it (a scratchpad); the library holds nothing
+ * locally at all — every fact on that side is the server's, which is what makes it
+ * survive a reload, a second device, and a worker restart.
  */
 function FactorBoard() {
   const { t } = useTranslation();
+  const [tab, setTab] = useState<BoardTab>('library');
   const templatesQuery = useFactorTemplates();
   const healthQuery = useFactorMinerHealth();
   const startDetection = useStartDetection();
@@ -140,6 +140,20 @@ function FactorBoard() {
         </div>
       )}
 
+      <div className="factor-board__tabs">
+        <SegmentedControl<BoardTab>
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'library', label: t('factors.tabs.library') },
+            { value: 'detect', label: t('factors.tabs.detect') },
+          ]}
+        />
+      </div>
+
+      {tab === 'library' ? (
+        <FactorLibraryPanel />
+      ) : (
       <div className="factor-board__body">
         <section className="factor-board__editor" aria-label={t('factors.editor.label')}>
           <div className="factor-board__field">
@@ -214,6 +228,7 @@ function FactorBoard() {
           )}
         </section>
       </div>
+      )}
     </div>
   );
 }

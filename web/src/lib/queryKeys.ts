@@ -177,6 +177,13 @@ export const queryKeys = {
     templates:  () => [...queryKeys.factors.all, 'templates'],
     detections: () => [...queryKeys.factors.all, 'detections'],
     detection:  (runId: string) => [...queryKeys.factors.detections(), runId],
+    // The library: `library()` is the invalidation prefix every write targets, so
+    // a save/evaluate/promote refreshes the list and the open factor at once
+    // without the caller naming either. The list is keyed by its filters (each
+    // filter set is its own page), the item by id (only the open factor polls).
+    library:     () => [...queryKeys.factors.all, 'library'],
+    libraryList: (filters: string) => [...queryKeys.factors.library(), 'list', filters],
+    libraryItem: (factorId: string) => [...queryKeys.factors.library(), 'item', factorId],
   },
 };
 

@@ -117,3 +117,200 @@ export async function getDetection(runId: string): Promise<DetectionRun> {
 export function isRunSettled(run: DetectionRun | undefined): boolean {
   return run?.status === 'done' || run?.status === 'failed';
 }
+
+// ── Library ──────────────────────────────────────────────────────────────────
+//
+// A factor is kept, so these shapes outlive a page view. Two of them are worth
+// naming: `evaluation.state` is the *row's* account of whether a run is going,
+// finished, failed or lost (the server resolves it, so a worker that died
+// mid-evaluation reads as `lost` rather than as a spinner forever), and the
+// tearsheet is stored verbatim from the miner — the charts read it as-is.
+
+export type FactorStatus = 'candidate' | 'promoted' | 'rejected';
+export type FactorSource = 'user' | 'agent' | 'sota' | 'athena';
+export type EvaluationDataset = 'debug' | 'full';
+export type EvaluationPhase = 'none' | 'running' | 'done' | 'failed' | 'lost';
+
+export interface EvaluationState {
+  state: EvaluationPhase;
+  dataset?: EvaluationDataset;
+  window_days?: number | null;
+  quantiles?: number | null;
+  periods?: number[] | null;
+  n_dates?: number | null;
+  n_symbols?: number | null;
+  eval_window?: { start?: string; end?: string } | null;
+  hypothesis_missing?: boolean;
+  started_at?: string;
+  finished_at?: string;
+  error?: string;
+  error_kind?: string;
+}
+
+/** Per-forward-period quantile means (Q1..Qn) — the monotonicity evidence. */
+export interface QuantileReturns {
+  mean_period_return?: Record<string, number | null>;
+  annualized?: Record<string, number | null>;
+}
+
+export interface LongShortSpread {
+  mean_period_spread?: number | null;
+  annualized?: number | null;
+}
+
+export interface IcStats {
+  period?: string;
+  mean?: number | null;
+  std?: number | null;
+  ir?: number | null;
+  series_summary?: { days?: number; positive_ratio?: number | null };
+  decay?: Record<string, number | null>;
+}
+
+export interface TearSheet {
+  quantile_returns?: Record<string, QuantileReturns>;
+  long_short?: Record<string, LongShortSpread>;
+  ic?: IcStats;
+  turnover?: { top?: number | null; bottom?: number | null };
+  method?: string;
+  n_days?: number;
+  n_symbols?: number;
+}
+
+export interface MonotonicityReport {
+  rho?: number | null;
+  direction?: 'increasing' | 'decreasing' | 'non_monotonic' | 'unknown';
+  monotonic?: boolean | null;
+  values?: number[] | null;
+}
+
+export interface FactorLibrarySummary {
+  factor_id: string;
+  name: string;
+  hypothesis: string;
+  description: string;
+  source: FactorSource | string;
+  status: FactorStatus | string;
+  code_hash: string;
+  ic: number | null;
+  ir: number | null;
+  t_stat: number | null;
+  ic_half_life_days: number | null;
+  monotonicity: Record<string, MonotonicityReport>;
+  evaluation: EvaluationState;
+  last_evaluated_at: string | null;
+  promoted_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FactorLibraryItem extends FactorLibrarySummary {
+  code: string;
+  formulation: string;
+  variables: Record<string, unknown>;
+  metrics: {
+    tearsheet?: TearSheet;
+    ic?: number | null;
+    ir?: number | null;
+    t_stat?: number | null;
+    ic_half_life_days?: number | null;
+    monotonicity?: Record<string, MonotonicityReport>;
+    evaluation?: EvaluationState;
+  };
+}
+
+export interface FactorLibraryCounts {
+  total?: number;
+  candidate?: number;
+  promoted?: number;
+  rejected?: number;
+  evaluated?: number;
+}
+
+export interface FactorLibraryList {
+  factors: FactorLibrarySummary[];
+  counts: FactorLibraryCounts;
+}
+
+export interface FactorLibraryFilters {
+  status?: FactorStatus | null;
+  source?: FactorSource | null;
+  q?: string;
+}
+
+export interface SaveFactorRequest {
+  name: string;
+  hypothesis: string;
+  code: string;
+  description?: string;
+  formulation?: string;
+  source?: FactorSource;
+}
+
+export interface EvaluateFactorRequest {
+  dataset?: EvaluationDataset;
+  quantiles?: number;
+  periods?: number[];
+  window_days?: number;
+}
+
+/** Stable key for a filter set — the list query is cached per set. */
+export function libraryFilterKey(filters: FactorLibraryFilters): string {
+  return [filters.status ?? '', filters.source ?? '', filters.q ?? ''].join('|');
+}
+
+export async function listFactorLibrary(
+  filters: FactorLibraryFilters = {},
+): Promise<FactorLibraryList> {
+  const { data } = await api.get<FactorLibraryList>('/api/v1/factors/library', {
+    params: {
+      status: filters.status || undefined,
+      source: filters.source || undefined,
+      q: filters.q || undefined,
+    },
+  });
+  return data;
+}
+
+export async function getFactorLibraryItem(factorId: string): Promise<FactorLibraryItem> {
+  const { data } = await api.get<FactorLibraryItem>(`/api/v1/factors/library/${factorId}`);
+  return data;
+}
+
+export async function saveFactorLibraryItem(
+  body: SaveFactorRequest,
+): Promise<FactorLibraryItem> {
+  const { data } = await api.post<FactorLibraryItem>('/api/v1/factors/library', body);
+  return data;
+}
+
+export async function deleteFactorLibraryItem(factorId: string): Promise<void> {
+  await api.delete(`/api/v1/factors/library/${factorId}`);
+}
+
+export async function setFactorLibraryStatus(
+  factorId: string,
+  status: FactorStatus,
+): Promise<FactorLibraryItem> {
+  const { data } = await api.post<FactorLibraryItem>(
+    `/api/v1/factors/library/${factorId}/status`,
+    { status },
+  );
+  return data;
+}
+
+export async function evaluateFactorLibraryItem(
+  factorId: string,
+  body: EvaluateFactorRequest = {},
+): Promise<FactorLibraryItem> {
+  const { data } = await api.post<FactorLibraryItem>(
+    `/api/v1/factors/library/${factorId}/evaluate`,
+    body,
+  );
+  return data;
+}
+
+/** An evaluation is still moving while the row says so (and only then). */
+export function isEvaluationRunning(item: FactorLibraryItem | undefined): boolean {
+  return item?.evaluation?.state === 'running';
+}
