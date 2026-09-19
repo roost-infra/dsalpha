@@ -262,6 +262,17 @@
   min-height: 80px;
 }
 
+/* MACD 面板：与 RSI 面板同构，复用 .rsi-label / .rsi-chart-wrapper 的排版，
+   只覆盖高度与顶部分隔线。 */
+.macd-container {
+  height: 120px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border-default);
+  padding: 4px 0 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .chart-loading,
 .chart-error {
   position: absolute;

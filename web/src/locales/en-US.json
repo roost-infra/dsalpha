@@ -2665,6 +2665,16 @@
         "fractals": "Fractals",
         "points": "Entry/exit marks",
         "note": "Strokes and pivots default on; segments are the level above strokes and clutter when both are shown."
+      },
+      "boll": {
+        "title": "Bollinger Bands",
+        "on": "BOLL",
+        "note": "20-period, ±2σ; overlays price"
+      },
+      "macd": {
+        "title": "MACD",
+        "on": "MACD",
+        "note": "12/26/9; separate pane, histogram shows momentum"
       }
     },
     "selection": {

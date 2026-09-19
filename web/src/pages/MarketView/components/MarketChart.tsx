@@ -20,6 +20,7 @@ import VenueClock from './VenueClock';
 import { useQuote } from '@/lib/quotes';
 import { calculateMA, calculateRSI, updateRSIIncremental } from '../utils/chartHelpers';
 import type { RSIState, OHLCDataPoint } from '../utils/chartHelpers';
+import { calculateBollinger, calculateMACD, type Bar, type LinePoint } from '../utils/indicators';
 import { computeChan } from '../utils/chan';
 import { ChanPrimitive, DEFAULT_CHAN_LAYERS } from '../utils/chanPrimitive';
 import type { ChanLayers } from '../utils/chanPrimitive';
@@ -29,6 +30,8 @@ import {
   SCROLL_LOAD_THRESHOLD, RANGE_CHANGE_DEBOUNCE_MS,
   STAGE2_BACKFILL_DAYS,
   MA_CONFIGS, DEFAULT_ENABLED_MA, RSI_PERIODS, BARS_PER_DAY, TARGET_BAR_SPACING,
+  BOLL_CONFIG, BOLL_COLORS, DEFAULT_BOLL_ENABLED,
+  MACD_CONFIG, MACD_COLORS, DEFAULT_MACD_ENABLED,
   INTERVAL_SECONDS, WS_FOLD_INTERVALS,
   OVERLAY_COLORS, OVERLAY_LABELS,
   EXTENDED_HOURS_INTERVALS, getExtendedHoursType, computeExtendedHoursRegions,
@@ -164,6 +167,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const rootRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const rsiChartContainerRef = useRef<HTMLDivElement>(null);
+  const macdChartContainerRef = useRef<HTMLDivElement>(null);
   const lightWrapperRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const rsiChartRef = useRef<IChartApi | null>(null);
@@ -172,6 +176,14 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const rsiSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const maSeriesRefs = useRef<Record<number, any>>({});
+  // 布林带三条线（主图叠加）。创建时机与 MA 同批，数据在下发时按开关计算。
+  const bollSeriesRefs = useRef<{ upper?: any; middle?: any; lower?: any }>({});
+  // MACD 独立实例（v4.2.3 没有多面板 API，只能像 RSI 那样另起一个 chart）
+  const macdChartRef = useRef<IChartApi | null>(null);
+  const macdSeriesRefs = useRef<{ macd?: any; signal?: any; histogram?: any }>({});
+  // applyMacdData 在图表创建 effect 之后才声明（它是 useCallback），effect 里直接
+  // 引用会踩 TDZ。用 ref 转交，effect 只读 ref.current。
+  const applyMacdDataRef = useRef<((data: ChartDataBar[]) => void) | null>(null);
   const baselineSeriesRef = useRef<any>(null);
   const extHoursBgRef = useRef<ExtendedHoursBgPrimitive | null>(null);
   const selectionPrimitiveRef = useRef<SelectionPrimitive | null>(null);
@@ -253,6 +265,12 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const [overlayVisibility, setOverlayVisibility] = useState<OverlayVisibility>(
     () => loadPref('overlayVisibility', { earnings: false, grades: false, priceTargets: false }),
   );
+  // 布林带（主图叠加：上/中/下轨 + 通道填充）
+  const [bollEnabled, setBollEnabled] = useState<boolean>(() => loadPref('bollEnabled', DEFAULT_BOLL_ENABLED));
+  // MACD（独立面板：DIF/DEA 双线 + 柱状能量）
+  const [macdEnabled, setMacdEnabled] = useState<boolean>(() => loadPref('macdEnabled', DEFAULT_MACD_ENABLED));
+  // 面板左上角读数。null 表示预热未完成或已关闭。
+  const [macdValues, setMacdValues] = useState<{ dif: number; dea: number; hist: number } | null>(null);
 
   // Responsive compact mode — based on actual chart container width, not viewport
   // Toolbar collapse tier by container width. As space shrinks the toolbar
@@ -305,6 +323,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // Refs for stable callbacks (avoid stale closures)
   const enabledMaPeriodsRef = useRef(DEFAULT_ENABLED_MA);
   const rsiPeriodRef = useRef(14);
+  const bollEnabledRef = useRef(DEFAULT_BOLL_ENABLED);
+  const macdEnabledRef = useRef(DEFAULT_MACD_ENABLED);
 
   // Track current interval for use inside stable callbacks (avoids stale closures)
   const intervalRef = useRef(interval);
@@ -312,6 +332,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // Keep refs synced with state
   useEffect(() => { enabledMaPeriodsRef.current = enabledMaPeriods; }, [enabledMaPeriods]);
   useEffect(() => { rsiPeriodRef.current = rsiPeriod; }, [rsiPeriod]);
+  useEffect(() => { bollEnabledRef.current = bollEnabled; }, [bollEnabled]);
+  useEffect(() => { macdEnabledRef.current = macdEnabled; }, [macdEnabled]);
   useEffect(() => { intervalRef.current = interval; }, [interval]);
   useEffect(() => { quoteDataRef.current = quoteData; }, [quoteData]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
@@ -321,6 +343,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // Persist user preferences to localStorage
   useEffect(() => { savePref('maPeriods', enabledMaPeriods); }, [enabledMaPeriods]);
   useEffect(() => { savePref('rsiPeriod', rsiPeriod); }, [rsiPeriod]);
+  useEffect(() => { savePref('bollEnabled', bollEnabled); }, [bollEnabled]);
+  useEffect(() => { savePref('macdEnabled', macdEnabled); }, [macdEnabled]);
   useEffect(() => { savePref('chartMode', chartMode); }, [chartMode]);
   useEffect(() => { savePref('overlayVisibility', overlayVisibility); }, [overlayVisibility]);
   useEffect(() => { savePref('priceScaleMode', priceScaleMode); }, [priceScaleMode]);
@@ -1103,6 +1127,79 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   }, [chartDataForHooks, dayQuote, marketPhase, interval, symbol, effectiveChartMode, applySessionPresentation]);
 
   // --- Update series data helper (used by both initial load and scroll load) ---
+
+  /**
+   * LinePoint[] -> lightweight-charts line data.
+   * The indicator layer uses `value: null` for warm-up, but a line series rejects
+   * null; the supported way to express "no data here" is a whitespace point that
+   * carries only `time`.
+   */
+  const toLineData = useCallback((points: LinePoint[]) => {
+    return points.map((p) =>
+      p.value === null ? { time: p.time as any } : { time: p.time as any, value: p.value },
+    );
+  }, []);
+
+  /**
+   * 最后一个非空值。预热区是 null，直接取末位会拿到 null。
+   */
+  const lastNonNull = (points: LinePoint[]): number | null => {
+    for (let i = points.length - 1; i >= 0; i--) {
+      if (points[i].value !== null) return points[i].value;
+    }
+    return null;
+  };
+
+  /**
+   * 把 MACD 三个系列下发到独立面板。面板是延迟创建的（等 DOM），所以在
+   * updateSeriesData 与面板创建两处都会调用，走同一个函数避免两套逻辑漂移。
+   */
+  const applyMacdData = useCallback((data: ChartDataBar[]) => {
+    const refs = macdSeriesRefs.current;
+    if (!refs.macd && !refs.signal && !refs.histogram) return;
+    if (!macdEnabledRef.current) {
+      refs.macd?.setData([]);
+      refs.signal?.setData([]);
+      refs.histogram?.setData([]);
+      setMacdValues(null);
+      return;
+    }
+    if (data.length === 0) return;
+
+    const m = calculateMACD(
+      data as unknown as Bar[],
+      MACD_CONFIG.fast,
+      MACD_CONFIG.slow,
+      MACD_CONFIG.signal,
+    );
+    refs.macd?.setData(toLineData(m.macd));
+    refs.signal?.setData(toLineData(m.signal));
+    // 柱状图按正负着色，用当前主题的上/下色。
+    const ct = ctRef.current;
+    refs.histogram?.setData(
+      m.histogram
+        .filter((p): p is { time: number; value: number } => p.value !== null)
+        .map((p) => ({
+          time: p.time as any,
+          value: p.value,
+          color: p.value >= 0 ? ct.macdHistUp : ct.macdHistDown,
+        })),
+    );
+
+    const dif = lastNonNull(m.macd);
+    const dea = lastNonNull(m.signal);
+    setMacdValues(
+      dif === null
+        ? null
+        : { dif, dea: dea ?? 0, hist: dea === null ? 0 : dif - dea },
+    );
+  }, [toLineData]);
+
+  // 把 applyMacdData 交给图表创建 effect（它在 effect 之后声明，见 applyMacdDataRef）。
+  useEffect(() => {
+    applyMacdDataRef.current = applyMacdData;
+  }, [applyMacdData]);
+
   const updateSeriesData = useCallback((data: ChartDataBar[]) => {
     const ct = ctRef.current;
     const applyExt = isUSEquity(symbolRef.current) && EXTENDED_HOURS_INTERVALS.has(intervalRef.current);
@@ -1159,6 +1256,27 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     });
     setMaValues(newMaValues);
 
+    // 布林带（主图叠加）。关着就清空。
+    // 注意：LinePoint 的预热区是 value:null，而 lightweight-charts 的 line series
+    // 不接受 null —— 必须转成仅含 time 的 whitespace 点，否则 setData 直接抛错。
+    const bollSeries = bollSeriesRefs.current;
+    if (bollEnabledRef.current) {
+      const bb = calculateBollinger(data as unknown as Bar[], BOLL_CONFIG.period, BOLL_CONFIG.stdDev);
+      bollSeries.upper?.setData(toLineData(bb.upper));
+      bollSeries.middle?.setData(toLineData(bb.middle));
+      bollSeries.lower?.setData(toLineData(bb.lower));
+    } else if (bollSeries.upper || bollSeries.middle || bollSeries.lower) {
+      bollSeries.upper?.setData([]);
+      bollSeries.middle?.setData([]);
+      bollSeries.lower?.setData([]);
+    }
+
+    // MACD（独立面板）。系列可能还没建好（100ms 延迟创建），没建好就跳过，
+    // 等面板创建时用 applyMacdData 补一次。
+    if (macdEnabledRef.current) {
+      applyMacdData(data);
+    }
+
     // RSI — compute and store smoothing state for incremental updates
     const currentRsiPeriod = rsiPeriodRef.current;
     const { data: rsiData, state: rsiState } = calculateRSI(data as unknown as OHLCDataPoint[], currentRsiPeriod);
@@ -1191,7 +1309,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
     // Update chart data state for overlay hooks
     setChartDataForHooks(data);
-  }, [applySessionPresentation, applyChanGeometry]);
+  }, [applySessionPresentation, applyChanGeometry, applyMacdData, toLineData]);
 
   // --- Live forming-bar delta-poll (shared controller) ---
   // The hook owns the watermark + reconcile cursors; the component owns bar
@@ -1391,6 +1509,24 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     });
 
+    // 布林带三条线（主图叠加）。中轨用实线，上下轨略细。
+    // 与 MA 同批创建，数据在 updateSeriesData 里按开关下发；关着时 setData([])。
+    const bollLine = (color: string, width: number) =>
+      chart.addLineSeries({
+        color,
+        lineWidth: width as any,
+        lineType: LineType.Curved,
+        title: '',
+        lastValueVisible: false,
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+      } as any);
+    bollSeriesRefs.current = {
+      upper: bollLine(BOLL_COLORS.upper, 1),
+      middle: bollLine(BOLL_COLORS.middle, 1.5),
+      lower: bollLine(BOLL_COLORS.lower, 1),
+    };
+
     // Subscribe to crosshair move for tooltip
     chart.subscribeCrosshairMove((param: MouseEventParams) => {
       if (!param.time || !param.point) {
@@ -1505,8 +1641,101 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     }, 100);
 
+    // MACD chart (deferred so DOM is ready). Separate instance because
+    // lightweight-charts 4.x has no multi-pane API.
+    //
+    // Alignment note: unlike RSI — whose data genuinely starts `rsiPeriod` bars
+    // later, forcing an index offset in the range sync — MACD is emitted full-length
+    // with whitespace points during warm-up, so its logical indices match the main
+    // chart 1:1. That keeps its range offset at exactly 0 and avoids the arithmetic
+    // the RSI sync has to do.
+    const macdTimeout = setTimeout(() => {
+      if (!macdChartContainerRef.current || macdChartRef.current) return;
+      const t1 = getChartTheme(theme);
+      const macdChart = createChart(macdChartContainerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: t1.bg },
+          textColor: t1.text,
+        },
+        autoSize: true,
+        grid: {
+          vertLines: { color: t1.grid },
+          horzLines: { color: t1.grid },
+        },
+        rightPriceScale: {
+          borderColor: t1.grid,
+          visible: true,
+          scaleMargins: { top: 0.15, bottom: 0.15 },
+        },
+        timeScale: {
+          borderColor: t1.grid,
+          timeVisible: true,
+          secondsVisible: false,
+          visible: false,
+        },
+        handleScroll: {
+          mouseWheel: false,
+          pressedMouseMove: false,
+          horzTouchDrag: false,
+          vertTouchDrag: false,
+        },
+        handleScale: {
+          mouseWheel: false,
+          pinch: false,
+          axisPressedMouseMove: false,
+          axisDoubleClickReset: false,
+        },
+      } as any);
+
+      macdSeriesRefs.current = {
+        macd: macdChart.addLineSeries({
+          color: MACD_COLORS.macd,
+          lineWidth: 1.5 as any,
+          title: '',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }),
+        signal: macdChart.addLineSeries({
+          color: MACD_COLORS.signal,
+          lineWidth: 1.5 as any,
+          title: '',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        }),
+        histogram: macdChart.addHistogramSeries({
+          title: '',
+          lastValueVisible: false,
+          priceLineVisible: false,
+        } as any),
+      };
+      macdChartRef.current = macdChart;
+
+      // 主图驱动 MACD：偏移恒为 0（见上面的对齐说明）。
+      const mainTs2 = chart.timeScale();
+      const macdTs = macdChart.timeScale();
+      mainTs2.subscribeVisibleLogicalRangeChange((range) => {
+        if (!range) return;
+        try {
+          macdTs.setVisibleLogicalRange({ from: range.from, to: range.to });
+        } catch { /* MACD 数据可能还没覆盖该区间 */ }
+      });
+
+      // 反方向也要补上：面板创建之前主图已经确立了可见区间，
+      // 若只订阅后续变化，MACD 会停在"全部数据自适应"的状态直到用户再次缩放。
+      const current = mainTs2.getVisibleLogicalRange();
+      if (current) {
+        try {
+          macdTs.setVisibleLogicalRange({ from: current.from, to: current.to });
+        } catch { /* 同上 */ }
+      }
+
+      // 面板创建时补一次数据（此前 applyMacdData 因系列未就绪而跳过）。
+      applyMacdDataRef.current?.(allDataRef.current);
+    }, 100);
+
     return () => {
       clearTimeout(rsiTimeout);
+      clearTimeout(macdTimeout);
 
       // Unsubscribe scroll-load listener
       if (rangeUnsubRef.current) {
@@ -1532,6 +1761,11 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         rsiChartRef.current.remove();
         rsiChartRef.current = null;
       }
+      if (macdChartRef.current) {
+        macdChartRef.current.remove();
+        macdChartRef.current = null;
+      }
+      macdSeriesRefs.current = {};
     };
     // priceFormatRef is a stable ref (from useCurrencyDisplay) — listed so
     // exhaustive-deps sees the formatter's read; its identity never changes, so
@@ -1610,6 +1844,19 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
           lineColor: ct.rsiLine, topColor: ct.rsiTop, bottomColor: ct.rsiBottom,
         });
       }
+    }
+    // MACD 面板与主图是两个独立实例，背景/网格/价格轴都要单独重刷。
+    // 柱状图的颜色已写进每个数据点（setData 时按当时主题着色），所以主题变化
+    // 必须重下数据，否则旧的绿/红柱会留在新主题上。
+    const macdChart = macdChartRef.current;
+    if (macdChart) {
+      macdChart.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
+        grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
+        rightPriceScale: { borderColor: ct.grid },
+        timeScale: { borderColor: ct.grid },
+      });
+      applyMacdDataRef.current?.(allDataRef.current);
     }
   }, [ct]);
 
@@ -1740,6 +1987,15 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         const s = maSeriesRefs.current[period];
         if (s) s.setData([]);
       });
+      // 布林带与 MACD 也必须一起清空 —— 否则切换标的/周期时旧曲线的痕迹会留在
+      // 新标的上（和 MA/RSI 同样的残留问题）。
+      bollSeriesRefs.current.upper?.setData([]);
+      bollSeriesRefs.current.middle?.setData([]);
+      bollSeriesRefs.current.lower?.setData([]);
+      macdSeriesRefs.current.macd?.setData([]);
+      macdSeriesRefs.current.signal?.setData([]);
+      macdSeriesRefs.current.histogram?.setData([]);
+      setMacdValues(null);
       setChartDataForHooks([]);
       // Reset RSI incremental state on symbol/interval change
       rsiSmoothingRef.current = null;
@@ -2019,6 +2275,34 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               {p}
             </button>
           ))}
+        </div>
+      </div>
+      <div className="dropdown-section">
+        <span className="indicator-toggles-label">{t('marketView.chart.boll.title')}</span>
+        <div className="indicator-toggles">
+          <button
+            type="button"
+            className={`indicator-toggle-btn${bollEnabled ? ' indicator-toggle-active' : ''}`}
+            style={bollEnabled ? { color: BOLL_COLORS.middle, borderColor: BOLL_COLORS.middle } : undefined}
+            onClick={() => setBollEnabled((v) => !v)}
+            title={t('marketView.chart.boll.note')}
+          >
+            {BOLL_CONFIG.period},{BOLL_CONFIG.stdDev}
+          </button>
+        </div>
+      </div>
+      <div className="dropdown-section">
+        <span className="indicator-toggles-label">MACD</span>
+        <div className="indicator-toggles">
+          <button
+            type="button"
+            className={`indicator-toggle-btn${macdEnabled ? ' indicator-toggle-active' : ''}`}
+            style={macdEnabled ? { color: MACD_COLORS.macd, borderColor: MACD_COLORS.macd } : undefined}
+            onClick={() => setMacdEnabled((v) => !v)}
+            title={t('marketView.chart.macd.note')}
+          >
+            {MACD_CONFIG.fast},{MACD_CONFIG.slow},{MACD_CONFIG.signal}
+          </button>
         </div>
       </div>
       <div className="dropdown-section">
@@ -2451,6 +2735,18 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               <div className="rsi-label">RSI ({rsiPeriod}): {rsiValue ?? '\u2014'}</div>
               <div className="rsi-chart-wrapper" ref={rsiChartContainerRef}></div>
             </div>
+            {macdEnabled && (
+              <div className="macd-container">
+                <div className="rsi-label">
+                  MACD ({MACD_CONFIG.fast},{MACD_CONFIG.slow},{MACD_CONFIG.signal}):
+                  {' '}
+                  {macdValues
+                    ? `DIF ${macdValues.dif.toFixed(2)}  DEA ${macdValues.dea.toFixed(2)}  MACD ${macdValues.hist.toFixed(2)}`
+                    : '\u2014'}
+                </div>
+                <div className="rsi-chart-wrapper" ref={macdChartContainerRef}></div>
+              </div>
+            )}
           </div>
           {loading && (
             <div className="chart-loading">
