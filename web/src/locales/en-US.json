@@ -1023,6 +1023,18 @@
         "flash": "Flash",
         "empty": "No recent threads",
         "emptyHint": "Start a conversation to fill this log."
+      },
+      "knowledge": {
+        "title": "Knowledge Base",
+        "description": "Shared research notes and trade reviews (the same vault the quant service reads).",
+        "count": "{{count}} notes",
+        "all": "All",
+        "back": "Back",
+        "loading": "Loading…",
+        "empty": "No notes yet. Ask the agent to write one.",
+        "noResults": "No matching notes.",
+        "searchPlaceholder": "Search notes…",
+        "unavailable": "Knowledge base not configured"
       }
     },
     "classic": {

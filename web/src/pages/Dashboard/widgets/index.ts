@@ -10,6 +10,7 @@ import './definitions/AutomationsWidget';
 import './definitions/ConversationWidget';
 import './definitions/WorkspacePickerWidget';
 import './definitions/RecentThreadsWidget';
+import './definitions/KnowledgeWidget';
 import './definitions/MiniChartGridWidget';
 // ChartWidget is registered lazily so lightweight-charts stays out of the dashboard chunk.
 import './definitions/ChartWidget.register';

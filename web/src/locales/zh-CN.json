@@ -1023,6 +1023,18 @@
         "flash": "Flash",
         "empty": "暂无近期对话",
         "emptyHint": "开始一段对话，记录会出现在这里。"
+      },
+      "knowledge": {
+        "title": "知识库",
+        "description": "共享的研究笔记与实盘复盘（与量化服务同一份 vault）。",
+        "count": "{{count}} 篇笔记",
+        "all": "全部",
+        "back": "返回",
+        "loading": "加载中…",
+        "empty": "知识库还没有笔记。让 agent 写一篇试试。",
+        "noResults": "没有匹配的笔记。",
+        "searchPlaceholder": "搜索笔记…",
+        "unavailable": "知识库未配置"
       }
     },
     "classic": {
