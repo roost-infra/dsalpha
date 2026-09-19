@@ -55,6 +55,61 @@ _DEFAULT_LOOKBACK: dict[str, timedelta] = {
     "1h": timedelta(days=727),
 }
 
+# Yahoo's hard per-request history caps, as (allowed span, margin).
+#
+# Yahoo rejects the WHOLE request when the span exceeds the cap — with a 200 and
+# an empty frame, not an error — so an over-long range is indistinguishable
+# downstream from "this symbol has no data". That is exactly how a 15min A-share
+# chart ends up showing "No data available": scroll-load prepends
+# SCROLL_CHUNK_DAYS['15min']=30 days per fetch, and two scrolls reach 65 days.
+#
+# _DEFAULT_LOOKBACK only guards the *open-ended* path. Once a caller passes an
+# explicit start/end (scroll-load, chart widgets, any direct provider use) that
+# guard is bypassed entirely, so the clamp belongs here at the request builder,
+# where every caller inherits it.
+#
+# The margin mirrors _DEFAULT_LOOKBACK's rationale: the span is measured against
+# the current instant while `start` is a date at exchange-local midnight, and the
+# requested exchange may differ from _ET, so a round cap can overflow by up to a
+# day. 1h carries no cap — sub-730d windows are all legal, and capping an
+# interval used for multi-year daily work would silently truncate history.
+_INTERVAL_CAP: dict[str, tuple[timedelta, timedelta]] = {
+    "1m": (timedelta(days=8), timedelta(days=1)),
+    "5m": (timedelta(days=60), timedelta(days=1)),
+    "15m": (timedelta(days=60), timedelta(days=1)),
+    "30m": (timedelta(days=60), timedelta(days=1)),
+}
+
+
+def _today_et() -> date:
+    """Current date in _ET — the clock ``_DEFAULT_LOOKBACK`` already uses.
+
+    Split out so the clamp is testable without a wall-clock dependency.
+    """
+    return datetime.now(_ET).date()
+
+
+def _clamp_start(interval: str, start: str | None) -> str | None:
+    """Pull an explicit ``start`` inside Yahoo's history cap for ``interval``.
+
+    Only ever moves the start *forwards* — never backfills more history than the
+    caller asked for. Returns the value unchanged when the range already fits,
+    the interval is uncapped, or the date is unparseable (preserving the existing
+    pass-through behaviour for malformed input).
+    """
+    cap = _INTERVAL_CAP.get(interval)
+    if cap is None or not start:
+        return start
+    span, margin = cap
+    try:
+        start_date = date.fromisoformat(start)
+    except ValueError:
+        return start
+    earliest = _today_et() - (span - margin)
+    if start_date < earliest:
+        return earliest.isoformat()
+    return start
+
 
 def _exclusive_end(end: str) -> str:
     """Advance an inclusive to_date to yfinance's exclusive ``end`` bound.
@@ -119,13 +174,19 @@ def _fetch_history(
     # price_treatment=split_adjusted, so conventions never blend across a
     # provider failover.
     kwargs: dict[str, Any] = {"interval": interval, "auto_adjust": False}
-    if start:
-        kwargs["start"] = start
+    # Clamp BEFORE the open-ended fallback: _DEFAULT_LOOKBACK only covers callers
+    # that omit dates, so an explicit start has to be checked here or it reaches
+    # Yahoo unguarded and the whole request comes back empty.
+    clamped_start = _clamp_start(interval, start)
+    if start and clamped_start:
+        kwargs["start"] = clamped_start
     if end:
         kwargs["end"] = _exclusive_end(end)
     if not start and not end:
         lookback = _DEFAULT_LOOKBACK.get(interval, timedelta(days=730))
-        kwargs["start"] = (datetime.now(_ET) - lookback).strftime("%Y-%m-%d")
+        # Same clock as _clamp_start, so the cap and the default lookback can
+        # never disagree about "today" (or about what a frozen test sees).
+        kwargs["start"] = (_today_et() - lookback).isoformat()
 
     df = ticker.history(**kwargs)
     if df is None or df.empty:
