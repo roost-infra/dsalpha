@@ -27,6 +27,9 @@ from src.gateway.wechat.state import Binding, BindingStore
 
 logger = logging.getLogger(__name__)
 
+# 精确匹配的指令集：不用 in/startswith 判断，否则「帮我开个新会话」也会被劫持。
+_COMMANDS = frozenset({"/new", "/help"})
+
 __all__ = ["WeChatChannel", "extract_reply"]
 
 # A research turn can legitimately run for minutes (sandbox + MCP tools).
@@ -217,6 +220,13 @@ class WeChatChannel:
         if not text:
             return None
         self.binding.note("in", from_, text)
+
+        # 指令：精确匹配、在进入 _run_turn 之前返回 —— 不调 LLM、不计轮次、不消耗配额。
+        # 为什么必须有：_ensure_thread 只在「没有绑定记录」时才新建 thread，
+        # 所以一旦某条会话卡住（例如历史里有非法图片 → 每次请求都 400），
+        # 用户在微信里无从自救，只能干等。`/new` 是唯一的换会话入口。
+        if text.lower() in _COMMANDS:
+            return await self._run_command(from_, text.lower())
         self.store.save(self.binding)
 
         try:
@@ -242,6 +252,10 @@ class WeChatChannel:
         if entry is not None and entry.thread_id:
             return entry.thread_id
 
+        return await self._create_thread(peer, first_query)
+
+    async def _create_thread(self, peer: str, first_query: str) -> str | None:
+        """新建一条 thread 并把该 peer 重新绑上去（_ensure_thread 与 /new 共用）。"""
         body: dict[str, Any] = {
             "first_query": first_query[:4000],
             "agent_mode": self.agent_mode,
@@ -258,6 +272,18 @@ class WeChatChannel:
         self.binding.remember_thread(peer, str(thread_id))
         self.store.save(self.binding)
         return str(thread_id)
+
+    async def _run_command(self, peer: str, command: str) -> str:
+        """处理 /new、/help。永不抛异常（与 _handle 的约定一致）。"""
+        if command == "/help":
+            return "可用指令：\n/new 开一条新会话（旧的保留，可在网页端查看）\n（/compact 暂未开放）"
+        entry = self.binding.peer(peer)
+        previous = getattr(entry, "thread_id", None) if entry else None
+        thread_id = await self._create_thread(peer, "新会话")
+        if not thread_id:
+            return "抱歉，服务端暂时无法创建会话，请稍后重试。"
+        logger.info("wechat %s: peer=%s %s -> %s", command, peer, previous, thread_id)
+        return "已开新会话，直接提问即可。（旧会话仍在，可在网页端查看）"
 
     async def _run_turn(self, thread_id: str, text: str) -> str:
         """POST the message and stream the turn down to just the reply text."""
