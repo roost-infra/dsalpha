@@ -1116,6 +1116,7 @@ from src.server.app.watchlist import router as watchlist_router
 from src.server.app.portfolio import router as portfolio_router
 from src.server.app.news import router as news_router
 from src.gateway.wechat.router import router as wechat_router
+from src.gateway.agui.router import router as agui_router
 from src.server.app.calendar import router as calendar_router
 from src.server.app.sec_proxy import router as sec_proxy_router
 from src.server.app.api_keys import router as api_keys_router
@@ -1190,6 +1191,7 @@ app.include_router(
 )  # /api/v1/users/me/portfolio/* - Portfolio management
 app.include_router(news_router)  # /api/v1/news - News feed (general + ticker-filtered)
 app.include_router(wechat_router)  # /api/v1/wechat/* - QR bind, status, recent, send
+app.include_router(agui_router)  # /api/v1/agui/* - AG-UI protocol run stream
 app.include_router(
     calendar_router
 )  # /api/v1/calendar/* - Economic & earnings calendars
