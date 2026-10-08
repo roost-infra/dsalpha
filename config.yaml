@@ -211,6 +211,9 @@ market_data:
 # Ordered news provider chain — sequential fallback (no market routing).
 news_data:
   providers:
+    # A股快讯优先：链是首个成功即返回，所以中文源必须排在最前。
+    # 它只认 A 股代码，美股 ticker 会抛错落到下面的英文源。
+    - name: astock
     - name: ginlix-data
     - name: fmp
     - name: yfinance
