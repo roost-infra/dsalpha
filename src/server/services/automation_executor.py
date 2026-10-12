@@ -8,6 +8,7 @@ and drains the async generator (no HTTP client to consume SSE).
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -100,6 +101,52 @@ class AutomationExecutor:
         except Exception as e:
             logger.error(f"[AUTOMATION_EXEC] Webhook fire failed: {e}")
             return None
+
+    async def _deliver_wechat(
+        self,
+        event: str,
+        automation: Dict[str, Any],
+        thread_id: str | None,
+        error: str | None = None,
+    ) -> dict | None:
+        """Deliver an automation result straight to the user's WeChat.
+
+        The webhook path needs an external gateway (AUTOMATION_WEBHOOK_URL);
+        this path talks to the in-process WeChat channel, so a deployment with
+        no gateway still pushes. Fires only when the automation's
+        delivery_config.methods contains "wechat" and the user has a bound bot.
+        Recipient is the most recently active peer (the convention
+        Binding.note keeps fresh). Never raises.
+        """
+        methods = (automation.get("delivery_config") or {}).get("methods") or []
+        if "wechat" not in methods:
+            return None
+        try:
+            from src.gateway.wechat import get_manager
+
+            manager = get_manager()
+            if manager is None:
+                return {"method": "wechat", "success": False, "error": "channel not running"}
+            uid = str(automation["user_id"])
+            channel = manager.get(uid)
+            binding = manager.binding(uid)
+            if channel is None or binding is None or not binding.peers:
+                return {"method": "wechat", "success": False, "error": "no bound peer"}
+
+            peer = max(binding.peers.values(), key=lambda p: p.last_message_at).peer
+            name = (automation.get("name") or "定时任务").strip()
+            base = os.environ.get(
+                "PUBLIC_WEB_BASE_URL", "https://athena.causal-memory.com"
+            ).rstrip("/")
+            if event == "automation.completed":
+                text = f"✅ 「{name}」已完成，点击查看完整报告：\n{base}/chat/t/{thread_id}"
+            else:
+                text = f"⚠️ 「{name}」执行失败：{(error or '未知错误')[:200]}"
+            await channel.send(peer, text)
+            return {"method": "wechat", "success": True}
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[AUTOMATION_EXEC] WeChat delivery failed: {e}")
+            return {"method": "wechat", "success": False, "error": str(e)}
 
     async def execute(
         self,
@@ -291,6 +338,9 @@ class AutomationExecutor:
 
             # Notify webhooks: completed
             delivery_result = await self._fire_webhook("automation.completed", automation, execution_id, thread_id, workspace_id)
+            wechat_result = await self._deliver_wechat("automation.completed", automation, thread_id)
+            if wechat_result:
+                delivery_result = (delivery_result or []) + [wechat_result]
             if delivery_result is not None:
                 await auto_db.update_execution_status(
                     execution_id, "completed", delivery_result=delivery_result,
@@ -359,6 +409,11 @@ class AutomationExecutor:
             delivery_result = await self._fire_webhook(
                 "automation.failed", automation, execution_id, thread_id, workspace_id, error=error_msg
             )
+            wechat_result = await self._deliver_wechat(
+                "automation.failed", automation, thread_id, error=error_msg
+            )
+            if wechat_result:
+                delivery_result = (delivery_result or []) + [wechat_result]
             if delivery_result is not None:
                 await auto_db.update_execution_status(
                     execution_id, "failed", delivery_result=delivery_result,

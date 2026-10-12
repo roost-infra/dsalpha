@@ -307,6 +307,36 @@ async def update_thread_status(
         return False
 
 
+async def set_thread_workspace(
+    conversation_thread_id: str, workspace_id: str, conn=None
+) -> bool:
+    """Rebind a thread to another workspace.
+
+    Only used by the PTC workspace self-heal path (an errored workspace is
+    replaced by a fresh one and the thread moves with it). Not a general
+    "move thread" API — no checkpoint/history migration happens here.
+    """
+    sql = """
+        UPDATE conversation_threads
+        SET workspace_id = %s, updated_at = NOW()
+        WHERE conversation_thread_id = %s
+    """
+    params = (workspace_id, conversation_thread_id)
+    try:
+        if conn:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                return True
+        else:
+            async with pool.get_db_connection() as conn:
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(sql, params)
+                    return True
+    except Exception as e:
+        logger.error(f"Error rebinding thread workspace: {e}")
+        return False
+
+
 async def update_thread_checkpoint_id(
     conversation_thread_id: str, checkpoint_id: str, conn=None
 ) -> bool:

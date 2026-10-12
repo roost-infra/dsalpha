@@ -374,6 +374,40 @@ async def _handle_send_message(
         if workspace is None and workspace_id:
             workspace = await get_workspace(workspace_id)
 
+        # PTC 工作区 error 自愈：坏工作区不再硬报错（否则用户/微信通道会拿着
+        # 坏 id 死循环），按 API 同款路径新建等价工作区、本会话改绑、旧的标记删除。
+        # 代价是本次请求多出 30-60s 沙箱初始化，好于直接报错。
+        if (
+            agent_mode == "ptc"
+            and workspace is not None
+            and workspace.get("status") == "error"
+        ):
+            from src.server.database.conversation.threads_write import (
+                set_thread_workspace,
+            )
+            from src.server.database.workspace import update_workspace_status
+            from src.server.services.workspace_manager import WorkspaceManager
+
+            logger.warning(
+                f"[CHAT] workspace {workspace_id} in error state; "
+                f"auto-recreating for user {user_id} thread {thread_id}"
+            )
+            new_workspace = await WorkspaceManager.get_instance().create_workspace(
+                user_id=user_id,
+                name=workspace.get("name") or "工作区",
+                description=workspace.get("description"),
+            )
+            await update_workspace_status(workspace_id, "deleted")
+            workspace = new_workspace
+            workspace_id = str(new_workspace["workspace_id"])
+            request = request.model_copy(update={"workspace_id": workspace_id})
+            if thread_id:
+                await set_thread_workspace(thread_id, workspace_id)
+            logger.info(
+                f"[CHAT] workspace self-heal: {workspace.get('workspace_id')} "
+                f"replaces the errored one for user {user_id}"
+            )
+
         # Auto-detect flash workspaces: if the workspace is flash, override
         # agent_mode so follow-up messages (HITL responses, etc.) route
         # correctly even if the client doesn't send agent_mode='flash'. Skip
