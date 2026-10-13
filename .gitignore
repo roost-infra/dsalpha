@@ -150,3 +150,4 @@ docs/pr_context/
 *.bak-*
 *.bak.*
 /migration-backup/
+*.bak
