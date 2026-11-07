@@ -83,7 +83,12 @@ html {
 
   --sidebar-width: 64px;
   --sidebar-rail-width: 64px;
-  --bottom-tab-bar: 78px;
+  /* 78px on every device without an inset: 8px top pad + 56px pill + 14px
+     below. On a notched iPhone the last part becomes the home indicator
+     (~34px), which is drawn over the page — without the max() the pill
+     sits under a system gesture, and the content column reserves too
+     little for it. */
+  --bottom-tab-bar: calc(64px + max(14px, env(safe-area-inset-bottom, 0px)));
   /* What is fixed to the screen's bottom measures off this, which is the keyboard
      while one is up (App.css). */
   --bottom-tab-height: var(--bottom-tab-bar);

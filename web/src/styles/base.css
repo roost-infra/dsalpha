@@ -116,3 +116,17 @@ body {
 :-moz-focusring {
   outline: revert-layer;
 }
+
+/* ---------- iOS focus zoom ----------
+   Safari zooms the whole page when a field under 16px takes focus, and does not
+   zoom back out on blur — one tap on a 14px search box leaves the page scrolled
+   and oversized. 16px is the threshold, not a type choice: the field's own
+   class still decides its look, this only stops the page inflating. Applies to
+   coarse pointers only, so a desktop browser at a narrow width is untouched. */
+@media (pointer: coarse) and (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
