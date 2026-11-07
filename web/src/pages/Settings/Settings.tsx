@@ -47,7 +47,11 @@ function Settings() {
       <div ref={pageRef} className="settings-scroll">
         <div className="settings-container">
           <h2 className="text-xl font-semibold mb-6" style={{ color: 'var(--color-text-primary)' }}>{t('settings.title')}</h2>
-          <div className="flex gap-2 mb-6 border-b overflow-x-auto settings-tab-bar clips-focus-ring" style={{ borderColor: 'var(--color-border-muted)' }}>
+          {/* Wrap instead of scrolling. At 390px the five labels are wider than
+              the column, and a horizontal scroller with no visible edge cut the
+              last two ("Experiments", "微信") mid-word — they read as truncated,
+              not as off-screen. Wrapping shows every tab at once. */}
+          <div className="flex flex-wrap gap-2 mb-6 border-b settings-tab-bar clips-focus-ring" style={{ borderColor: 'var(--color-border-muted)' }}>
             <button
               type="button"
               onClick={() => handleTabChange('userInfo')}

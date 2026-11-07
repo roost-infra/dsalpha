@@ -40,7 +40,14 @@ html {
   --font-mono: 'JetBrains Mono', 'Menlo', ui-monospace, SFMono-Regular, monospace;
 
   --sidebar-width: 80px;
-  --bottom-tab-height: 78px;
+  /* Everything the floating tab bar occupies at the bottom of the screen: the
+     8px top pad, the 56px pill, and whatever the device needs under it. On a
+     notched iPhone that last part is the home indicator (~34px), and the pill
+     was previously padded with a fixed 14px regardless — so the indicator drew
+     over it and the tab labels the user aimed at were half under a system
+     gesture. max(), not a sum: a device with no inset keeps the old 14px and a
+     notched one gets the inset instead of 14 + 34 of dead space. */
+  --bottom-tab-height: calc(64px + max(14px, env(safe-area-inset-bottom, 0px)));
 
   /* ---------- Background roles ----------
      Which fill belongs on which surface. Reach for the role, not a lookalike
@@ -413,6 +420,11 @@ html {
     padding: 0;
     width: 100%;
     height: 100vh;
+    /* iOS Safari resolves 100vh to the large viewport (address bar retracted),
+       so the shell was taller than what the user could see on first paint and
+       the bottom of every route — the chat composer included — sat under the
+       toolbar. dvh tracks the visible box; vh stays as the fallback. */
+    height: 100dvh;
     min-width: 320px;
     overflow: hidden;
   }
@@ -420,6 +432,7 @@ html {
   #root {
     width: 100%;
     height: 100vh;
+    height: 100dvh;
     margin: 0;
     padding: 0;
   }

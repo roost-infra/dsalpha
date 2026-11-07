@@ -28,6 +28,4 @@
 
 @media (max-width: 767px) {
   .plugins-scroll { padding: 16px 16px 48px; }
-  .plugins-tab-bar { scrollbar-width: none; -ms-overflow-style: none; }
-  .plugins-tab-bar::-webkit-scrollbar { display: none; }
 }

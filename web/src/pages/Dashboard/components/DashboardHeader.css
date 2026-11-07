@@ -95,4 +95,11 @@
 
 @media (max-width: 767px) {
   .dashboard-search-dropdown { min-width: 0; width: 100%; max-width: calc(100vw - 32px); }
+
+  /* iOS Safari zooms the whole page when a field whose font-size is under 16px
+     takes focus, and does not zoom back out on blur — tapping the search box
+     left the page stuck at ~1.15x with the right edge off screen. 16px is the
+     threshold, not a type choice: the placeholder is clipped either way. */
+  .dashboard-search-input { font-size: 16px; }
+  .dashboard-search-input::placeholder { font-size: 0.875rem; }
 }

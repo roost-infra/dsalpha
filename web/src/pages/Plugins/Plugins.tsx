@@ -191,7 +191,10 @@ function Plugins() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <div className="flex gap-2 mb-6 border-b overflow-x-auto plugins-tab-bar clips-focus-ring" style={{ borderColor: 'var(--color-border-muted)' }}>
+          {/* Same call as Settings: six labels do not fit 390px, and the old
+              horizontal scroller clipped "Skills" and "Secrets" mid-word with no
+              hint that they were reachable. Wrapping keeps every tab on screen. */}
+          <div className="flex flex-wrap gap-2 mb-6 border-b plugins-tab-bar clips-focus-ring" style={{ borderColor: 'var(--color-border-muted)' }}>
             {TABS.map((tab) => (
               <button
                 key={tab}

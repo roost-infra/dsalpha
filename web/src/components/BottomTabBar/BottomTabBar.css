@@ -4,7 +4,9 @@
   left: 0;
   right: 0;
   z-index: 1000;
-  padding: 8px 16px 14px;
+  /* The bottom pad is the home-indicator reservation, mirrored in
+     --bottom-tab-height so the content column reserves the same amount. */
+  padding: 8px 16px max(14px, env(safe-area-inset-bottom, 0px));
   background: transparent;
   pointer-events: none;
 }

@@ -484,6 +484,15 @@
     grid-template-columns: repeat(6, 1fr);
     gap: 4px;
   }
+
+  /* Nine range presets ("1D … All") plus the venue clock do not fit 390px: the
+     selector is a horizontal scroller with a hidden scrollbar, so the last
+     preset was clipped mid-glyph with nothing to say it could be swiped. The
+     clock is the discretionary half — a secondary readout, not a control — so
+     it gives up its width here and every preset stays reachable. */
+  .chart-bottom-bar .venue-clock {
+    display: none;
+  }
 }
 
 /* Hide the lightweight-charts watermark only. MUST NOT match the TradingView

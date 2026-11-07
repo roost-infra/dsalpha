@@ -23,8 +23,6 @@
 
 @media (max-width: 767px) {
   .settings-scroll { padding: 16px 16px 48px; }
-  .settings-tab-bar { scrollbar-width: none; -ms-overflow-style: none; }
-  .settings-tab-bar::-webkit-scrollbar { display: none; }
 }
 
 /* Settings rows that are neither a labeled field nor a section: a name on the

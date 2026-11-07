@@ -107,6 +107,12 @@
   border-color: var(--color-accent-primary);
 }
 
+/* iOS Safari zooms the page when a focused field is under 16px and never zooms
+   back, which left this modal scaled up with its footer off screen. */
+@media (max-width: 767px) {
+  .cwm-textarea { font-size: 16px; }
+}
+
 /* ---- Description mode toggle ---- */
 .cwm-toggle-group {
   display: flex;

@@ -10,12 +10,27 @@
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 12px;
+  gap: 12px;
+}
+
+/* The title block is the half that gives: without a zero floor it refuses to
+   shrink below its content width, so the company name wrapped to a second line
+   and shoved the price column around instead of ellipsizing. */
+.stock-header-top > div:first-child {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .stock-title {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  /* At 390px the symbol, name, exchange and liveness dot no longer fit one
+     line. Wrap between them — never inside the name, which would break a
+     company name across rows. */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .stock-symbol {
@@ -27,6 +42,10 @@
 .stock-name {
   font-size: 1rem;
   color: var(--color-text-secondary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stock-exchange {
@@ -35,10 +54,13 @@
   background-color: var(--color-bg-tag);
   padding: 4px 8px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 
 .stock-price-section {
   text-align: right;
+  flex: 0 0 auto;
+  padding-left: 4px;
 }
 
 .stock-price {

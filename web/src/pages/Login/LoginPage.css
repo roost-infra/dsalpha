@@ -31,6 +31,10 @@
 
   position: relative;
   min-height: 100vh;
+  /* dvh, not vh: iOS Safari's 100vh is the large viewport (the one with the
+     address bar retracted), so on first load — toolbar shown — the login frame
+     ran taller than the visible area and its bottom edge sat under the toolbar. */
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
