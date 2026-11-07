@@ -66,10 +66,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -199,10 +206,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -342,10 +356,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -472,10 +493,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -555,10 +583,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -698,10 +733,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -828,10 +870,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -911,10 +960,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1054,10 +1110,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1184,10 +1247,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1267,10 +1337,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1410,10 +1487,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1538,10 +1622,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1676,10 +1767,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1814,10 +1912,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -1952,10 +2057,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2084,10 +2196,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2216,10 +2335,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2348,10 +2474,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2480,10 +2613,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2612,10 +2752,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2744,10 +2891,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -2875,10 +3029,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3008,10 +3169,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3139,10 +3307,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3272,10 +3447,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3403,10 +3585,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3536,10 +3725,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3667,10 +3863,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3800,10 +4003,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -3931,10 +4141,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4065,10 +4282,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4199,10 +4423,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4333,10 +4564,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4467,10 +4705,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4601,10 +4846,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4735,10 +4987,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -4869,10 +5128,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5003,10 +5269,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5135,10 +5408,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5267,10 +5547,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5397,10 +5684,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5522,10 +5816,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5652,10 +5953,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5777,10 +6085,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -5907,10 +6222,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6032,10 +6354,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6157,10 +6486,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6287,10 +6623,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6417,10 +6760,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6547,10 +6897,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6677,10 +7034,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
@@ -6807,10 +7171,17 @@
     "get_options_chain",
     "get_quote",
     "get_sec_filing",
+    "list_knowledge_notes",
+    "list_wechat_contacts",
     "manage_chart_annotations",
+    "read_knowledge_note",
     "reply_to_comment",
     "schedule_wakeup",
-    "screen_stocks"
+    "screen_stocks",
+    "search_knowledge_base",
+    "send_wechat_message",
+    "wechat_channel_status",
+    "write_knowledge_note"
    ]
   },
   "metadata": {
