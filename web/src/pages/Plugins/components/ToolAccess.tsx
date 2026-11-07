@@ -1,7 +1,10 @@
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { EnabledToggle } from '@/components/mcp/McpPrimitives';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
+import { TRADING_PERMISSION_HREF, skipsApproval } from '@/lib/tradingPermission';
+import { cn } from '@/lib/utils';
 import {
   orderApprovalOf,
   type CatalogServer,
@@ -30,11 +33,17 @@ const ORDER_MODE_LADDER: readonly McpOrderMode[] = ['live', 'paper', 'staged'];
  * ship as a raw key beside a switch that decides whether an agent may spend
  * real money. The badge naming the mode is `OrderModeBadge`, shared with the
  * chat card that answers a stopped order.
+ *
+ * A live or staged switch is held on while the level asks before every
+ * order, and then says where the real control is (the `setting` tag links
+ * there); otherwise it says what switching on keeps. The level never speaks
+ * for paper, so paper has the one sentence.
  */
-const ORDER_COPY: Record<McpOrderMode, { label: string; desc: string }> = {
+const ORDER_COPY = {
   live: {
     label: 'plugins.detail.orderApprovalLive',
     desc: 'plugins.detail.orderApprovalLiveDesc',
+    locked: 'plugins.detail.orderApprovalLiveLockedDesc',
   },
   paper: {
     label: 'plugins.detail.orderApprovalPaper',
@@ -43,8 +52,9 @@ const ORDER_COPY: Record<McpOrderMode, { label: string; desc: string }> = {
   staged: {
     label: 'plugins.detail.orderApprovalStaged',
     desc: 'plugins.detail.orderApprovalStagedDesc',
+    locked: 'plugins.detail.orderApprovalStagedLockedDesc',
   },
-};
+} as const satisfies Record<McpOrderMode, { label: string; desc: string; locked?: string }>;
 
 /**
  * The row-wide switches. `binding_preset` has one non-null value, `ptc_only`,
@@ -60,6 +70,12 @@ const ORDER_COPY: Record<McpOrderMode, { label: string; desc: string }> = {
  * connection has, because the three cost different things and a single switch
  * priced them all at whichever one the user was thinking of. A vendor with no
  * order tool gets none of them.
+ *
+ * The live and staged gates answer to the user's trading permission, and can
+ * only tighten it: under a level that asks they are held on, and under one
+ * that does not they default off and switching one on keeps this connection
+ * asking. The checked state still comes from `order_approval`, which the
+ * server echoes already folded with the level.
  */
 export function ToolAccessSwitches({
   catalog,
@@ -88,33 +104,65 @@ export function ToolAccessSwitches({
         disabled={busy}
         onToggle={() => onPatch({ binding_preset: groupDefaults ? 'ptc_only' : null })}
       />
-      {gates.map((mode) => (
-        <SwitchRow
-          key={mode}
-          label={t(ORDER_COPY[mode].label)}
-          desc={t(ORDER_COPY[mode].desc)}
-          enabled={approval[mode]}
-          disabled={busy}
-          // Only the mode the user touched travels. The server merges it, so a
-          // second tab holding an older map cannot write back the other two.
-          onToggle={() => onPatch({ order_approval: { [mode]: !approval[mode] } })}
-        />
-      ))}
+      {gates.map((mode) => {
+        const copy = ORDER_COPY[mode];
+        // The server's rule: the level holds real money on when it asks. A row
+        // without one comes from a backend that has no level and honors the
+        // stored map as written, so it stays a plain switch there.
+        const level = catalog.trading_permission;
+        const locked = mode !== 'paper' && level !== undefined && !skipsApproval(level);
+        return (
+          <SwitchRow
+            key={mode}
+            label={t(copy.label)}
+            desc={
+              <Trans
+                i18nKey={locked ? ORDER_COPY[mode].locked : copy.desc}
+                // Not `link`: the Trans parser reads that as the void HTML
+                // element and drops the words inside it.
+                components={{
+                  setting: (
+                    <Link
+                      to={TRADING_PERMISSION_HREF}
+                      className="underline underline-offset-2"
+                      style={{ color: 'var(--color-text-secondary)' }}
+                    />
+                  ),
+                }}
+              />
+            }
+            // Held on rather than read: a stored `false` from before levels
+            // existed is inert, and a catalog read before the level changed
+            // may still carry it.
+            enabled={locked || approval[mode]}
+            disabled={busy || locked}
+            locked={locked}
+            // Only the mode the user touched travels. The server merges it, so a
+            // second tab holding an older map cannot write back the other two.
+            onToggle={() => onPatch({ order_approval: { [mode]: !approval[mode] } })}
+          />
+        );
+      })}
     </ul>
   );
 }
 
-function SwitchRow({
+/** One labelled switch of a side column's list, its description under it. */
+export function SwitchRow({
   label,
   desc,
   enabled,
   disabled,
+  locked = false,
   onToggle,
 }: {
   label: string;
-  desc: string;
+  desc: React.ReactNode;
   enabled: boolean;
   disabled: boolean;
+  /** Held in place by a setting elsewhere, so it is drawn as unavailable,
+   *  which a switch merely waiting on a write is not. */
+  locked?: boolean;
   onToggle: () => void;
 }) {
   return (
@@ -127,7 +175,7 @@ function SwitchRow({
           {desc}
         </p>
       </div>
-      <div className="flex-shrink-0 pt-0.5">
+      <div className={cn('shrink-0 pt-0.5', locked && 'opacity-50')}>
         <EnabledToggle enabled={enabled} name={label} disabled={disabled} onToggle={onToggle} />
       </div>
     </li>
@@ -172,16 +220,8 @@ export function ToolBindingControl({
   }
 
   return (
-    <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
-      <div className="flex items-center gap-1.5">
-        {pinned && (
-          <span
-            className="text-[0.625rem] text-right"
-            style={{ color: 'var(--color-text-quaternary)' }}
-          >
-            {t('plugins.detail.bindingPinned')}
-          </span>
-        )}
+    <div className={cn('flex flex-col items-end gap-0.5 grow', pinned && 'pb-1')}>
+      <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-0.5 max-w-full">
         <OrderModeBadge mode={tool.order?.mode} />
         {tool.approval && (
           <span
@@ -218,8 +258,19 @@ export function ToolBindingControl({
           onChange={write}
         />
       </div>
+      {/* Zero intrinsic width, full width once laid out: the note sits under the
+          controls and wraps in the room the row has, instead of widening the
+          control until the tool name is squeezed. */}
+      {pinned && (
+        <span
+          className="text-[0.625rem] text-right w-0 min-w-full"
+          style={{ color: 'var(--color-text-quaternary)' }}
+        >
+          {t('plugins.detail.bindingPinned')}
+        </span>
+      )}
       {error && (
-        <span role="alert" className="text-[0.625rem] text-right" style={{ color: 'var(--color-loss)' }}>
+        <span role="alert" className="text-[0.625rem] text-right w-0 min-w-full" style={{ color: 'var(--color-loss)' }}>
           {error}
         </span>
       )}

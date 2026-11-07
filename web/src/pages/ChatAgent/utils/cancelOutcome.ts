@@ -19,12 +19,27 @@ export type CancelNoOpState =
   | 'run_not_found'
   | 'task_not_found';
 
+/** A steer of the user's the server holds unread: one a stop hands back, or
+ *  one an errored turn left queued for the next. */
+export interface HeldSteer {
+  content: string;
+  /** The key its send went out under; null for one sent with none. */
+  request_key: string | null;
+  /** Epoch seconds. */
+  timestamp?: number;
+  /** A send carrying file comments: `content` is its note, this its comments. */
+  artifact_comments?: unknown;
+}
+
 export interface CancelOutcome {
   cancelled: boolean;
   thread_id?: string;
   task_id?: string;
   state?: CancelNoOpState;
   message: string;
+  /** The user's steers the stop took back from the run, unread, for the
+   *  composer. Older servers omit it. */
+  returned_steers?: HeldSteer[];
 }
 
 /**

@@ -60,3 +60,83 @@ export function validatePluginSourceUrl(raw: string): string | null {
   // rather than leaking the policy's own sentence into this dialog.
   return matched ? matched[1] : 'badUrl';
 }
+
+/**
+ * The literal a declared key pattern opens with (`^acme_[A-Za-z0-9]{24}$`
+ * gives `acme_`), or null when it opens with anything a prefix cannot say.
+ * "Starts with acme_" is something a user can check against the key in front
+ * of them; a regular expression is not.
+ */
+export function patternPrefix(pattern: string | null): string | null {
+  if (!pattern?.startsWith('^') || pattern.includes('|')) return null;
+  let prefix = '';
+  for (let i = 1; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      const next = pattern[i + 1];
+      // \d, \w and the like are classes, not the letter.
+      if (next === undefined || /[A-Za-z0-9]/.test(next)) break;
+      prefix += next;
+      i += 1;
+      continue;
+    }
+    if (/[A-Za-z0-9_:-]/.test(ch)) {
+      prefix += ch;
+      continue;
+    }
+    // A quantifier makes the character before it optional or repeated.
+    if ('?*{'.includes(ch)) prefix = prefix.slice(0, -1);
+    break;
+  }
+  return prefix.length >= 2 ? prefix : null;
+}
+
+export type KeyMismatch =
+  | { kind: 'prefix'; prefix: string }
+  /** Lengths count the whole value, prefix included; `max` null is open. */
+  | { kind: 'length'; actual: number; min: number; max: number | null }
+  | { kind: 'characters' }
+  | { kind: 'format' };
+
+/** `^`, a literal, one character class repeated, `$`: the shape nearly every
+ *  key format takes, and one whose length can be read off it. Groups: the
+ *  literal, the class, then `{n}` / `{n,}` / `{n,m}` or `+` / `*`. */
+const KEY_SHAPE =
+  /^\^((?:[A-Za-z0-9_:-]|\\[^A-Za-z0-9])*)(\[(?:\\.|[^\]\\])+\]|\\[dDwWsS]|\.)(?:\{(\d+)(?:(,)(\d*))?\}|([+*]))\$$/;
+
+/**
+ * What is off about a value its declared pattern refuses, in terms a user can
+ * check against the key in front of them: the prefix it should open with,
+ * its length, or a character the format does not allow. A pattern of any
+ * other shape only says the format is off. Once the value has the prefix,
+ * the prefix is not mentioned: pointing at the one part that is right sends
+ * the user looking in the wrong place.
+ *
+ * Null when nothing is off, and when there is nothing to judge by: no value
+ * yet, no pattern, or a pattern this engine cannot read, since a declaration
+ * that does not compile here says nothing either way about the key.
+ */
+export function keyMismatch(value: string, pattern: string | null | undefined): KeyMismatch | null {
+  if (!value || !pattern) return null;
+  try {
+    if (new RegExp(pattern).test(value)) return null;
+  } catch {
+    return null;
+  }
+  const prefix = patternPrefix(pattern);
+  if (prefix && !value.startsWith(prefix)) return { kind: 'prefix', prefix };
+  const shape = KEY_SHAPE.exec(pattern);
+  if (!shape) return { kind: 'format' };
+  const [, escaped, , low, comma, high, repeat] = shape;
+  const literal = escaped.replace(/\\(.)/g, '$1');
+  if (!value.startsWith(literal)) return { kind: 'format' };
+  const fewest = repeat ? (repeat === '+' ? 1 : 0) : Number(low);
+  const most = repeat || (comma && !high) ? null : comma ? Number(high) : fewest;
+  const min = literal.length + fewest;
+  const max = most === null ? null : literal.length + most;
+  const actual = value.length;
+  if (actual < min || (max !== null && actual > max)) {
+    return { kind: 'length', actual, min, max };
+  }
+  return { kind: 'characters' };
+}

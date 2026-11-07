@@ -6,7 +6,7 @@ Errors are classified by where jsonschema reports them: only a root-level
 violation on plugin.json is fatal and nothing is written.
 """
 
-from json import JSONDecodeError, loads
+from json import dumps, loads
 from typing import Any
 
 from jsonschema.validators import validator_for
@@ -57,7 +57,10 @@ def validate_manifest(raw: bytes) -> tuple[dict[str, Any], list[Diagnostic]]:
     """
     try:
         doc = loads(raw.decode("utf-8"))
-    except (JSONDecodeError, UnicodeDecodeError) as e:
+        # A ``\ud800`` escape decodes to a lone surrogate, which neither a
+        # JSON response nor the stored manifest can encode.
+        dumps(doc, ensure_ascii=False).encode("utf-8")
+    except (ValueError, RecursionError) as e:
         raise PluginFatal(f"plugin.json is not valid JSON: {e}") from e
     if not isinstance(doc, dict):
         raise PluginFatal("plugin.json must be a JSON object")

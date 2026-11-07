@@ -16,7 +16,7 @@ import pytest
 from src.llms.preferences import TUNING_FIELDS, Tuning, resolve_tuning, resolve_tuning_field
 
 CONTRACT = json.loads(
-    (Path(__file__).parents[3] / "tests/fixtures/tuning_precedence.json").read_text()
+    (Path(__file__).parents[3] / "web/src/lib/__tests__/__fixtures__/tuning_precedence.json").read_text()
 )
 
 MODEL = "m1"
@@ -67,7 +67,10 @@ def test_resolve_tuning_agrees_with_the_single_field_resolver():
         "compaction_profile": "moderate",
         "reasoning_effort": "low",
         "fast_mode": True,
-        "profiles": {MODEL: {"reasoning_effort": "high", "fast_mode": False}},
+        "native_compaction": False,
+        "profiles": {
+            MODEL: {"reasoning_effort": "high", "fast_mode": False, "native_compaction": True}
+        },
     }
     tuning = resolve_tuning(model_pref, MODEL)
 
@@ -76,6 +79,7 @@ def test_resolve_tuning_agrees_with_the_single_field_resolver():
         compaction_profile="moderate",
         reasoning_effort="high",
         fast_mode=False,
+        native_compaction=True,
     )
     for field in TUNING_FIELDS:
         assert getattr(tuning, field) == resolve_tuning_field(model_pref, MODEL, field)

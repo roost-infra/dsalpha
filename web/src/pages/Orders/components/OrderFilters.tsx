@@ -12,7 +12,8 @@ import {
 } from '@/pages/ChatAgent/utils/api';
 import { ORDER_MODE_KEY, ORDER_MODES } from '@/components/orders/mode';
 import type { OrderMode } from '@/types/orders';
-import { ORDER_ASSET_CLASS_KEY, ORDER_STATUS_GROUP_KEY } from '../utils/labels';
+import { ORDER_ASSET_CLASS_KEY } from '@/components/orders/labels';
+import { ORDER_STATUS_GROUP_KEY } from '../utils/labels';
 
 function Select({
   label,
@@ -27,10 +28,10 @@ function Select({
 }) {
   const id = useId();
   return (
-    <div className="flex flex-col gap-1 min-w-[8rem]">
+    <div className="flex flex-col gap-1 min-w-32">
       <label
         htmlFor={id}
-        className="text-[0.625rem] font-medium uppercase tracking-[0.14em]"
+        className="text-[0.6875rem] font-medium uppercase tracking-[0.14em]"
         style={{ color: 'var(--color-text-tertiary)' }}
       >
         {label}

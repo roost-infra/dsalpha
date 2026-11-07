@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { useAuth } from '../../contexts/AuthContext';
 import { isPlatformMode, APP_ENTRY_PATH } from '../../config/hostMode';
 import { authErrorMessage } from '../../lib/authErrors';
+import { landAfterSignIn } from '../../lib/hostedSignIn';
 import { useShellHandoff } from './useShellHandoff';
 import ShellHandoff from './ShellHandoff';
 import PasswordInput from './PasswordInput';
 import PasswordStrength from './PasswordStrength';
 import { validatePasswordPair, MIN_PASSWORD_LENGTH } from './passwordRequirements';
-import WavesBackground from './WavesBackground';
+import EdgeGrain from './EdgeGrain';
 import './LoginPage.css';
 
 /**
@@ -80,7 +81,7 @@ function ResetPassword() {
       const result = await updatePassword(password);
       if (!result) return;
       if (result.error) throw result.error;
-      navigate('/dashboard', { replace: true });
+      landAfterSignIn(navigate);
     } catch (err: unknown) {
       setError(authErrorMessage(err, t).message);
     } finally {
@@ -146,8 +147,8 @@ function ResetPassword() {
   }
 
   return (
-    <div className="login-page">
-      <WavesBackground />
+    <div className="login-page owns-its-edge">
+      <EdgeGrain centered />
       <div className="login-page__card">{body}</div>
     </div>
   );

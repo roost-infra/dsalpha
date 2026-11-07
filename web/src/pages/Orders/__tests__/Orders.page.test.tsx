@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type {
   Brokerage,
@@ -39,14 +39,17 @@ const MOOMOO: Brokerage = {
 // fixtures here.
 let catalogServers: CatalogServer[] = [];
 
-// Mocked at the module, not the barrel: the broker check imports this client
+// Mocked at the module, not the barrel: the broker check imports these clients
 // itself, when its queries run.
+vi.mock('@/pages/ChatAgent/utils/api/brokerages', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/pages/ChatAgent/utils/api/brokerages')>()),
+  getBrokerages: vi.fn(async () => [MOOMOO]),
+}));
+
 vi.mock('@/pages/ChatAgent/utils/api/mcp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/pages/ChatAgent/utils/api/mcp')>()),
-  getBrokerages: vi.fn(async () => [MOOMOO]),
   getMcpCatalog: vi.fn(async () => ({
     servers: catalogServers,
-    workspace_servers: [],
     max_servers: 50,
   })),
 }));
@@ -248,6 +251,21 @@ describe('the orders page', () => {
     expect(link).toHaveAttribute('href', 'https://example.com/staged/abc123');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(link).toHaveTextContent('Open in moomoo');
+  });
+
+  it('names an approval the order waits on as an approval, not a broker order', async () => {
+    getOrder.mockResolvedValue(
+      attempt({
+        status: 'pending_confirm',
+        vendor_order_id: 'apr-1',
+        route: { approval_id: 'apr-1' },
+        failure: null,
+      }),
+    );
+    renderPage(`/orders?detail=order:${ATTEMPT}`);
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(fieldValue(dialog, 'Approval ID')).toHaveTextContent('apr-1'));
+    expect(within(dialog).queryByText('Broker order')).toBeNull();
   });
 
   it('offers no broker link when the vendor sent none', async () => {

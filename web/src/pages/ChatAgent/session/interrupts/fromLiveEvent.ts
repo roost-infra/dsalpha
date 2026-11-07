@@ -146,7 +146,7 @@ export function projectLiveInterrupt(
           [proposalId]: {
             workspace_id: proposalData.workspace_id,
             workspace_name: proposalData.workspace_name,
-            question: proposalData.question,
+            question: proposalData.question ?? '',
             report_back: proposalData.report_back ?? true,
             interruptId: event.interrupt_id,
             // Persist tool_call_id ON the proposal so the clicked card
@@ -183,6 +183,7 @@ export function projectLiveInterrupt(
           [proposalId]: {
             actionType: actionType as 'delete_workspace' | 'stop_workspace' | 'delete_thread',
             workspace_id: proposalData.workspace_id,
+            workspace_name: proposalData.workspace_name,
             thread_id: proposalData.thread_id,
             interruptId: event.interrupt_id,
             status: 'pending',
@@ -269,40 +270,10 @@ export function projectLiveInterrupt(
       assistantMessageId,
       proposalId: cards[0].proposalId,
     });
-  } else {
-    // --- Plan approval interrupt (existing) ---
-    const planApprovalId = event.interrupt_id || `plan-${Date.now()}`;
-    const description =
-      actionRequests[0]?.description ||
-      (actionRequests[0]?.args?.plan as string) ||
-      'No plan description provided.';
-
-    const order = event._eventId != null ? Number(event._eventId) : ++refs.contentOrderCounterRef.current;
-
-    rt.setMessages((prev) =>
-      updateMessage(prev,assistantMessageId, (m) => { if (m.role !== 'assistant') return m; const msg = m as AssistantMessage; return {
-        ...msg,
-        contentSegments: appendCardSegment(msg.contentSegments, { type: 'plan_approval', planApprovalId, order }),
-        planApprovals: {
-          ...(msg.planApprovals || {}),
-          [planApprovalId]: {
-            description,
-            interruptId: event.interrupt_id,
-            status: 'pending',
-          },
-        },
-        isStreaming: false,
-      }; })
-    );
-
-    rt.pendingInterruptIdsRef.current.add(event.interrupt_id!);
-    rt.setPendingInterrupt({
-      interruptId: event.interrupt_id,
-      actionRequests: actionRequests,
-      threadId: event.thread_id,
-      assistantMessageId,
-      planApprovalId,
-      planMode: actionRequests.some((r) => r.name === 'SubmitPlan') || rt.currentPlanModeRef.current,
-    });
   }
+  // Any other interrupt gets no card and no pending state. The only one left
+  // in the wild is a SubmitPlan review on a thread paused before the agent
+  // stopped raising it, and nothing can resume it now: arming it would hold the
+  // composer shut behind a card with no answer, while leaving it lets the next
+  // message start a fresh turn.
 }

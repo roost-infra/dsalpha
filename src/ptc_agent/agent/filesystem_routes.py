@@ -4,11 +4,17 @@ Memory, memo, workflows and the user's own data all reach the agent as files
 under the sandbox root, each served by a store route rather than the sandbox.
 Which of them exist is a single question about identity, so the gates that
 answer it live here with the mounting they gate.
+
+The user tier hangs off the computer root; workspace memory hangs off the
+turn's own folder, so two workspaces sharing a computer do not share a
+memory file. Nothing here touches disk: moving a mount moves a prefix, and
+the namespace behind it -- which is what holds the bytes -- never changes.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Any
 
 from ptc_agent.agent.backends import (
@@ -17,9 +23,16 @@ from ptc_agent.agent.backends import (
     RequestScopedStoreCache,
     StoreBackend,
     WorkflowsBackend,
+    memo_namespace,
     prebuilt_workflow_backend,
+    user_memory_namespace,
     workflow_namespace,
+    workspace_memory_namespace,
 )
+from ptc_agent.agent.backends.automations import AutomationsBackend
+from ptc_agent.agent.backends.channels import ChannelsBackend
+from ptc_agent.agent.backends.db_json_route import DbJsonRoute
+from ptc_agent.agent.backends.subagents import SubagentsBackend
 from ptc_agent.agent.backends.user_data import UserDataBackend
 from ptc_agent.agent.middleware.background_subagent.workflow.prebuilt import (
     get_prebuilt_workflows,
@@ -34,10 +47,25 @@ from ptc_agent.core.paths import (
     MEMO_USER_DIR,
     MEMORY_INDEX_FILENAME,
     MEMORY_USER_DIR,
-    MEMORY_WORKSPACE_DIR,
-    USER_PROFILE_DATA_DIR,
     WORKFLOW_DIR,
+    SandboxLayout,
+    WorkspaceLayout,
 )
+from ptc_agent.core.sandbox.livefs_mount import CallContext
+
+# The routes that serve the user's database rows as files, one per directory
+# of ``USER_DATA_DIRS``.
+USER_DATA_ROUTES = (UserDataBackend, AutomationsBackend, SubagentsBackend)
+
+
+def route_for(path: str) -> type[DbJsonRoute] | None:
+    """The route serving ``path`` (relative to the sandbox root), if it may
+    be one of the user's data files, whether or not one is there."""
+    directory, _, name = path.rpartition("/")
+    return next(
+        (r for r in USER_DATA_ROUTES if r.directory == directory and r.file_named(name) is not None),
+        None,
+    )
 
 
 @dataclass(frozen=True)
@@ -56,6 +84,9 @@ class IdentityGates:
     workflow: bool
     workflow_fs: bool
     workflow_tool: bool
+    # The user's chat-app settings, for the file tools only: the mount never
+    # asks for them, so they are no mount tier.
+    channels: bool = False
 
     @property
     def memory(self) -> bool:
@@ -68,6 +99,7 @@ def resolve_identity_gates(
     user_id: str | None,
     workspace_id: str | None,
     disable_subagents: bool,
+    channels: bool = False,
 ) -> IdentityGates:
     from src.config.settings import get_workflow_orchestration_config
 
@@ -77,9 +109,9 @@ def resolve_identity_gates(
         user_memory=identified,
         workspace_memory=identified and bool(workspace_id),
         memo=identified,
-        # Independent of `store`: the user-profile data backend (portfolio +
-        # watchlist + preferences) talks to the application DB tables, not the
-        # LangGraph store.
+        # Independent of `store`: the user's data files (profile and
+        # automations) talk to the application DB tables, not the LangGraph
+        # store.
         user_data=bool(user_id),
         workflow=workflow,
         workflow_fs=workflow and identified,
@@ -88,6 +120,37 @@ def resolve_identity_gates(
         # advertising a skill whose tool this build never registers strands
         # the agent.
         workflow_tool=workflow and not disable_subagents,
+        # Asked for by a build whose deployment has the channel gateway.
+        channels=channels and bool(user_id),
+    )
+
+
+#: What a subagent's Write or Edit gets in memory, which its prompt leaves to
+#: the parent agent.
+SUBAGENT_MEMORY_REFUSAL = (
+    "Memory is the parent agent's to write. Put anything it may want to keep "
+    "in your result as a proposed memory."
+)
+
+
+def memory_prefixes(backend: Any, layout: WorkspaceLayout | None) -> tuple[str, str]:
+    """Where the user's and the workspace's memory mount over ``backend``."""
+    sandbox_root = backend.computer_root.rstrip("/")
+    layout = layout or SandboxLayout(sandbox_root).for_workspace(None)
+    return f"{sandbox_root}/{MEMORY_USER_DIR}/", f"{layout.memory}/"
+
+
+def subagent_backend(backend: Any, layout: WorkspaceLayout | None) -> Any:
+    """``backend`` for a subagent's file tools: memory refuses their writes.
+
+    The prompt says a subagent proposes memories rather than saving them, and
+    this holds the file tools to it. Bash and code reach the mount as the main
+    agent's do, which a tool wrapper cannot see.
+    """
+    if not isinstance(backend, CompositeFilesystemBackend):
+        return backend
+    return backend.refusing_writes_under(
+        memory_prefixes(backend.sandbox, layout), SUBAGENT_MEMORY_REFUSAL
     )
 
 
@@ -98,6 +161,9 @@ def build_filesystem_backend(
     store: Any | None,
     user_id: str | None,
     workspace_id: str | None,
+    layout: WorkspaceLayout | None = None,
+    call: CallContext | None = None,
+    history_routes: Sequence[Any] = (),
 ) -> tuple[Any, BaselineSources | None]:
     """Mount the store-backed routes over the sandbox filesystem.
 
@@ -105,8 +171,22 @@ def build_filesystem_backend(
     sources the runtime-context baseline reads at the turn boundary (the
     memory namespaces and the memo catalog), one value because they are all
     derived from the same gate resolution and namespace closures.
+
+    ``layout`` is the turn's workspace folder, which the workspace memory
+    mount hangs off. Omitted, the workspace owns the computer root.
+    ``call`` is who the files are written for, which a new automation
+    defaults to: this workspace, this conversation for ``thread: "current"``,
+    and this clock, else the user's own. ``history_routes`` are past threads
+    the host serves where no file mount shows them (``HistoryFiles``).
     """
-    if not (gates.memory or gates.memo or gates.user_data or gates.workflow):
+    if not (
+        gates.memory
+        or gates.memo
+        or gates.user_data
+        or gates.workflow
+        or gates.channels
+        or history_routes
+    ):
         return backend, None
 
     # One cache per agent (≈ per request). Shared by every memory/memo
@@ -119,7 +199,10 @@ def build_filesystem_backend(
         if (gates.memory or gates.memo or gates.workflow_fs)
         else None
     )
-    sandbox_root = backend.root_dir.rstrip("/")
+    sandbox_root = backend.computer_root.rstrip("/")
+    layout = layout or SandboxLayout(sandbox_root).for_workspace(None)
+    workspace_memory_dir = WorkspaceLayout.MEMORY_DIR
+    user_memory, workspace_memory = memory_prefixes(backend, layout)
 
     # INVARIANT: these closures capture identity at agent-creation time
     # (``user_id`` is bound once per call). Safe only because one PTCAgent
@@ -127,7 +210,7 @@ def build_filesystem_backend(
     # across requests, memory will cross-pollinate between users. Resolve
     # identity at call time (e.g. via `langgraph.runtime.get_runtime()`)
     # before introducing reuse.
-    routes: list[Any] = []
+    routes: list[Any] = list(history_routes)
     user_namespace_factory: NamespaceFactory | None = None
     workspace_namespace_factory: NamespaceFactory | None = None
     memo_namespace_factory: NamespaceFactory | None = None
@@ -135,14 +218,14 @@ def build_filesystem_backend(
     if gates.user_memory:
 
         def _user_namespace() -> tuple[str, ...]:
-            return (user_id, "memory")
+            return user_memory_namespace(user_id)
 
         user_namespace_factory = _user_namespace
         routes.append(
             StoreBackend(
                 store=store,
                 namespace_factory=_user_namespace,
-                root_prefix=f"{sandbox_root}/{MEMORY_USER_DIR}/",
+                root_prefix=user_memory,
                 sandbox_backend=backend,
                 cache=store_cache,
             )
@@ -151,14 +234,14 @@ def build_filesystem_backend(
     if gates.workspace_memory:
 
         def _workspace_namespace() -> tuple[str, ...]:
-            return (user_id, "workspaces", workspace_id, "memory")
+            return workspace_memory_namespace(user_id, workspace_id)
 
         workspace_namespace_factory = _workspace_namespace
         routes.append(
             StoreBackend(
                 store=store,
                 namespace_factory=_workspace_namespace,
-                root_prefix=f"{sandbox_root}/{MEMORY_WORKSPACE_DIR}/",
+                root_prefix=workspace_memory,
                 sandbox_backend=backend,
                 cache=store_cache,
             )
@@ -167,10 +250,7 @@ def build_filesystem_backend(
     if gates.memo:
 
         def _memo_namespace() -> tuple[str, ...]:
-            # Plural: avoid string-prefix collision with the
-            # ``(user_id, "memory")`` tier in AsyncPostgresStore,
-            # whose asearch is ``LIKE 'user_id.memo%'``.
-            return (user_id, "memos")
+            return memo_namespace(user_id)
 
         memo_namespace_factory = _memo_namespace
         routes.append(
@@ -216,11 +296,23 @@ def build_filesystem_backend(
             routes.append(prebuilt_route)
 
     if gates.user_data:
-        routes.append(
-            UserDataBackend(
+        routes.extend(
+            route(
                 user_id=user_id,
+                call=call or CallContext(),
                 sandbox_backend=backend,
-                root_prefix=f"{sandbox_root}/{USER_PROFILE_DATA_DIR}/",
+                root_prefix=f"{sandbox_root}/{route.directory}/",
+            )
+            for route in USER_DATA_ROUTES
+        )
+
+    if gates.channels:
+        routes.append(
+            ChannelsBackend(
+                user_id=user_id,
+                call=call or CallContext(),
+                sandbox_backend=backend,
+                root_prefix=f"{sandbox_root}/{ChannelsBackend.directory}/",
             )
         )
 
@@ -237,7 +329,7 @@ def build_filesystem_backend(
             ),
             "workspace": (
                 workspace_namespace_factory,
-                f"{MEMORY_WORKSPACE_DIR}/{MEMORY_INDEX_FILENAME}",
+                f"{workspace_memory_dir}/{MEMORY_INDEX_FILENAME}",
             ),
         }
         if gates.memory

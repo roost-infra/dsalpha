@@ -1,14 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
-import { publishSession, sessionAdopter, clearAuthToken } from '../lib/authToken';
+import { publishSession, sessionAdopter, clearAuthToken, authGeneration } from '../lib/authToken';
+import { trackRequest } from '../lib/reloadHolds';
 import { queryKeys } from '../lib/queryKeys';
 import { AUTH_BROADCAST_CHANNEL, OAUTH_POPUP_WINDOW_NAME, OAUTH_POPUP_FEATURES } from '../lib/oauthPopup';
-import { clearFlashWorkspaceCache } from '@/pages/MarketView/utils/flashWorkspace';
 import { resetNavPanelExpansion } from '@/pages/ChatAgent/components/navExpansionStore';
 import { resetStableNavOrder } from '@/pages/ChatAgent/hooks/useNavigationData';
 import { resetSharedWorkspaceThreads } from '@/lib/navThreadsStore';
 import { runAuthResets } from '../lib/authResets';
+import { detectedTimezone } from '@/lib/deviceTimezone';
+import { revokeAllConnectedApps } from '@/api/connectedApps';
 
 import type {
   AuthError,
@@ -44,9 +46,8 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 import { isPlatformMode } from '@/config/hostMode';
+import { LOCAL_USER_ID } from '@/config/localUser';
 import { withShellReturn } from '../lib/desktopAuthHandoff';
-
-const _LOCAL_DEV_USER_ID = (import.meta.env.VITE_AUTH_USER_ID as string) || 'local-dev-user';
 
 const baseURL = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
 
@@ -55,7 +56,7 @@ const baseURL = (import.meta.env.VITE_API_BASE_URL as string) ?? '';
  * Presents the app as permanently logged-in with a local-dev identity.
  */
 const _localDevValue: AuthContextValue = {
-  userId: _LOCAL_DEV_USER_ID,
+  userId: LOCAL_USER_ID,
   isInitialized: true,
   isLoggedIn: true,
   loginWithEmail: () => Promise.resolve(),
@@ -96,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         + 'every authenticated request will be rejected.',
       );
     }
-    return <AuthContext.Provider value={_localDevValue}>{children}</AuthContext.Provider>;
+    return <AuthContext value={_localDevValue}>{children}</AuthContext>;
   }
 
   return <SupabaseAuthProvider>{children}</SupabaseAuthProvider>;
@@ -122,6 +123,9 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
     if (!sess) return;
     if (_syncPromise) return _syncPromise;
     _syncPromise = (async () => {
+      // Outside the API client, so the stale-build reload a section switch
+      // takes would not wait for it, and a load after sign-in does not sync.
+      const settle = trackRequest(authGeneration());
       try {
         const token = sess.access_token;
         const meta = sess.user?.user_metadata ?? {};
@@ -135,7 +139,7 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
             email: sess.user?.email,
             name: meta.name || meta.full_name || null,
             avatar_url: meta.avatar_url || null,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+            timezone: detectedTimezone(),
             // `locale` deliberately omitted — only the Settings dropdown
             // writes it. The frontend detector reads browser locale on cold
             // load. See `useSyncUserLocale`.
@@ -155,6 +159,7 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         console.error('[auth] syncUser failed:', err);
       } finally {
+        settle();
         _syncPromise = null;
       }
     })();
@@ -193,7 +198,6 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
       // new user against the old user's cached data.
       if (sess?.user && lastUserIdRef.current && sess.user.id !== lastUserIdRef.current) {
         queryClient.clear();
-        clearFlashWorkspaceCache();
         resetNavPanelExpansion();
         resetStableNavOrder();
         resetSharedWorkspaceThreads();
@@ -213,7 +217,6 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Logged out — wipe all cached data
         queryClient.clear();
-        clearFlashWorkspaceCache();
         // Module-level nav stores live on globalThis (no page reload on logout),
         // so they'd otherwise leak one user's folders/thread lists into the next
         // user's session on a shared tab. Reset them on every sign-out.
@@ -269,7 +272,13 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const updatePassword = useCallback(
-    (password: string) => sb.auth.updateUser({ password }),
+    async (password: string) => {
+      const result = await sb.auth.updateUser({ password });
+      // Outside apps keep their access through a password change unless told
+      // otherwise, so whoever connected one with the old password would too.
+      if (!result.error) revokeAllConnectedApps();
+      return result;
+    },
     [sb.auth]
   );
 
@@ -349,7 +358,7 @@ function SupabaseAuthProvider({ children }: { children: React.ReactNode }) {
     updatePassword,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext value={value}>{children}</AuthContext>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

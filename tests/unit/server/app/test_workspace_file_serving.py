@@ -4,16 +4,20 @@ Calls ``serve_workspace_file`` / ``serve_workspace_file_endpoint`` directly
 (same style as ``test_workspace_files_routing.py``) so no TestClient is
 needed. The serving core resolves a workspace by UUID, reads bytes from the
 live sandbox or the DB fallback, applies the sandboxed CSP, redacts vault
-secrets from text bodies, and optionally splices a theme-sync script into HTML.
+secrets from text bodies, and splices the page bridge into HTML when asked.
 
 Covered: MIME mapping, uniform-404 (unknown workspace / missing file /
 traversal), DB fallback (text + binary), CSP header on every response,
-redaction of text bodies, ``?inject=theme`` splicing for HTML only, and
+redaction of text bodies, ``?inject=`` bridging for HTML only, and
 byte-faithful plain GET.
 """
 
 from __future__ import annotations
 
+import time
+import base64
+import re
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,35 +26,71 @@ from fastapi import HTTPException
 from src.server.app.workspace_files.serve import (
     _guess_content_type,
     _has_traversal,
+    _owner_visible,
+    render_workspace_file_pdf,
     serve_workspace_file,
     serve_workspace_file_endpoint,
 )
-from src.server.services import pdf_render
+from src.server.preview_proxy.page_bridge import bridge_for, with_bridge
+from src.server.utils.html_policy import html_document_csp
+from src.server.services import file_grants, pdf_render
+from src.server.services.computer_manager import MachineTarget
+from src.server.services.served_paths import (
+    ShareScope,
+    page_may_load,
+    may_be_artifact,
+    shared_path_visible,
+)
 
 WS_ID = "ws-test-0001"
 OWNER = "user-test-1"
 _VAULT_PATCH = "src.server.app.workspace_files.serve.get_vault_secrets_for_redaction"
 _DBWS_PATCH = "src.server.app.workspace_files.serve.db_get_workspace"
-_FP_PATCH = "src.server.app.workspace_files.serve.FilePersistenceService"
-_WD_PATCH = "src.server.app.workspace_files.serve._get_work_dir"
-_WSMGR_PATCH = "src.server.app.workspace_files.serve.WorkspaceManager"
+_FP_PATCH = "src.server.services.warm_files.FilePersistenceService"
+_WD_PATCH = "src.server.app.workspace_files.serve.work_dir_for"
+_WSMGR_PATCH = "src.server.services.warm_files.WorkspaceManager"
+# The row the route re-reads after a live read, to prove the folder the read
+# went to was still this workspace's.
+_RECHECK_PATCH = "src.server.app.workspace_files._shared.db_get_workspace"
+# The serve root is resolved in the file service, so a test about resolving
+# it patches the manager the service reads the computer root from, not the route's.
+_LAYOUT_WSMGR_PATCH = "src.server.services.workspace_files.WorkspaceManager"
 _RENDER_PATCH = "src.server.services.pdf_render.render_workspace_pdf"
 _PDF_INTERNAL_BASE = "http://127.0.0.1:8000"
+_GRANT_KEY = b"k" * 32
+
+
+@pytest.fixture(autouse=True)
+def _pinned_grant_key(monkeypatch):
+    """The grant key is read from Postgres once per process; pin it here."""
+    monkeypatch.setattr(file_grants._CODEC, "_key", _GRANT_KEY)
+
+
+def _grant(workspace_id: str = WS_ID, *, expires_at: int = 4_102_444_800) -> str:
+    """A grant the endpoint accepts, signed with the pinned key."""
+    signature = file_grants._CODEC.signature(_GRANT_KEY, (workspace_id,), expires_at)
+    return f"v1.{workspace_id}.{expires_at}.{signature}"
+
+
+# The PDF renderer is handed the prefix of the grant that asked, whichever one
+# a test signed, so the tests match its shape rather than its value.
+_GRANT_PREFIX_RE = re.compile(
+    rf"^{re.escape(_PDF_INTERNAL_BASE)}/api/v1/wsfiles/g/v1\.{re.escape(WS_ID)}\.\d+\.[A-Za-z0-9_-]+/$"
+)
+
+
+async def _serve(workspace_id: str, path: str, **kwargs):
+    """The core as the owner's route calls it."""
+    return await serve_workspace_file(
+        workspace_id, path, visible=_owner_visible, **kwargs
+    )
 
 
 def _assert_report_csp(csp: str) -> None:
-    """Assert the served-report CSP keeps the sandbox AND caps egress.
-
-    Checks shape, not the exact string, so directive ordering can change freely.
-    """
-    assert csp.startswith(
-        "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox;"
-    )
-    assert "default-src 'none'" in csp
-    assert "connect-src 'none'" in csp  # the load-bearing exfiltration block
-    # Google Fonts stays allowed for the CJK web-font path.
-    assert "https://fonts.googleapis.com" in csp
-    assert "https://fonts.gstatic.com" in csp
+    """A served report runs on an opaque origin and is otherwise free to load."""
+    assert csp == html_document_csp()
+    assert csp.startswith("sandbox allow-scripts ")
+    assert "allow-same-origin" not in csp
 
 
 def _warm(mock_mgr: MagicMock, sandbox: object | None) -> MagicMock:
@@ -98,9 +138,21 @@ def _db_binary_record(data: bytes, mime: str = "image/png") -> dict:
 
 def _running_sandbox(returns: bytes | None) -> MagicMock:
     sandbox = MagicMock()
-    sandbox.validate_and_normalize_path.return_value = ("/home/workspace/results/x", None)
-    sandbox.adownload_file_bytes = AsyncMock(return_value=returns)
+    sandbox.validate_and_normalize_path.return_value = (
+        "/home/workspace/results/x",
+        None,
+    )
     sandbox.virtualize_path.return_value = "/results/x"
+    # The live read is gated on an in-sandbox containment probe, so the double
+    # answers it: the path resolves to itself, inside the one allowed root.
+    sandbox.config.filesystem.allowed_directories = ["/home/workspace"]
+    if returns is None:
+        result = SimpleNamespace(stdout="", stderr="", exit_code=2)
+    else:
+        path = base64.b64encode(b"/home/workspace/results/x").decode()
+        content = base64.b64encode(returns).decode()
+        result = SimpleNamespace(stdout=f"{path}\n{content}\n", stderr="", exit_code=0)
+    sandbox.runtime.exec = AsyncMock(return_value=result)
     return sandbox
 
 
@@ -122,6 +174,114 @@ def test_mime_mapping_unknown_extension_is_octet_stream():
     assert _guess_content_type("blob.zzz") == "application/octet-stream"
 
 
+# --- Scrollbar in the bridge splice ---------------------------------------
+
+
+def test_bridge_splice_reads_a_declared_scheme_in_any_spelling():
+    ours = b'<meta name="color-scheme" content="light dark">'
+    for tag in (
+        b"<META NAME=color-scheme content=dark>",
+        b"<meta charset=utf-8><meta content='dark' name='color-scheme'>",
+    ):
+        assert ours not in with_bridge(b"<html><head>" + tag, bridge_for("view"))
+    # Named outside a meta tag it declares nothing.
+    assert ours in with_bridge(
+        b"<head><meta charset=utf-8><p name=color-scheme>", bridge_for("view")
+    )
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        b"<!-- <head> -->",
+        b"<!doctype html><!-- <head> -->",
+        # One holding the tag that ends the search, which would hide the real head.
+        b"<!-- <script> <head> -->",
+        b"<!-- <head> --!>",
+    ],
+)
+def test_bridge_splice_skips_tags_written_in_a_comment(comment):
+    """Spliced into the comment, the bridge would be text nothing runs."""
+    document = comment + b"<html><head><title>t</title></head><body></body></html>"
+    ours = bridge_for("view").script
+    out = with_bridge(document, bridge_for("view"))
+    assert out.index(ours) > len(comment) + len(b"<html><head")
+    assert out.startswith(comment + b"<html><head>")
+
+
+@pytest.mark.parametrize(
+    "holder",
+    [
+        b"<template><head></head></template>",
+        b"<title>the <head> tag</title>",
+        b"<noscript><head></noscript>",
+    ],
+)
+def test_bridge_splice_skips_a_head_tag_in_an_inert_element(holder):
+    """A document that leaves its head implied: the bridge goes in after html."""
+    start = b"<!doctype html><html>"
+    out = with_bridge(start + holder + b"<body></body></html>", bridge_for("view"))
+    assert out.startswith(start)
+    assert out.index(bridge_for("view").script) < out.index(holder)
+
+
+def test_bridge_splice_takes_the_head_after_a_comment_closed_at_once():
+    out = with_bridge(b"<!--><head></head>", bridge_for("view"))
+    assert out.startswith(b"<!--><head>")
+    assert bridge_for("view").script in out
+
+
+@pytest.mark.parametrize(
+    "run", [b"<meta ", b"<head ", b"<html ", b"<!doctype ", b"<!-- ", b"<!---->"]
+)
+def test_bridge_splice_stays_linear_on_unclosed_tags(run):
+    """Anyone's published bytes, on the path every visitor's GET takes: a
+    pattern tried at each of a run of unclosed tags is quadratic."""
+    document = run * (1024 * 1024 // len(run))
+    started = time.monotonic()
+    out = with_bridge(document, bridge_for("view"))
+    assert time.monotonic() - started < 5
+    assert out.endswith(document)
+
+
+@pytest.mark.parametrize(
+    ("own_css", "inset"),
+    [
+        ("", True),
+        # The standard properties cannot merge into a thumbless scrollbar.
+        ("html{scrollbar-width:thin}", True),
+        # WebKit rules would merge with the inset ones and can leave no thumb.
+        ("::-webkit-scrollbar{width:6px}", False),
+    ],
+)
+def test_bridge_splice_scrollbar(own_css, inset):
+    out = with_bridge(
+        f"<html><head><style>{own_css}</style></head><body></body></html>".encode(),
+        bridge_for("view"),
+    )
+    assert (
+        b"::-webkit-scrollbar-track{background:transparent;margin:4px}" in out
+    ) is inset
+    assert b'<meta name="color-scheme" content="light dark">' in out
+
+
+@pytest.mark.parametrize(
+    ("meta", "ours"),
+    [
+        ("", True),
+        ('<meta name="viewport" content="width=device-width">', True),
+        ('<meta name="color-scheme" content="dark">', False),
+        ("<META CONTENT='light' NAME=color-scheme>", False),
+    ],
+)
+def test_bridge_splice_keeps_the_documents_own_color_scheme(meta, ours):
+    out = with_bridge(
+        f"<html><head>{meta}</head><body></body></html>".encode(),
+        bridge_for("view"),
+    )
+    assert (b'<meta name="color-scheme" content="light dark">' in out) is ours
+
+
 # --- Traversal rejection → uniform 404 ------------------------------------
 
 
@@ -138,7 +298,9 @@ async def test_traversal_returns_uniform_404():
     # Traversal is rejected before any workspace lookup happens.
     with patch(_DBWS_PATCH, new=AsyncMock()) as mock_ws:
         with pytest.raises(HTTPException) as exc:
-            await serve_workspace_file(WS_ID, "results/../../etc/passwd", inject_theme=False)
+            await _serve(
+                WS_ID, "results/../../etc/passwd"
+            )
     assert exc.value.status_code == 404
     assert exc.value.detail == "Not found"
     mock_ws.assert_not_called()
@@ -155,28 +317,45 @@ async def test_traversal_returns_uniform_404():
     "blocked_path",
     [
         ".agents/user/memory/memory.md",
-        "tools/generated_wrapper.py",
+        # No "tools/": layout v4 moved the generated wrappers under
+        # ``_internal/tools``, which this list blocks by its own prefix, and a
+        # ``tools/`` a user makes in their own folder is theirs to serve.
         "mcp_servers/server.py",
         ".system/config.json",
         "_internal/secret.txt",
+        # A transfer's partial or staged file at the folder root.
+        ".wsfiles-upload-00000000-0000-4000-8000-000000000001",
     ],
 )
-async def test_system_and_hidden_paths_return_404(
-    mock_ws, _wd, mock_fp, blocked_path
-):
+async def test_system_and_hidden_paths_return_404(mock_ws, _wd, mock_fp, blocked_path):
     # The serve core must mirror the read/download/list gate so the
     # unauthenticated route never exposes agent-infrastructure dirs, even
     # when a record exists in the DB fallback.
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("secret"))
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, blocked_path, inject_theme=False)
+        await _serve(WS_ID, blocked_path)
     assert exc.value.status_code == 404
     # Blocked before the DB is ever consulted.
     mock_fp.get_file_content.assert_not_called()
 
 
-# --- Unknown / flash workspace → uniform 404 ------------------------------
+@pytest.mark.parametrize(
+    "path, hidden",
+    [
+        (".wsfiles-upload-abc", True),
+        ("/.wsfiles-3f2a9c", True),
+        ("data/.wsfiles-notes", False),
+        ("wsfiles-notes", False),
+    ],
+)
+def test_only_a_transfers_name_at_the_folder_root_is_hidden(path, hidden):
+    from src.server.services.served_paths import is_always_hidden_path
+
+    assert is_always_hidden_path(path) is hidden
+
+
+# --- Unknown workspace or unbound Home → uniform 404 ----------------------
 
 
 @pytest.mark.asyncio
@@ -185,7 +364,7 @@ async def test_system_and_hidden_paths_return_404(
 async def test_unknown_workspace_returns_uniform_404(mock_ws, _wd):
     mock_ws.return_value = None
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+        await _serve(WS_ID, "results/report.html")
     assert exc.value.status_code == 404
     assert exc.value.detail == "Not found"
 
@@ -196,7 +375,7 @@ async def test_unknown_workspace_returns_uniform_404(mock_ws, _wd):
 async def test_db_lookup_error_returns_uniform_404(mock_ws, _wd):
     mock_ws.side_effect = RuntimeError("db down")
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+        await _serve(WS_ID, "results/report.html")
     assert exc.value.status_code == 404
     assert exc.value.detail == "Not found"
 
@@ -204,11 +383,49 @@ async def test_db_lookup_error_returns_uniform_404(mock_ws, _wd):
 @pytest.mark.asyncio
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_flash_workspace_returns_uniform_404(mock_ws, _wd):
-    mock_ws.return_value = _workspace("flash")
+async def test_unbound_home_returns_uniform_404(mock_ws, _wd):
+    mock_ws.return_value = _workspace("unbound")
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+        await _serve(WS_ID, "results/report.html")
     assert exc.value.status_code == 404
+
+
+# Both routes that resolve a serve root before reading anything.
+async def _render_under_a_grant(workspace_id: str, path: str):
+    return await render_workspace_file_pdf(
+        workspace_id, path, visible=_owner_visible, serve_base="/g/x/"
+    )
+
+
+_ROOTED_ROUTES = (
+    _serve,
+    _render_under_a_grant,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _ROOTED_ROUTES, ids=["serve", "pdf"])
+@patch(_LAYOUT_WSMGR_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_workspace_that_names_no_folder_returns_uniform_404(
+    mock_ws, mock_mgr, route
+):
+    """A row bound to a computer with no folder name resolves to no serve root.
+
+    That is unservable rather than broken, and this route answers every failed
+    check the same way: the computer root is not a fallback for the folder,
+    because it holds the sibling workspaces' folders.
+    """
+    core = mock_mgr.get_instance.return_value.config.to_core_config.return_value
+    core.filesystem.working_directory = "/home/workspace"
+    mock_ws.return_value = _workspace("stopped") | {
+        "computer_id": "comp-0001",
+        "dir_name": None,
+    }
+    with pytest.raises(HTTPException) as exc:
+        await route(WS_ID, "results/report.html")
+    assert exc.value.status_code == 404
+    assert exc.value.detail == "Not found"
 
 
 # --- DB fallback (stopped workspace) --------------------------------------
@@ -224,7 +441,7 @@ async def test_db_fallback_serves_text(mock_ws, mock_fp, _wd, _vault):
     mock_fp.get_file_content = AsyncMock(
         return_value=_db_text_record("<html><head></head><body>hi</body></html>")
     )
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/report.html")
     assert resp.status_code == 200
     assert resp.media_type == "text/html; charset=utf-8"
     assert b"<body>hi</body>" in resp.body
@@ -240,7 +457,7 @@ async def test_db_fallback_serves_binary(mock_ws, mock_fp, _wd, _vault):
     png = b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03binarydata"
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=_db_binary_record(png))
-    resp = await serve_workspace_file(WS_ID, "results/chart.png", inject_theme=False)
+    resp = await _serve(WS_ID, "results/chart.png")
     assert resp.status_code == 200
     assert resp.media_type == "image/png"
     assert resp.body == png  # exact bytes, no redaction on binary
@@ -255,7 +472,7 @@ async def test_db_fallback_missing_file_returns_404(mock_ws, mock_fp, _wd, _vaul
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=None)
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, "results/missing.html", inject_theme=False)
+        await _serve(WS_ID, "results/missing.html")
     assert exc.value.status_code == 404
 
 
@@ -264,7 +481,9 @@ async def test_db_fallback_missing_file_returns_404(mock_ws, mock_fp, _wd, _vaul
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_db_fallback_unknown_extension_uses_db_mime(mock_ws, mock_fp, _wd, _vault):
+async def test_db_fallback_unknown_extension_uses_db_mime(
+    mock_ws, mock_fp, _wd, _vault
+):
     record = {
         "file_name": "data.bin",
         "content_text": None,
@@ -274,7 +493,7 @@ async def test_db_fallback_unknown_extension_uses_db_mime(mock_ws, mock_fp, _wd,
     }
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=record)
-    resp = await serve_workspace_file(WS_ID, "results/data.zzz", inject_theme=False)
+    resp = await _serve(WS_ID, "results/data.zzz")
     assert resp.media_type == "application/x-custom"
 
 
@@ -282,14 +501,17 @@ async def test_db_fallback_unknown_extension_uses_db_mime(mock_ws, mock_fp, _wd,
 
 
 @pytest.mark.asyncio
+@patch(_RECHECK_PATCH, new_callable=AsyncMock)
 @patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_WSMGR_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_running_workspace_serves_live_bytes(mock_ws, mock_mgr, _wd, _vault):
-    mock_ws.return_value = _workspace("running")
+async def test_running_workspace_serves_live_bytes(
+    mock_ws, mock_mgr, _wd, _vault, mock_recheck
+):
+    mock_ws.return_value = mock_recheck.return_value = _workspace("running")
     _warm(mock_mgr, _running_sandbox(b"<html><body>live</body></html>"))
-    resp = await serve_workspace_file(WS_ID, "results/x.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/x.html")
     assert resp.status_code == 200
     assert b"live" in resp.body
 
@@ -305,7 +527,7 @@ async def test_running_workspace_missing_file_returns_404(
     mock_ws.return_value = _workspace("running")
     _warm(mock_mgr, _running_sandbox(None))
     with pytest.raises(HTTPException) as exc:
-        await serve_workspace_file(WS_ID, "results/x.html", inject_theme=False)
+        await _serve(WS_ID, "results/x.html")
     assert exc.value.status_code == 404
 
 
@@ -324,7 +546,7 @@ async def test_running_db_row_but_cold_sandbox_uses_db_not_wake(
     mock_ws.return_value = _workspace("running")
     _warm(mock_mgr, None)
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("from-db"))
-    resp = await serve_workspace_file(WS_ID, "results/x.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/x.html")
     assert resp.status_code == 200
     assert b"from-db" in resp.body
     mock_mgr.get_instance.return_value.get_session_for_workspace.assert_not_called()
@@ -347,11 +569,13 @@ async def test_superseded_handle_uses_db_and_never_wakes_a_sandbox(
     mgr = mock_mgr.get_instance.return_value
     mgr.get_session_if_ready.return_value = None
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("from-db"))
-    resp = await serve_workspace_file(WS_ID, "results/x.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/x.html")
     assert resp.status_code == 200
     assert b"from-db" in resp.body
     mgr.get_session_if_ready.assert_called_once_with(
-        WS_ID, expected_sandbox_id="sb-existing"
+        WS_ID,
+        expected_sandbox_id="sb-existing",
+        target=MachineTarget.of_workspace(_workspace("running")),
     )
     mgr.get_session_for_workspace.assert_not_called()
 
@@ -367,7 +591,7 @@ async def test_superseded_handle_uses_db_and_never_wakes_a_sandbox(
 async def test_csp_header_present_on_html(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("<html></html>"))
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/report.html")
     _assert_report_csp(resp.headers["Content-Security-Policy"])
     assert resp.headers["Cache-Control"] == "private, max-age=60"
     assert resp.headers["Content-Disposition"].startswith("inline")
@@ -381,8 +605,10 @@ async def test_csp_header_present_on_html(mock_ws, mock_fp, _wd, _vault):
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
 async def test_csp_header_present_on_binary(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
-    mock_fp.get_file_content = AsyncMock(return_value=_db_binary_record(b"\x89PNGbytes"))
-    resp = await serve_workspace_file(WS_ID, "results/chart.png", inject_theme=False)
+    mock_fp.get_file_content = AsyncMock(
+        return_value=_db_binary_record(b"\x89PNGbytes")
+    )
+    resp = await _serve(WS_ID, "results/chart.png")
     # CSP is on EVERY response, not just HTML.
     _assert_report_csp(resp.headers["Content-Security-Policy"])
     assert resp.headers["Cache-Control"] == "private, max-age=60"
@@ -403,9 +629,12 @@ async def test_redaction_applied_to_text(mock_ws, mock_fp, _wd, mock_vault):
     mock_fp.get_file_content = AsyncMock(
         return_value=_db_text_record(f"<html><body>key={secret}</body></html>")
     )
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/report.html")
     assert secret.encode() not in resp.body
     assert b"[REDACTED:API_KEY]" in resp.body
+    # The owner the route resolved, not a second lookup that a deletion
+    # mid-request could turn into "no owner, nothing to redact".
+    mock_vault.assert_awaited_once_with(OWNER)
 
 
 @pytest.mark.asyncio
@@ -421,7 +650,7 @@ async def test_redaction_not_applied_to_binary(mock_ws, mock_fp, _wd, mock_vault
     raw = b"\x89PNG" + secret.encode() + b"\x00\x01"
     mock_ws.return_value = _workspace("stopped")
     mock_fp.get_file_content = AsyncMock(return_value=_db_binary_record(raw))
-    resp = await serve_workspace_file(WS_ID, "results/chart.png", inject_theme=False)
+    resp = await _serve(WS_ID, "results/chart.png")
     assert resp.body == raw
 
 
@@ -440,13 +669,17 @@ async def test_redaction_applied_to_misnamed_text(mock_ws, mock_fp, _wd, mock_va
     mock_fp.get_file_content = AsyncMock(
         return_value=_db_text_record(f"leaked key={secret}")
     )
-    resp = await serve_workspace_file(WS_ID, "results/secret.png", inject_theme=False)
+    resp = await _serve(WS_ID, "results/secret.png")
     assert resp.media_type == "image/png"
     assert secret.encode() not in resp.body
     assert b"[REDACTED:API_KEY]" in resp.body
 
 
-# --- ?inject=theme splices for HTML only ----------------------------------
+# --- ?inject= splices the page bridge into HTML only -----------------------
+
+
+_VIEW = bridge_for("view").script
+_COMMENTS = bridge_for("comments").script
 
 
 @pytest.mark.asyncio
@@ -454,16 +687,18 @@ async def test_redaction_applied_to_misnamed_text(mock_ws, mock_fp, _wd, mock_va
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_inject_theme_splices_for_html(mock_ws, mock_fp, _wd, _vault):
+async def test_inject_view_splices_the_bridge_for_html(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head><title>x</title></head><body>hi</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=True)
-    body = resp.body.decode()
-    assert "widget:themeUpdate" in body
-    assert 'content="light dark"' in body
-    # Script spliced right after <head>, before the original <title>.
-    assert body.index("widget:themeUpdate") < body.index("<title>")
+    resp = await _serve(WS_ID, "results/report.html", inject="view")
+    body = resp.body
+    assert _VIEW in body
+    assert b'content="light dark"' in body
+    # Spliced right after <head>, before the original <title>.
+    assert body.index(_VIEW) < body.index(b"<title>")
+    # Read only: the comment half stays out of a view.
+    assert b"page:comment-mode" not in body
 
 
 @pytest.mark.asyncio
@@ -471,15 +706,37 @@ async def test_inject_theme_splices_for_html(mock_ws, mock_fp, _wd, _vault):
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_inject_theme_not_applied_to_non_html(mock_ws, mock_fp, _wd, _vault):
+async def test_inject_view_carries_the_anchor_scroller(mock_ws, mock_fp, _wd, _vault):
+    """A reference clicked twice has to land twice.
+
+    The second click asks for the section the URL already names, so nothing
+    navigates. Scrolling has to be driven by the request rather than by the
+    fragment changing, which is why this reads `scrollIntoView` and not
+    `location.hash`.
+    """
+    mock_ws.return_value = _workspace("stopped")
+    html = "<html><head><title>x</title></head><body>hi</body></html>"
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
+    resp = await _serve(WS_ID, "results/report.html", inject="view")
+    body = resp.body
+    assert b"page:scroll-to" in body
+    assert b"scrollIntoView" in body
+    assert b"location.hash" not in body
+
+
+@pytest.mark.asyncio
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_inject_not_applied_to_non_html(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     css = "body{color:red}"
     mock_fp.get_file_content = AsyncMock(
         return_value=_db_text_record(css, mime="text/css")
     )
-    resp = await serve_workspace_file(WS_ID, "results/style.css", inject_theme=True)
+    resp = await _serve(WS_ID, "results/style.css", inject="view")
     assert resp.body == css.encode()
-    assert b"widget:themeUpdate" not in resp.body
 
 
 @pytest.mark.asyncio
@@ -491,10 +748,9 @@ async def test_plain_get_is_byte_faithful(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head></head><body>exact bytes</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=False)
-    # No inject param → original bytes, no theme script.
+    resp = await _serve(WS_ID, "results/report.html")
+    # No inject → original bytes, no bridge.
     assert resp.body == html.encode()
-    assert b"widget:themeUpdate" not in resp.body
 
 
 @pytest.mark.asyncio
@@ -502,36 +758,118 @@ async def test_plain_get_is_byte_faithful(mock_ws, mock_fp, _wd, _vault):
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_inject_theme_skips_non_utf8_html(mock_ws, mock_fp, _wd, _vault):
+async def test_inject_skips_non_utf8_html(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     # GBK-encoded HTML (the body bytes \xb1\xa8\xb8\xe6 are invalid UTF-8).
-    # Injection must decline rather than corrupt it via an errors="replace"
-    # decode, so the document is served byte-faithful with no theme script.
+    # The splice declines rather than risk the document, which is served
+    # byte-faithful with no bridge.
     gbk_html = b"<html><head></head><body>\xb1\xa8\xb8\xe6</body></html>"
     mock_fp.get_file_content = AsyncMock(
         return_value=_db_binary_record(gbk_html, mime="text/html")
     )
-    resp = await serve_workspace_file(WS_ID, "results/report.html", inject_theme=True)
+    resp = await _serve(WS_ID, "results/report.html", inject="view")
     assert resp.body == gbk_html
-    assert b"widget:themeUpdate" not in resp.body
 
 
 # --- Endpoint wrapper: ?inject query param wiring -------------------------
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("inject", "bridge"),
+    [
+        ("view", _VIEW),
+        # What the read-only view was called before it carried the bridge.
+        ("theme", _VIEW),
+        ("comments", _COMMENTS),
+    ],
+    # Named by the mode alone: the bridge itself is too long to name a test.
+    ids=["view", "theme", "comments"],
+)
 @patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_endpoint_inject_theme_query_enables_splice(mock_ws, mock_fp, _wd, _vault):
+async def test_endpoint_inject_query_picks_the_bridge(
+    mock_ws, mock_fp, _wd, _vault, inject, bridge
+):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head></head><body>x</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
     resp = await serve_workspace_file_endpoint(
-        workspace_id=WS_ID, path="results/report.html", inject="theme"
+        grant=_grant(), path="results/report.html", inject=inject
     )
-    assert b"widget:themeUpdate" in resp.body
+    assert bridge in resp.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inject", [None, "bogus"])
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_endpoint_without_inject_is_byte_faithful(
+    mock_ws, mock_fp, _wd, _vault, inject
+):
+    mock_ws.return_value = _workspace("stopped")
+    html = "<html><head></head><body>x</body></html>"
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
+    resp = await serve_workspace_file_endpoint(
+        grant=_grant(), path="results/report.html", inject=inject
+    )
+    assert resp.body == html.encode()
+
+
+# --- A file a page frames gets the nested bridge --------------------------
+
+
+_NESTED = bridge_for("nested").script
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dest", ["iframe", "frame", "object", "embed"])
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_endpoint_bridges_a_file_a_page_frames(
+    mock_ws, mock_fp, _wd, _vault, dest
+):
+    """Its stand-ins and its loads, with none of the viewer's dress: the frame
+    is the page's, so it keeps the page's scheme and scrollbar. An <object> or
+    an <embed> showing the file is a document inside the page too."""
+    mock_ws.return_value = _workspace("stopped")
+    html = "<html><head></head><body>x</body></html>"
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
+    resp = await serve_workspace_file_endpoint(
+        grant=_grant(), path="results/detail.html", inject=None, sec_fetch_dest=dest
+    )
+    assert _NESTED in resp.body
+    assert b"page:frame-loads" in resp.body
+    assert b"hello();" not in resp.body
+    assert b'content="light dark"' not in resp.body
+    assert resp.headers["vary"] == "Sec-Fetch-Dest"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dest", [None, "", "document", "empty"])
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_endpoint_serves_unframed_html_as_it_is(
+    mock_ws, mock_fp, _wd, _vault, dest
+):
+    """A download, a fetch, a tab and the PDF render get the bytes, and the
+    Vary keeps the framed copy out of their cache entry."""
+    mock_ws.return_value = _workspace("stopped")
+    html = "<html><head></head><body>x</body></html>"
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
+    resp = await serve_workspace_file_endpoint(
+        grant=_grant(), path="results/detail.html", inject=None, sec_fetch_dest=dest
+    )
+    assert resp.body == html.encode()
+    assert resp.headers["vary"] == "Sec-Fetch-Dest"
 
 
 @pytest.mark.asyncio
@@ -539,14 +877,40 @@ async def test_endpoint_inject_theme_query_enables_splice(mock_ws, mock_fp, _wd,
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_endpoint_without_inject_is_byte_faithful(mock_ws, mock_fp, _wd, _vault):
+async def test_endpoint_frame_that_asks_for_a_bridge_gets_that_one(
+    mock_ws, mock_fp, _wd, _vault
+):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head></head><body>x</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
     resp = await serve_workspace_file_endpoint(
-        workspace_id=WS_ID, path="results/report.html", inject=None
+        grant=_grant(),
+        path="results/report.html",
+        inject="comments",
+        sec_fetch_dest="iframe",
     )
-    assert resp.body == html.encode()
+    assert _COMMENTS in resp.body
+    assert _NESTED not in resp.body
+    # The URL already tells the two apart.
+    assert "vary" not in resp.headers
+
+
+@pytest.mark.asyncio
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_endpoint_framed_non_html_is_as_it_is(mock_ws, mock_fp, _wd, _vault):
+    mock_ws.return_value = _workspace("stopped")
+    css = "body{color:red}"
+    mock_fp.get_file_content = AsyncMock(
+        return_value=_db_text_record(css, mime="text/css")
+    )
+    resp = await serve_workspace_file_endpoint(
+        grant=_grant(), path="results/style.css", inject=None, sec_fetch_dest="iframe"
+    )
+    assert resp.body == css.encode()
+    assert "vary" not in resp.headers
 
 
 # --- ?format=pdf: render HTML to PDF --------------------------------------
@@ -554,8 +918,16 @@ async def test_endpoint_without_inject_is_byte_faithful(mock_ws, mock_fp, _wd, _
 # render_workspace_pdf is mocked everywhere — CI has no Chromium. The pre-
 # validation path (resolve bytes + require HTML) reuses the DB-fallback fixtures.
 
-_EXPECTED_INTERNAL_URL = f"{_PDF_INTERNAL_BASE}/api/v1/wsfiles/{WS_ID}/results/report.html"
-_EXPECTED_SERVE_PREFIX = f"{_PDF_INTERNAL_BASE}/api/v1/wsfiles/{WS_ID}/"
+
+
+def _assert_rendered_under_grant(mock_render, encoded_path: str, **kwargs) -> None:
+    """The document URL is the grant prefix plus the encoded path, and nothing else moved."""
+    call = mock_render.await_args
+    prefix = call.kwargs["workspace_serve_prefix"]
+    assert _GRANT_PREFIX_RE.match(prefix), prefix
+    assert call.args[0] == f"{prefix}{encoded_path}"
+    for key, value in kwargs.items():
+        assert call.kwargs[key] == value, key
 
 
 @pytest.mark.asyncio
@@ -572,7 +944,7 @@ async def test_format_pdf_renders_html(mock_ws, mock_fp, _wd, _vault, mock_rende
     mock_render.return_value = b"%PDF-1.7 fake pdf bytes"
 
     resp = await serve_workspace_file_endpoint(
-        workspace_id=WS_ID,
+        grant=_grant(),
         path="results/report.html",
         inject=None,
         format="pdf",
@@ -590,12 +962,9 @@ async def test_format_pdf_renders_html(mock_ws, mock_fp, _wd, _vault, mock_rende
     assert resp.headers["Cache-Control"] == "private, max-age=60"
     # No CSP on the PDF response.
     assert "Content-Security-Policy" not in resp.headers
-    mock_render.assert_awaited_once_with(
-        _EXPECTED_INTERNAL_URL,
-        workspace_serve_prefix=_EXPECTED_SERVE_PREFIX,
-        scale=None,
-        page_numbers=False,
-        branding=True,
+    mock_render.assert_awaited_once()
+    _assert_rendered_under_grant(
+        mock_render, "results/report.html", scale=None, page_numbers=False, branding=True
     )
 
 
@@ -615,7 +984,7 @@ async def test_format_pdf_scale_and_page_numbers_pass_through(
     mock_render.return_value = b"%PDF-1.7 fake pdf bytes"
 
     resp = await serve_workspace_file_endpoint(
-        workspace_id=WS_ID,
+        grant=_grant(),
         path="results/report.html",
         inject=None,
         format="pdf",
@@ -625,13 +994,44 @@ async def test_format_pdf_scale_and_page_numbers_pass_through(
     )
 
     assert resp.status_code == 200
-    mock_render.assert_awaited_once_with(
-        _EXPECTED_INTERNAL_URL,
-        workspace_serve_prefix=_EXPECTED_SERVE_PREFIX,
-        scale=0.8,
-        page_numbers=True,
-        branding=False,
+    mock_render.assert_awaited_once()
+    _assert_rendered_under_grant(
+        mock_render, "results/report.html", scale=0.8, page_numbers=True, branding=False
     )
+
+
+@pytest.mark.parametrize("caller_left, render_left", [(12 * 3600, 300), (60, 60)])
+@pytest.mark.asyncio
+@patch(_RENDER_PATCH, new_callable=AsyncMock)
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_format_pdf_renders_under_a_grant_of_its_own(
+    mock_ws, mock_fp, _wd, _vault, mock_render, caller_left, render_left
+):
+    """A document can print the address it was rendered from, so the PDF must
+    not carry the owner's own grant: the render's ends minutes after it, and
+    never after theirs."""
+    mock_ws.return_value = _workspace("stopped")
+    mock_fp.get_file_content = AsyncMock(
+        return_value=_db_text_record("<html><body>report</body></html>")
+    )
+    mock_render.return_value = b"%PDF-1.7"
+    now = int(time.time())
+    caller = _grant(expires_at=now + caller_left)
+
+    await serve_workspace_file_endpoint(
+        grant=caller, path="results/report.html", inject=None, format="pdf"
+    )
+
+    prefix = mock_render.await_args.kwargs["workspace_serve_prefix"]
+    token = prefix.rstrip("/").rsplit("/", 1)[-1]
+    # Capped at the caller's expiry, it is the caller's own: a leaked grant
+    # cannot renew itself through a PDF.
+    assert (token != caller) == (render_left < caller_left)
+    assert await file_grants.verify_file_grant(token) == WS_ID
+    assert abs(int(token.split(".")[2]) - (now + render_left)) <= 2
 
 
 @pytest.mark.asyncio
@@ -649,7 +1049,7 @@ async def test_format_pdf_on_non_html_returns_404_no_render(
     )
     with pytest.raises(HTTPException) as exc:
         await serve_workspace_file_endpoint(
-            workspace_id=WS_ID, path="results/style.css", inject=None, format="pdf"
+            grant=_grant(), path="results/style.css", inject=None, format="pdf"
         )
     assert exc.value.status_code == 404
     assert exc.value.detail == "Not found"
@@ -669,7 +1069,7 @@ async def test_format_pdf_on_missing_file_returns_404_no_render(
     mock_fp.get_file_content = AsyncMock(return_value=None)
     with pytest.raises(HTTPException) as exc:
         await serve_workspace_file_endpoint(
-            workspace_id=WS_ID, path="results/missing.html", inject=None, format="pdf"
+            grant=_grant(), path="results/missing.html", inject=None, format="pdf"
         )
     assert exc.value.status_code == 404
     mock_render.assert_not_awaited()
@@ -699,7 +1099,7 @@ async def test_format_pdf_render_errors_map_to_status(
     mock_render.side_effect = render_exc
     with pytest.raises(HTTPException) as exc:
         await serve_workspace_file_endpoint(
-            workspace_id=WS_ID, path="results/report.html", inject=None, format="pdf"
+            grant=_grant(), path="results/report.html", inject=None, format="pdf"
         )
     assert exc.value.status_code == expected_status
 
@@ -715,7 +1115,7 @@ async def test_format_pdf_traversal_returns_404_no_render(
 ):
     with pytest.raises(HTTPException) as exc:
         await serve_workspace_file_endpoint(
-            workspace_id=WS_ID,
+            grant=_grant(),
             path="results/../../etc/passwd",
             inject=None,
             format="pdf",
@@ -730,13 +1130,15 @@ async def test_format_pdf_traversal_returns_404_no_render(
 @patch(_WD_PATCH, return_value="/home/workspace")
 @patch(_FP_PATCH)
 @patch(_DBWS_PATCH, new_callable=AsyncMock)
-async def test_unknown_format_serves_normally(mock_ws, mock_fp, _wd, _vault, mock_render):
+async def test_unknown_format_serves_normally(
+    mock_ws, mock_fp, _wd, _vault, mock_render
+):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head></head><body>plain</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
     # An unrecognized format value falls through to a normal inline serve.
     resp = await serve_workspace_file_endpoint(
-        workspace_id=WS_ID, path="results/report.html", inject=None, format="docx"
+        grant=_grant(), path="results/report.html", inject=None, format="docx"
     )
     assert resp.status_code == 200
     assert resp.media_type == "text/html; charset=utf-8"
@@ -769,17 +1171,14 @@ async def test_format_pdf_encodes_url_metacharacters(
 
     # A space and a '#' in the filename would otherwise truncate/misroute.
     await serve_workspace_file_endpoint(
-        workspace_id=WS_ID,
+        grant=_grant(),
         path="results/Q4 report#draft.html",
         inject=None,
         format="pdf",
     )
 
     internal_url = mock_render.await_args.args[0]
-    assert internal_url == (
-        f"{_PDF_INTERNAL_BASE}/api/v1/wsfiles/{WS_ID}/"
-        "results/Q4%20report%23draft.html"
-    )
+    _assert_rendered_under_grant(mock_render, "results/Q4%20report%23draft.html")
     # Slashes preserved, no raw space or '#' leaked into the URL.
     assert " " not in internal_url and "#" not in internal_url
 
@@ -801,20 +1200,14 @@ async def test_format_pdf_encodes_cjk_filename(
 
     # A CJK-named report (neutral placeholder name).
     await serve_workspace_file_endpoint(
-        workspace_id=WS_ID,
+        grant=_grant(),
         path="results/报告.html",
         inject=None,
         format="pdf",
     )
 
-    internal_url = mock_render.await_args.args[0]
     # UTF-8 percent-encoding of 报告; the leading dir + '/' stay literal.
-    assert internal_url == (
-        f"{_PDF_INTERNAL_BASE}/api/v1/wsfiles/{WS_ID}/"
-        "results/%E6%8A%A5%E5%91%8A.html"
-    )
-    serve_prefix = mock_render.await_args.kwargs["workspace_serve_prefix"]
-    assert serve_prefix == _EXPECTED_SERVE_PREFIX
+    _assert_rendered_under_grant(mock_render, "results/%E6%8A%A5%E5%91%8A.html")
 
 
 @pytest.mark.asyncio
@@ -828,7 +1221,170 @@ async def test_serves_cjk_named_html_file(mock_ws, mock_fp, _wd, _vault):
     mock_ws.return_value = _workspace("stopped")
     html = "<html><head></head><body>季度报告</body></html>"
     mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
-    resp = await serve_workspace_file(WS_ID, "results/报告.html", inject_theme=False)
+    resp = await _serve(WS_ID, "results/报告.html")
     assert resp.status_code == 200
     assert resp.media_type == "text/html; charset=utf-8"
     assert "季度报告".encode() in resp.body
+
+
+# --- HTTP-level: the grant is the credential --------------------------------
+#
+# The route is mounted and driven over ASGI so the URL shape itself is what is
+# locked: a grant path that verifies serves, every other spelling is the same
+# 404, and the bare-UUID route no longer exists.
+
+
+def _wsfiles_client():
+    from httpx import ASGITransport, AsyncClient
+
+    from src.server.app.workspace_files.serve import wsfiles_router
+    from tests.conftest import create_test_app
+
+    app = create_test_app(wsfiles_router)
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+@pytest.mark.asyncio
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_grant_route_serves_with_a_valid_grant(mock_ws, mock_fp, _wd, _vault):
+    mock_ws.return_value = _workspace("stopped")
+    html = "<html><head></head><body>granted</body></html>"
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record(html))
+    async with _wsfiles_client() as client:
+        resp = await client.get(f"/api/v1/wsfiles/g/{_grant()}/results/report.html")
+    assert resp.status_code == 200
+    assert resp.content == html.encode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "grant",
+    [
+        # Signature with its last character flipped.
+        _grant()[:-1] + ("A" if _grant()[-1] != "A" else "B"),
+        # Signed for a different workspace, presented as WS_ID.
+        _grant("ws-test-other").replace("ws-test-other", WS_ID),
+        # Expired on 2000-01-01.
+        _grant(expires_at=946_684_800),
+        "not-a-grant",
+    ],
+    ids=["tampered-signature", "swapped-workspace", "expired", "malformed"],
+)
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_grant_route_refuses_a_bad_grant_before_any_lookup(
+    mock_ws, mock_fp, grant
+):
+    mock_ws.return_value = _workspace("stopped")
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("<p>x</p>"))
+    async with _wsfiles_client() as client:
+        resp = await client.get(f"/api/v1/wsfiles/g/{grant}/results/report.html")
+    assert resp.status_code == 404
+    mock_ws.assert_not_awaited()
+    mock_fp.get_file_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_bare_workspace_uuid_route_is_gone(mock_ws, mock_fp):
+    from src.server.app.workspace_files.serve import wsfiles_router
+
+    mock_ws.return_value = _workspace("stopped")
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("<p>x</p>"))
+    async with _wsfiles_client() as client:
+        resp = await client.get(f"/api/v1/wsfiles/{WS_ID}/results/report.html")
+    assert resp.status_code == 404
+    mock_ws.assert_not_awaited()
+
+    served = [r.path for r in wsfiles_router.routes if r.path.startswith("/api/v1/wsfiles/")]
+    assert served == ["/api/v1/wsfiles/g/{grant}/{path:path}"]
+
+
+@pytest.mark.parametrize(
+    "path", ["results/.env", "results/.ssh/config", "deck.key", "results/token.json"]
+)
+def test_a_file_is_not_refused_for_its_name(path):
+    # What a user keeps in their workspace is theirs: the routes redact vault
+    # secrets by value, and a name proves nothing.
+    assert shared_path_visible(ShareScope(WS_ID, ""), path)
+    assert may_be_artifact(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["vendor/chart.js", "node_modules/d3/d3.js", "report/vendor/a.css", "app/.next/static/a.js"],
+)
+def test_a_page_may_load_from_a_folder_hidden_only_to_tidy_a_listing(path):
+    assert page_may_load(path)
+    assert may_be_artifact(path)
+    # A thread's share link still opens none of it.
+    assert not shared_path_visible(ShareScope(WS_ID, ""), path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".git/config",
+        "app/.git/HEAD",
+        "node_modules/pkg/.git/config",
+        ".venv/lib/site.py",
+        ".config/gh/hosts.yml",
+        ".cache/pip/x",
+        "src/__pycache__/m.cpython-313.pyc",
+    ],
+)
+def test_a_page_reaches_no_history_environment_or_cache(path):
+    assert not page_may_load(path)
+    assert not may_be_artifact(path)
+
+
+# --- Who may read what a served document fetches ---------------------------
+#
+# The frame runs on an opaque origin, so every read it makes is cross-origin.
+# Locked here, behind the app's own CORS middleware as setup installs it: any
+# origin may read the answer, and never with credentials.
+
+
+def _wsfiles_client_behind_app_cors():
+    from fastapi.middleware.cors import CORSMiddleware
+    from httpx import ASGITransport, AsyncClient
+
+    from src.server.app.setup import app as server_app
+    from src.server.app.workspace_files.serve import wsfiles_router
+    from tests.conftest import create_test_app
+
+    cors = next(
+        m for m in server_app.user_middleware if issubclass(m.cls, CORSMiddleware)
+    )
+    app = cors.cls(create_test_app(wsfiles_router), *cors.args, **cors.kwargs)
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+
+async def _served():
+    grant = _grant()
+    async with _wsfiles_client_behind_app_cors() as client:
+        resp = await client.get(
+            f"/api/v1/wsfiles/g/{grant}/task-a/report/index.html",
+            headers={"Origin": "null"},
+        )
+    assert resp.status_code == 200
+    return resp
+
+
+@pytest.mark.asyncio
+@patch(_VAULT_PATCH, new_callable=AsyncMock, return_value={})
+@patch(_WD_PATCH, return_value="/home/workspace")
+@patch(_FP_PATCH)
+@patch(_DBWS_PATCH, new_callable=AsyncMock)
+async def test_any_origin_reads_a_served_document_and_never_with_credentials(
+    mock_ws, mock_fp, _wd, _vault
+):
+    mock_ws.return_value = _workspace("stopped")
+    mock_fp.get_file_content = AsyncMock(return_value=_db_text_record("<p>x</p>"))
+    resp = await _served()
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in resp.headers

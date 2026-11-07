@@ -1,13 +1,24 @@
 # Prompt templates
 
-Jinja2 sources for the PTC, Flash, and subagent system prompts. Rendered by
+Jinja2 sources for the PTC and subagent system prompts. Rendered by
 `PromptLoader` (`../loader.py`); defaults live in `../config/prompts.yaml`.
+The PTC prompt renders per role: the analyst's is the base prompt, and the
+Chief of Staff's adds `components/chief_of_staff.md.j2` as a `<role>` section,
+so a change there never touches a workspace's prompt or its cached prefix.
+`workspace_context`, `workspace_paths`, `task_workflow` and `memory` also read
+`role`: Home's `agent.md` is the Chief of Staff's notebook of what the user is
+focused on and where that work lives, laid out in `<role>`, not a workspace's
+index of its own work, and Home's workspace memory is how the user wants it to
+work. A shared section that describes the analyst's
+`agent.md` argues with `<role>`, and the model then keeps both layouts. Subagents
+render these sections without `role`, so they read the analyst's wording.
 
 Preview any surface as it renders at runtime:
 
 ```bash
-uv run python scripts/utils/render_prompt.py --mode ptc --crawl --count-tokens
+uv run python scripts/utils/render_prompt.py --crawl --count-tokens
 uv run python scripts/utils/render_prompt.py --subagent equity-analyst
+uv run python scripts/utils/render_prompt.py --role chief_of_staff
 ```
 
 ## Two guidance levels: lean and detailed
@@ -116,26 +127,51 @@ on why it inverts. The speed bump is deliberate.
 
 ```bash
 # What does lean drop?
-uv run python scripts/utils/render_prompt.py --mode ptc --diff
+uv run python scripts/utils/render_prompt.py --diff
 
 # Resolve the level from a real model, as runtime would
-uv run python scripts/utils/render_prompt.py --mode ptc --model claude-opus-5
+uv run python scripts/utils/render_prompt.py --model claude-opus-5-5
 ```
 
-`test_lean_subset_invariant.py` enforces the subset property across PTC, Flash,
-and all five subagents. If it fails, lean is rendering text detailed never
+`test_lean_subset_invariant.py` enforces the subset property across PTC and all
+five subagents. If it fails, lean is rendering text detailed never
 sees — move it outside the fence, or register it as an either/or.
 
 ## Other conventions
 
-- **`agent_preference` is echoed to the model verbatim.**
-  `components/user_profile.md.j2` prints its keys as user instructions, so a
-  renderer-consumed knob must not be stored there — it would become prompt
-  text about itself. `output_format` is the one exception, and it shows the
-  cost: the loop carries an explicit `if key != "output_format"` so that key
-  can select a section instead of printing. Model-scoped settings (the guidance level
-  among them) live in the sibling `model_preference` bucket, which the template
-  never iterates.
+- **`agent_preference` is echoed to the model verbatim, except for its
+  structured keys.** `components/user_profile.md.j2` prints its keys as user
+  instructions, so a renderer-consumed knob must not be stored there — it
+  would become prompt text about itself. The keys of
+  `STRUCTURED_PREFERENCES["agent_preference"]`
+  (`src/server/models/profile_vocabulary.py`) are the knobs that may:
+  `render_user_profile` hands the template each one whose value is in its
+  vocabulary as `agent_steering`, which selects the main agent's paragraphs
+  (the `output_format` ranking one ordered list of formats),
+  and prints the rest. A subagent gets none of the paragraphs, and
+  `research_depth` is worded for the role, because the Chief of Staff's
+  research is often a hand-off, so `render_user_profile` takes the `role`. A
+  value added to one of those vocabularies needs its paragraph in the template
+  too, or `tests/unit/prompts/test_agent_preference_rendering.py` fails.
+  Model-scoped settings (the guidance level among them) live in the sibling
+  `model_preference` bucket, which the template never iterates.
+- **`trading_permission` is not a preference.** The agent can write
+  `agent_preference` (its profile files, its preference tool), so a level that
+  lets orders skip approval cannot live there. It has its own table and
+  endpoint, and the turn runner adds it to the profile when a server the
+  workspace is configured with can place a live order or stage an instruction
+  as a direct tool (`src/server/services/trading_rule.py`). The rule follows
+  the user's settings, not this turn's binding: a lapsed grant, a connection
+  waiting on re-auth or order tools the turn budget dropped leave it as it
+  was, since a profile that moved with them would reach the model as a
+  `profile_changed` row saying its rule changed when the user changed nothing.
+  It is read off the same binding plans that stamp each order tool's
+  approval, never a second read, so it cannot promise an approval step the
+  turn did not wire.
+  Subagents are bound no order tools, so their copy of the profile drops it.
+  Beside it, `trading_asks_on` names the brokerages (by server) whose switch
+  still asks at a level that skips approval, so the rule does not tell the
+  model those orders go straight out.
 - **The static prompt excludes every per-request value.** The clock, the user's
   identity, the surface this turn is running on, and anything that changes
   between turns are rendered from `templates/envelope/` and appended after the
@@ -150,6 +186,18 @@ sees — move it outside the fence, or register it as an either/or.
   own text on the request (`ChatRequest.surface_rules`) and the template renders
   that verbatim in place of a built-in line.
 
+- **A static prompt change reaches a running thread at its next rebuild, not
+  at the deploy.** A Claude thread keeps sending the static prompt its thinking
+  was produced under until a summary that keeps no turns lets it take the
+  current one (`runtime_context/frozen_prompt.py`), so most edits reach it at
+  its next compaction. When the old text is unsafe or contradicts the deployed
+  code (a safety or trading rule, a tool or path that no longer exists), raise
+  `prompt_version` in `../config/prompts.yaml` by one and set
+  `rebuild_before` to the new value: every thread pinned below it rebuilds at
+  its next turn start, whatever its size, at one summary each. Leave both
+  alone for any other change. A build whose `prompt_version` is below a
+  thread's pin, a rollback, never forces that rebuild.
+
 ## `templates/envelope/`
 
 Fragments of the runtime context, rendered by `middleware/runtime_context/`
@@ -161,7 +209,9 @@ directory:
   history. They emit bare markdown lines: the envelope supplies the
   `<system-reminder>` wrapper, so a fragment that adds one nests it.
 - **Baseline fragments** (`baseline_files`, `baseline_agentmd`,
-  `baseline_memory`, `baseline_identity`) land *inside* the cached per-thread
+  `baseline_memory`, `baseline_identity`, and the harness blocks
+  `baseline_mcp_servers`, `baseline_skills` and the Chief of Staff's
+  `baseline_activity`) land *inside* the cached per-thread
   prefix, so they must be byte-identical for equal inputs: no timestamps, no
   dict iteration, and no guidance fence. A guidance flip must not move them,
   because the model can change mid-thread.

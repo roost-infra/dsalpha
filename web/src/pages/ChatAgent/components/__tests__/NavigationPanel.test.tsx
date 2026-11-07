@@ -9,15 +9,20 @@
  * currentThreadId so the rows mount on first render.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi, type Mock } from 'vitest';
 import { render as rtlRender, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import NavigationPanel from '../NavigationPanel';
 import { resetNavPanelExpansion, forgetNavPanelExpansion, expandedWorkspaces } from '../navExpansionStore';
 import { toSidebarAgentRow } from '../../session/subagents/subagentStatus';
+import { loadNavTreeKit } from '../navTreeKit';
+
+// The panel paints with a static kit until the interactive one loads. Load it
+// up front so these cases run against the tree people actually use.
+beforeAll(() => loadNavTreeKit());
 
 // `t()` identity mock — we don't depend on bundled English copy here, but
 // the component reads i18n keys for some labels and we want the fallback
@@ -55,7 +60,7 @@ interface RenderOpts {
 function renderPanel({ agents }: RenderOpts) {
   return render(
     <NavigationPanel
-      workspaces={[{ workspace_id: WS_ID, name: 'Test workspace' }]}
+      workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', is_home: false }]}
       workspaceThreads={{
         [WS_ID]: {
           threads: [{ thread_id: THREAD_ID, title: 'Test thread' }],
@@ -73,6 +78,44 @@ function renderPanel({ agents }: RenderOpts) {
     />,
   );
 }
+
+describe('NavigationPanel: the current thread row', () => {
+  function renderCurrent(agents: Parameters<typeof toSidebarAgentRow>[0][]) {
+    const onNavigateThread = vi.fn();
+    render(
+      <NavigationPanel
+        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', is_home: false }]}
+        workspaceThreads={{
+          [WS_ID]: { threads: [{ thread_id: THREAD_ID, title: 'Test thread' }], loading: false },
+        }}
+        currentWorkspaceId={WS_ID}
+        currentThreadId={THREAD_ID}
+        agents={agents.map(toSidebarAgentRow)}
+        activeAgentId={null}
+        expandWorkspace={vi.fn()}
+        onSelectAgent={vi.fn()}
+        onRemoveAgent={vi.fn()}
+        onNavigateThread={onNavigateThread}
+      />,
+    );
+    return onNavigateThread;
+  }
+
+  it('is a pick with no agents to show, which the mobile drawer closes on', async () => {
+    const onNavigateThread = renderCurrent([{ id: 'main', name: 'Lead Agent', isMainAgent: true }]);
+    await userEvent.click(screen.getByText('Test thread'));
+    expect(onNavigateThread).toHaveBeenCalledWith(WS_ID, THREAD_ID);
+  });
+
+  it('toggles its agents when it has them, and is not a pick', async () => {
+    const onNavigateThread = renderCurrent([
+      { id: 'main', name: 'Lead Agent', isMainAgent: true },
+      { id: 'sub-1', name: 'Worker', isMainAgent: false },
+    ]);
+    await userEvent.click(screen.getByText('Test thread'));
+    expect(onNavigateThread).not.toHaveBeenCalled();
+  });
+});
 
 describe('NavigationPanel — subagent description fallback', () => {
   it('renders the trimmed description in place of the displayId / Worker name', () => {
@@ -234,9 +277,9 @@ describe('NavigationPanel — workspace render order', () => {
     render(
       <NavigationPanel
         workspaces={[
-          { workspace_id: 'ws-a', name: 'Workspace A' },
-          { workspace_id: 'ws-b', name: 'Workspace B' },
-          { workspace_id: 'ws-c', name: 'Workspace C' },
+          { workspace_id: 'ws-a', name: 'Workspace A', is_home: false },
+          { workspace_id: 'ws-b', name: 'Workspace B', is_home: false },
+          { workspace_id: 'ws-c', name: 'Workspace C', is_home: false },
         ]}
         workspaceThreads={{}}
         currentWorkspaceId="ws-c"
@@ -260,7 +303,7 @@ describe('NavigationPanel — show more threads', () => {
     resetNavPanelExpansion();
     render(
       <NavigationPanel
-        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace' }]}
+        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', is_home: false }]}
         workspaceThreads={{ [WS_ID]: threadsData }}
         currentWorkspaceId={WS_ID}
         currentThreadId={null}
@@ -312,16 +355,16 @@ describe('NavigationPanel — active-thread auto-reveal', () => {
   function renderWithActiveThread(opts: {
     threadsData: { threads: { thread_id: string; title: string }[]; loading: boolean; total?: number };
     currentThreadId: string | null;
-    status?: string;
+    isHome?: boolean;
     isActive?: boolean;
-    onLoadMoreThreads?: ReturnType<typeof vi.fn>;
+    onLoadMoreThreads?: Mock<(wsId: string) => void>;
   }) {
     resetNavPanelExpansion();
-    const onLoadMoreThreads = opts.onLoadMoreThreads ?? vi.fn();
+    const onLoadMoreThreads = opts.onLoadMoreThreads ?? vi.fn<(wsId: string) => void>();
     render(
       <NavigationPanel
         isActive={opts.isActive ?? true}
-        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', status: opts.status }]}
+        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', is_home: opts.isHome ?? false }]}
         workspaceThreads={{ [WS_ID]: opts.threadsData }}
         currentWorkspaceId={WS_ID}
         currentThreadId={opts.currentThreadId}
@@ -404,7 +447,7 @@ describe('NavigationPanel — active-thread auto-reveal', () => {
     expect(onLoadMoreThreads).not.toHaveBeenCalled();
   });
 
-  it('auto-reveals in the flash workspace (pages like any other workspace)', async () => {
+  it('auto-reveals in Home (pages like any other workspace)', async () => {
     const onLoadMoreThreads = renderWithActiveThread({
       threadsData: {
         threads: [{ thread_id: 't-1', title: 'Thread one' }],
@@ -412,7 +455,7 @@ describe('NavigationPanel — active-thread auto-reveal', () => {
         total: 14,
       },
       currentThreadId: 't-9',
-      status: 'flash',
+      isHome: true,
     });
 
     await waitFor(() => expect(onLoadMoreThreads).toHaveBeenCalled());
@@ -437,8 +480,8 @@ describe('NavigationPanel — workspace drag-reorder affordances', () => {
     return render(
       <NavigationPanel
         workspaces={[
-          { workspace_id: 'ws-flash', name: 'Flash workspace', status: 'flash' },
-          { workspace_id: 'ws-a', name: 'Workspace A' },
+          { workspace_id: 'ws-home', name: 'Home', status: 'running', is_home: true },
+          { workspace_id: 'ws-a', name: 'Workspace A', is_home: false },
         ]}
         workspaceThreads={{}}
         currentWorkspaceId="ws-a"
@@ -454,13 +497,14 @@ describe('NavigationPanel — workspace drag-reorder affordances', () => {
     );
   }
 
-  it('marks workspace header rows sortable, including the flash workspace', () => {
+  it('marks workspace header rows sortable, including Home', () => {
     renderReorderPanel(vi.fn());
 
     const sortable = screen.getByText('Workspace A').closest('[aria-roledescription="sortable"]');
     expect(sortable).not.toBeNull();
-    // Flash drags too — the pin-boundary guard keeps it inside the pinned block.
-    expect(screen.getByText('Flash workspace').closest('[aria-roledescription="sortable"]')).not.toBeNull();
+    // Home drags too; the pin-boundary guard keeps it inside the pinned
+    // block. It shows as the Chief of Staff, not its stored name.
+    expect(screen.getByText('agents.chiefOfStaff').closest('[aria-roledescription="sortable"]')).not.toBeNull();
   });
 
   it('renders plain rows when no reorder handler is provided', () => {
@@ -475,8 +519,8 @@ describe('NavigationPanel — expansion survives remounts', () => {
     return render(
       <NavigationPanel
         workspaces={[
-          { workspace_id: 'ws-a', name: 'Workspace A' },
-          { workspace_id: 'ws-b', name: 'Workspace B' },
+          { workspace_id: 'ws-a', name: 'Workspace A', is_home: false },
+          { workspace_id: 'ws-b', name: 'Workspace B', is_home: false },
         ]}
         workspaceThreads={{
           'ws-a': { threads: [{ thread_id: 'ta-1', title: 'Thread A1' }], loading: false },
@@ -563,8 +607,8 @@ describe('NavigationPanel — shared expansion across instances', () => {
     return render(
       <NavigationPanel
         workspaces={[
-          { workspace_id: 'ws-a', name: 'Workspace A' },
-          { workspace_id: 'ws-b', name: 'Workspace B' },
+          { workspace_id: 'ws-a', name: 'Workspace A', is_home: false },
+          { workspace_id: 'ws-b', name: 'Workspace B', is_home: false },
         ]}
         workspaceThreads={{
           'ws-a': { threads: [{ thread_id: 'ta-1', title: 'Thread A1' }], loading: false },
@@ -614,9 +658,9 @@ describe('NavigationPanel — shared expansion across instances', () => {
     return render(
       <NavigationPanel
         workspaces={[
-          { workspace_id: 'ws-a', name: 'Workspace A' },
-          { workspace_id: 'ws-b', name: 'Workspace B' },
-          { workspace_id: 'ws-c', name: 'Workspace C' },
+          { workspace_id: 'ws-a', name: 'Workspace A', is_home: false },
+          { workspace_id: 'ws-b', name: 'Workspace B', is_home: false },
+          { workspace_id: 'ws-c', name: 'Workspace C', is_home: false },
         ]}
         workspaceThreads={{
           'ws-a': { threads: [{ thread_id: 'ta-1', title: 'Thread A1' }], loading: false },
@@ -652,5 +696,31 @@ describe('NavigationPanel — shared expansion across instances', () => {
 
     // ws-b must still be expanded — manual expansion persists across navigation.
     expect(within(second.container).getByText('Thread B1')).toBeInTheDocument();
+  });
+});
+
+describe('NavigationPanel — thread agent expansion', () => {
+  // The rows are memoized so the sidebar stays still during streaming, and the
+  // expansion store mutates one long-lived Set rather than replacing it. A memo
+  // that took that Set as its only signal compared equal on every toggle and
+  // froze the agent rows in whatever state they first rendered.
+  it('collapses and reopens the current thread agent rows on the chevron', async () => {
+    resetNavPanelExpansion();
+    const user = userEvent.setup();
+    renderPanel({
+      agents: [
+        { id: 'main', name: 'Lead Agent', isMainAgent: true },
+        { id: 'sub-1', name: 'Worker', description: 'Research revenue drivers', isMainAgent: false },
+      ],
+    });
+
+    // The current thread opens itself on mount, so its rows start visible.
+    expect(screen.getByText('Research revenue drivers')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('nav.collapseAgents'));
+    await waitFor(() => expect(screen.queryByText('Research revenue drivers')).toBeNull());
+
+    await user.click(screen.getByLabelText('nav.expandAgents'));
+    await waitFor(() => expect(screen.getByText('Research revenue drivers')).toBeInTheDocument());
   });
 });

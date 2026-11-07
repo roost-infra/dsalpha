@@ -1,0 +1,118 @@
+/* ============================================
+   Base element styles, on top of Tailwind's preflight
+   ============================================
+
+   Imported straight after preflight (index.css) and, like it, outside any
+   cascade layer, so these win over preflight by source order and lose to every
+   utility and component rule by specificity. */
+
+/* ---------- Tailwind v3 preflight, where v4's differs ----------
+   The v4 preflight changed these defaults. Each rule puts back the v3 value so
+   the upgrade moves no pixels; drop one only as a deliberate visual change. */
+
+/* v4 makes form controls transparent, square and fully opaque; v3 left all
+   three to the browser, so a field with no background class showed the
+   platform's field color. Buttons were already transparent in v3. */
+input,
+select,
+optgroup,
+textarea {
+  background-color: revert;
+}
+
+input:where([type='button'], [type='reset'], [type='submit']) {
+  background-color: transparent;
+}
+
+button,
+input,
+select,
+optgroup,
+textarea {
+  border-radius: revert;
+  opacity: revert;
+}
+
+/* v4 zeroes every element's padding; v3 left options at the browser's. */
+option {
+  padding: revert;
+}
+
+/* v4's placeholder is half the text color; v3's was gray-400. */
+input::placeholder,
+textarea::placeholder {
+  color: #9ca3af;
+}
+
+/* v4 dropped the pointer cursor on buttons. */
+button,
+[role='button'] {
+  cursor: pointer;
+}
+
+:disabled {
+  cursor: default;
+}
+
+/* ---------- Touch hit area ---------- */
+
+/* A control drawn small on purpose keeps its size and takes a finger across
+   44px. Only under a coarse pointer, so a mouse's target and the desktop layout
+   do not move. The box is centered rather than inset by a negative margin, which
+   would have to know the control's own size. Zero specificity on the position,
+   so a control that places itself stays where it is.
+
+   The box lies over whatever is beside the control, and a later control's box
+   lies over an earlier one's, so one that sits closer than 44px to another
+   control keeps to the room it has: --tap-target-w and -h set the box, and -x
+   and -y move it off a neighbor. An ancestor's overflow clips it too. A disabled
+   control takes no box, since it would only make a dead zone of its neighbors'
+   ground. */
+@media (pointer: coarse) {
+  :where(.tap-target) {
+    position: relative;
+  }
+  .tap-target:not(:disabled)::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--tap-target-w, 44px));
+    height: max(100%, var(--tap-target-h, 44px));
+    transform: translate(calc(-50% + var(--tap-target-x, 0px)), calc(-50% + var(--tap-target-y, 0px)));
+  }
+}
+
+/* ---------- App base ---------- */
+
+* {
+  box-sizing: border-box;
+  @apply border-border;
+}
+
+body {
+  @apply bg-background text-foreground;
+  font-family: var(--font-ui);
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100vh;
+  min-width: 320px;
+  overflow: hidden;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+
+/* Tailwind's preflight carries `:-moz-focusring { outline: auto }` outside any
+   layer, so in Firefox it would beat the whole focus layer in tokens.css: its
+   own ring on a keyboard focus, and one on a clicked field the layer means to
+   keep quiet. Same specificity and later in source, so this wins, and
+   revert-layer hands the decision back to the layer. */
+:-moz-focusring {
+  outline: revert-layer;
+}

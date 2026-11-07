@@ -140,8 +140,101 @@ class TestNamespaceParsing:
         assert [s.name for s in extension.secrets] == ["PROBE_TOKEN"]
         assert extension.servers["remote"].tool_exposure_mode == "detailed"
 
-    def test_an_unknown_key_still_costs_the_namespace(self):
+    def test_a_newer_contract_field_costs_only_itself(self):
+        # A key this build does not read used to fail extra=forbid and empty
+        # the namespace, so one new field in a newer package erased every
+        # secret, bind and server instruction on an older build.
         diagnostics: list[Diagnostic] = []
-        extension = parse_extension({"nonsense": 1}, diagnostics)
-        assert [d.code for d in diagnostics] == ["extension_invalid"]
-        assert extension.servers == {}
+        extension = parse_extension(
+            {
+                "theme": "dark",
+                "secrets": [
+                    {
+                        "name": "VENDOR_KEY",
+                        "label": "Vendor key",
+                        "bind": [
+                            {
+                                "server": "remote",
+                                "header": "Authorization",
+                                "scheme": "bearer",
+                            },
+                            {"server": "cli", "env": "VENDOR_KEY"},
+                        ],
+                    },
+                    {"name": "OTHER_KEY", "label": "Other key"},
+                ],
+                "servers": {"remote": {"tool_exposure_mode": "detailed"}},
+            },
+            diagnostics,
+        )
+        assert [s.name for s in extension.secrets] == ["VENDOR_KEY", "OTHER_KEY"]
+        assert [
+            b.model_dump(exclude_none=True) for b in extension.secrets[0].bind
+        ] == [
+            {"server": "remote", "header": "Authorization"},
+            {"server": "cli", "env": "VENDOR_KEY"},
+        ]
+        assert extension.servers["remote"].tool_exposure_mode == "detailed"
+        assert [(d.level, d.code, d.message) for d in diagnostics] == [
+            (
+                "warning",
+                "extension_key_unknown",
+                "extensions.ai.langalpha.theme: unknown key; ignored",
+            ),
+            (
+                "warning",
+                "extension_key_unknown",
+                "extensions.ai.langalpha.secrets[0].bind[0].scheme: unknown key; "
+                "ignored",
+            ),
+        ]
+
+    def test_an_entry_that_does_not_validate_costs_only_that_entry(self):
+        diagnostics: list[Diagnostic] = []
+        extension = parse_extension(
+            {
+                "secrets": [
+                    {"name": "not a name", "label": "Bad"},
+                    {
+                        "name": "KEPT",
+                        "label": "Kept",
+                        "bind": [
+                            {"server": "remote", "env": "A", "header": "B"},
+                            {"server": "remote", "header": "X-Key"},
+                        ],
+                    },
+                ],
+                "servers": {
+                    "remote": {"tool_exposure_mode": "loud"},
+                    "other": {"description": "Reads the tape."},
+                },
+                "icon": 7,
+            },
+            diagnostics,
+        )
+        assert [s.name for s in extension.secrets] == ["KEPT"]
+        assert [b.header for b in extension.secrets[0].bind] == ["X-Key"]
+        assert list(extension.servers) == ["other"]
+        assert extension.icon is None
+        assert {d.code for d in diagnostics} == {"extension_invalid"}
+        assert sorted(d.message.split(":")[0] for d in diagnostics) == [
+            "extensions.ai.langalpha.icon",
+            "extensions.ai.langalpha.secrets[0]",
+            "extensions.ai.langalpha.secrets[1].bind[0]",
+            "extensions.ai.langalpha.servers.remote",
+        ]
+
+    def test_a_skills_dict_carrying_icons_is_accepted_and_ignored(self):
+        # Manifests written while skills could name an icon still install:
+        # extra=forbid would otherwise cost the namespace over a key nothing
+        # reads.
+        diagnostics: list[Diagnostic] = []
+        extension = parse_extension(
+            {
+                "skills": {"dcf-model": {"icon": "calculator"}},
+                "servers": {"remote": {"tool_exposure_mode": "detailed"}},
+            },
+            diagnostics,
+        )
+        assert diagnostics == []
+        assert extension.servers["remote"].tool_exposure_mode == "detailed"

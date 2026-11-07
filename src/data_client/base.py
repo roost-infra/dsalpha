@@ -9,7 +9,43 @@ News sources implement :class:`NewsDataSource` for the news feed layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
+
+
+class IntervalNotSupported(ValueError):
+    """The source has no bars of the asked width, whatever the symbol.
+
+    A provider chain skips such a source instead of reading its refusal as the
+    covering source failing.
+    """
+
+
+# A country's own exchanges, in the screen filters' exchange names (FMP's, which
+# every screen source takes). FMP's `country` is the issuer's domicile, so a US
+# screen also ranked Visa's Buenos Aires line in pesos, and Yahoo's is where a
+# line lists, so a GB screen also returned Cboe Europe copies of UK lines. A
+# country screen names these exchanges instead, the ones the symbology knows,
+# so each row's currency is known from its suffix. India keeps to NSE: its
+# companies list on BSE as well, which would show each one twice.
+SCREEN_HOME_EXCHANGES: dict[str, tuple[str, ...]] = {
+    "US": ("NYSE", "NASDAQ", "AMEX", "CBOE"),
+    "CN": ("SHH", "SHZ"),
+    "HK": ("HKSE",),
+    "GB": ("LSE",),
+    "JP": ("JPX",),
+    "CA": ("TSX",),
+    "AU": ("ASX",),
+    "DE": ("XETRA",),
+    "FR": ("PAR",),
+    "NL": ("AMS",),
+    "IT": ("MIL",),
+    "ES": ("BME",),
+    "CH": ("SIX",),
+    "KR": ("KSC", "KOE"),
+    "TW": ("TAI",),
+    "SG": ("SES",),
+    "IN": ("NSE",),
+}
 
 
 @dataclass
@@ -136,14 +172,26 @@ class FinancialDataSource(Protocol):
     async def get_revenue_by_segment(
         self, symbol: str, segment_type: str = "product", **kwargs: Any
     ) -> list[dict[str, Any]]: ...
-    async def get_sector_performance(
-        self, target_date: str | None = None
-    ) -> list[dict[str, Any]]: ...
     async def screen_stocks(self, **filters: Any) -> list[dict[str, Any]]: ...
     async def search_stocks(
         self, query: str, limit: int = 50
     ) -> list[dict[str, Any]]: ...
     async def close(self) -> None: ...
+
+
+class MoverRow(TypedDict):
+    """One market mover, as every :class:`MarketIntelSource` hands it over."""
+
+    symbol: str
+    #: The price its change was measured at.
+    price: float | None
+    change: float | None
+    change_percent: float | None
+    volume: float | None
+    #: Money traded in the session: volume at the session's average price.
+    traded_value: float | None
+    #: When ``price`` traded, Unix ms.
+    traded_at: int | None
 
 
 class MarketIntelSource(Protocol):
@@ -171,7 +219,7 @@ class MarketIntelSource(Protocol):
     ) -> dict[str, Any]: ...
     async def get_movers(
         self, direction: str = "gainers", user_id: str | None = None
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[MoverRow]: ...
     async def close(self) -> None: ...
 
 

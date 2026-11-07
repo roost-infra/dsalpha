@@ -38,7 +38,6 @@ export interface SkillInfo {
 
 function uploadConfig(onProgress: ((percent: number) => void) | null) {
   return {
-    headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress
       ? (e: { loaded: number; total?: number }) => {
           if (e.total) onProgress(Math.round((e.loaded / e.total) * 100));
@@ -48,18 +47,33 @@ function uploadConfig(onProgress: ((percent: number) => void) | null) {
 }
 
 export async function getSkills(opts?: {
-  mode?: string | null;
   includeDisabled?: boolean;
   workspaceId?: string | null;
   allScopes?: boolean;
 }): Promise<SkillInfo[]> {
   const params: Record<string, string | boolean> = {};
-  if (opts?.mode) params.mode = opts.mode;
   if (opts?.includeDisabled) params.include_disabled = true;
   if (opts?.workspaceId) params.workspace_id = opts.workspaceId;
   if (opts?.allScopes) params.all_scopes = true;
   const { data } = await api.get('/api/v1/skills', { params });
   return data.skills || [];
+}
+
+/** What one upload may hold on this server. `max_upload_bytes` weighs the
+ * zip as sent; `max_stored_bytes` the skill as kept, re-zipped after what an
+ * upload sets aside, and is null where the deployment has no such cap. */
+export interface SkillLimits {
+  max_upload_bytes: number;
+  max_stored_bytes: number | null;
+  max_files: number;
+  max_file_bytes: number;
+  max_unpacked_bytes: number;
+  max_skill_md_bytes: number;
+}
+
+export async function getSkillLimits(): Promise<SkillLimits> {
+  const { data } = await api.get<SkillLimits>('/api/v1/skills/limits');
+  return data;
 }
 
 /** Re-scope a skill row: user tier (every workspace) ↔ one workspace. Both
@@ -117,14 +131,32 @@ export async function deleteSkill(name: string): Promise<void> {
   await api.delete(`/api/v1/skills/${encodeURIComponent(name)}`);
 }
 
-/** The SKILL.md text, most specific tier first (workspace → user → platform). */
+export interface SkillFile {
+  /** Relative to the skill's folder: `SKILL.md`, `references/sector-drivers.md`. */
+  path: string;
+  size: number;
+}
+
+export interface SkillContent {
+  name: string;
+  path: string;
+  /** Null when the file is not text, or too large to show. */
+  content: string | null;
+  size: number;
+  /** Every file in the skill's folder. */
+  files: SkillFile[];
+}
+
+/** One file of a skill (SKILL.md by default) with its folder's listing, most
+ *  specific tier first (workspace → user → platform). */
 export async function getSkillContent(
   name: string,
   workspaceId: string | null = null,
-): Promise<{ name: string; content: string }> {
+  path = 'SKILL.md',
+): Promise<SkillContent> {
   const { data } = await api.get(
     `/api/v1/skills/${encodeURIComponent(name)}/content`,
-    { params: workspaceId ? { workspace_id: workspaceId } : {} },
+    { params: { ...(workspaceId ? { workspace_id: workspaceId } : {}), path } },
   );
   return data;
 }

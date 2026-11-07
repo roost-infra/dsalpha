@@ -1,4 +1,5 @@
-import type { CatalogServer } from '@/pages/ChatAgent/utils/api';
+import { DEFAULT_TRADING_LEVEL } from '@/lib/tradingPermission';
+import type { CatalogServer, McpProbeResult } from '@/pages/ChatAgent/utils/api';
 
 /**
  * Fixture builders for API shapes several suites need.
@@ -31,6 +32,8 @@ export function catalogServer(over: Partial<CatalogServer> = {}): CatalogServer 
     updated_at: null,
     plugin_name: null,
     plugin_enabled: null,
+    probe_kicked_at: null,
+    trading_permission: DEFAULT_TRADING_LEVEL,
     ...over,
   };
 }
@@ -44,4 +47,21 @@ export function httpCatalogServer(over: Partial<CatalogServer> = {}): CatalogSer
     url: 'https://mcp.example.com/sse',
     ...over,
   });
+}
+
+/**
+ * A row's projection of the host-side check. The catalog never carries the
+ * tool list (only the add form's own check does), so `tools` stays empty here.
+ */
+export function catalogProbe(over: Partial<McpProbeResult> = {}): McpProbeResult {
+  return {
+    verdict: 'ok',
+    tools: [],
+    server_info: null,
+    error: '',
+    http_status: null,
+    missing_secrets: [],
+    probed_at: '2026-01-01T00:00:00Z',
+    ...over,
+  };
 }

@@ -10,9 +10,8 @@ import type {
 /**
  * The account-wide compaction preset, as cards carrying their real numbers.
  *
- * Bundles token_threshold, keep_messages and truncate_args_trigger_messages —
- * the numbers are the only way to tell the presets apart, so they are printed
- * rather than described.
+ * Each sets the context size that triggers a summary. The number is the only
+ * way to tell the presets apart, so it is printed rather than described.
  */
 export function CompactionProfilePicker({
   value,
@@ -66,7 +65,7 @@ export function CompactionProfilePicker({
               onClick={() => onChange(selected ? "" : name)}
               className={cn(
                 "flex flex-col items-start rounded-md p-3 text-left transition-colors",
-                "hover:border-[var(--color-border-elevated)]",
+                "hover:border-(--color-border-elevated)",
               )}
               style={{
                 background: selected
@@ -91,8 +90,6 @@ export function CompactionProfilePicker({
               >
                 {t("settings.compactionProfilePreset", {
                   tokens: Math.round(preset.token_threshold / 1000),
-                  keep: preset.keep_messages,
-                  trim: preset.truncate_args_trigger_messages,
                 })}
               </span>
             </button>

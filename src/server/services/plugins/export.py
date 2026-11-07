@@ -1,15 +1,15 @@
 """Export an installed plugin as a spec-compliant package zip.
 
-Regenerated from the three stored sources: plugin.json and mcp.json come back
-from the JSONB manifests as they were stored, and each still-owned skill's
-canonical archive is unpacked under ``skills/<dir>/``. No secret value can
-ride along, because the stored document is scrubbed of credential-looking
-literals at validation time rather than here — a package that embedded one in
-violation of the spec exports with the key present and the value empty. Files
-the
-install didn't model (README, LICENSE, extension dirs) were reported as
-``dropped_files`` and are not round-tripped. Detached components are the
-user's now — they are not exported.
+Regenerated from the stored sources: plugin.json and mcp.json come back from
+the JSONB manifests as they were stored, each still-owned skill's canonical
+archive is unpacked under ``skills/<dir>/``, and each subagent's file comes
+back as shipped under ``agents/``. No secret value can ride along, because
+the stored document is scrubbed of credential-looking literals at validation
+time rather than here: a package that embedded one in violation of the spec
+exports with the key present and the value empty. Files the install didn't
+model (README, LICENSE, extension dirs) were reported as ``dropped_files``
+and are not round-tripped. Detached components are the user's now, so
+they are not exported.
 """
 
 import asyncio
@@ -19,6 +19,7 @@ import logging
 import zipfile
 from typing import Any
 
+from src.server.database.plugin_subagents import list_plugin_subagents
 from src.server.database.plugins import list_plugin_skill_names
 from src.server.services.user_skills.limits import MAX_CONCURRENT_ARCHIVE_OPS
 from src.server.services.user_skills.materialize import fetch_skill_archive
@@ -74,6 +75,10 @@ async def export_plugin_zip(user_id: str, plugin: dict[str, Any]) -> bytes:
             ("mcp.json", json.dumps(plugin["mcp_document"], indent=2) + "\n")
         )
 
+    docs += [
+        (f"agents/{row['name']}.md", row["file_text"])
+        for row in await list_plugin_subagents(user_id, plugin["user_plugin_id"])
+    ]
     refs = await list_plugin_skill_names(user_id, plugin["user_plugin_id"])
     gate = asyncio.Semaphore(MAX_CONCURRENT_ARCHIVE_OPS)
 

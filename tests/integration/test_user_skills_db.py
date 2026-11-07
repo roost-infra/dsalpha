@@ -122,6 +122,80 @@ class TestDeleteClearsWorkspaceDisableMarkers:
         assert "alpha" in await list_workspace_skill_disables(ws_id)
 
 
+class TestMoveClearsWorkspaceDisableMarkers:
+    """A marker describes the inherited skill, so one left by a skill that
+    moved down disables it again, unasked, once it moves back up."""
+
+    async def _workspaces(self, user_id: str, n: int) -> list[str]:
+        from src.server.database.workspace import create_workspace
+
+        return [
+            (await create_workspace(user_id=user_id, name=f"ws {i}", status="running"))[
+                "workspace_id"
+            ]
+            for i in range(n)
+        ]
+
+    async def test_a_round_trip_through_a_workspace_comes_back_everywhere(
+        self, seed_user, patched_get_db_connection, test_user_id
+    ):
+        from src.server.database.user_skills import (
+            list_workspace_skill_disables,
+            move_user_skill,
+            set_workspace_skill_disable,
+        )
+
+        home, other = await self._workspaces(test_user_id, 2)
+        await _write(test_user_id, "alpha", None)
+        await set_workspace_skill_disable(other, "alpha", True)
+
+        await move_user_skill(
+            test_user_id, "alpha", from_workspace_id=None, to_workspace_id=home
+        )
+        await move_user_skill(
+            test_user_id, "alpha", from_workspace_id=home, to_workspace_id=None
+        )
+
+        assert "alpha" not in await list_workspace_skill_disables(other)
+
+    async def test_a_move_between_workspaces_leaves_the_others(
+        self, seed_user, patched_get_db_connection, test_user_id
+    ):
+        """A marker elsewhere describes the account's skill of that name, which
+        a workspace row that shadows it can move past without touching."""
+        from src.server.database.user_skills import (
+            list_workspace_skill_disables,
+            move_user_skill,
+            set_workspace_skill_disable,
+            upsert_user_skill,
+        )
+
+        start, end, other = await self._workspaces(test_user_id, 3)
+        await _write(test_user_id, "alpha", None)
+        await upsert_user_skill(
+            test_user_id,
+            "alpha",
+            description="probe",
+            license=None,
+            frontmatter={"name": "alpha", "description": "probe"},
+            allowed_tools=[],
+            confirmed=True,
+            content_hash=uuid.uuid4().hex,
+            archive_key=None,
+            archive_blob=b"PK\x05\x06" + b"\x00" * 18,
+            archive_bytes=22,
+            file_count=1,
+            workspace_id=start,
+        )
+        await set_workspace_skill_disable(other, "alpha", True)
+
+        await move_user_skill(
+            test_user_id, "alpha", from_workspace_id=start, to_workspace_id=end
+        )
+
+        assert "alpha" in await list_workspace_skill_disables(other)
+
+
 class TestPlatformAliasReadUnderTheLock:
     async def _seed_override(self, user_id: str, alias: str) -> None:
         from src.server.database.user import upsert_user_preferences

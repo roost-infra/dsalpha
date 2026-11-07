@@ -10,7 +10,8 @@
  * a dozen across four files.
  */
 import type { PluginInfo } from '@/pages/ChatAgent/utils/api/plugins';
-import { bundleArt, type BrandArt } from '@/lib/brandArt';
+import type { BuiltinMcpServer } from '@/pages/ChatAgent/utils/api/mcpBuiltins';
+import { bundleArt, mcpServerArt, type BrandArt } from '@/lib/brandArt';
 import type { MarkKind } from '@/pages/ChatAgent/components/mcp/KindTile';
 
 type SourceShape = Pick<PluginInfo, 'source_type'>;
@@ -56,4 +57,16 @@ export function sourceLabelKey(plugin: SourceShape): string {
 export function pluginMark(plugin: PluginInfo): { art?: BrandArt; kind: MarkKind } {
   const art = bundleArt(plugin);
   return { art, kind: isBundled(plugin) && !art ? 'langalpha' : 'plugin' };
+}
+
+/**
+ * The same rule for a server a bundle ships, so a row matches its bundle's
+ * card. One no bundle claims is an operator's own entry in
+ * `agent_config.yaml`, which is not ours either and keeps the server glyph.
+ */
+export function builtinServerMark(
+  server: Pick<BuiltinMcpServer, 'icon_url' | 'plugin_name'>,
+): { art?: BrandArt; kind: MarkKind } {
+  const art = mcpServerArt(server);
+  return { art, kind: server.plugin_name && !art ? 'langalpha' : 'server' };
 }

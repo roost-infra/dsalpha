@@ -4,21 +4,29 @@
 the frontend reads it. A refused launch opens no run and no channel, so nothing
 will ever arrive to settle its card: an unstamped failure leaves the card
 spinning for the life of the thread.
+
+A launch a stop refused mid-setup is the exception: a stop is a cancellation,
+so its reply stays a success and settles the card through its artifact.
 """
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from ptc_agent.agent.middleware.background_subagent import task_actions
 from ptc_agent.agent.middleware.background_subagent.registry import (
+    BackgroundTask,
     BackgroundTaskRegistry,
 )
-from ptc_agent.agent.middleware.background_subagent.spawn import TaskRunRefused
+from ptc_agent.agent.middleware.background_subagent.spawn import (
+    SpawnStoppedError,
+    TaskRunRefused,
+)
 
 
 class _RefusingMiddleware:
@@ -50,6 +58,158 @@ async def test_a_refused_task_launch_is_stamped_an_error():
 
     assert message.content.startswith("Error: could not start ")
     assert message.status == "error"
+
+
+def _task() -> BackgroundTask:
+    return BackgroundTask(
+        tool_call_id="call-1",
+        task_id="k7Xm2p",
+        description="d",
+        prompt="p",
+        subagent_type="research",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "action, ending",
+    [
+        ("init", "was stopped before it started."),
+        ("resume", "was stopped before the resume started."),
+    ],
+)
+async def test_a_stopped_launch_settles_as_stopped_not_failed(
+    monkeypatch: pytest.MonkeyPatch, action: str, ending: str
+):
+    """A stop mid-setup refuses the writer, and the run settles cancelled.
+
+    The reply carries no task artifact, so nothing else settles the launch
+    card. The frontend settles the record cancelled from this artifact, which
+    an init card shows as "Stopped"; without it the card spins "Running", and
+    an error status shows "Failed". A resume card reads "Resumed" either way.
+    """
+
+    async def _stopped(*_args: Any, **_kwargs: Any) -> None:
+        raise SpawnStoppedError("Task-k7Xm2p was stopped before it started")
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _stopped)
+
+    message = await task_actions._spawn_writer(
+        _RefusingMiddleware(),
+        _task(),
+        None,
+        None,
+        prompt="p",
+        description="d",
+        tool_call_id="call-1",
+        action=action,
+    )
+
+    assert message is not None
+    assert message.content == f"Background subagent {_task().display_id} {ending}"
+    assert message.status == "success"
+    assert message.artifact == {"launch": "cancelled"}
+
+
+@pytest.mark.asyncio
+async def test_a_completed_spawn_carries_no_refusal_message(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Control: a spawn that completes hands the writer off with no message."""
+
+    async def _spawned(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(task_actions, "spawn_task_writer", _spawned)
+
+    assert (
+        await task_actions._spawn_writer(
+            _RefusingMiddleware(),
+            _task(),
+            None,
+            None,
+            prompt="p",
+            description="d",
+            tool_call_id="call-1",
+            action="init",
+        )
+        is None
+    )
+
+
+class _TypedMiddleware(_RefusingMiddleware):
+    def __init__(self, subagent_types: frozenset[str]) -> None:
+        super().__init__()
+        self.subagent_types = subagent_types
+
+
+def _task_request(action: str = "init", subagent_type: str | None = "research") -> Any:
+    args = {"action": action, "description": "d", "prompt": "p", "subagent_type": subagent_type}
+    if action != "init":
+        args["task_id"] = "k7Xm2p"
+    return SimpleNamespace(tool_call={"id": "call-1", "args": args}, runtime=None)
+
+
+@pytest.fixture
+def routed(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[str]]:
+    """Which handler each action reached, with the real ones stubbed out."""
+    reached: dict[str, list[str]] = {"init": [], "update": [], "resume": []}
+
+    def _stub(name: str):
+        async def _handle(*_args: Any, **kwargs: Any) -> str:
+            reached[name].append(kwargs.get("subagent_type"))
+            return name
+
+        return _handle
+
+    for name in reached:
+        monkeypatch.setattr(task_actions, f"_handle_{name}", _stub(name))
+    return reached
+
+
+@pytest.mark.asyncio
+# None: an omitted type means general-purpose, which this roster lacks.
+@pytest.mark.parametrize("subagent_type", ["ghost", None])
+async def test_an_init_of_a_type_with_no_graph_runs_in_place_and_registers_nothing(routed, subagent_type):
+    mw = _TypedMiddleware(frozenset({"research"}))
+    seen = []
+
+    async def handler(request: Any) -> str:
+        seen.append(request)
+        return "in place"
+
+    request = _task_request(subagent_type=subagent_type)
+
+    assert await task_actions.handle_task_action(mw, request, handler) == "in place"
+    assert seen == [request]
+    assert routed["init"] == []
+    assert not mw.registry._tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("roster", "subagent_type"), [({"research"}, "research"), ({"general-purpose"}, None)])
+async def test_an_init_otherwise_takes_the_background_path(routed, roster, subagent_type):
+    async def handler(_request: Any) -> str:
+        raise AssertionError("ran in place")
+
+    result = await task_actions.handle_task_action(
+        _TypedMiddleware(frozenset(roster)), _task_request(subagent_type=subagent_type), handler
+    )
+
+    assert (result, routed["init"]) == ("init", [subagent_type])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["update", "resume"])
+async def test_an_update_or_resume_is_not_judged_by_the_type_set(routed, action):
+    async def handler(_request: Any) -> str:
+        raise AssertionError("ran in place")
+
+    result = await task_actions.handle_task_action(
+        _TypedMiddleware(frozenset({"research"})), _task_request(action, "ghost"), handler
+    )
+
+    assert (result, routed[action]) == (action, ["ghost"])
 
 
 _SWEPT_FILES = ("task_actions.py", "middleware.py")

@@ -10,6 +10,7 @@ renames never leak and the frontend switches on exactly one vocabulary.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Optional
 
 # The public vocabulary is a PARTITION, not a list: every status is live
@@ -100,6 +101,31 @@ def is_live(raw: Any) -> bool:
     return value is not None and str(value) in _LIVE
 
 
+def is_user_stop(row: Optional[Mapping[str, Any]]) -> bool:
+    """True iff a run or response row ended because the user stopped it.
+
+    A cancelled status alone is not a stop: shutdown and recovery cancel runs
+    too. The finalize records ``cancelled_by_user`` from the user's /cancel,
+    whichever worker took it, so readers check that flag and never
+    ``cancel_requested_at``, which a system cancel stamps as well.
+    """
+    if not row or row.get("status") != "cancelled":
+        return False
+    metadata = row.get("metadata")
+    return isinstance(metadata, dict) and bool(metadata.get("cancelled_by_user"))
+
+
+# Endings whose subagents are collected and billed. A user stop bills them
+# too, killed; any other ending (an error, a timeout, a shutdown) is not the
+# user's doing, so its subagents are killed unbilled.
+COLLECTED_ENDINGS = frozenset({"completed", "interrupted"})
+
+
+def bills_subagents(row: Optional[dict[str, Any]]) -> bool:
+    """True iff a settled run row's ending bills the subagents it spawned."""
+    return bool(row) and (row.get("status") in COLLECTED_ENDINGS or is_user_stop(row))
+
+
 # The credit gate's two wire spellings, declared rather than derived. Both are
 # matched outside Python — the resume query filters on them in SQL and the
 # stream reducer compares the error type in TypeScript — so neither may follow
@@ -126,7 +152,6 @@ _QUESTION_TYPE = "ask_user_question"
 INTERRUPT_REASONS = (
     INTERRUPT_REASON_CREDIT_PAUSE,
     "user_question",
-    "plan_review_required",
     "approval_required",
 )
 
@@ -159,18 +184,27 @@ def _classify_one(request: dict) -> Optional[str]:
         # left is "approve this", so the generalization holds where naming a
         # specific action would be a guess.
         return "approval_required"
-    name = request.get("name")
-    if name == "SubmitPlan":
-        return "plan_review_required"
-    return "approval_required" if name else None
+    return "approval_required" if request.get("name") else None
 
 
-def classify_interrupt_reason(interrupts: Any) -> Optional[str]:
-    """Classify HITL interrupt payloads into the ``interrupt_reason`` column.
+def classify_interrupts(interrupts: Any) -> tuple[Optional[str], Optional[str]]:
+    """Classify HITL interrupt payloads -> (``interrupt_reason``, the credit
+    pause's denial).
 
-    One authority for the spelling: the live streaming path and the recovery
-    scanner must never drift apart on it. ``None`` when no payload carries a
-    discriminator at all, which the column already stores as NULL.
+    One authority for both: the live producer, the finalize fallback and the
+    recovery scanner must never drift apart on the spelling or on which
+    words a pause stamps. The reason is ``None`` when no payload carries a
+    discriminator, which the column stores as NULL. The denial is the quota
+    service's own words, relayed verbatim or not at all; the last pause wins.
     """
-    reasons = [r for r in map(_classify_one, _action_requests(interrupts)) if r]
-    return min(reasons, key=INTERRUPT_REASONS.index, default=None)
+    reasons: list[str] = []
+    message: Optional[str] = None
+    for request in _action_requests(interrupts):
+        reason = _classify_one(request)
+        if reason:
+            reasons.append(reason)
+        if reason == INTERRUPT_REASON_CREDIT_PAUSE and isinstance(
+            request.get("message"), str
+        ):
+            message = request["message"]
+    return min(reasons, key=INTERRUPT_REASONS.index, default=None), message

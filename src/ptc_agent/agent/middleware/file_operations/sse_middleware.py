@@ -31,7 +31,8 @@ from langchain.agents.middleware import AgentMiddleware, AgentState
 from typing_extensions import NotRequired
 from langgraph.config import get_stream_writer
 
-from ptc_agent.core.paths import workspace_relative_path
+from ptc_agent.agent.tools.computer_reach import ran_elsewhere
+from ptc_agent.core.paths import DEFAULT_SANDBOX_ROOT, workspace_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class FileOperationMiddleware(AgentMiddleware):
     def __init__(
         self,
         on_agent_md_write: Callable[[dict[str, Any] | None], None] | None = None,
-        work_dir: str = "/home/workspace",
+        work_dir: str = DEFAULT_SANDBOX_ROOT,
         thread_id: str | None = None,
     ) -> None:
         super().__init__()
@@ -107,8 +108,13 @@ class FileOperationMiddleware(AgentMiddleware):
         Intercept tool calls and emit file operation events after execution.
 
         Emits a single event per operation with full content for frontend display.
-        Event field order: agent, operation, file_path, tool_call_id, timestamp,
-        status, line_count, content/old_string/new_string.
+        Event field order: agent, operation, file_path, sandbox_path, tool_call_id,
+        timestamp, status, line_count, content/old_string/new_string.
+
+        ``file_path`` is the workspace-relative spelling and ``sandbox_path`` the
+        one the tool was called with: the browser routes on the relative form
+        (a folder's absolute path matches none of its memory or memo prefixes)
+        and keeps the absolute one for opening the file where it sits.
 
         Args:
             request: Tool call request with tool_call dict containing name, args, id
@@ -120,12 +126,13 @@ class FileOperationMiddleware(AgentMiddleware):
         tool_call = request.tool_call
         tool_name = tool_call.get("name")
 
-        # Only process file operation tools
-        if tool_name not in self.MONITORED_TOOLS:
+        tool_args = tool_call.get("args", {})
+        # Only process file operation tools, on this computer: a card opens
+        # its path here, and so does the agent.md hook.
+        if tool_name not in self.MONITORED_TOOLS or ran_elsewhere(tool_args):
             return await handler(request)
 
         tool_call_id = tool_call.get("id", "unknown")
-        tool_args = tool_call.get("args", {})
         file_path = tool_args.get("file_path", "unknown")
 
         logger.debug(f"[FILE_OP_MIDDLEWARE] Intercepting {tool_name} (id: {tool_call_id})")
@@ -164,7 +171,8 @@ class FileOperationMiddleware(AgentMiddleware):
             # Build payload with operation-specific content
             payload: dict[str, Any] = {
                 "operation": tool_name,
-                "file_path": file_path,
+                "file_path": normalized,
+                "sandbox_path": file_path,
             }
 
             if tool_name == "Write":
@@ -213,7 +221,8 @@ class FileOperationMiddleware(AgentMiddleware):
                 "status": "failed",
                 "payload": {
                     "operation": tool_name,
-                    "file_path": file_path,
+                    "file_path": normalized,
+                    "sandbox_path": file_path,
                     "error": str(e),
                 },
             }

@@ -39,8 +39,8 @@ curl http://localhost:8000/health   # → {"status": "healthy"}
 
 Stop the stack with `make down` (or `make clean` to also reclaim Docker disk).
 
-No keys are strictly required — see [Data Provider Fallback Chain](README.md#data-provider-fallback-chain).
-For the full experience, set `DAYTONA_API_KEY` and `FMP_API_KEY` in `.env`; for
+No keys are strictly required — see "Optional keys and what they unlock" under [Get started](README.md#get-started).
+For the full experience, set `DAYTONA_API_KEY` (or `E2B_API_KEY`) and `FMP_API_KEY` in `.env`; for
 LLM access, set an API key or connect via OAuth in the UI.
 
 <details>

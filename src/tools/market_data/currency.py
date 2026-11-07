@@ -1,13 +1,12 @@
 """Currency-aware display formatting for market-data tool output.
 
 Field names and numeric values stay currency-neutral; only human-readable
-display strings gain a currency prefix. USD output is byte-identical to the
-legacy hardcoded ``$`` formatting, so US symbols are unaffected.
+display strings gain a currency prefix. USD keeps the ``$`` it always printed,
+but a negative value now leads with its sign (``-$1.23``, where the old
+formatting wrote ``$-1.23``) and one that rounds to zero drops it.
 """
 
 from typing import NamedTuple, Optional, Union
-
-from .utils import format_number
 
 # ISO 4217 code -> display prefix. Unknown codes fall back to "<ISO> " so a
 # value renders as e.g. "CHF 12.34".
@@ -30,6 +29,12 @@ class DisplaySpec(NamedTuple):
 
     currency: Optional[str]
     decimals: int
+    # No currency prefix: an index level is points, and a listing on a venue
+    # the protocol does not know has no known currency.
+    bare: bool = False
+    # Zeros past the second decimal are dropped: a coin carries eight places
+    # for SHIB's $0.00000464, which would pad BTC to $76,810.32810000.
+    trim: bool = False
 
 
 # What the formatters accept for their second argument: a resolved spec, a bare
@@ -37,11 +42,31 @@ class DisplaySpec(NamedTuple):
 CurrencyArg = Union[DisplaySpec, str, None]
 
 
+def quote_spec(spec: DisplaySpec, price: Optional[float]) -> DisplaySpec:
+    """*spec* for quoting *price*: under one unit it keeps four places, since a US
+    stock under a dollar quotes in hundredths of a cent and a Hong Kong penny
+    stock in tenths of a cent. An A-share under a yuan still ticks in fen, so a
+    yuan price keeps its own places."""
+    if price is None or abs(price) >= 1 or spec.currency == "CNY":
+        return spec
+    return spec._replace(decimals=max(spec.decimals, 4))
+
+
 def _spec(currency: CurrencyArg) -> DisplaySpec:
     """Coerce a bare code / ``None`` to a 2-decimal spec; pass specs through."""
     if isinstance(currency, DisplaySpec):
         return currency
     return DisplaySpec(currency, 2)
+
+
+def _sign(value: float, decimals: int) -> tuple[str, float]:
+    """Split the sign off so it leads the symbol ("-CN¥1.23", never "CN¥-1.23").
+
+    A value that rounds to zero at the shown precision drops its sign.
+    """
+    if value < 0 and round(value, decimals) != 0:
+        return "-", -value
+    return "", abs(value)
 
 
 def currency_symbol(code: Optional[str]) -> str:
@@ -73,40 +98,57 @@ def fmt_price(
     spec = _spec(currency)
     dec = spec.decimals if decimals is None else decimals
     grouping = "," if group else ""
-    return f"{currency_symbol(spec.currency)}{value:{grouping}.{dec}f}"
+    sign, value = _sign(value, dec)
+    prefix = "" if spec.bare else currency_symbol(spec.currency)
+    text = f"{value:{grouping}.{dec}f}"
+    if spec.trim and dec > 2:
+        whole, _, places = text.partition(".")
+        text = f"{whole}.{places.rstrip('0').ljust(2, '0')}"
+    return f"{sign}{prefix}{text}"
 
 
-def fmt_money(
-    value: Optional[float], currency: CurrencyArg = None, suffix: bool = True
-) -> str:
-    """Currency-aware large-number formatting (mirrors utils.format_number).
+def fmt_quote(value: Optional[float], currency: CurrencyArg = None, group: bool = False) -> str:
+    """:func:`fmt_price` for a traded price, at the precision it quotes in
+    (:func:`quote_spec`): each figure is judged by its own size, so a 52-week
+    high above a dollar keeps two places beside a sub-dollar last trade."""
+    if value is None:
+        return "N/A"
+    return fmt_price(value, quote_spec(_spec(currency), value), group=group)
 
-    Applies B/M/T suffixes for magnitudes and a currency prefix. For USD the
-    output is byte-identical to ``format_number``. ``None`` value -> "N/A".
-    Use only for values priced in the instrument's listing currency (market
-    cap, price targets); statement figures (revenue, cash flow) may be
-    reported in a different currency and keep plain ``format_number`` until
-    reportedCurrency is plumbed through.
+
+def _scaled(value: float, prefix: str, places: int = 2) -> str:
+    """The one magnitude ladder (T/B/M, grouped below a million), sign first.
+
+    Money and counts differ only in ``prefix`` and in the ``places`` shown below
+    a million, so they cannot drift apart on where a suffix starts or which
+    side of the symbol a minus sits.
+    """
+    sign, value = _sign(value, places)
+    for scale, unit in ((1e12, "T"), (1e9, "B"), (1e6, "M")):
+        if value >= scale:
+            return f"{sign}{prefix}{value / scale:.2f}{unit}"
+    return f"{sign}{prefix}{value:,.{places}f}"
+
+
+def fmt_money(value: Optional[float], currency: CurrencyArg = None) -> str:
+    """Large money figure with a currency prefix, e.g. "$3.68T", "HK$2.50B".
+
+    A statement figure (revenue, cash flow) is reported in the issuer's own
+    currency, which need not be the listing one, so pass its
+    ``reportedCurrency`` rather than the instrument's. ``None`` -> "N/A".
     """
     if value is None:
         return "N/A"
-    sym = currency_symbol(_spec(currency).currency)
-    if suffix and abs(value) >= 1e12:
-        return f"{sym}{value / 1e12:.2f}T"
-    if suffix and abs(value) >= 1e9:
-        return f"{sym}{value / 1e9:.2f}B"
-    if suffix and abs(value) >= 1e6:
-        return f"{sym}{value / 1e6:.2f}M"
-    if suffix:
-        return f"{sym}{value:,.2f}"
-    return f"{value:,.2f}"
+    spec = _spec(currency)
+    return _scaled(value, "" if spec.bare else currency_symbol(spec.currency))
 
 
-def fmt_count(value: Optional[float]) -> str:
-    """Currency-neutral large-number formatting for share counts / volumes.
+def fmt_count(value: Optional[float], places: int = 2) -> str:
+    """Share counts and volumes: the money ladder without a currency prefix.
 
-    Byte-identical to ``format_number(value)`` with the currency prefix stripped
-    (delegates to it, so B/M/T suffixes, ``None`` -> "N/A", and negatives match
-    exactly). Use for quantities that carry no currency, never for prices.
+    ``places=0`` prints a share count whole below a million; the default keeps
+    two, since a crypto bar's volume can be fractional.
     """
-    return format_number(value).replace("$", "")
+    if value is None:
+        return "N/A"
+    return _scaled(value, "", places)

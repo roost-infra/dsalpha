@@ -37,6 +37,11 @@ def mock_connection(mock_cursor):
         yield mock_cursor
 
     conn.cursor = _cursor_cm
+    @asynccontextmanager
+    async def _transaction_cm():
+        yield
+
+    conn.transaction = _transaction_cm
     return conn
 
 
@@ -387,7 +392,7 @@ async def test_get_user_preferences_cache_hit():
 
     assert result is not None
     assert result["user_id"] == "user-1"
-    cache.client.get.assert_awaited_once_with("user_prefs:user-1")
+    cache.client.get.assert_awaited_once_with("user_prefs:v2:user-1")
     # DB should NOT have been called
     cursor.execute.assert_not_awaited()
 
@@ -429,7 +434,7 @@ async def test_get_user_preferences_cache_miss():
     # Cache was populated with JSON
     cache.client.set.assert_awaited_once()
     set_call = cache.client.set.call_args
-    assert set_call[0][0] == "user_prefs:user-1"
+    assert set_call[0][0] == "user_prefs:v2:user-1"
     # The second positional arg is JSON; verify it round-trips
     stored = json.loads(set_call[0][1])
     assert stored["user_id"] == "user-1"
@@ -448,4 +453,4 @@ async def test_invalidate_user_prefs_cache():
 
         await invalidate_user_prefs_cache("user1")
 
-    cache.client.delete.assert_awaited_once_with("user_prefs:user1")
+    cache.client.delete.assert_awaited_once_with("user_prefs:v2:user1")

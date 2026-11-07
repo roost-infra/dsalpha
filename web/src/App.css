@@ -10,6 +10,18 @@
   overflow: hidden;
 }
 
+/* Set by lib/visualViewport.ts while an on-screen keyboard is up. What is fixed
+   to the bottom of the screen measures off the tab bar, and fixed means the
+   layout viewport, which runs on behind the keyboard: the keyboard stands in
+   for the bar, so those composers land on top of it. */
+html[data-keyboard-open] {
+  --bottom-tab-height: var(--keyboard-overlap);
+}
+
+html[data-keyboard-open] .app-layout {
+  height: var(--keyboard-viewport-height);
+}
+
 .app-main {
   width: 100%;
   height: 100%;
@@ -17,7 +29,7 @@
   background-color: hsl(var(--bg-main));
   overflow: auto;
   box-sizing: border-box;
-  transition: padding-left 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: padding-left var(--motion-fold) var(--ease-out);
 }
 
 /* Fixed overlays positioned off --sidebar-width. They are viewport-anchored, so
@@ -25,8 +37,8 @@
    to the new column while .app-main is still easing into it. */
 .sidebar-tracking {
   transition:
-    left 0.25s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    left var(--motion-fold) var(--ease-out),
+    transform var(--motion-fold) var(--ease-out);
 }
 
 .main {
@@ -39,26 +51,20 @@
 
 /* A route with no top bar of its own to mark `data-chrome="drag"` drops in a
    `.chrome-drag-strip` (chrome.css) so the top of the content column can still
-   move the window. Two shapes, and which one a route needs is decided by
-   whether it scrolls:
+   move the window. It goes ABOVE the route's scroll port (Automations, Orders,
+   Plugins, Settings) -- a strip inside one rides the content out of view, and a
+   titlebar that works only at scroll-top is the bug reported again. Nothing is
+   needed from here: the strip is the first child of an unpadded column, so it
+   already starts at the window's top edge and runs the column's full width. */
 
-   A route that scrolls puts the strip ABOVE its scroll port (Plugins, Settings)
-   -- a strip inside one rides the content out of view, and a titlebar that
-   works only at scroll-top is the bug reported again. That shape needs nothing
-   from here: the strip is the first child of an unpadded column, so it already
-   starts at the window's top edge and runs the column's full width.
-
-   A route that does not scroll can keep its padding on the page root and drop
-   the strip straight in (Automations). There the padding is between the strip
-   and the two edges a drag aims for -- the window's top, and on the left the
-   band between this strip and the sidebar's own. Such a page publishes its
-   padding as `--page-inset`: the strip pulls back out of it and hands it back
-   below itself, so the strip is the titlebar and the padding still spaces the
-   content underneath. Unset, every margin here resolves to zero. */
-html.desktop-mac .chrome-drag-strip {
-  margin-top: calc(-1 * var(--page-inset, 0px));
-  margin-bottom: var(--page-inset, 0px);
-  margin-inline: calc(-1 * var(--page-inset, 0px));
+/* In the desktop shell the window buttons live in the sidebar's titlebar row,
+   not over this column, so the strip is a drag handle and no longer needs a
+   band of its own. It keeps its full height but takes no room in the flow: the
+   route's content starts at the top edge and the strip lies over its top
+   padding. Controls under it stay clickable because they declare `no-drag`
+   (chrome.css). The narrow layout below hides it. */
+html.desktop-mac .app-main .chrome-drag-strip {
+  margin-bottom: -38px;
 }
 
 @media (max-width: 767px) {
@@ -71,6 +77,10 @@ html.desktop-mac .chrome-drag-strip {
     padding-bottom: var(--bottom-tab-height);
   }
   .app-main--no-tab {
+    padding-bottom: 0;
+  }
+  /* The tab bar steps aside for the keyboard, and the column ends at its top. */
+  html[data-keyboard-open] .app-main {
     padding-bottom: 0;
   }
 

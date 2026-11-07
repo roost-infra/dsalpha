@@ -1,13 +1,14 @@
-import { useEffect, type RefObject } from 'react';
-import type { ISeriesApi, Time } from 'lightweight-charts';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
+import { createSeriesMarkers } from 'lightweight-charts';
+import type { ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, Time } from 'lightweight-charts';
 import type { ChartDataPoint } from '@/types/market';
 import { getChartTheme } from '../utils/chartConstants';
 
 interface EarningsEntry {
   date?: string;
   fiscalDateEnding?: string;
-  actualEarningResult?: number;
-  estimatedEarning?: number;
+  epsActual?: number | null;
+  epsEstimate?: number | null;
   [key: string]: unknown;
 }
 
@@ -28,43 +29,33 @@ interface OverlayVisibility {
   [key: string]: boolean | undefined;
 }
 
+const DAY_SECONDS = 86400;
+
 /**
- * Binary search to find the nearest chart bar time for a given date string.
- * Returns the closest time that exists in chartData.
+ * Where an event date lands on a series: the first bar at or after the date's
+ * midnight, or null for no marker. Bar times are the venue's wall clock
+ * written as UTC seconds, the same encoding new Date('YYYY-MM-DD') gives, so
+ * a weekend date lands on the next session's first bar. A date before the
+ * loaded range or past the last bar gets no marker.
  */
-function snapToNearestBar(chartData: ChartDataPoint[], dateStr: string): number | null {
-  if (!chartData || chartData.length === 0) return null;
-
-  // Convert date string to unix timestamp (seconds)
-  const target = Math.floor(new Date(dateStr).getTime() / 1000);
-  if (isNaN(target)) return null;
-
-  let lo = 0;
-  let hi = chartData.length - 1;
-
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (chartData[mid].time < target) lo = mid + 1;
-    else hi = mid;
-  }
-
-  // Check neighbours for closest match
-  if (lo > 0) {
-    const diffLo = Math.abs(chartData[lo].time - target);
-    const diffPrev = Math.abs(chartData[lo - 1].time - target);
-    if (diffPrev < diffLo) lo = lo - 1;
-  }
-
-  return chartData[lo].time;
+function barSnapper(chartData: ChartDataPoint[]): (dateStr: string) => number | null {
+  const n = chartData.length;
+  const first = n ? Math.floor(chartData[0].time / DAY_SECONDS) * DAY_SECONDS : 0;
+  return (dateStr) => {
+    const target = Math.floor(new Date(dateStr).getTime() / 1000);
+    if (n === 0 || isNaN(target) || target < first) return null;
+    let lo = 0;
+    let hi = n;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (chartData[mid].time < target) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo < n ? chartData[lo].time : null;
+  };
 }
 
-type OverlayMarker = {
-  time: Time;
-  position: 'aboveBar' | 'belowBar' | 'inBar';
-  shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
-  color: string;
-  text?: string;
-};
+type OverlayMarker = SeriesMarker<Time>;
 
 const VALID_MARKER_SHAPES: ReadonlySet<string> = new Set([
   'arrowUp',
@@ -76,8 +67,10 @@ const VALID_MARKER_SHAPES: ReadonlySet<string> = new Set([
 /**
  * Manages series markers on the candlestick series.
  * Combines earnings surprises, analyst grade changes, and caller-supplied
- * agent markers into a single ``setMarkers`` call (LWC replaces the full
- * list each call, so all sources must merge here).
+ * agent markers into one markers plugin (``setMarkers`` replaces the full
+ * list each call, so all sources must merge here). The plugin is created
+ * once per series and reused, since each ``createSeriesMarkers`` call would
+ * attach another primitive to the series.
  */
 export function useChartOverlays(
   candlestickSeriesRef: RefObject<ISeriesApi<'Candlestick'> | null>,
@@ -89,32 +82,46 @@ export function useChartOverlays(
   extraMarkers: OverlayMarker[] = [],
   theme: 'dark' | 'light' = 'dark'
 ): void {
+  const pluginRef = useRef<{ series: ISeriesApi<'Candlestick'>; plugin: ISeriesMarkersPluginApi<Time> } | null>(null);
+  const snapToBar = useMemo(() => barSnapper(chartData ?? []), [chartData]);
+
   useEffect(() => {
     const series = candlestickSeriesRef.current;
-    if (!series || !chartData || chartData.length === 0) {
-      if (series) {
-        try { series.setMarkers([]); } catch (_) { /* series may be disposed */ }
+    const setMarkers = (markers: OverlayMarker[]): void => {
+      if (!series) return;
+      try {
+        if (pluginRef.current?.series !== series) {
+          pluginRef.current = { series, plugin: createSeriesMarkers(series) };
+        }
+        pluginRef.current.plugin.setMarkers(markers);
+      } catch (_) {
+        /* series may be disposed */
       }
+    };
+    if (!series || !chartData || chartData.length === 0) {
+      setMarkers([]);
       return;
     }
 
     const markers: OverlayMarker[] = [];
     // Themed profit/loss pair — canvas markers can't read CSS variables, so
     // they go through the resolved chart theme, never hex literals.
-    const { upColor, downColor } = getChartTheme(theme);
+    const { upColor, downColor, text: neutralColor } = getChartTheme(theme);
 
     // Earnings markers
     if (overlayVisibility?.earnings && earningsData && Array.isArray(earningsData)) {
       earningsData.forEach((e: EarningsEntry) => {
         const date = e.date || e.fiscalDateEnding;
         if (!date) return;
-        const time = snapToNearestBar(chartData, date);
+        const time = snapToBar(date);
         if (!time) return;
 
-        const isBeat = e.actualEarningResult != null && e.estimatedEarning != null
-          ? e.actualEarningResult >= e.estimatedEarning
-          : true;
+        if (e.epsActual == null || e.epsEstimate == null) {
+          markers.push({ time: time as Time, position: 'aboveBar', shape: 'circle', color: neutralColor, text: 'E' });
+          return;
+        }
 
+        const isBeat = e.epsActual >= e.epsEstimate;
         markers.push({
           time: time as Time,
           position: isBeat ? 'belowBar' : 'aboveBar',
@@ -130,7 +137,7 @@ export function useChartOverlays(
       overlayData.grades.forEach((g: GradeEntry) => {
         const date = g.date;
         if (!date) return;
-        const time = snapToNearestBar(chartData, date);
+        const time = snapToBar(date);
         if (!time) return;
 
         const isUpgrade = g.action === 'upgrade' || g.action === 'Upgrade';
@@ -159,16 +166,8 @@ export function useChartOverlays(
     // Sort markers by time (required by lightweight-charts)
     safeMarkers.sort((a, b) => (a.time as number) - (b.time as number));
 
-    try {
-      series.setMarkers(safeMarkers);
-    } catch (_) {
-      /* series may be disposed */
-    }
+    setMarkers(safeMarkers);
 
-    return () => {
-      if (series) {
-        try { series.setMarkers([]); } catch (_) { /* already cleaned */ }
-      }
-    };
-  }, [candlestickSeriesRef, chartData, earningsData, overlayData, overlayVisibility, symbol, extraMarkers, theme]);
+    return () => { setMarkers([]); };
+  }, [candlestickSeriesRef, chartData, snapToBar, earningsData, overlayData, overlayVisibility, symbol, extraMarkers, theme]);
 }

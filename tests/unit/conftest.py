@@ -6,6 +6,7 @@ socket creation turns that failure mode into a loud error. AF_UNIX stays
 allowed: asyncio's event loop self-pipe is a unix socketpair.
 """
 
+import contextlib
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,45 @@ def _empty_user_skill_bundle(monkeypatch):
 
     monkeypatch.setattr(user_skills, "load_user_skill_bundle", _empty)
     monkeypatch.setattr(materialize, "load_user_skill_bundle", _empty)
+
+
+@pytest.fixture(autouse=True)
+def _no_user_subagents(monkeypatch):
+    """Stub each user's subagent rows, and their plugins' subagents, to none
+    for unit tests.
+
+    ``resolve_llm_config`` reads them from Postgres on every PTC turn, and
+    unit tests have no pool. A user with no rows is also the case whose turn
+    must match a build that never read any.
+    """
+    from src.server.database import plugin_subagents, user_subagents
+
+    async def _none(user_id, *, conn=None):
+        return []
+
+    @contextlib.asynccontextmanager
+    async def _no_snapshot():
+        yield None
+
+    monkeypatch.setattr(user_subagents, "list_user_subagents", _none)
+    monkeypatch.setattr(plugin_subagents, "list_user_plugin_subagents", _none)
+    monkeypatch.setattr(plugin_subagents, "subagents_snapshot", _no_snapshot)
+
+
+@pytest.fixture(autouse=True)
+def _no_host_claude_code_managed(monkeypatch, tmp_path_factory):
+    """Point Claude Code's managed-settings paths at folders that do not exist.
+
+    The check runs the real script, so on a machine with an organization's
+    managed settings installed (``/etc/claude-code``) every computer the
+    tests stand up, the backend's own included, would read as policy-blocked.
+    Tests *about* the check set these paths themselves.
+    """
+    from ptc_agent.core import claude_code_managed
+
+    empty = tmp_path_factory.getbasetemp() / "no-claude-code-managed"
+    for name in ("CLAUDE_CODE_MANAGED_DIR_LINUX", "CLAUDE_CODE_MANAGED_DIR_MAC", "MAC_MANAGED_PREFERENCES_DIR"):
+        monkeypatch.setattr(claude_code_managed, name, str(empty / name))
 
 
 @pytest.fixture(scope="session")

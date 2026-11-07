@@ -3,7 +3,7 @@ FastAPI application setup, initialization, and middleware configuration.
 
 This module contains:
 - Application lifespan management (startup/shutdown)
-- Global state initialization (agent_config, session_service, checkpointer)
+- Global state initialization (agent_config, workspace_manager, checkpointer)
 - Middleware setup (CORS, request ID)
 - Router registration
 """
@@ -16,6 +16,7 @@ This module contains:
 # async code runs to avoid "ProactorEventLoop" errors when opening connection pools.
 import sys
 import asyncio
+import gc
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -26,6 +27,7 @@ if sys.platform == "win32":
 import importlib
 import logging
 import os
+import re
 import certifi
 
 os.environ["SSL_CERT_FILE"] = certifi.where()
@@ -39,18 +41,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.gzip import GZipMiddleware
 
+from ptc_agent.core.sandbox.livefs_runtime.protocol import PREFIX as LIVEFS_PREFIX
 from ptc_agent.core.sandbox.platform_secrets import PlatformSecretError
+from ptc_agent.core.sandbox.providers.ssh_errors import SSHConnectError
 from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
+from src.server.preview_proxy import install_preview_proxy
 from src.config.logging_config import configure_logging
 from src.config.settings import (
     get_allowed_origins,
+    is_brokerage_marks_warm_on_startup_enabled,
 )
 from src.observability import init_otel, init_otel_runtime, shutdown_otel_runtime
+from src.observability.private_query import drop_span_query
 from src.server.services.runs.executor import LocalRunExecutor
+from src.server.services.cli_calls import CliCallRecorder
 from src.server.services.background_registry_store import BackgroundRegistryStore
 from src.server.utils.api import find_malformed_route_ids  # TEMP (malformed-id-diag)
+from src.server.services.preview_base import (
+    PreviewProxyConfigurationError,
+    check_preview_proxy_config,
+    preview_proxy_requirements,
+)
 from src.server.utils.error_sanitization import (
-    sandbox_unreachable_detail,
+    sandbox_failure_http,
     single_line,
 )
 
@@ -80,7 +93,6 @@ agent_config = None  # PTC Agent configuration (loaded from config files)
 # Plugins page keeps the live read, where showing an edited manifest at once
 # is the point. See services/plugins/bundled.enforcement_owners.
 bundle_owners = None
-session_service = None  # PTC Session service instance
 workspace_manager = None  # Workspace manager instance
 checkpointer = None  # PTC Agent LangGraph checkpointer for state persistence
 store = None  # LangGraph Store for cross-turn metadata persistence
@@ -112,13 +124,32 @@ _REDIS_BACKGROUND_SINGLETONS: tuple[tuple[str, str], ...] = (
     ("StreamRetentionSweeper", "src.server.services.stream_retention_sweep"),
     # One PSUBSCRIBE per worker feeds every open /watch, instead of one pinned
     # Redis connection per viewer.
-    ("ThreadWakeListener", "src.server.services.report_back.flash.wake_listener"),
+    ("ThreadWakeListener", "src.server.services.report_back.handoff.wake_listener"),
     # Tells apart "Redis is slow" from "this worker's loop was blocked", which
     # read identically at the redis-py boundary.
     ("EventLoopLagMonitor", "src.observability.loop_lag"),
     # Refreshes expiring MCP OAuth connections ahead of the hot path; the
     # per-connection advisory try-lock dedups it across workers.
     ("McpOAuthRefreshSweeper", "src.server.services.mcp_oauth.sweep"),
+    # Keeps running sandboxes' market-data tokens fresh between turns; a
+    # claim on each computer's row in Postgres dedups it across workers.
+    ("DataTokenSweeper", "src.server.services.data_token_sweep"),
+    # The same for the token the `la` CLI calls the API with, on every
+    # deployment.
+    ("CliTokenSweeper", "src.server.services.cli_token_sweep"),
+    # Takes tunnels no computer uses off their machines; a claim on each
+    # tunnel's row in Postgres dedups it across workers.
+    ("TunnelSweeper", "src.server.services.ssh_tunnel_sweep"),
+    # Ends uploads their browser abandoned and takes over pulls whose worker
+    # died; a claim on each upload's row in Postgres dedups it across workers.
+    ("UploadSweeper", "src.server.services.workspace_upload_pull"),
+    # Follows handed-off background commands to their end and keeps their
+    # computers up while covered; claims on each command's row in Postgres
+    # dedup it across workers.
+    ("CommandWatcher", "src.server.services.commands.watcher"),
+    # Has a model describe MCP servers; a claim on each job's row under its
+    # scope's advisory lock dedups it across workers.
+    ("McpDescriptionWorker", "src.server.services.mcp_descriptions.worker"),
 )
 
 
@@ -170,7 +201,6 @@ async def lifespan(app: FastAPI):
     global \
         agent_config, \
         bundle_owners, \
-        session_service, \
         workspace_manager, \
         checkpointer, \
         store, \
@@ -183,6 +213,10 @@ async def lifespan(app: FastAPI):
     # per-worker so BatchSpanProcessor / PeriodicExportingMetricReader daemon
     # threads are owned by the worker process, not a dead pre-fork parent.
     init_otel_runtime()
+
+    from src.observability.langsmith_tracer import configure_trace_payloads
+
+    configure_trace_payloads()
 
     # Container hardening diagnostics: confirm tini is PID 1 and log cgroup PID limit.
     # If PID 1 is python (not tini), `init: true` in compose silently failed and
@@ -265,9 +299,23 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Redis cache initialization failed: {e}")
         logger.warning("Server will continue without caching")
 
+    # Report-back state an earlier build wrote under the Flash agent's names
+    # is renamed before this worker serves; nothing reads the old names.
+    from src.server.services.report_back.handoff.retired_names import (
+        rename_retired_names,
+    )
+
+    await rename_retired_names()
+
+    # Sandbox path writes take a Redis lease so the workers agree on one
+    # writer per file. Fails open when the cache is down (see the module).
+    from src.server.services.path_lock_coordination import install as install_path_lease
+
+    install_path_lease()
+
     # Pre-build market calendars so session lookups never build on a request path
     try:
-        from src.market_protocol.calendars import prebuild_calendars
+        from market_protocol.calendars import prebuild_calendars
 
         built = await asyncio.to_thread(prebuild_calendars)
         logger.info(f"Market calendars pre-built: {built}")
@@ -300,6 +348,13 @@ async def lifespan(app: FastAPI):
         logger.info("Loading PTC Agent configuration...")
         agent_config = await load_from_files(context=ConfigContext.SDK)
 
+        from src.config.env import PUBLIC_APP_URL, SERVER_BASE_URL
+
+        check_preview_proxy_config(
+            proxy_required_by=preview_proxy_requirements(agent_config.sandbox),
+            app_urls=(SERVER_BASE_URL, PUBLIC_APP_URL, *get_allowed_origins()),
+        )
+
         from src.server.services.plugins.bundled import component_owners
 
         bundle_owners = component_owners()
@@ -310,20 +365,6 @@ async def lifespan(app: FastAPI):
 
         await reconcile_platform_secrets_at_boot(agent_config)
         logger.info("PTC Agent configuration loaded successfully")
-
-        # Platform-secret migration sweep: converges running sandboxes left
-        # behind the fleet generation (always-on sandboxes never re-init, so
-        # only this sweep ever scrubs them). Inert without an active catalog.
-        try:
-            from src.server.services.platform_secret_sweep import (
-                PlatformSecretSweeper,
-            )
-
-            PlatformSecretSweeper.get_instance().start(
-                agent_config.to_core_config()
-            )
-        except Exception as e:
-            logger.warning(f"Failed to start PlatformSecretSweeper: {e}")
 
         # Connect once, freeze, install as the process-global registry so every
         # Session borrows the same tool snapshot instead of spawning its own
@@ -338,7 +379,7 @@ async def lifespan(app: FastAPI):
         try:
             core_config = agent_config.to_core_config()
             mcp_registry = MCPRegistry(core_config)
-            await mcp_registry.connect_all()
+            await mcp_registry.connect_all(retry_builtin_remote=True)
             await mcp_registry.freeze()
             set_global_registry(mcp_registry)
             logger.info(
@@ -371,32 +412,41 @@ async def lifespan(app: FastAPI):
         llm_service = LLMService(agent_config=agent_config, logger=logger)
         logger.info("LLMService initialized")
 
-        # Initialize session service
-        # Derive idle timeout from Daytona auto-stop so the server cleans up
-        # *before* Daytona kills the sandbox (10-min buffer, 5-min floor).
-        daytona_auto_stop = agent_config.daytona.auto_stop_interval  # seconds
-        server_idle_timeout = max(daytona_auto_stop - 600, 300)
-
-        from src.server.services.session_manager import SessionService
-
-        session_service = SessionService.get_instance(
-            config=agent_config,
-            idle_timeout=server_idle_timeout,
-            cleanup_interval=300,  # 5 minutes
-        )
-        await session_service.start_cleanup_task()
-        logger.info("PTC Session Service initialized")
-
-        # Initialize workspace manager
+        # Initialize workspace manager. Its idle sweep times each computer by
+        # that computer's own provider settings.
         from src.server.services.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager.get_instance(
             config=agent_config,
-            idle_timeout=server_idle_timeout,
             cleanup_interval=300,  # 5 minutes
         )
         await workspace_manager.start_cleanup_task()
         logger.info("Workspace Manager initialized")
+
+        # An ssh computer logs in with its owner's key, which the provider
+        # reads through this loader; any worker may start one. A machine that
+        # connects out is reached through the gateway the second loader names.
+        from src.server.services.ssh_computers import install_client_key_loader
+        from src.server.services.ssh_tunnels import install_gateway_loader
+
+        install_client_key_loader()
+        install_gateway_loader()
+
+        # Platform-secret migration sweep: converges running sandboxes left
+        # behind the fleet generation (always-on sandboxes never re-init, so
+        # only this sweep ever scrubs them). Inert without an active catalog.
+        # Started after the Workspace Manager, which creates the
+        # ComputerManager its first pass needs.
+        try:
+            from src.server.services.platform_secret_sweep import (
+                PlatformSecretSweeper,
+            )
+
+            PlatformSecretSweeper.get_instance().start(
+                agent_config.to_core_config()
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start PlatformSecretSweeper: {e}")
 
         # Initialize PTC Agent checkpointer for state persistence
         from src.server.utils.checkpointer import (
@@ -470,9 +520,21 @@ async def lifespan(app: FastAPI):
         # Required platform Secrets are a configuration gate. Hosted mode
         # must never continue into a plaintext fallback or partial startup.
         raise
+    except PreviewProxyConfigurationError:
+        # The same kind of gate: private computers with nowhere to serve
+        # their previews would hand out only dead links.
+        raise
     except Exception as e:
         logger.warning(f"Failed to initialize PTC Agent: {e}")
         logger.warning("PTC Agent endpoints may not work correctly")
+
+    # A gate of the same kind, outside the catch-all: with the CLI inside
+    # cloud computers' sandboxes, a kind with no Medium tier would refuse every
+    # one of its computers as too small.
+    if agent_config is not None:
+        from src.server.services.claude_code.hosted import check_sandbox_tiers
+
+        check_sandbox_tiers(agent_config.sandbox)
 
     # Multi-worker hard gate (top level — must not be swallowed by the PTC
     # init catch-all): without the fence, two workers could both write one
@@ -498,14 +560,34 @@ async def lifespan(app: FastAPI):
     # that must crash the worker loudly — swallowed, it leaves the drainer
     # permanently off behind one WARN line (report-backs undelivered, burst
     # slots leaking).
-    from src.server.services.report_back import subagent
-    from src.server.services.report_back.flash import core as flash_core
-    from src.server.services import thread_lifecycle_feed
+    from src.server.services.report_back import command as command_report
+    from src.server.services.report_back import steer_executor, subagent
+    from src.server.services.report_back.handoff import core as handoff_core
+    from src.server.services import automation_settlement, idle_compaction, thread_lifecycle_feed
+    from src.server.services.features import register_feature_off_hook
     from src.server.services.hook_outbox import HookOutboxDrainer
+    from src.server.services.market_targets import delivery as market_target_delivery
+    from src.server.services.push import notify as push_notify
+    from src.server.services.wakeups import cancel as wakeups_cancel
+    from src.server.services.wakeups import delivery as wakeup_delivery
 
-    flash_core.register_outbox_executors()
+    handoff_core.register_outbox_executors()
     subagent.register_outbox_executors()
+    command_report.register_outbox_executors()
+    steer_executor.register_outbox_executors()
     thread_lifecycle_feed.register_outbox_executors()
+    automation_settlement.register_outbox_executors()
+    market_target_delivery.register_outbox_executors()
+    # Registered with push off too: its rows then ack as no-ops.
+    push_notify.register_outbox_executors()
+    idle_compaction.register_outbox_executors()
+    wakeup_delivery.register_wakeup_executors()
+    # Turning wakeups off ends what the agent set, on every thread.
+    register_feature_off_hook("wakeups", wakeups_cancel.setting_off)
+    # Turning Claude Code off deletes a setup token stored for the user.
+    from src.server.services.claude_code.hosted import register_opt_out
+
+    register_opt_out()
     try:
         HookOutboxDrainer.get_instance().start()
         logger.info("HookOutboxDrainer started")
@@ -581,6 +663,29 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to start PriceMonitorService: {e}")
         logger.warning("Price-triggered automations will not run")
 
+    # Start WakeupSweeper (fires agents' timed wakeups). Every worker runs
+    # one: its fires are guarded claims, so none doubles another's.
+    try:
+        from src.server.services.wakeups.sweep import WakeupSweeper
+
+        await WakeupSweeper.get_instance().start()
+        logger.info("WakeupSweeper started")
+    except Exception as e:
+        logger.warning(f"Failed to start WakeupSweeper: {e}")
+
+    # Start IdleCompactionSweeper (summarizes idle threads while their prompt
+    # cache is warm). Every worker runs one: a claim deletes its row.
+    try:
+        from src.server.handlers.idle_compaction import fire as fire_idle_compaction
+        from src.server.services.idle_compaction import start_sweeper
+
+        if await start_sweeper(fire_idle_compaction):
+            logger.info("IdleCompactionSweeper started")
+        else:
+            logger.info("IdleCompactionSweeper not started: the idle_compaction feature is off")
+    except Exception as e:
+        logger.warning(f"Failed to start IdleCompactionSweeper: {e}")
+
     # Start MarketInsightService (schedule-based market news gathering)
     try:
         from src.server.services.insight_service import InsightService
@@ -625,6 +730,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to start WorkspaceFileGCService: {e}")
 
+    # A multipart upload the process died holding is never aborted by us;
+    # only the bucket's own expiry rule reclaims its parts. The check only
+    # feeds a warning, so an unresponsive store must not hold up startup.
+    try:
+        from src.utils.storage import has_multipart_cleanup_rule
+
+        if (
+            await asyncio.wait_for(
+                asyncio.to_thread(has_multipart_cleanup_rule), timeout=5
+            )
+            is False
+        ):
+            logger.warning(
+                "Storage bucket has no rule expiring incomplete multipart uploads; "
+                "parts of an upload interrupted mid-transfer will be kept and billed. "
+                "Add an AbortIncompleteMultipartUpload lifecycle rule (e.g. 1 day)."
+            )
+    except Exception as e:
+        logger.info(f"Skipped the multipart cleanup rule check: {e!r}")
+
     # Confirm the runtime credit gate can reach its lease service, and on
     # terms its refresher can work with. Both failures it catches are silent
     # at request time.
@@ -634,6 +759,50 @@ async def lifespan(app: FastAPI):
         await verify_credit_gate_wiring()
     except Exception as e:
         logger.warning(f"Credit gate wiring check failed: {e}")
+
+    from src.server.auth.jwt_bearer import warm_jwks
+    from src.server.auth.oauth_resource import warm_oauth_resource_keys
+
+    await warm_jwks()
+    await warm_oauth_resource_keys()
+
+    # The shipped brokers' logos, fetched here rather than in front of the first
+    # person to open a page that draws one. In the background: a vendor's site
+    # can take seconds, and nothing at startup waits on a logo.
+    mark_warmup: asyncio.Task[None] | None = None
+    if is_brokerage_marks_warm_on_startup_enabled():
+        from src.server.services.brand_icons import warm_marks
+        from src.server.services.brokerages import BROKERAGES
+
+        mark_warmup = asyncio.create_task(
+            warm_marks(b.mark_sources for b in BROKERAGES),
+            name="warm-brokerage-marks",
+        )
+
+    # A built-in remote server still down after boot's retry budget is retried
+    # in the background, so this worker heals when it answers instead of
+    # serving without its tools until a restart. Last, so nothing above can
+    # fail startup with the task running.
+    from ptc_agent.core.mcp_registry import get_global_registry, reconnect_builtin_remote
+
+    mcp_reconnect: asyncio.Task[None] | None = None
+    booted_registry = get_global_registry()
+    if booted_registry is not None and booted_registry.failed_builtin_remote:
+        mcp_reconnect = asyncio.create_task(
+            reconnect_builtin_remote(), name="mcp-builtin-reconnect"
+        )
+        logger.info(
+            "Reconnecting built-in MCP servers in the background: %s",
+            ", ".join(sorted(booted_registry.failed_builtin_remote)),
+        )
+
+    # Startup leaves ~700k import-time objects (pydantic schemas, routes,
+    # module state) that never die, and every full collection re-walks them
+    # while the loop is frozen. Freezing moves them out of the collector for
+    # good; the collect first keeps startup garbage from being frozen with them.
+    gc.collect()
+    gc.freeze()
+    logger.info(f"Froze {gc.get_freeze_count()} startup objects out of the GC")
 
     # Start the WeChat channel. Off unless a bot is already bound or
     # WECHAT_ENABLED=1, so an unconfigured deployment opens no socket.
@@ -649,6 +818,20 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Application shutdown started...")
+    # Awaited, so a warm-up stopped midway releases its lock while Redis is
+    # still open; a lock left to expire skips the warm-up of a quick restart.
+    # The refreshes go after it, since the warm-up can start them.
+    if mark_warmup is not None:
+        mark_warmup.cancel()
+        await asyncio.gather(mark_warmup, return_exceptions=True)
+    # Before the registry is cleared below, which would end it anyway, so an
+    # attempt in flight closes its connection while the loop still runs.
+    if mcp_reconnect is not None:
+        mcp_reconnect.cancel()
+        await asyncio.gather(mcp_reconnect, return_exceptions=True)
+    from src.server.services.brand_icons import stop_refreshes
+
+    await stop_refreshes()
 
     # Stop the WeChat poll loop before the rest: it holds a long-poll request
     # open and a handler mid-turn would otherwise race the teardown below.
@@ -750,6 +933,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error shutting down PriceMonitorService: {e}")
 
+    try:
+        from src.server.services.wakeups.sweep import WakeupSweeper
+
+        await WakeupSweeper.get_instance().stop()
+    except Exception as e:
+        logger.warning(f"Error shutting down WakeupSweeper: {e}")
+
+    try:
+        from src.server.services.idle_compaction import IdleCompactionSweeper
+
+        await IdleCompactionSweeper.get_instance().stop()
+    except Exception as e:
+        logger.warning(f"Error shutting down IdleCompactionSweeper: {e}")
+
     # 1. Shutdown AutomationScheduler
     try:
         from src.server.services.automation_scheduler import AutomationScheduler
@@ -775,17 +972,26 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error cancelling background subagent tasks: {e}")
 
+    # 2.5. Close the preview proxy's upstream pool; its keep-alive renewals
+    # reach the Workspace Manager, so they go before it does.
+    preview_proxy = getattr(app.state, "preview_proxy", None)
+    if preview_proxy is not None:
+        try:
+            await preview_proxy.aclose()
+        except Exception as e:
+            logger.warning(f"Error closing the preview proxy: {e}")
+
     # 3. Shutdown Workspace Manager (stop cleanup task, clear cache)
     if workspace_manager is not None:
         try:
             # Drain in-flight warm tasks first so a task cancelled mid-Phase-2
             # reverts its 'starting' row to 'stopped' (CancelledError revert)
             # instead of being torn down abruptly and left wedged.
-            from src.server.app.workspaces import drain_warm_tasks
+            from src.server.services.background_starts import drain_start_tasks
 
-            await drain_warm_tasks()
+            await drain_start_tasks()
         except Exception as e:
-            logger.warning(f"Error draining warm tasks: {e}")
+            logger.warning(f"Error draining background starts: {e}")
         try:
             logger.info("Shutting down Workspace Manager...")
             await workspace_manager.shutdown()
@@ -793,14 +999,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Error during Workspace Manager shutdown: {e}")
 
-    # 4. Shutdown PTC Session Service (stop sandboxes)
-    if session_service is not None:
-        try:
-            logger.info("Shutting down PTC Session Service...")
-            await session_service.shutdown()
-            logger.info("PTC Session Service shutdown complete")
-        except Exception as e:
-            logger.warning(f"Error during PTC Session Service shutdown: {e}")
+    # 4. Forget this worker's PTC handles. A sibling worker may still be using
+    # the same computer, so process shutdown must not stop the shared sandbox.
+    try:
+        from ptc_agent.core.session import SessionManager
+
+        logger.info("Detaching PTC sessions...")
+        SessionManager.detach_all()
+        logger.info("PTC sessions detached")
+    except Exception as e:
+        logger.warning(f"Error stopping PTC sessions: {e}")
 
     # 4.5. Drop the global MCP registry reference (frozen snapshot — no
     # subprocesses to terminate). Hygiene only.
@@ -829,6 +1037,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error stopping HookOutboxDrainer: {e}")
 
+    # Then the automation settlements still sending their webhooks, now that
+    # every settler (scheduler, price monitor, drainer) has stopped and before
+    # the pools they write to close: a settled row is never found again.
+    try:
+        from src.server.services.automation_settlement import drain_tails
+
+        await drain_tails()
+    except Exception as e:
+        logger.warning(f"Error draining automation settlements: {e}")
+
     # 6c. Close the writer-guard pool AFTER BTM shutdown: the final
     # finalizes run on pinned guard sessions checked out of this pool.
     try:
@@ -853,7 +1071,14 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Error closing PTC Agent checkpointer pool: {e}")
 
-    # 7. Close database pools
+    # 7. Close database pools, and the session folder holds share
+    try:
+        from src.server.database.session_lock import close_shared_lock_session
+
+        await close_shared_lock_session()
+    except Exception as e:
+        logger.warning(f"Error closing shared lock session: {e}")
+
     try:
         from src.server.database.pool import get_or_create_pool
 
@@ -895,12 +1120,27 @@ async def lifespan(app: FastAPI):
 
     # 9. Close usage-limits HTTP client
     try:
-        from src.server.dependencies.usage_limits import close_http_client
+        from src.server.utils.http_client import close_http_client
 
         await close_http_client()
         logger.info("Usage limits HTTP client closed")
     except Exception as e:
         logger.warning(f"Error closing usage limits HTTP client: {e}")
+
+    try:
+        from src.server.services.push.apns import close_apns_client
+
+        await close_apns_client()
+    except Exception as e:
+        logger.warning(f"Error closing APNs client: {e}")
+
+    # 9.1. Close the messaging gateway HTTP client
+    try:
+        from src.tools.messaging.tools import close_client
+
+        await close_client()
+    except Exception as e:
+        logger.warning(f"Error closing messaging HTTP client: {e}")
 
     # 9.5. Close the PDF render browser singleton (headless Chromium), if one
     # was launched to serve ?format=pdf. No-op when the pdf extra is unused.
@@ -940,7 +1180,7 @@ if _otel_enabled:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(app, server_request_hook=drop_span_query)
     except Exception as _otel_exc:  # noqa: BLE001
         logger.warning("FastAPIInstrumentor.instrument_app failed: %s", _otel_exc)
 
@@ -1022,8 +1262,32 @@ class MalformedIdDiagnosticMiddleware:
         await self.app(scope, receive, send)
 
 
+def _gzip_exempt(path: str) -> bool:
+    """Whether GZip leaves the response at ``path`` as it is.
+
+    The workspace file download is the file's own bytes, often already
+    compressed, and can be gigabytes streamed from a sandbox: compressing it
+    spends a worker's CPU for little, and drops the Content-Length the
+    client's progress bar needs.
+
+    The file mount's endpoint names a file's version in an ETag, which the
+    next save is checked against. A CDN in front of the server (Cloudflare
+    for one) asks for gzip whatever its client asked, and decompressing for
+    the daemon, which asks for no encoding, weakens or drops that tag.
+    """
+    return path.endswith("/files/download") or path.startswith(f"{LIVEFS_PREFIX}/")
+
+
+class _SelectiveGZip(GZipMiddleware):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and _gzip_exempt(scope["path"]):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 # Register GZip compression middleware (compresses JSON responses >= 1KB)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(_SelectiveGZip, minimum_size=1000)
 
 # TEMP (malformed-id-diag): log malformed workspace/thread ids + Referer so the next
 # real prod occurrence names the SPA route that built the bad request.
@@ -1034,6 +1298,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # tests/unit/server/utils/test_malformed_route_ids.py. Every site is tagged
 # `malformed-id-diag` — `grep -rn malformed-id-diag src tests` lists them all.
 app.add_middleware(MalformedIdDiagnosticMiddleware)
+
+# Records every request a computer's `la` makes, with the thread whose command
+# made it (src/server/services/cli_calls.py).
+app.add_middleware(CliCallRecorder)
 
 # Register request ID middleware (will be executed after CORS)
 # Note: In FastAPI, middleware is executed in reverse order (last added = first executed)
@@ -1047,8 +1315,31 @@ allowed_origins = get_allowed_origins()
 
 logger.info(f"Allowed origins: {allowed_origins}")
 
+# Routes whose URL is the whole credential (a grant or share code in the path).
+# Their documents run on an opaque origin, so their own reads arrive as
+# Origin: null; any origin may read them, and never with credentials, which
+# the app's CORS below would add by echoing that origin back.
+_URL_CREDENTIAL_ROUTES = re.compile(
+    r"/api/v1/(?:wsfiles/g/|artifacts/g/|public/shared/[^/]+/files/serve/)"
+)
+
+
+class _CORSMiddleware(CORSMiddleware):
+    def __init__(self, app, **options):
+        super().__init__(app, **options)
+        self._url_credential = CORSMiddleware(
+            app, allow_origins=["*"], allow_methods=["GET", "HEAD"]
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and _URL_CREDENTIAL_ROUTES.match(scope["path"]):
+            await self._url_credential(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 app.add_middleware(
-    CORSMiddleware,
+    _CORSMiddleware,
     allow_origins=allowed_origins,  # Restrict to specific origins
     allow_credentials=True,
     allow_methods=[
@@ -1060,7 +1351,14 @@ app.add_middleware(
         "OPTIONS",
     ],  # Use the configured list of methods
     allow_headers=["*"],  # Now allow all headers, but can be restricted further
+    # A ranged file download is read by script, which sees only these past the
+    # safelisted few when the app is served from another origin.
+    expose_headers=["Content-Range", "Accept-Ranges", "ETag"],
 )
+
+# Previews of private sandboxes, picked out by Host before any middleware
+# above sees the request. Installed last, around the stack the tracing wraps.
+install_preview_proxy(app)
 
 
 # ============================================================================
@@ -1068,14 +1366,15 @@ app.add_middleware(
 # ============================================================================
 
 
-async def _sandbox_unreachable_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Map an unreachable sandbox to 503 once, for every route.
+async def _sandbox_failure_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Answer a sandbox failure once, for every route, as the computer routes do.
 
-    The detail wording is a wire contract, not a message: the file panel
-    categorizes the error by matching this string, so it must stay identical
-    across producers rather than being re-spelled per route. It is built by
-    ``sandbox_unreachable_detail`` because the raw exception carries provider
-    URLs and SDK response bodies that must not leave the server.
+    ``sandbox_failure_http`` decides, so one failure gets one status whichever
+    route met it: 422 with the owner's own sentence when their SSH machine
+    answered and refused, which a retry cannot fix, and 503 otherwise. The 503
+    detail is a wire contract, not a message: the file panel categorizes the
+    error by matching it, and it never quotes the raw exception, which carries
+    provider URLs and SDK response bodies that must not leave the server.
     """
     # The exception is the live carrier: it quotes provider response bodies, so
     # it can hold a newline and a forged entry. Starlette's path is already
@@ -1083,14 +1382,15 @@ async def _sandbox_unreachable_handler(request: Request, exc: Exception) -> JSON
     logger.warning(
         f"Sandbox unreachable for {single_line(request.url.path)}: {single_line(str(exc))}"
     )
-    return JSONResponse(
-        status_code=503,
-        content={"detail": sandbox_unreachable_detail(exc)},
-    )
+    answer = sandbox_failure_http(exc)
+    return JSONResponse(status_code=answer.status_code, content={"detail": answer.detail})
 
 
-app.add_exception_handler(SandboxGoneError, _sandbox_unreachable_handler)
-app.add_exception_handler(SandboxTransientError, _sandbox_unreachable_handler)
+app.add_exception_handler(SandboxGoneError, _sandbox_failure_handler)
+app.add_exception_handler(SandboxTransientError, _sandbox_failure_handler)
+# A refusal a caller let through unwrapped, which would otherwise answer 500.
+app.add_exception_handler(SSHConnectError, _sandbox_failure_handler)
+
 
 
 # ============================================================================
@@ -1099,19 +1399,27 @@ app.add_exception_handler(SandboxTransientError, _sandbox_unreachable_handler)
 # Import routers
 from src.server.app.threads import router as threads_router
 from src.server.app.sessions import router as sessions_router
-from src.server.app.cache import router as cache_router
 from src.server.app.utilities import health_router
+from src.server.app.computers import router as computers_router
+from src.server.app.computers_ssh import router as computers_ssh_router
 from src.server.app.workspaces import router as workspaces_router
 from src.server.app.workspace_files import router as workspace_files_router
 from src.server.app.workspace_files import wsfiles_router
 from src.server.app.workspace_sandbox import router as workspace_sandbox_router
 from src.server.app.chart_annotations import router as chart_annotations_router
+from src.server.app.artifact_frames import frame_router as artifact_frame_router
+from src.server.app.artifacts import router as artifacts_router
+from src.server.app.artifacts import workspace_router as artifact_records_router
 from src.server.app.workspace_sandbox import preview_redirect_router
 from src.server.app.market_data import router as market_data_router
 from src.server.app.bars import router as bars_router
 from src.server.app.user_events import router as user_events_router
 from src.server.app.users import router as users_router
+from src.server.app.trading_permission import router as trading_permission_router
+from src.server.app.push_devices import router as push_devices_router
 from src.server.app.features import router as features_router
+from src.server.app.claude_code import router as claude_code_router
+from src.server.app.claude_code_computers import router as claude_code_computers_router
 from src.server.app.watchlist import router as watchlist_router
 from src.server.app.portfolio import router as portfolio_router
 from src.server.app.news import router as news_router
@@ -1122,19 +1430,28 @@ from src.server.app.sec_proxy import router as sec_proxy_router
 from src.server.app.api_keys import router as api_keys_router
 from src.server.app.automations import router as automations_router
 from src.server.app.insights import router as insights_router
-from src.server.app.oauth import router as oauth_router
+from src.server.app.oauth import OAuthRefusal, router as oauth_router
 from src.server.app.orders import router as orders_router
 from src.server.app.public import router as public_router
+from src.server.app.share_links import (
+    owner_router as share_link_owner_router,
+    router as share_links_router,
+)
 from src.server.app.skills import router as skills_router
+from src.server.app.subagents import router as subagents_router
 from src.server.app.skills import workspace_router as workspace_skills_router
-from src.server.app.vault import router as vault_router
 from src.server.app.memo import router as memo_router
 from src.server.app.memory import router as memory_router
 from src.server.app.workflows import include_workflow_router
 from src.server.app.egress_relay import router as egress_relay_router
+from src.server.app.livefs import router as livefs_router
 from src.server.app.mcp_catalog import router as mcp_catalog_router
+from src.server.app.mcp_brokerages import router as mcp_brokerages_router
+from src.server.app.mcp_builtin import router as mcp_builtin_router
+from src.server.app.mcp_icons import router as mcp_icons_router
 from src.server.app.mcp_oauth import router as mcp_oauth_router
 from src.server.app.plugins import router as plugins_router
+from src.server.app.marketplace import router as marketplace_router
 from src.server.app.user_vault import router as user_vault_router
 from src.server.app.mcp_servers import router as mcp_servers_router
 from src.server.app.factors import router as factors_router
@@ -1165,6 +1482,12 @@ app.include_router(threads_router)  # /api/v1/threads/* - Thread CRUD, messages,
 app.include_router(sessions_router)  # /api/v1/sessions - Active session stats
 app.include_router(workspaces_router)  # /api/v1/workspaces/* - Workspace CRUD
 app.include_router(
+    computers_ssh_router
+)  # /api/v1/computers/ssh/* - Adding an SSH machine, ahead of /{computer_id}
+app.include_router(
+    computers_router
+)  # /api/v1/computers/* - Computer lifecycle (the workspace routes alias these)
+app.include_router(
     workspace_files_router
 )  # /api/v1/workspaces/{id}/files/* - Live file access
 app.include_router(
@@ -1173,16 +1496,29 @@ app.include_router(
 app.include_router(
     chart_annotations_router
 )  # /api/v1/workspaces/{id}/chart-annotations - Agent-drawn chart annotations
-app.include_router(cache_router)  # /api/v1/cache/* - Cache management
+app.include_router(
+    artifact_records_router
+)  # /api/v1/workspaces/{id}/artifacts - A workspace file's artifact record (owner)
+app.include_router(
+    artifacts_router
+)  # /api/v1/artifacts/{id}/* - Versions, publishing and comments (owner)
 app.include_router(market_data_router)  # /api/v1/market-data/* - Market data proxy
 app.include_router(
     bars_router
 )  # /api/v1/market-data/bars/* - Protocol-native progressive bars
 app.include_router(users_router)  # /api/v1/users/* - User management
 app.include_router(
+    trading_permission_router
+)  # /api/v1/users/me/trading-permission - Order approval level
+app.include_router(
     user_events_router
 )  # /api/v1/users/me/thread-events - Thread lifecycle SSE feed
+app.include_router(
+    push_devices_router
+)  # /api/v1/users/me/push-devices - Phones for push notifications
 app.include_router(features_router)  # /api/v1/features/* - Feature flags (per-user resolved)
+app.include_router(claude_code_router)  # /api/v1/claude-code/* - Claude Code setup token and readiness
+app.include_router(claude_code_computers_router)  # /api/v1/claude-code/computers/* - Claude Code on own computers
 app.include_router(
     watchlist_router
 )  # /api/v1/users/me/watchlist/* - Watchlist management
@@ -1204,19 +1540,36 @@ app.include_router(
 )  # /api/v1/automations/* - Scheduled automation triggers
 app.include_router(insights_router)  # /api/v1/insights/* - AI market insights
 app.include_router(oauth_router)  # /api/v1/oauth/* - OAuth provider connections (Codex)
+
+
+# OAuth refusals carry a structured ``error`` beside the plain ``detail``.
+async def _oauth_refusal_handler(request: Request, exc: OAuthRefusal) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "error": exc.error},
+        headers=exc.headers,
+    )
+
+
+app.add_exception_handler(OAuthRefusal, _oauth_refusal_handler)
+
 app.include_router(
     orders_router
 )  # /api/v1/orders/* - Order attempt ledger (read-only, user-scoped)
 app.include_router(
     public_router
 )  # /api/v1/public/* - Public shared thread access (no auth)
+app.include_router(
+    share_links_router
+)  # /api/v1/workspaces/{id}/share-links, file-grant - Owner share links
+app.include_router(
+    share_link_owner_router
+)  # /api/v1/share-links/{code} - One of the owner's links, any workspace
 app.include_router(skills_router)  # /api/v1/skills - Available agent skills
+app.include_router(subagents_router)  # /api/v1/subagents - The user's subagents (Plugins pane)
 app.include_router(
     workspace_skills_router
 )  # /api/v1/workspaces/{id}/skills - Workspace-scoped skills
-app.include_router(
-    vault_router
-)  # /api/v1/workspaces/{id}/vault/secrets - Per-workspace secret storage
 app.include_router(
     memory_router
 )  # /api/v1/memory/* - Read agent long-term memory (user + workspace tiers)
@@ -1228,6 +1581,15 @@ app.include_router(
     mcp_catalog_router
 )  # /api/v1/mcp/servers - User-level MCP servers (Plugins backing store)
 app.include_router(
+    mcp_builtin_router
+)  # /api/v1/mcp/builtin-servers - This build's own MCP servers, per-user toggle
+app.include_router(
+    mcp_brokerages_router
+)  # /api/v1/mcp/brokerages - Shipped brokerage connectors
+app.include_router(
+    mcp_icons_router
+)  # /api/v1/mcp/server-icons/{handle} - Marks MCP servers declare, proxied
+app.include_router(
     mcp_oauth_router
 )  # /api/v1/mcp/servers/{name}/oauth + /api/v1/mcp/oauth/callback - MCP OAuth
 app.include_router(
@@ -1237,8 +1599,14 @@ app.include_router(
     plugins_router
 )  # /api/v1/plugins/* - Agent Plugins packages (install/manage/export)
 app.include_router(
+    marketplace_router
+)  # /api/v1/marketplace/* - Plugin catalog for the Discover tab
+app.include_router(
     egress_relay_router
 )  # /v1/egress/{grant_id} - Sandbox egress relay (relay-JWT auth, not user auth)
+app.include_router(
+    livefs_router
+)  # /api/v1/livefs/* - Sandbox file mount (mount-token auth, not user auth)
 app.include_router(
     mcp_servers_router
 )  # /api/v1/workspaces/{id}/mcp/servers - Per-workspace MCP server config
@@ -1251,10 +1619,13 @@ app.include_router(
 )  # /api/v1/knowledge/* - Read-only view of the shared markdown vault
 app.include_router(
     preview_redirect_router
-)  # /api/v1/preview/{workspace_id}/{port} - Unauthenticated preview URL redirect
+)  # /api/v1/preview/{workspace_id}/{port} - Old preview URLs, redirected to /a/<code>
 app.include_router(
     wsfiles_router
-)  # /api/v1/wsfiles/{workspace_id}/{path} - Unauthenticated path-style file serving
+)  # /api/v1/wsfiles/g/{grant}/{path} - Grant-gated path-style file serving
+app.include_router(
+    artifact_frame_router
+)  # /api/v1/artifacts/g/{grant}/v/{seq}/{path} - A version's files, without a preview base
 
 app.include_router(
     market_data_ws_router

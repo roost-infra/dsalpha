@@ -45,7 +45,8 @@ from psycopg.rows import dict_row
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # Every one of these is import-clean: _db reads os.environ, blob_keys imports
-# only `re`, and src.utils.storage only os + yaml + the provider SDK.
+# only `re`, and src.utils.storage only the provider SDK and ptc_agent's config
+# loader, which reads the YAML files but never .env.
 # Deliberately NOT src.server.database.workspace_file_blobs, which pulls
 # database/pool -> src.config.env -> load_dotenv() and would silently retarget
 # a mutating operator script at whatever .env happens to be on disk.
@@ -54,7 +55,7 @@ from src.server.database.blob_keys import (
     BLOB_BACKED_SQL,
     BLOB_CONTENT_TYPE,
     CLAIM_SQL,
-    MAX_BLOB_BYTES,
+    RELAY_MAX_BYTES,
     REGISTER_SQL,
     blob_key,
 )
@@ -69,7 +70,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("backfill_workspace_file_blobs")
 
 # Uploads in flight per chunk, and the byte ceiling that overrides the count so
-# a chunk of large files can't hold UPLOAD_CONCURRENCY x MAX_BLOB_BYTES at once.
+# a chunk of large files can't hold UPLOAD_CONCURRENCY x RELAY_MAX_BYTES at once.
 UPLOAD_CONCURRENCY = 8
 INFLIGHT_MAX_BYTES = 64 * 1024 * 1024
 
@@ -182,7 +183,7 @@ async def _upload_chunk(pending: list[_Pending]) -> list[bool | BaseException]:
                 blob_key(item.user_id, item.sha256),
                 item.data,
                 BLOB_CONTENT_TYPE,
-                max_size=MAX_BLOB_BYTES,
+                max_size=RELAY_MAX_BYTES,
             )
 
     return await asyncio.gather(

@@ -67,7 +67,6 @@ function props(
     subagentTasks: {},
     toolApprovals: { 'int-1': approval },
     isStreaming,
-    isAssistant: true,
   };
 }
 
@@ -145,6 +144,50 @@ describe('an approved order in the transcript', () => {
     });
     expect(screen.queryByTestId('order-status-filled')).toBeNull();
     expect(screen.queryByTestId('order-approval-orphaned')).toBeNull();
+  });
+
+  it('keeps the receipt and its Orders link visible beside the final text when the turn is folded', () => {
+    const answered = {
+      'call-1': {
+        toolName: APPROVED.toolName,
+        isInProgress: false,
+        isComplete: true,
+        toolCallResult: {
+          artifact: {
+            type: 'order_receipt',
+            order_receipt: {
+              attempt_id: 'attempt-1',
+              vendor: 'moomoo',
+              action: 'place',
+              mode: 'paper',
+              order: APPROVED.order,
+              outcome: { status: 'filled' },
+            },
+          },
+        },
+      },
+    };
+    renderWithProviders(
+      <MessageContentSegments
+        {...props(APPROVED, answered, false)}
+        segments={[
+          { type: 'tool_approval', order: 0, proposalId: 'int-1' },
+          { type: 'tool_call', order: 1, toolCallId: 'call-1' },
+          { type: 'text', order: 2, content: 'The paper order filled.' },
+        ]}
+        fold="collapsed"
+        isTurnTail
+      />,
+      { queryClient: clientHoldingLedgerRow('filled') },
+    );
+
+    expect(screen.getByText('The paper order filled.')).toBeVisible();
+    const receipt = screen.getByTestId('order-receipt');
+    expect(receipt).toBeVisible();
+    expect(within(receipt).getByTestId('order-status-filled')).toBeVisible();
+    expect(within(receipt).getByRole('link')).toHaveAttribute(
+      'href', '/orders?detail=order:attempt-1',
+    );
   });
 
   // Without the tool call the interrupt named there is no join to wait on, and

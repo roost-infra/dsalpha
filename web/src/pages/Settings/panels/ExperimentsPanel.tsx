@@ -1,0 +1,67 @@
+import { AlertTriangle } from 'lucide-react';
+import { Trans, useTranslation } from 'react-i18next';
+import { useFeatures, useSetFeatureOverride } from '@/hooks/useFeatures';
+import { SettingsCardBody, SettingsGroup, ToggleRow } from '../components/SettingsLayout';
+import { SETTINGS } from '../sections';
+import { useSaveFailureToast } from './usePreferenceWrite';
+
+/** Experiments: user-overridable feature flags, data-driven from the
+ *  feature-flag API, so a new flag needs no change here. The API serves the
+ *  catalog's English; a locale translates a feature under
+ *  `settings.featureCatalog.<key>`, and one it has not translated shows the
+ *  English. */
+export function ExperimentsPanel() {
+  const reportFailure = useSaveFailureToast();
+  const { data: featuresData, isLoading: isFeaturesLoading } = useFeatures();
+  const setFeatureOverrideMutation = useSetFeatureOverride();
+  const { t } = useTranslation();
+
+  // A feature turned on elsewhere (`home`) is not offered here as well.
+  const overridable = (featuresData ?? []).filter((f) => (f.gate === 'opt_in' || f.gate === 'opt_out') && !f.home);
+  // Wait out the features query before committing to the empty state, so it
+  // never flashes before the real list lands.
+  if (overridable.length === 0 && isFeaturesLoading) return null;
+
+  return (
+    <SettingsGroup title={t('settings.experimentsGroup')} description={t(SETTINGS.experiments.descKey)}>
+      {overridable.length === 0 ? (
+        <SettingsCardBody id={SETTINGS.experiments.anchor} className="py-6 text-center">
+          <p className="text-[0.8125rem]" style={{ color: 'var(--color-text-tertiary)' }}>
+            {t('settings.experimentsEmpty')}
+          </p>
+        </SettingsCardBody>
+      ) : (
+        overridable.map((feature, index) => {
+          const copyKey = `settings.featureCatalog.${feature.key}`;
+          const description = t(`${copyKey}.description`, { defaultValue: feature.description });
+          return (
+            <ToggleRow
+              key={feature.key}
+              id={index === 0 ? SETTINGS.experiments.anchor : undefined}
+              label={t(`${copyKey}.label`, { defaultValue: feature.label })}
+              description={feature.tradeoffs ? (
+                <>
+                  {description}
+                  <span className="mt-1.5 flex items-start gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 mt-px shrink-0" style={{ color: 'var(--color-warning)' }} />
+                    <span>
+                      <Trans
+                        i18nKey="settings.experimentTradeoff"
+                        components={{
+                          lead: <span className="font-medium" style={{ color: 'var(--color-warning)' }} />,
+                          text: <span>{t(`${copyKey}.tradeoffs`, { defaultValue: feature.tradeoffs })}</span>,
+                        }}
+                      />
+                    </span>
+                  </span>
+                </>
+              ) : description}
+              checked={feature.enabled}
+              onChange={() => { void reportFailure(setFeatureOverrideMutation.mutateAsync({ key: feature.key, enabled: !feature.enabled })); }}
+            />
+          );
+        })
+      )}
+    </SettingsGroup>
+  );
+}

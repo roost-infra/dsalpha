@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A reloaded thread settles its order cards by attempt id.
  *
@@ -8,7 +9,7 @@
  * because the wrong badge on an order is what makes someone place it twice.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -17,7 +18,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const AAPL = {
@@ -85,7 +85,7 @@ function crossedResume(runId?: string) {
   };
 }
 
-function allCards(messages: MessageRecord[]) {
+function allCards(messages: ChatMessage[]) {
   return Object.fromEntries(
     (messages.filter((m) => m.role === 'assistant') as unknown as AssistantMessage[])
       .flatMap((b) => Object.entries(b.toolApprovals || {})),

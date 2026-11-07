@@ -1,9 +1,8 @@
 """Turn one server's discovered tools into what each path gets.
 
-The composite install and the Flash binder both start from the same three
-inputs, the vendor's list, the consent's denial and the row's binding plan,
-and must land on the same split, or a tool could be wrapped for the sandbox
-on one path and bound directly on the other. Folded names throughout, the way
+The composite install splits each server's tools between the sandbox wrappers
+and the direct path from three inputs, the vendor's list, the consent's denial
+and the row's binding plan. Folded names throughout, the way
 the relay matches them, so a vendor that recases a name is treated the same
 at every gate.
 """

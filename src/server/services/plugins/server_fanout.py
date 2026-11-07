@@ -6,20 +6,21 @@ hand-pasted ``mcpServers`` blob get the identical per-entry gauntlet
 the same per-entry isolation: one bad entry never aborts the others. Legacy
 sse entries are held back rather than installed — they are probed and
 reported ``upgradable`` for the wizard's consent step.
+
+The caller has already checked every server this writes (``checks``), and a
+row lands only as the server that passed: one whose fields moved since is
+refused at its commit instead of written unchecked.
 """
 
+import asyncio
 import logging
+from dataclasses import dataclass
 
 from pydantic import ValidationError
 
 from src.server.database.mcp_servers import (
-    MAX_CATALOG_SERVERS_PER_USER,
     create_catalog_server,
     list_catalog_servers,
-)
-from src.server.database.user_vault_secrets import (
-    create_user_secret,
-    get_user_secret_names,
 )
 from src.server.models.mcp_server import (
     McpServerInput,
@@ -27,11 +28,67 @@ from src.server.models.mcp_server import (
     isolation_warnings,
 )
 from src.server.models.plugin import ComponentResult, InstallReport
-from src.server.services.mcp_config import reserved_catalog_names
-from src.server.services.mcp_import import ImportScope, run_mcp_import
+from src.server.services.mcp_import import catalog_import_scope, run_mcp_import
+from src.server.services.mcp_oauth.discovery import schedule_catalog_discovery
+from src.server.services.plugins.checks import NOT_CHECKED_REASON, CheckedServers
 from src.server.services.plugins.mcp import McpEntryPlan
 
 logger = logging.getLogger(__name__)
+
+# One package decides how many endpoints get probed, and mcp.json puts no
+# ceiling on its entry count. The probe gate (``services/mcp_probe._gate``,
+# shared with every other caller on this worker) bounds the sockets but not
+# the clock: 10,000 stalling entries a handful at a time is hours of held
+# request. This cap is what bounds the phase; with the gate to itself that is
+# a few probe timeouts, and contention from other callers stretches it, which
+# is the trade the shared gate makes for never opening more sockets than it.
+MAX_PROBED_ENTRIES = 32
+
+
+@dataclass(frozen=True)
+class _SseProbe:
+    """Whether one held-back sse endpoint answers streamable HTTP."""
+
+    ok: bool
+    detail: str = ""
+
+
+async def _probe_sse_entries(plans: list[McpEntryPlan]) -> dict[str, _SseProbe]:
+    """Probe the held-back sse endpoints, keyed by mcp.json entry key.
+
+    An auth challenge counts as success: a server that asks for a credential
+    has proved it speaks streamable HTTP, and supplying one is the connector
+    flow's job rather than the probe's. Entries past the cap come back not-ok
+    with the reason rather than dropped, so the caller still reports them as
+    the ordinary un-upgradable sse entries an unprobed one is.
+    """
+    from src.server.services.mcp_probe import bounded_probe
+
+    async def one(plan: McpEntryPlan) -> tuple[str, _SseProbe]:
+        outcome = await bounded_probe(plan.config["url"], {})
+        if outcome.ok:
+            return plan.key, _SseProbe(True)
+        if outcome.auth in ("credential", "oauth"):
+            return plan.key, _SseProbe(
+                True,
+                "endpoint requires authentication (streamable HTTP confirmed)",
+            )
+        logger.info(
+            "[plugins] sse upgrade probe failed for %s: %s",
+            plan.config["url"], outcome.error,
+        )
+        return plan.key, _SseProbe(False, outcome.error)
+
+    probed = dict(
+        await asyncio.gather(*(one(p) for p in plans[:MAX_PROBED_ENTRIES]))
+    )
+    for plan in plans[MAX_PROBED_ENTRIES:]:
+        probed[plan.key] = _SseProbe(
+            False,
+            "not probed: the package declares more than "
+            f"{MAX_PROBED_ENTRIES} legacy sse entries",
+        )
+    return probed
 
 
 def _entry_warnings(plan: McpEntryPlan) -> list[str]:
@@ -49,22 +106,19 @@ async def fan_out_servers(
     plugin_id: str,
     plans: list[McpEntryPlan],
     report: InstallReport,
+    *,
+    checked: CheckedServers,
 ) -> None:
-    """Create a catalog row per installable plan, reporting every plan."""
+    """Create a catalog row per installable plan, reporting every plan.
+
+    ``checked`` is what the caller's check passed; a server outside it is
+    reported ``error`` and not written.
+    """
     installable = [p for p in plans if p.installable]
     sse_plans = [
         p for p in plans if p.skip_code is None and p.transport == "sse"
     ]
-    probed = {}
-    if sse_plans:
-        from src.server.services.plugins.probe import probe_all
-
-        probed = {
-            r.key: r
-            for r in await probe_all(
-                [(p.key, p.config["url"]) for p in sse_plans]
-            )
-        }
+    probed = await _probe_sse_entries(sse_plans) if sse_plans else {}
     for plan in plans:
         report.diagnostics.extend(plan.diagnostics)
         if plan.skip_code is not None:
@@ -97,30 +151,24 @@ async def fan_out_servers(
     if not installable:
         return
 
-    existing_rows = await list_catalog_servers(user_id)
-    existing_names = {r["name"] for r in existing_rows}
-    # First key wins, not last: two package keys can normalize to one MCP name
-    # (`foo-bar` and `foo.bar`), and the import loop creates the first and
-    # skips the rest as duplicates. Keeping the last key would stamp the
-    # created row with the skipped entry's provenance, so a later update would
-    # reconcile it against the wrong entry.
-    key_by_name: dict[str, str] = {}
-    for plan in installable:
-        key_by_name.setdefault(plan.name, plan.key)
-
-    async def create_secret(conn, secret) -> None:
-        await create_user_secret(
-            user_id, secret.name, secret.value, secret.description, conn=conn
-        )
-
-    async def persist(conn, server: McpServerInput) -> bool:
+    async def persist(
+        conn, server: McpServerInput, entry: ParsedMcpServer
+    ) -> bool:
+        # Provenance comes from the entry that actually landed, never from the
+        # name: two package keys can normalize to one MCP name (`foo-bar` and
+        # `foo_bar`), and whichever of them the import loop rejects is not the
+        # one a later plugin update should reconcile this row against.
+        if not checked.approves(server):
+            # Inside the entry's transaction, so the secrets it vaulted roll
+            # back with it.
+            raise ValueError(NOT_CHECKED_REASON)
         await create_catalog_server(
             user_id,
             server.name,
             conn=conn,
             enabled=True,
             plugin_id=plugin_id,
-            plugin_server_key=key_by_name[server.name],
+            plugin_server_key=entry.original_name,
             **server.to_catalog_fields(),
         )
         return True
@@ -133,20 +181,15 @@ async def fan_out_servers(
     ]
     mcp_report = await run_mcp_import(
         parsed,
-        scope=ImportScope(
-            reserved_names=reserved_catalog_names(),
-            existing_names=existing_names,
-            current_count=len(existing_names),
-            cap=MAX_CATALOG_SERVERS_PER_USER,
-            cap_message=(
-                f"Plugins server cap ({MAX_CATALOG_SERVERS_PER_USER}) reached"
-            ),
+        scope=await catalog_import_scope(
+            user_id,
+            existing_names={r["name"] for r in await list_catalog_servers(user_id)},
+            persist=persist,
             exists_message=(
                 "a server with this name already exists; left untouched"
             ),
-            existing_secret_names=set(await get_user_secret_names(user_id)),
-            create_secret=create_secret,
-            persist=persist,
+            # Checked all together before the fan-out lock was taken.
+            check=None,
         ),
     )
 
@@ -163,5 +206,14 @@ async def fan_out_servers(
                 warnings=_entry_warnings(plan) if status == "created" else [],
             )
         )
+    # These rows land ENABLED, so they are in delivery the moment they commit
+    # and nothing else on this path probes them. A remote row with no verdict
+    # of its own earns no egress grant, which leaves its direct tools dark
+    # until a catalog listing self-heals it.
+    for result in mcp_report.results:
+        if result["status"] == "created":
+            schedule_catalog_discovery(
+                user_id, result["name"], reason="plugin-install"
+            )
     report.secrets_created.extend(mcp_report.secrets_created)
     report.servers_created += mcp_report.created

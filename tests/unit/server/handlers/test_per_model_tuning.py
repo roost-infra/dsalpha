@@ -30,7 +30,7 @@ SMALL = "small-context-model"
 
 
 def _make_config(**llm_overrides) -> AgentConfig:
-    llm_defaults = {"name": "system-default-model", "flash": "system-flash-model"}
+    llm_defaults = {"name": "system-default-model", "background": "system-background-model"}
     llm_defaults.update(llm_overrides)
     return AgentConfig(
         llm=LLMConfig(**llm_defaults),
@@ -43,7 +43,7 @@ def _make_config(**llm_overrides) -> AgentConfig:
 
 
 def _mock_model_config():
-    known = {"system-default-model", "system-flash-model", BIG, SMALL}
+    known = {"system-default-model", "system-background-model", BIG, SMALL}
     mc = MagicMock()
     mc.get_model_config.side_effect = lambda name: {"provider": "openai"} if name in known else None
     mc.get_provider_info.return_value = {}
@@ -51,7 +51,7 @@ def _mock_model_config():
     return mc
 
 
-async def _resolve(model_pref, request_model=None, mode="ptc"):
+async def _resolve(model_pref, request_model=None, slot="primary"):
     from src.server.services.llm.config import resolve_llm_config
 
     with (
@@ -64,7 +64,7 @@ async def _resolve(model_pref, request_model=None, mode="ptc"):
         patch("src.llms.llm.LLM.get_model_config", return_value=_mock_model_config()),
     ):
         return await resolve_llm_config(
-            _make_config(), "user-1", request_model, False, mode=mode
+            _make_config(), "user-1", request_model, False, slot=slot
         )
 
 
@@ -99,16 +99,6 @@ class TestCompactionProfileIsPerModel:
         small = await _resolve(two_profiles, request_model=SMALL)
         assert big.compaction.token_threshold != small.compaction.token_threshold
 
-    @pytest.mark.asyncio
-    async def test_whole_preset_is_applied_not_only_the_threshold(self, two_profiles):
-        config = await _resolve(two_profiles, request_model=BIG)
-        preset = COMPACTION_PROFILES["aggressive"]
-        assert config.compaction.keep_messages == preset["keep_messages"]
-        assert (
-            config.compaction.truncate_args_trigger_messages
-            == preset["truncate_args_trigger_messages"]
-        )
-
 
 class TestProfileIsKeyedOnTheModelThatRuns:
     @pytest.mark.asyncio
@@ -124,29 +114,29 @@ class TestProfileIsKeyedOnTheModelThatRuns:
         assert config.compaction.token_threshold == COMPACTION_PROFILES["aggressive"]["token_threshold"]
 
     @pytest.mark.asyncio
-    async def test_flash_mode_keys_on_the_flash_model(self):
-        """A profile on the primary model must not tune a flash turn."""
+    async def test_background_slot_keys_on_the_background_model(self):
+        """A profile on the primary model must not tune a background turn."""
         config = await _resolve(
             {
                 "preferred_model": BIG,
-                "preferred_flash_model": SMALL,
+                "preferred_background_model": SMALL,
                 "compaction_profile": "relaxed",
                 "profiles": {BIG: {"compaction_profile": "aggressive"}},
             },
-            mode="flash",
+            slot="background",
         )
         assert config.compaction.token_threshold == COMPACTION_PROFILES["relaxed"]["token_threshold"]
 
     @pytest.mark.asyncio
-    async def test_flash_profile_applies_on_a_flash_turn(self):
+    async def test_background_profile_applies_on_a_background_turn(self):
         config = await _resolve(
             {
                 "preferred_model": BIG,
-                "preferred_flash_model": SMALL,
+                "preferred_background_model": SMALL,
                 "compaction_profile": "relaxed",
                 "profiles": {SMALL: {"compaction_profile": "aggressive"}},
             },
-            mode="flash",
+            slot="background",
         )
         assert config.compaction.token_threshold == COMPACTION_PROFILES["aggressive"]["token_threshold"]
 

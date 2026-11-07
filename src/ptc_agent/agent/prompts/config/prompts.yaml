@@ -1,6 +1,13 @@
 # Prompt configuration and defaults
 # Variables defined here are available in all templates
 
+# A Claude thread keeps the static prompt it was pinned with until its next
+# rebuild. A thread pinned below rebuild_before rebuilds at its next turn
+# start, whatever its size; a build below a thread's pinned version, a
+# rollback, never forces one. When to bump: templates/AGENTS.md.
+prompt_version: 0
+rebuild_before: 0
+
 defaults:
   # Runtime variables (set at render time, these are just documentation)
   # NOTE: date/datetime are auto-injected by PromptLoader - do NOT set here
@@ -13,9 +20,6 @@ defaults:
   direct_tools_sandbox: false
   # Task workflow defaults
   max_concurrent_task_units: 3
-
-  # General agent defaults
-  max_iterations: 15
 
   # Component defaults
   include_examples: true
@@ -36,14 +40,30 @@ defaults:
   # the runtime-context baseline; the static prompt component describes it)
   memo_enabled: true
 
-  # Sandbox/filesystem availability. Gates filesystem-dependent steering in the
-  # shared user_profile component (e.g. HTML-report output) so it never fires
-  # for Flash, which has no sandbox. PTC overrides to true at render time.
-  sandbox_enabled: false
+  # Gates the main agent's own steering in the shared user_profile component:
+  # the profile files, the HTML-deliverable format, and the automations and
+  # subagents folders. The baseline renders it true for the main agent and
+  # false for a subagent, which leaves them all out.
+  main_agent_steering: false
+
+  # Which agent the main prompt is for: "analyst" works in one workspace,
+  # "chief_of_staff" works from Home and hands workspace work to the analysts
+  # (adds components/chief_of_staff.md.j2).
+  role: analyst
 
   # Market watch (live price injection). Gates the watch_market row in
   # tool_guide. Agent render overrides with the config.yaml master switch.
   market_watch_enabled: true
+
+  # TodoWrite (opt-in feature). Gates the task_workflow line that names the
+  # tool; the agent render and the subagent compiler pass the real value.
+  todo_enabled: false
+
+  # Scratchpad (opt-out feature). Gates every scratchpad mention in the system
+  # prompt, which names only the folders' pattern; this thread's own folder
+  # rides the runtime-context baseline, so the prompt is the same across threads.
+  # The agent render passes the real value, which needs a thread to name it.
+  scratchpad_enabled: false
 
   # Tool-tier gates for tool_guide. The main agent binds all three, so the
   # default matches it; the subagent compiler passes the real per-agent value
@@ -51,6 +71,10 @@ defaults:
   show_widget_enabled: true
   finance_enabled: true
   web_enabled: true
+  # Gates the draw_chart_annotation line in the PTC visualizations section.
+  # The agent builds pass false when the chart-annotation skill is off, and
+  # the subagent compiler always does: only the main agent binds the tools.
+  chart_annotation_enabled: true
 
 # System prompt template metadata (for documentation)
 system:
@@ -149,11 +173,10 @@ envelope:
   updates:
     template: envelope/updates.md.j2
     description: >-
-      Per-call updates contributed on the request, rendered in the tail. Each
-      item carries kind, text, provenance, created_at, schema_version;
-      schema_version is machinery and is not rendered. kind == "market_watch"
-      renders text verbatim.
-    kwargs: [updates]
+      The live-price block a market_watch row carries, rendered once when the
+      row is written. stamp is the wrapped market-watch block and renders
+      verbatim.
+    kwargs: [stamp]
 
   update_row:
     template: envelope/update_row.md.j2
@@ -163,23 +186,25 @@ envelope:
       of its own: the carrier adds that per call. A change row names in plain
       words what moved and who moved it, and carries the paragraph that says
       how to read it; no stamp, because the row's place in history already
-      says when. The harness blocks (<mcp-servers>, <skills>) get a paragraph
-      of their own: they diff like a file but name no file to go and read. A
-      kind with no words here keeps the labelled `**kind**` form.
-    kwargs: [update]
+      says when. A harness block (runtime_context/harness_blocks.py, passed
+      in as `harness`) gets a paragraph of its own: it diffs like a file but
+      names no file to go and read. A kind with no words here keeps the
+      labelled `**kind**` form.
+    kwargs: [update, harness]
 
   baseline_agentmd:
     template: envelope/baseline_agentmd.md.j2
     description: agent.md wrapped in <agentmd path=...>. Byte-deterministic.
-    kwargs: [path, content]
+    kwargs: [path, content, role]
 
   baseline_memory:
     template: envelope/baseline_memory.md.j2
     description: >-
       One memory tier wrapped in <memory path=...>. Byte-deterministic.
-      readonly is the build with no filesystem, which reads the index but
-      cannot open or write the files it points to.
-    kwargs: [path, content, readonly]
+      readonly is a subagent without file tools, which reads the index but
+      cannot open or write the files it points to; subagent reads memory and
+      never writes it.
+    kwargs: [path, content, readonly, subagent]
 
   baseline_identity:
     template: envelope/baseline_identity.md.j2
@@ -205,5 +230,23 @@ envelope:
     description: >-
       The skills manifest wrapped in <skills>, verbatim: it arrives with its
       own heading and activation line. Empty content renders nothing.
+      Byte-deterministic.
+    kwargs: [content]
+
+  baseline_activity:
+    template: envelope/baseline_activity.md.j2
+    description: >-
+      The Chief of Staff's view of what the user has been doing (recent
+      workspaces and threads, today's automation runs, holdings), wrapped in
+      <activity> under one line dating the copy. Empty content renders
+      nothing. Byte-deterministic.
+    kwargs: [content]
+
+  baseline_scratchpad:
+    template: envelope/baseline_scratchpad.md.j2
+    description: >-
+      This thread's scratchpad folder and its note/ folder as a <scratchpad>
+      element, when the scratchpad feature is on. content is the folder,
+      absolute with a trailing slash; empty renders nothing.
       Byte-deterministic.
     kwargs: [content]

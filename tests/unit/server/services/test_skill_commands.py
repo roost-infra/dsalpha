@@ -1,8 +1,6 @@
 """Pins for the editable slash-command contracts: the alias charset, the
 frontmatter ``command:`` seed, and the per-turn trigger fold."""
 
-import io
-import zipfile
 from types import SimpleNamespace
 
 from src.server.handlers.chat.request_prep import user_skill_commands
@@ -11,13 +9,11 @@ from src.server.services.user_skills.validate import (
     valid_command,
     validate_skill_archive,
 )
+from tests.unit.server.mcp_builders import zip_package
 
 
 def _zip(name: str, skill_md: str) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr(f"{name}/SKILL.md", skill_md)
-    return buf.getvalue()
+    return zip_package({f"{name}/SKILL.md": skill_md})
 
 
 def _skill_md(name: str, command: str | None = None) -> str:

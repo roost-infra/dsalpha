@@ -1,6 +1,6 @@
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
 import { instrumentLabel } from '@/components/orders/instrument';
 import { OrderStatusPill } from '@/components/orders/OrderStatusPill';
@@ -12,6 +12,7 @@ import { OrderActionLink } from '@/components/orders/OrderActionLink';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
 import { useDirectToolVendorLabel } from '@/pages/ChatAgent/components/mcp/useDirectToolVendor';
 import { maskAccountId } from '@/pages/ChatAgent/utils/directTools';
+import { useLocale } from '@/hooks/useLocale';
 import { isDefinitiveOrderError, useOrder } from '@/hooks/useOrders';
 import { fillFigure, type OrderAttempt } from '@/pages/ChatAgent/utils/api';
 import {
@@ -19,21 +20,21 @@ import {
   DetailOverlay,
   DetailSection,
 } from '@/pages/Plugins/components/DetailOverlay';
+import { HIDDEN, orderAmount } from '@/components/orders/format';
 import {
-  formatOrderTime,
-  orderAmount,
-  orderLimitPrice,
-  orderSize,
-  orderStopPrice,
-  HIDDEN,
-} from '../utils/format';
-import {
-  ORDER_ACTION_KEY,
   ORDER_ASSET_CLASS_KEY,
+  ORDER_SESSION_KEY,
   ORDER_SIDE_KEY,
   ORDER_TIME_IN_FORCE_KEY,
   ORDER_TYPE_KEY,
-} from '../utils/labels';
+} from '@/components/orders/labels';
+import {
+  formatOrderTime,
+  orderLimitPrice,
+  orderSize,
+  orderStopPrice,
+} from '../utils/format';
+import { ORDER_ACTION_KEY } from '../utils/labels';
 
 function Body({
   order,
@@ -42,8 +43,8 @@ function Body({
   order: OrderAttempt;
   valuesHidden: boolean;
 }) {
-  const { t, i18n } = useTranslation();
-  const locale = i18n.language;
+  const { t } = useTranslation();
+  const locale = useLocale();
   const summary = order.order;
   const none = t('orders.detail.none');
   const assetKey = summary?.asset_class
@@ -54,6 +55,7 @@ function Body({
   const tifKey = summary?.time_in_force
     ? ORDER_TIME_IN_FORCE_KEY[summary.time_in_force]
     : undefined;
+  const sessionKey = summary?.session ? ORDER_SESSION_KEY[summary.session] : undefined;
   const route = Object.entries(order.route ?? {});
   const filledQty = fillFigure(order.filled_qty);
   const avgFillPrice = fillFigure(order.avg_fill_price);
@@ -101,7 +103,7 @@ function Body({
             {tifKey ? t(tifKey) : summary.time_in_force || none}
           </DetailField>
           <DetailField label={t('orders.detail.session')}>
-            {summary.session || none}
+            {sessionKey ? t(sessionKey) : summary.session || none}
           </DetailField>
           {summary.note && (
             <DetailField label={t('orders.detail.note')}>{summary.note}</DetailField>
@@ -131,16 +133,16 @@ function Body({
 
       <DetailSection title={t('orders.detail.timeline')}>
         <DetailField label={t('orders.detail.created')}>
-          {formatOrderTime(order.created_at) || none}
+          {formatOrderTime(order.created_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.decided')}>
-          {formatOrderTime(order.decided_at) || none}
+          {formatOrderTime(order.decided_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.executed')}>
-          {formatOrderTime(order.executed_at) || none}
+          {formatOrderTime(order.executed_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.completed')}>
-          {formatOrderTime(order.completed_at) || none}
+          {formatOrderTime(order.completed_at, locale) || none}
         </DetailField>
         <DetailField label={t('orders.detail.approval')}>
           {t(
@@ -192,7 +194,13 @@ function Body({
         <DetailField label={t('orders.detail.tool')}>
           {order.tool || none}
         </DetailField>
-        <DetailField label={t('orders.detail.vendorOrderId')}>
+        <DetailField
+          label={t(
+            order.vendor_order_id && order.vendor_order_id === order.route?.approval_id
+              ? 'orders.detail.approvalId'
+              : 'orders.detail.vendorOrderId',
+          )}
+        >
           {order.vendor_order_id || none}
         </DetailField>
         <DetailField label={t('orders.detail.attemptId')}>
@@ -277,6 +285,7 @@ export function OrderDetail({
                 status={order.status}
                 mode={order.mode}
                 vendorLabel={vendorLabel}
+                unlistedAt={order.unlisted_at}
                 surface="detail"
               />
               <OrderModeBadge mode={order.mode} />

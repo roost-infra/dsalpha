@@ -1,37 +1,51 @@
-"""Chat request preparation — shared by the flash & PTC run generators.
+"""Chat request preparation for the PTC run generator.
 
 Everything that turns a raw ``ChatRequest`` into a runnable graph invocation:
 message normalization, HITL response translation, fork/timezone resolution,
 skill contexts, steering setup, thread bootstrap, and graph config assembly.
-Identical between the two run flavors, so it lives once here. The START
-entry and retransmit dedup live in ``services.runs.admission``; error
-classification and the terminal error funnel live in ``error_handling``.
+The START entry and retransmit dedup live in ``services.runs.admission``;
+error classification and the terminal error funnel live in
+``error_handling``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 
-from ptc_agent.agent.middleware.runtime_context import TurnContext
+from ptc_agent.agent.limits import UNBOUNDED_RECURSION_LIMIT
+from ptc_agent.agent.middleware.provenance.command_trace import REPORT_COMMAND_KEY
+from ptc_agent.agent.middleware.runtime_context import TurnContext, parse_surface
 from src.config.settings import (
     get_langsmith_metadata,
     get_langsmith_tags,
     get_locale_config,
 )
-from src.server.app import setup
+from src.observability.langsmith_tracer import with_run_tracer
+from src.server.contracts.run_times import run_settled_at
+from src.server.contracts.turn_kinds import (
+    ANNOUNCED_KEYS,
+    NOTIFICATION_QUERY_TYPES,
+    WAKE_QUERY_TYPE,
+)
 from src.server.database import conversation as qr_db
+from src.server.database.conversation.threads_write import remember_thread_llm_model
+from src.server.services.llm.thread_model import NamedModel
+from src.server.services.runs.pending_input import cache_clock_attempt
 from src.server.database.runs import lifecycle as tl_db
-from src.server.models.chat import summarize_hitl_response_map
+from src.server.database.runs.hook_jobs import SURFACE_META
+from src.server.models.chat import CommandReport, summarize_hitl_response_map
 from src.server.utils.skill_context import (
     detect_slash_commands,
     parse_skill_contexts,
 )
-from src.tools.web.fetch import fetch_llm_client_override, fetch_model_override
+from src.utils.timezone_utils import zone_or_none
 from src.utils.tracking import TokenTrackingManager
 from src.tools.decorators import ToolUsageTracker
 
@@ -52,6 +66,17 @@ logger = logging.getLogger("src.server.handlers.chat_handler")
 # a durable receipt — the primer consumes it, so it never enters the SSE
 # stream.
 DISPATCH_STARTED_MARKER = "__dispatch_run_started__"
+
+
+@dataclass(frozen=True)
+class HandOffSteered:
+    """Yielded instead when a dispatched hand-off met a running turn and went
+    into it as a steer: no run of its own starts, and the primer answers with
+    ``run_id``, the run it was sent into, and ``steer_id``, the steer's row,
+    which names a later run that takes it in if that one ends first."""
+
+    run_id: str
+    steer_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -90,26 +115,22 @@ def inject_inline_reminders(
             _append_to_last_user_message(messages, reminder)
 
 
-def _resolve_timezone(request_timezone: Optional[str], locale: Optional[str]) -> str:
-    """Validate request timezone, falling back to locale-based default."""
-    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-
-    if request_timezone:
-        try:
-            ZoneInfo(request_timezone)
-            return request_timezone
-        except ZoneInfoNotFoundError:
-            logger.warning(
-                f"Invalid timezone '{request_timezone}', falling back to locale-based timezone."
-            )
-
-    locale_config = get_locale_config(locale or "en-US", "en")
-    return locale_config.get("timezone", "UTC")
+def _first_zone(*candidates: Optional[str]) -> Optional[str]:
+    """The first candidate that names a zone; one that names none is logged
+    and skipped."""
+    for candidate in candidates:
+        if zone_or_none(candidate) is not None:
+            return candidate
+        if candidate:
+            logger.warning(f"Invalid timezone '{candidate}', trying the next source.")
+    return None
 
 
-def _resolve_fork(*, request: ChatRequest) -> tuple[str, Optional[ForkSpec]]:
+def _resolve_fork(
+    *, request: ChatRequest, thread_id: str
+) -> tuple[str, Optional[ForkSpec]]:
     """Compute query_type and the fork cleanup spec (truncation + checkpoint
-    pin), shared by flash and PTC handlers.
+    pin).
 
     The cleanup itself executes INSIDE the START transaction (v4 2.4,
     ``start_run(fork=...)``): truncation, checkpoint pin, and the new attempt
@@ -131,54 +152,33 @@ def _resolve_fork(*, request: ChatRequest) -> tuple[str, Optional[ForkSpec]]:
 
     fork = None
     if request.fork_from_turn is not None and request.checkpoint_id:
+        from src.server.utils.checkpoint_helpers import (
+            FORK_ROOT_CHECKPOINT_ID,
+            checkpoint_on_branch,
+            write_fork_root,
+        )
+
         fork = ForkSpec(
             from_turn=request.fork_from_turn,
             checkpoint_id=request.checkpoint_id,
+            branch_tip=request.fork_branch_tip,
             preserve_query_at_fork=is_checkpoint_replay,
+            run_horizon=request.fork_run_horizon,
+            # The walk stops at the tip the fork was read off: the checkpoint
+            # is on that tip's branch, so a pointer above the tip still has it.
+            on_branch=(
+                partial(checkpoint_on_branch, thread_id, request.fork_branch_tip)
+                if request.fork_branch_tip
+                else None
+            ),
+            write_root=(
+                partial(write_fork_root, thread_id)
+                if request.checkpoint_id == FORK_ROOT_CHECKPOINT_ID
+                else None
+            ),
         )
 
     return query_type, fork
-
-
-async def _is_plan_interrupt_pending(thread_id: str) -> bool:
-    """Check if the pending interrupt is a SubmitPlan (plan mode) interrupt.
-
-    Plan interrupts from HumanInTheLoopMiddleware have action_requests with
-    name="SubmitPlan". Other interrupts (AskUserQuestion, onboarding) use
-    a "type" field instead. Returns False on any error.
-    """
-    try:
-        checkpointer = setup.checkpointer
-        if not checkpointer:
-            return False
-        config = {"configurable": {"thread_id": thread_id}}
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
-        if not checkpoint_tuple or not checkpoint_tuple.pending_writes:
-            return False
-        for _task_id, channel, value in checkpoint_tuple.pending_writes:
-            if channel != "__interrupt__":
-                continue
-            interrupts = value if isinstance(value, list) else [value]
-            for intr in interrupts:
-                intr_value = (
-                    getattr(intr, "value", intr)
-                    if not isinstance(intr, dict)
-                    else intr.get("value", intr)
-                )
-                if not isinstance(intr_value, dict):
-                    continue
-                action_requests = intr_value.get("action_requests", [])
-                if action_requests and isinstance(action_requests[0], dict):
-                    if action_requests[0].get("name") == "SubmitPlan":
-                        return True
-        return False
-    except Exception:
-        logger.warning(
-            f"[PTC_CHAT] Failed to check pending interrupt type for "
-            f"thread_id={thread_id}, defaulting to non-plan mode",
-            exc_info=True,
-        )
-        return False
 
 
 # ---------------------------------------------------------------------------
@@ -268,11 +268,38 @@ def process_hitl_response(request: ChatRequest) -> PreparedHitl:
     return PreparedHitl(feedback_action, summary["content"], metadata)
 
 
+def provenance_metadata(request: ChatRequest) -> dict[str, Any]:
+    """Where a turn came from, for its query row (display only).
+
+    History labels a message from these keys, and none of them reaches the
+    model: ``origin`` is per turn, mirroring the thread-level
+    metadata['origin'] (threads go mixed: a pinned automation thread also
+    takes manual user follow-ups, which carry no origin); ``platform`` is the
+    raw surface string, the client deciding which values it labels, and the
+    request's own rather than :func:`turn_surface`'s, which gives a
+    report-back the thread's channel although nobody sent it from there; and
+    the ``ANNOUNCED_KEYS`` name what a notification turn announces, since its
+    own message is model-facing and hidden: ``report_source`` a report-back's
+    report, ``market_target`` and ``wakeup`` a wake's notices.
+    """
+    metadata: dict[str, Any] = {}
+    if request.origin:
+        metadata["origin"] = request.origin.model_dump(exclude_none=True)
+    if request.platform:
+        metadata["platform"] = request.platform
+    for key in ANNOUNCED_KEYS:
+        value = getattr(request, key)
+        if value and not isinstance(value, dict):
+            value = value.model_dump(exclude_none=True)
+        if value:
+            metadata[key] = value
+    return metadata
+
+
 def serialize_context_metadata(
     request: ChatRequest,
     query_metadata: dict,
     user_input: str,
-    mode: str,
     extra_commands: dict[str, str] | None = None,
     allowed_skills: set[str] | None = None,
 ) -> None:
@@ -301,7 +328,6 @@ def serialize_context_metadata(
     if not request.hitl_response and "additional_context" not in query_metadata:
         _, early_detected = detect_slash_commands(
             user_input,
-            mode=mode,
             extra_commands=extra_commands,
             allowed_skills=allowed_skills,
         )
@@ -311,30 +337,21 @@ def serialize_context_metadata(
             ]
 
 
-def setup_steering_tracking(handler) -> None:
-    """Wire up steering tracking on a ``RunSSEProducer``.
-
-    Registers a callback so that messages injected mid-workflow are tracked
-    for post-completion query backfill.
-    """
-
-    async def _track_steerings(messages):
-        handler.injected_steerings.extend(
-            msg for msg in messages if msg.get("content")
-        )
-
-    handler.on_steering_delivered = _track_steerings
-
-
 def normalize_request_messages(request: ChatRequest) -> list[dict]:
-    """Convert ``request.messages`` to a flat list of ``{"role": ..., "content": ...}`` dicts.
+    """Convert ``request.messages`` to ``{"id", "role", "content"}`` dicts.
 
     Handles both plain-string and multi-part (text / image_url) content items.
+    The id is minted here rather than left to langgraph at write time because
+    the turn's input checkpoint keeps the input as sent, and a regenerate runs
+    that input again: an id it carries comes back as the same message, which
+    the reducer merges, while one minted per run is a second copy.
     """
     messages: list[dict] = []
     for msg in request.messages:
         if isinstance(msg.content, str):
-            messages.append({"role": msg.role, "content": msg.content})
+            messages.append(
+                {"id": str(uuid.uuid4()), "role": msg.role, "content": msg.content}
+            )
         elif isinstance(msg.content, list):
             content_items = []
             for item in msg.content:
@@ -349,7 +366,11 @@ def normalize_request_messages(request: ChatRequest) -> list[dict]:
                             }
                         )
             messages.append(
-                {"role": msg.role, "content": content_items or str(msg.content)}
+                {
+                    "id": str(uuid.uuid4()),
+                    "role": msg.role,
+                    "content": content_items or str(msg.content),
+                }
             )
     return messages
 
@@ -366,24 +387,28 @@ def init_tracking(thread_id: str) -> tuple[TokenTrackingManager, ToolUsageTracke
     return token_callback, tool_tracker
 
 
-def apply_fetch_override(config) -> None:
-    """Propagate fetch model / client overrides from *config* into context vars."""
-    if config.llm and config.llm.fetch:
-        fetch_model_override.set(config.llm.fetch)
-        fetch_client = config.subsidiary_llm_clients.get("fetch")
-        if fetch_client:
-            fetch_llm_client_override.set(fetch_client)
-
-
 class PriorThread(NamedTuple):
     """The thread row as it stood before this turn stamped it.
 
-    Both fields are absent on a thread's first turn, and on any turn whose read
-    failed: they are context for the turn anchor row rather than correctness,
-    so a read failure degrades to nothing rather than failing the turn start.
+    Every field is absent on a thread's first turn, and on any turn whose read
+    failed: they are context for the turn rather than correctness, so a read
+    failure degrades to nothing rather than failing the turn start.
     """
 
     last_turn_at: Optional[datetime] = None
+    # The surface the thread is bound to (the one it was created on, or a
+    # channel identity stamped onto it later). Stands in for the turn's own
+    # surface on a notification, which arrives without one (``turn_surface``).
+    platform: Optional[str] = None
+    # The surface the latest attempt recorded it ran on (``surface_stamp``).
+    # Stands in for a resume's, which continues that attempt.
+    attempt_platform: Optional[str] = None
+    # When the thread's newest attempt settled, by the run ledger, passing over
+    # one whose input never reached the graph (``cache_clock_attempt``). A
+    # cancelled or failed call still refreshed the provider's prompt cache but
+    # stamped nothing in the checkpoint, so compaction's cold-cache estimate
+    # reads this as well.
+    last_run_settled_at: Optional[datetime] = None
 
 
 def _fork_predecessor_turn(request: ChatRequest) -> Optional[int]:
@@ -396,7 +421,8 @@ def _fork_predecessor_turn(request: ChatRequest) -> Optional[int]:
 async def _read_prior_thread(
     thread_id: str, *, before_turn: Optional[int] = None
 ) -> PriorThread:
-    """The prior-turn time.
+    """The prior-turn time, the surface the thread is bound to, and the
+    surface its latest attempt ran on.
 
     The time is the latest attempt row's, never the thread's ``updated_at``: a
     rename or a share bumps the thread stamp between turns, a concurrent POST
@@ -409,11 +435,17 @@ async def _read_prior_thread(
     model reads ends there, so its prior turn is the attempt before the fork
     rather than the newest attempt on the thread.
     """
+    reads = [
+        qr_db.get_thread_by_id(thread_id),
+        tl_db.get_latest_attempt(thread_id, before_turn=before_turn),
+    ]
+    # A fork's prior turn is an earlier attempt, but the newest one is what
+    # last refreshed the provider's cache over the history they share.
+    if before_turn is not None:
+        reads.append(tl_db.get_latest_attempt(thread_id))
     try:
-        row, attempt = await asyncio.gather(
-            qr_db.get_thread_by_id(thread_id),
-            tl_db.get_latest_attempt(thread_id, before_turn=before_turn),
-        )
+        row, attempt, *newest = await asyncio.gather(*reads)
+        clock = await cache_clock_attempt(thread_id, newest[0] if newest else attempt)
     except Exception:
         logger.debug("thread runtime-context read failed", exc_info=True)
         return PriorThread()
@@ -426,7 +458,19 @@ async def _read_prior_thread(
         # A naive stamp would raise against the envelope's aware clock.
         last_turn_at = stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
-    return PriorThread(last_turn_at)
+    platform = row.get("platform")
+    ran_on = ((attempt or {}).get("metadata") or {}).get(SURFACE_META)
+    attempt_platform = ran_on.get("platform") if isinstance(ran_on, dict) else None
+    return PriorThread(
+        last_turn_at=last_turn_at,
+        platform=platform if isinstance(platform, str) and platform else None,
+        attempt_platform=(
+            attempt_platform
+            if isinstance(attempt_platform, str) and attempt_platform
+            else None
+        ),
+        last_run_settled_at=run_settled_at(clock),
+    )
 
 
 async def ensure_thread(
@@ -434,27 +478,76 @@ async def ensure_thread(
     thread_id: str,
     workspace_id: str,
     user_id: str,
-    msg_type: str,
     initial_query: str = "",
+    row_ensured: bool = False,
 ) -> PriorThread:
     """Ensure a thread record exists in the database, optionally with external linkage.
 
     Returns the prior turn as it stood on entry, read here so the ordering
     against the ensure below (which stamps the thread row) stays off the
     callers.
+
+    ``row_ensured``: ``make_thread`` already found or made the row, which is
+    then the only call that applies creation-time fields, so this one has the
+    status to resume and nothing to create or title.
     """
     prior = await _read_prior_thread(
         thread_id, before_turn=_fork_predecessor_turn(request)
     )
+    if row_ensured:
+        await qr_db.update_thread_status(thread_id, "in_progress")
+        return prior
+    created = await _ensure_thread_row(
+        request, thread_id, workspace_id, user_id, initial_query=initial_query
+    )
 
+    # Threads born here (automations, channel gateways, legacy clients) never
+    # pass through POST /threads, so this is their only shot at an LLM title.
+    # Web create-first threads pre-exist → created=False → no double generation.
+    if created and initial_query:
+        from src.server.services.thread_title import schedule_title_generation
+        from src.server.utils.thread_stamp import stamped_title
+
+        schedule_title_generation(
+            thread_id=thread_id,
+            user_id=user_id,
+            first_query=initial_query,
+            expected_title=stamped_title(initial_query),
+            timezone=request.timezone,
+        )
+
+    return prior
+
+
+async def make_thread(
+    request: ChatRequest, thread_id: str, workspace_id: str, user_id: str
+) -> bool:
+    """Make the thread a send needs before its admission, untitled. Whether
+    this call made it; a thread it finds keeps its status, since the send
+    may yet be refused. A thread this call made has no prior turn."""
+    return await _ensure_thread_row(
+        request, thread_id, workspace_id, user_id, initial_query="", resume=False
+    )
+
+
+async def _ensure_thread_row(
+    request: ChatRequest,
+    thread_id: str,
+    workspace_id: str,
+    user_id: str,
+    *,
+    initial_query: str,
+    resume: bool = True,
+) -> bool:
     ensure_kwargs = dict(
         workspace_id=workspace_id,
         conversation_thread_id=thread_id,
         user_id=user_id,
         initial_query=initial_query,
         initial_status="in_progress",
-        msg_type=msg_type,
     )
+    if not resume:
+        ensure_kwargs["resume"] = False
     if request.platform:
         ensure_kwargs["platform"] = request.platform
     if request.external_thread_id:
@@ -463,26 +556,36 @@ async def ensure_thread(
         ensure_kwargs["metadata"] = {
             "origin": request.origin.model_dump(exclude_none=True)
         }
-    created = await qr_db.ensure_thread_exists(**ensure_kwargs)
+    # Applied only if this send creates the thread; PATCH owns it after.
+    if request.subagents_allowed is not None:
+        ensure_kwargs["subagents_allowed"] = request.subagents_allowed
+    return await qr_db.ensure_thread_exists(**ensure_kwargs)
 
-    # Threads born here (automations, channel gateways, legacy clients) never
-    # pass through POST /threads, so this is their only shot at an LLM title.
-    # Web create-first threads pre-exist → created=False → no double generation.
-    if created and initial_query:
-        from src.server.services.thread_title import schedule_title_generation
 
-        schedule_title_generation(
-            thread_id=thread_id,
-            user_id=user_id,
-            first_query=initial_query,
-            expected_title=initial_query[:255],
-            timezone=request.timezone,
+async def keep_named_model(thread_id: str, named_model: NamedModel | None) -> None:
+    """Keep the model a client named on its thread, once the turn is admitted.
+
+    Called after START commits and the run is attached, so a send refused
+    before admission, or a steer that never ran on the model it carried,
+    leaves the thread as it was, and the committed run always has an owner
+    when this waits on the database.
+    """
+    if named_model:
+        await remember_thread_llm_model(
+            thread_id, named_model.name, seen=named_model.seen
         )
 
-    return prior
 
-
-def build_turn_context(request: ChatRequest, prior: PriorThread) -> TurnContext:
+def build_turn_context(
+    request: ChatRequest,
+    prior: PriorThread,
+    *,
+    user_profile: dict[str, Any] | None,
+    disk_free_mb: int | None = None,
+    disk_known: bool = False,
+    inherits_rules: bool = False,
+    sent_at: float | None = None,
+) -> TurnContext:
     """What this turn knows about itself: the request's surface plus the prior row.
 
     Origin, surface and rules all come from the request alone, because they
@@ -490,13 +593,138 @@ def build_turn_context(request: ChatRequest, prior: PriorThread) -> TurnContext:
     thread can take a manual follow-up: that turn has a person waiting on it,
     and the automation line in the rules would tell the model otherwise. An
     automation stamps the origin on every request it sends, so nothing is lost.
+    ``disk_free_mb`` and ``disk_known`` come from :func:`read_disk_notice`.
+    ``inherits_rules`` is set for a retry whose attempt ran under the last
+    rules stated (:func:`retried_on_its_surface`). ``sent_at`` is when the
+    server received the request, ahead of admission and the workspace's start.
+
+    The zone is the profile's before the request's: a channel or an
+    automation's own request names none, and the request alone would put
+    those turns on the locale default. When neither names one, as when the
+    profile read fails on such a turn, only ``tool_timezone`` takes the locale
+    default; the stamp keeps the frozen identity's zone.
     """
+    zone = _first_zone((user_profile or {}).get("timezone"), request.timezone)
     return TurnContext(
         last_turn_at=prior.last_turn_at,
+        previous_run_settled_at=prior.last_run_settled_at,
+        keep_full_context=request.keep_full_context,
+        sent_at=sent_at,
         platform=request.platform,
         origin=request.origin.type if request.origin else None,
+        origin_agent=request.origin.agent if request.origin else None,
         surface_rules=request.surface_rules,
+        inherits_rules=inherits_rules or is_notification_turn(request),
+        disk_free_mb=disk_free_mb,
+        disk_known=disk_known,
+        timezone=zone,
+        tool_timezone=zone
+        or get_locale_config(request.locale or "en-US", "en").get("timezone", "UTC"),
     )
+
+
+def is_notification_turn(request: ChatRequest) -> bool:
+    """Whether this server posted the turn itself, to report finished background
+    work, a market target's notice or a wakeup that fired.
+
+    A report-back arrives as a system query with no surface of its own, and a
+    wake as a ``market_target`` or ``wakeup`` query. Nobody sent any of them,
+    so it speaks where the thread's last turn did rather than naming a surface.
+    ``query_type`` is stripped from every request that is not the server's own
+    (``threads/messaging.py``), so a client cannot claim one.
+    """
+    return request.query_type in NOTIFICATION_QUERY_TYPES and not request.platform
+
+
+def turn_surface(request: ChatRequest, prior: PriorThread) -> Optional[str]:
+    """The name of the surface this turn's replies reach, without its symbol.
+
+    The request's own surface when it names one. A resumed interrupt can
+    arrive without one, and continues the attempt it answers, so it runs where
+    that attempt ran, as a retry does: the thread's bound surface would make
+    the answer to a web turn's question on a channel's thread the channel's.
+    A notification arrives without one too and continues work the thread
+    already had in hand, so it takes the surface the thread is bound to. Any
+    other turn without a surface is a plain web-app turn, which has none.
+    """
+    return parse_surface(_turn_platform(request, prior)).name
+
+
+def _turn_platform(request: ChatRequest, prior: PriorThread) -> Optional[str]:
+    """The surface :func:`turn_surface` names, as the request spells it."""
+    if request.platform:
+        return request.platform
+    if request.hitl_response:
+        return prior.attempt_platform
+    if is_notification_turn(request):
+        return prior.platform
+    return None
+
+
+def surface_stamp(
+    request: ChatRequest, prior: PriorThread, *, inherits_rules: bool
+) -> dict:
+    """START metadata naming the surface the attempt runs on and its rules.
+
+    ``/retry`` builds its attempt from the run row, with no surface, and the
+    thread's bound surface would make a web turn on a channel's thread the
+    channel's. So each attempt records where it ran and the rules it ran
+    under, and a retry of it runs there too (:func:`retried_on_its_surface`),
+    as does a resume of it (:func:`turn_surface`). A plain web-app turn
+    records nothing.
+    """
+    stamp: dict[str, Any] = {}
+    platform = _turn_platform(request, prior)
+    if platform:
+        stamp["platform"] = platform
+    if request.surface_rules:
+        stamp["rules"] = request.surface_rules
+    if inherits_rules:
+        stamp["inherits_rules"] = True
+    return {SURFACE_META: stamp} if stamp else {}
+
+
+async def retried_on_its_surface(request: ChatRequest) -> tuple[ChatRequest, bool]:
+    """A retry as the attempt it retries ran: on its surface, under its rules.
+
+    Returns the request to run and whether its turn runs under the last rules
+    stated. Any other turn, and a retry of an attempt that recorded no surface
+    (:func:`surface_stamp`), comes back as it is. A read failure fails the
+    turn start, as the retry's own predecessor check would.
+    """
+    if not request.retry_of_run_id or request.platform:
+        return request, False
+    run = await tl_db.get_run(request.retry_of_run_id)
+    stamp = ((run or {}).get("metadata") or {}).get(SURFACE_META)
+    if not isinstance(stamp, dict):
+        return request, False
+    platform, rules = stamp.get("platform"), stamp.get("rules")
+    request = request.model_copy(
+        update={
+            "platform": platform if isinstance(platform, str) and platform else None,
+            "surface_rules": rules if isinstance(rules, str) and rules else None,
+        }
+    )
+    return request, stamp.get("inherits_rules") is True
+
+
+async def read_disk_notice(workspace_id: str) -> tuple[int | None, bool]:
+    """The shared disk's free megabytes once low enough to tell the agent, and
+    whether a current reading backs the answer.
+
+    Read off the stored reading, never measured here: a turn does not wait on
+    the sandbox for context. A failed read is unknown, never "not low", so it
+    cannot take back an earlier low-disk line.
+    """
+    from src.server.database.computer import get_computer_for_workspace
+    from src.server.services.computer_disk import disk_is_known, low_disk_free_mb
+
+    try:
+        computer = await get_computer_for_workspace(workspace_id)
+    except Exception as e:  # noqa: BLE001 - context is never worth failing a turn for
+        logger.debug(f"Low-disk notice skipped for {workspace_id}: {e}")
+        return None, False
+    return low_disk_free_mb(computer), disk_is_known(computer)
 
 
 def _slash_text_target(content: Any) -> tuple[str, dict | None]:
@@ -550,14 +778,14 @@ def user_skill_commands(config) -> dict[str, str] | None:
     return extra or None
 
 
-def turn_skill_names(config, mode: str) -> set[str] | None:
+def turn_skill_names(config) -> set[str] | None:
     """The skill names this turn's build actually exposes.
 
     Slash detection otherwise matches against the process-wide registry, which
-    knows nothing about this user's disables, feature opt-outs, or the build's
-    mode. A command matching a skill the build then refuses does not error: the
-    prefix is stripped and nothing loads, so the model silently receives a
-    shortened message. Assembled from the config ``resolve_llm_config`` already
+    knows nothing about this user's disables or feature opt-outs. A command
+    matching a skill the build then refuses does not error: the prefix is
+    stripped and nothing loads, so the model silently receives a shortened
+    message. Assembled from the config ``resolve_llm_config`` already
     populated, by the same call the agent build makes, so the two cannot drift.
     """
     if config is None:
@@ -568,7 +796,6 @@ def turn_skill_names(config, mode: str) -> set[str] | None:
 
     return set(
         build_effective_skill_registry(
-            mode,  # type: ignore[arg-type]
             feature_resolver=getattr(config, "feature_enabled", None),
             disabled_skills=getattr(config, "disabled_skills", None) or (),
             user_skills=getattr(config, "user_skills", None) or (),
@@ -581,7 +808,6 @@ def turn_skill_names(config, mode: str) -> set[str] | None:
 def prepare_skill_contexts(
     messages: list[dict],
     request: ChatRequest,
-    mode: str,
     extra_commands: dict[str, str] | None = None,
     allowed_skills: set[str] | None = None,
 ) -> list[dict]:
@@ -605,7 +831,6 @@ def prepare_skill_contexts(
         if msg_text:
             cleaned_text, detected = detect_slash_commands(
                 msg_text,
-                mode=mode,
                 extra_commands=extra_commands,
                 allowed_skills=allowed_skills,
             )
@@ -619,7 +844,7 @@ def prepare_skill_contexts(
 
     if skill_contexts:
         logger.info(
-            f"[{mode.upper()}_CHAT] Skills requested: {[s.name for s in skill_contexts]}"
+            f"[PTC_CHAT] Skills requested: {[s.name for s in skill_contexts]}"
         )
 
     return [
@@ -627,62 +852,111 @@ def prepare_skill_contexts(
     ]
 
 
+async def turn_start_checkpoint_id(
+    thread_id: str, request: ChatRequest, checkpointer: Any
+) -> str | None:
+    """The checkpoint a new message runs from when the request names none and
+    the newest one is off the thread's branch (``turn_base_checkpoint_id``).
+
+    A HITL resume keeps the newest: it answers the pause there, and naming a
+    checkpoint would replay the pause's tasks that already finished. The route
+    refuses one whose pause is off the branch (``settle_resume_request``).
+    """
+    from src.server.utils.checkpoint_helpers import turn_base_checkpoint_id
+
+    if request.checkpoint_id or request.hitl_response:
+        return None
+    return await turn_base_checkpoint_id(checkpointer, thread_id)
+
+
+def _origin_metadata(request: ChatRequest, *, from_server: bool) -> dict[str, str]:
+    """Who sent the turn, so a trace can be split by what drove it.
+
+    Read per request rather than off the thread: an automation's thread takes
+    turns from a person too, and only the request says which this one is. A
+    turn the server posts itself (a report-back or a wake) carries no origin
+    either, so its query type, which no client can set, keeps it from reading
+    as the user's. Any client may name an origin, so only the server's own is
+    believed: a person's turn labelled an automation's would drop out of the
+    user traffic and pin its failures on an automation.
+    """
+    if request.query_type in NOTIFICATION_QUERY_TYPES:
+        return {"origin": "system", "query_type": request.query_type}
+    origin = request.origin
+    if origin is None or not from_server:
+        return {"origin": "user"}
+    fields = {"origin": origin.type}
+    if origin.type == "automation" and origin.id:
+        fields["automation_id"] = origin.id
+    return fields
+
+
 def build_graph_config(
     thread_id: str,
     user_id: str,
     workspace_id: str,
-    mode: str,
     timezone_str: str,
     token_callback,
     request: ChatRequest,
     effective_model: str | None,
-    recursion_limit: int,
-    plan_mode: bool | None = None,
     extra_configurable: dict | None = None,
     skill_contexts: list[dict] | None = None,
     skill_dirs: list[str] | None = None,
     run_id: str | None = None,
     turn_index: int | None = None,
+    surface: str | None = None,
+    base_checkpoint_id: str | None = None,
+    from_server: bool = False,
 ) -> dict:
-    """Build the LangGraph ``config`` dict shared by flash and PTC handlers.
+    """Build the LangGraph ``config`` dict for a PTC turn.
 
-    ``mode`` should be ``"flash"`` or ``"ptc"``.
     ``extra_configurable`` is an optional dict merged into ``configurable``.
     ``skill_contexts`` (+ ``skill_dirs``) are passed to ``SkillsMiddleware`` so it
     injects each requested skill's SKILL.md body once; omit on HITL/replay turns.
     ``run_id`` / ``turn_index`` are stamped into config metadata so the run's
     checkpoints self-describe (checkpoint-sourced replay can correlate turns by
     these instead of ordinal matching).
+    ``run_id`` and ``surface`` (from :func:`turn_surface`) also ride
+    ``configurable`` as ``run_id`` and ``platform``, which is where a tool
+    reads which run and which conversation it is acting in.
+    ``base_checkpoint_id`` is where a turn that names no checkpoint starts
+    (``turn_start_checkpoint_id``). ``from_server`` says the server sent the
+    request, so the trace believes the origin it names.
     """
-    workflow_type = "flash_agent" if mode == "flash" else "ptc_agent"
-
-    langsmith_tags = get_langsmith_tags(
-        msg_type=mode,
-        locale=request.locale,
-    )
+    langsmith_tags = get_langsmith_tags(locale=request.locale)
     langsmith_metadata = get_langsmith_metadata(
         user_id=user_id,
         workspace_id=workspace_id,
         thread_id=thread_id,
-        workflow_type=workflow_type,
+        workflow_type="ptc_agent",
         locale=request.locale,
         timezone=timezone_str,
         llm_model=effective_model,
         platform=request.platform,
-        **({"plan_mode": plan_mode} if plan_mode is not None else {}),
     )
     if run_id is not None:
         langsmith_metadata["run_id"] = run_id
     if turn_index is not None:
         langsmith_metadata["turn_index"] = turn_index
+    langsmith_metadata.update(_origin_metadata(request, from_server=from_server))
 
     configurable: dict = {
         "thread_id": thread_id,
         "user_id": user_id,
         "workspace_id": workspace_id,
-        "agent_mode": mode,
         "timezone": timezone_str,
+        "run_id": run_id,
+        "platform": surface,
+        # Only a turn a wakeup started may end without a reply. The type is
+        # server-only, so no client can claim it.
+        "wake_turn": request.query_type == WAKE_QUERY_TYPE,
     }
+    # A command's report-back turn names the command, so the call that reads
+    # its notice brings the command's data sources with it. Its own field
+    # (``report_source``) is server-only; the trace stays on the command's row.
+    report = request.report_source
+    if isinstance(report, CommandReport):
+        configurable[REPORT_COMMAND_KEY] = report.command_id
     if extra_configurable:
         configurable.update(extra_configurable)
     if skill_contexts:
@@ -692,17 +966,19 @@ def build_graph_config(
 
     graph_config: dict = {
         "configurable": configurable,
-        "recursion_limit": recursion_limit,
+        "recursion_limit": UNBOUNDED_RECURSION_LIMIT,
         "tags": langsmith_tags,
         "metadata": langsmith_metadata,
     }
 
-    if request.checkpoint_id:
-        graph_config["configurable"]["checkpoint_id"] = request.checkpoint_id
+    checkpoint_id = request.checkpoint_id or base_checkpoint_id
+    if checkpoint_id:
+        graph_config["configurable"]["checkpoint_id"] = checkpoint_id
 
-    # Token tracking callback. LangSmith tracing is handled by the SDK's
-    # ambient auto-tracer activated via LANGSMITH_TRACING env var.
     if token_callback:
         graph_config["callbacks"] = [token_callback]
 
-    return graph_config
+    # LANGSMITH_TRACING switches tracing on. The turn names its own tracer
+    # because the one langchain_core would build holds the turn's whole run
+    # tree until the turn ends.
+    return with_run_tracer(graph_config)

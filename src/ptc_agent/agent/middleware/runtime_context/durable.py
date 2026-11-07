@@ -19,14 +19,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 
+from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_block_for,
+)
+from ptc_agent.agent.middleware.runtime_context.state import state_get
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
 
-#: ``lc_source`` tag on a persisted row. Registered by the history projector,
-#: which keeps these out of the transcript, and by ``is_run_boundary_message``,
-#: which must never open a run on one.
+#: ``lc_source`` tag on a persisted row. Registered in the shared message
+#: classifier (``ptc_agent/agent/transcript/classify.py``), so neither replay
+#: nor the transcript ever opens a turn or a run on one.
 RUNTIME_UPDATE_SOURCE = "runtime_update"
 
 #: The one ``additional_kwargs`` key the row's metadata rides under.
@@ -37,7 +43,8 @@ RUNTIME_UPDATE_KEY = "runtime_update"
 class DurableUpdate:
     """One runtime-context row: something that moved, and who moved it.
 
-    A durable row is written once at a turn boundary and persisted as a message;
+    A durable row is written once, at a turn boundary or, like the notes
+    reminder and check-in, between tool batches, and persisted as a message;
     a per-call contributor puts the same shape on the request and it is gone
     with the call. ``schema_version`` travels with the row because a row
     outlives the code that wrote it: a reader replaying an old thread has to
@@ -102,6 +109,15 @@ def build_update_message(update: DurableUpdate) -> HumanMessage:
     )
 
 
+def written_row(update: DurableUpdate) -> HumanMessage:
+    """The message carrying ``update`` for a writer outside a hook, such as
+    a model call that puts it into history ahead of its answer, which no
+    Pregel path stamps an id on."""
+    row = build_update_message(update)
+    row.id = str(uuid4())
+    return row
+
+
 def is_runtime_update_message(message: Any) -> bool:
     """True for a message :func:`build_update_message` wrote."""
     return (
@@ -124,6 +140,39 @@ def runtime_update_from_message(message: Any) -> DurableUpdate | None:
     data = dict(meta) if isinstance(meta, dict) else {}
     data["text"] = update_text(message)
     return DurableUpdate.from_dict(data)
+
+
+def messages_in_view(state: Any) -> list[Any]:
+    """The checkpoint's messages from the compaction cutoff onward, resolved
+    the way the compaction slice is: what the model still reads after the
+    summary, which stands in for everything before."""
+    messages = state_get(state, "messages")
+    if not isinstance(messages, (list, tuple)):
+        return []
+    event = state_get(state, "_summarization_event")
+    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
+    return list(messages)[cutoff:]
+
+
+def rows_in_view(state: Any) -> list[DurableUpdate]:
+    """The rows the model can still read, oldest first: a row the summary
+    swallowed is one the model no longer reads, so whatever it said is no
+    longer said."""
+    rows = (runtime_update_from_message(message) for message in messages_in_view(state))
+    return [row for row in rows if row is not None]
+
+
+def last_stated(state: Any, kind: str, key: str, default: Any = None) -> Any:
+    """``provenance[key]`` of the last row in view of ``kind`` that carries it.
+
+    A row of the kind without the key is passed over rather than read as the
+    answer: it comes from a build that did not stamp it, or had nothing to say
+    on it.
+    """
+    for row in reversed(rows_in_view(state)):
+        if row.kind == kind and key in row.provenance:
+            return row.provenance[key]
+    return default
 
 
 def update_text(message: Any) -> str:
@@ -152,5 +201,11 @@ def render_update_row(update: DurableUpdate) -> str:
     not knowable at write time. Every word of the row, the writer attribution
     included, is the template's: a row is prompt surface, and a second renderer
     of the same bytes makes what a thread carries depend on how it was packaged.
+    A harness block's words come from its registry entry, so the template has
+    one branch for all of them rather than one per block.
     """
-    return render_template("envelope/update_row.md.j2", update=update.to_dict())
+    return render_template(
+        "envelope/update_row.md.j2",
+        update=update.to_dict(),
+        harness=harness_block_for(update.kind),
+    )

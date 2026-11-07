@@ -36,15 +36,23 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from ptc_agent.agent.middleware.skills.lock import MANAGED_SOURCE_TYPE
+from ptc_agent.core.paths import WorkspaceLayout
+from ptc_agent.core.project_context import ProjectContext, current_project
 from ptc_agent.core.sandbox import skill_sync
 from ptc_agent.core.sandbox.skill_sync import SkillSyncError
 
+from src.server.services.workspace_layout import (
+    WorkspaceLayoutUnavailable,
+    resolve_workspace_layout,
+)
+from src.server.database.workspace import files_restore_incomplete
 from src.server.database.user_skills import (
     SkillSyncLockBusy,
     create_user_skill,
     delete_user_skill_cas,
     get_user_skill_by_id,
     list_user_skills,
+    list_workspace_skill_disables,
     update_user_skill_content_cas,
     workspace_skill_sync_lock,
 )
@@ -103,6 +111,14 @@ class ReconcileStats:
     skipped: int = 0
     failures: int = 0
     drifts: int = 0
+    #: Links into the computer's shared tier created/repointed and removed.
+    linked: int = 0
+    unlinked: int = 0
+    #: The link step raised, so the folder may still lack its shared skills.
+    link_failed: bool = False
+    #: The pass ran before this folder's restore finished, so it held back
+    #: whatever reads the tree; a pass after the restore still has work.
+    restore_incomplete: bool = False
 
     @property
     def changed(self) -> bool:
@@ -115,6 +131,8 @@ class ReconcileStats:
             or self.conflicts
             or self.row_deletes
             or self.dir_deletes
+            or self.linked
+            or self.unlinked
         )
 
 
@@ -137,8 +155,37 @@ class _Pass:
     report: dict[str, Any]
     ws_rows: dict[str, dict[str, Any]]
     user_rows: dict[str, dict[str, Any]]
+    #: This workspace's own skill directory, the only tier the pass writes.
+    base: str
+    #: A restore of this workspace has not finished, so the tree may still
+    #: lack files it will bring back. Its state is not news for the DB until
+    #: then: no pull-up, import or deletion reads it.
+    restore_incomplete: bool = False
     stats: ReconcileStats = field(default_factory=ReconcileStats)
     actions: list[dict[str, Any]] = field(default_factory=list)
+
+
+async def _resolve_layout(
+    sandbox: "PTCSandbox",
+    workspace_id: str,
+    project: ProjectContext | None,
+) -> WorkspaceLayout:
+    """Which folder on the computer this pass materialises.
+
+    The caller's project first, then the turn's bound project when it is this
+    workspace, then the workspace row. Bringup paths run outside any turn, so
+    the row is not a fallback but the normal answer there.
+
+    Raises ``WorkspaceLayoutUnavailable`` when none of the three can name a
+    folder. The pass writes skill directories and prunes the ones it does not
+    recognise, so a guess at the computer root would prune every sibling's.
+    """
+    if project is not None:
+        return sandbox.workspace(project)
+    bound = current_project()
+    if bound is not None and bound.workspace_id == workspace_id:
+        return sandbox.workspace(bound)
+    return await resolve_workspace_layout(workspace_id, root=sandbox.working_dir)
 
 
 async def reconcile_workspace_skills(
@@ -147,22 +194,26 @@ async def reconcile_workspace_skills(
     user_id: str,
     workspace_id: str,
     source: str = "",
+    project: ProjectContext | None = None,
 ) -> ReconcileStats | None:
     """Run one reconcile pass; never raises — callers are turn/bringup paths
     that must not fail on sync trouble. Returns None when the sandbox isn't
-    usable or the pass aborted before producing a report."""
+    usable or the pass aborted before producing a report.
+
+    ``project`` names the workspace folder to materialise; omitted, it is
+    resolved per :func:`_resolve_layout`. Never off the sandbox, which serves
+    every workspace on the computer at once.
+    """
     if sandbox is None or getattr(sandbox, "runtime", None) is None:
         return None
     try:
+        resolved = await _resolve_layout(sandbox, workspace_id, project)
         async with workspace_skill_sync_lock(workspace_id):
             # Inside the lock on purpose. wait_for cancels only the inner
-            # coroutine, so the lock's finally still runs its unlock on a live,
-            # uncancelled task; a timeout wrapped around the whole block would
-            # deliver the cancellation into that unlock and leave the advisory
-            # lock held until the pooled connection dies, which is how one hung
-            # sandbox makes a workspace permanently un-reconcilable.
+            # coroutine, so the lock's finally closes its session on a live,
+            # uncancelled task instead of absorbing the cancellation.
             return await asyncio.wait_for(
-                _run_pass(sandbox, user_id, workspace_id, source),
+                _run_pass(sandbox, user_id, workspace_id, source, resolved),
                 timeout=RECONCILE_TIMEOUT_SECONDS,
             )
     except TimeoutError:
@@ -171,6 +222,17 @@ async def reconcile_workspace_skills(
             RECONCILE_TIMEOUT_SECONDS,
             workspace_id,
             source,
+        )
+        return None
+    except WorkspaceLayoutUnavailable as e:
+        # Nothing at all rather than a pass over the wrong directory: this one
+        # deletes the skill dirs it does not recognise, and every sibling's
+        # looks unrecognised from the computer root.
+        logger.warning(
+            "[skill_sync] pass skipped, no workspace folder (ws=%s source=%s): %s",
+            workspace_id,
+            source,
+            e,
         )
         return None
     except SkillSyncLockBusy:
@@ -191,9 +253,14 @@ async def reconcile_workspace_skills(
 
 
 async def _run_pass(
-    sandbox: "PTCSandbox", user_id: str, workspace_id: str, source: str
+    sandbox: "PTCSandbox",
+    user_id: str,
+    workspace_id: str,
+    source: str,
+    layout: WorkspaceLayout,
 ) -> ReconcileStats:
-    report = await skill_sync.report(sandbox)
+    base = layout.skills
+    report = await skill_sync.report(sandbox, base=base)
     ws_rows = {
         r["name"]: r
         for r in await list_user_skills(user_id, workspace_id=workspace_id)
@@ -201,12 +268,19 @@ async def _run_pass(
     user_rows = {r["name"]: r for r in await list_user_skills(user_id)}
     ctx = _Pass(
         sandbox=sandbox,
+        base=base,
         user_id=user_id,
         workspace_id=workspace_id,
         report=report,
         ws_rows=ws_rows,
         user_rows=user_rows,
+        # Read after the report. A restore holds this pass's lock while it
+        # fills the folder, so none changes the tree under the report; one
+        # waiting on the lock has already raised the flag, and the tree the
+        # report read is about to be replaced.
+        restore_incomplete=await files_restore_incomplete(workspace_id),
     )
+    ctx.stats.restore_incomplete = ctx.restore_incomplete
 
     for name in sorted(set(report) | set(ws_rows)):
         try:
@@ -229,7 +303,7 @@ async def _run_pass(
             )
 
     if ctx.actions:
-        results = await skill_sync.apply_actions(sandbox, ctx.actions)
+        results = await skill_sync.apply_actions(sandbox, ctx.actions, base=base)
         for res in results:
             if res.get("ok"):
                 continue
@@ -253,12 +327,17 @@ async def _run_pass(
                     res.get("error"),
                 )
 
+    # Last, so the links land over the tier's settled contents: a name this
+    # pass just pushed down is a real dir and must not also be linked.
+    await _link_shared(ctx)
+
     stats = ctx.stats
     if stats.changed or stats.failures or stats.drifts:
         logger.info(
             "[skill_sync] reconcile ws=%s source=%s pulled=%d pushed=%d "
             "imported=%d adopted=%d healed=%d conflicts=%d row_deletes=%d "
-            "dir_deletes=%d skipped=%d failures=%d drifts=%d",
+            "dir_deletes=%d skipped=%d failures=%d drifts=%d linked=%d "
+            "unlinked=%d",
             workspace_id,
             source,
             stats.pulled,
@@ -272,8 +351,52 @@ async def _run_pass(
             stats.skipped,
             stats.failures,
             stats.drifts,
+            stats.linked,
+            stats.unlinked,
         )
     return stats
+
+
+async def _link_shared(ctx: _Pass) -> None:
+    """Point the workspace tier at the shared skills it may use.
+
+    The workspace's disables are applied here rather than on the shared
+    directory: that directory serves every workspace on the computer, so
+    pruning it for one would take the skill from its siblings.
+    """
+    user_base = skill_sync.skills_base(ctx.sandbox)
+    if ctx.base.rstrip("/") == user_base.rstrip("/"):
+        return
+    try:
+        disabled = await list_workspace_skill_disables(ctx.workspace_id)
+        result = await skill_sync.link_shared_skills(
+            ctx.sandbox,
+            base=ctx.base,
+            user_base=user_base,
+            disabled=disabled,
+            own=ctx.ws_rows,
+        )
+    except Exception:
+        ctx.stats.failures += 1
+        ctx.stats.link_failed = True
+        logger.exception(
+            "[skill_sync] shared link pass failed (ws=%s)", ctx.workspace_id
+        )
+        return
+    ctx.stats.linked = len(result["linked"]) + len(result["relinked"])
+    ctx.stats.unlinked = len(result["pruned"])
+    if result["unpinned"]:
+        logger.info(
+            "[skill_sync] handed back to the shared tier (ws=%s): %s",
+            ctx.workspace_id,
+            ", ".join(result["unpinned"]),
+        )
+    if result["blocked"]:
+        logger.warning(
+            "[skill_sync] shared skills blocked by a non-directory (ws=%s): %s",
+            ctx.workspace_id,
+            ", ".join(result["blocked"]),
+        )
 
 
 # --- Decision matrix ---
@@ -417,6 +540,8 @@ async def _decide_linked(
             # The row moved since last sync: dirty survivor wins, re-deliver.
             await _push_down(ctx, name, rep, row)
             ctx.stats.pushed += 1
+        elif ctx.restore_incomplete:
+            ctx.stats.skipped += 1
         else:
             deleted = await delete_user_skill_cas(
                 ctx.user_id, skill_id, sync.get("syncedDbHash") or ""
@@ -517,6 +642,9 @@ async def _pull_up(
     """Sandbox → DB: validate the tree and CAS it over the observed row
     content. ``conflict`` marks the arbiter path, where the displaced row
     content is deliberately retained in object storage."""
+    if ctx.restore_incomplete:
+        ctx.stats.skipped += 1
+        return
     validated, tree_hash = await _download_validated(ctx, name)
     link_id = row["user_skill_id"]
     stamp = {
@@ -611,7 +739,7 @@ async def _push_down(
         pairs = await asyncio.to_thread(archive_file_pairs, raw)
     except SkillValidationError as e:
         raise _SyncFailure("unpack", str(e), suppress=True) from e
-    staged = await skill_sync.stage_skill_files(ctx.sandbox, pairs)
+    staged = await skill_sync.stage_skill_files(ctx.sandbox, pairs, base=ctx.base)
     entry = _entry_from_row(row, pairs)
     entry["sync"] = {
         "linkedSkillId": row["user_skill_id"],
@@ -632,6 +760,9 @@ async def _push_down(
 
 async def _import_new(ctx: _Pass, name: str) -> None:
     """Sandbox-only tree → new workspace row (auto-import)."""
+    if ctx.restore_incomplete:
+        ctx.stats.skipped += 1
+        return
     if name in reserved_skill_names():
         raise _SyncFailure(
             "reserved", "name is reserved by a platform skill", suppress=True
@@ -646,6 +777,9 @@ async def _absorb_user_shadow(
     """An unlinked dir whose name matches a user-tier row: equal content means
     it's simply that row's delivered copy (relink managed); different content
     becomes a workspace shadow row so the sandbox's version wins here."""
+    if ctx.restore_incomplete:
+        ctx.stats.skipped += 1
+        return
     validated, tree_hash = await _download_validated(ctx, name)
     if validated.content_hash == user_row["content_hash"]:
         ctx.actions.append(
@@ -731,6 +865,7 @@ async def _download_validated(
             max_files=MAX_SKILL_FILES,
             max_file_bytes=MAX_SKILL_SINGLE_FILE_BYTES,
             max_total_bytes=MAX_SKILL_UNCOMPRESSED_BYTES,
+            base=ctx.base,
         )
     except SkillSyncError as e:
         deterministic = e.code in _DETERMINISTIC_DOWNLOAD
@@ -739,6 +874,16 @@ async def _download_validated(
         validated = await asyncio.to_thread(validate_skill_archive, raw)
     except SkillValidationError as e:
         raise _SyncFailure("validate", str(e), suppress=True) from e
+    if validated.name != name:
+        # The archive is rooted at the declared name, so storing it under this
+        # row would leave the row with no files and extract over the skill
+        # that does carry that name.
+        raise _SyncFailure(
+            "validate",
+            f"SKILL.md declares name {validated.name!r} but the directory "
+            f"is {name!r}; they must match",
+            suppress=True,
+        )
     return validated, tree_hash
 
 

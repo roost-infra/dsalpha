@@ -14,35 +14,29 @@
 //
 // Update either constant deliberately, never to make a red build go green.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
+import { CATALOG_URL } from './locale-preload.ts'
 
-const EXPECTED = ['index', 'vendor-dnd', 'vendor-motion', 'vendor-react']
+// `rolldown-runtime` is the bundler's shared module runtime (under 1 kB gz).
+// Rolldown emits it whenever the build has more than one chunk, and no config
+// removes it, so it is eager by construction rather than by an import.
+//
+// vendor-motion and vendor-dnd load after first paint: the sidebar tree swaps
+// them in at idle (navTreeKit), a dialog sheet loads its swipe on first open,
+// and each lazy root that animates brings framer with it (lib/lazyWithMotion).
+// An eager framer-motion or dnd-kit import puts them back here.
+const EXPECTED = ['index', 'rolldown-runtime', 'vendor-react']
 
-// Measured against platform mode, which is what ships (oss builds land ~60 kB
-// lower). Headroom is deliberately thin — routine growth should be visible here,
-// not quietly absorbed.
-//
-// Raised 450 -> 460 for per-model tuning: the composer resolves the selected
-// model's profile to label its trigger before first paint, which puts
-// modelPreferences.ts, useUpdatePreferences.ts and the dropdown primitive on the
-// critical path for +1.9 kB gz. Nothing moved chunks; the eager set is unchanged.
-//
-// Raised 460 -> 465 for the Orders page. The nav decides before first paint
-// whether to offer it, and i18n.ts bundles every locale's JSON into the entry,
-// so that check and the page's en-US and zh-CN strings ride the critical path
-// for about +5 kB gz, 4 of it strings. Nothing moved chunks; the eager set is
-// unchanged.
-//
-// Raised 465 -> 470 for the factor library board (mean IC/IR columns, the
-// economic-hypothesis form) and the IC/equity-curve copy that shipped with it:
-// measured 466.2 kB gz, so 1.2 kB over. All of it is strings and a few eager
-// helpers — i18n.ts folds every locale's JSON into the entry, and the board's
-// two locales added ~200 keys between them. Nothing moved chunks; the eager set
-// is unchanged. Headroom stays thin on purpose (see above): the next feature to
-// land here should still have to argue for itself.
-const MAX_EAGER_KB = 470
+// The gzipped first-load payload: the entry and its preloads, index.html, the
+// entry stylesheet and the largest locale catalog. Measured against platform
+// mode, which is what ships (oss builds land ~60 kB lower), and read against CI's
+// gzip, which runs about 1.8 kB above a local build of the same tree. Headroom is
+// deliberately thin, so routine growth shows up here instead of being quietly
+// absorbed. Raise it only for a measured cause, and put that cause in the commit
+// message that raises it; the line's history is the record of why it moved.
+const MAX_EAGER_KB = 500
 
 const outDir = process.argv[2] || 'dist'
 const indexPath = join(outDir, 'index.html')
@@ -93,7 +87,7 @@ const moduleScripts = [...html.matchAll(/<script\b([^>]*)>/g)]
   .map(([, attrs]) => attrs)
   .filter((attrs) => /\btype\s*=\s*"module"/.test(attrs))
   .map((attrs) => /\bsrc\s*=\s*"([^"]+)"/.exec(attrs))
-  .filter(Boolean)
+  .filter((m) => m !== null)
 
 // currentBuild() takes querySelector's first match. More than one module script
 // and it may read something that is not the entry, and then `build !== mine` is
@@ -113,7 +107,7 @@ try {
   version = JSON.parse(readFileSync(join(outDir, 'version.json'), 'utf8'))
 } catch {
   console.error(`\n✗ ${outDir}/version.json missing or unparseable`)
-  console.error('  emitVersionManifest (vite.config.js) did not run. The version poll')
+  console.error('  versionManifest (scripts/vite-plugins) did not run. The version poll')
   console.error('  fails closed, so stale-build detection is dead with no signal.\n')
   process.exit(1)
 }
@@ -127,7 +121,28 @@ if (version.build !== entryFile) {
   process.exit(1)
 }
 
-const stripHash = (f) => f.replace(/\.(js|css)$/, '').replace(/-[A-Za-z0-9_-]{8}$/, '')
+// No lazy import may list the entry among the chunks to preload: it is already
+// running, Firefox 146 fails a modulepreload for it, and index.html reads that
+// failure as a dead build, so every route chunk that imports shared code raised
+// the "new version" toast. skipEntryPreload (scripts/vite-plugins) filters it through
+// `resolveDependencies`, which Vite marks experimental, so an upgrade could
+// quietly turn the filter into a no-op; this is where that shows.
+const entryAsDep = ['"', "'", '`'].map((q) => `${q}assets/${entryFile}${q}`)
+const preloadingEntry = readdirSync(join(outDir, 'assets')).filter((f) => {
+  if (!f.endsWith('.js')) return false
+  const code = readFileSync(join(outDir, 'assets', f), 'utf8')
+  return entryAsDep.some((dep) => code.includes(dep))
+})
+if (preloadingEntry.length) {
+  console.error(`\n✗ ${preloadingEntry.length} chunk(s) list the entry ${entryFile} as a preload dep`)
+  console.error(`  e.g. ${preloadingEntry.slice(0, 3).join(', ')}`)
+  console.error('  Firefox 146 fails that modulepreload and the stale-build listener in')
+  console.error('  index.html turns it into a false "new version" toast. Check that')
+  console.error('  skipEntryPreload (scripts/vite-plugins) still runs.\n')
+  process.exit(1)
+}
+
+const stripHash = (/** @type {string} */ f) => f.replace(/\.(js|css)$/, '').replace(/-[A-Za-z0-9_-]{8}$/, '')
 
 const eager = [...new Set(assets.filter((f) => f.endsWith('.js')).map(stripHash))].sort()
 const expected = [...EXPECTED].sort()
@@ -136,10 +151,37 @@ const expected = [...EXPECTED].sort()
 // all: stale-build recovery depends on the document being refetched every load,
 // so every byte in it is paid on every visit, forever. Leaving it outside the
 // ceiling is how an inline script grows without anything noticing.
-const bytes = assets.reduce(
-  (n, f) => n + gzipSync(readFileSync(join(outDir, 'assets', f))).length,
-  gzipSync(html).length,
-)
+const gz = (/** @type {string} */ f) => gzipSync(readFileSync(join(outDir, 'assets', f))).length
+
+// The byte count depends on the zlib this Node links, not only on the files.
+// Official Node builds, which CI runs, bundle Chromium's zlib and agree across
+// CPUs; a Node linked against the system zlib (Homebrew's on macOS) reads about
+// 1.2 kB lower on the same build. Node's default level, memLevel and strategy
+// are fixed constants, so pinning them would not close that gap; naming the
+// zlib next to the number is what makes two readings comparable.
+const zlib = `zlib ${process.versions.zlib}`
+
+// --- locale catalog ----------------------------------------------------------
+//
+// Each locale's catalog is a chunk of its own, so none of them is a src/href
+// above, yet every first visit fetches one: nothing renders until the active
+// catalog is in, and the inline preload (scripts/locale-preload.ts) starts it
+// alongside the entry. The largest counts, since that is what some visitor
+// pays. A build without the preload fails here rather than reading light while
+// every visitor waits on a request that only starts once the entry has run.
+const catalogs = [...html.matchAll(CATALOG_URL)]
+  .map(([, locale, file]) => ({ locale, bytes: gz(file) }))
+
+if (!catalogs.length) {
+  console.error(`\n✗ no locale catalog preload in ${indexPath}`)
+  console.error('  scripts/locale-preload.ts did not run, so the catalog request waits')
+  console.error('  for the entry to run, and this gate cannot count it.\n')
+  process.exit(1)
+}
+
+const catalog = catalogs.reduce((a, b) => (b.bytes > a.bytes ? b : a))
+
+const bytes = assets.reduce((n, f) => n + gz(f), gzipSync(html).length + catalog.bytes)
 const kb = bytes / 1024
 
 const added = eager.filter((c) => !expected.includes(c))
@@ -148,20 +190,20 @@ const overBudget = kb > MAX_EAGER_KB
 
 if (added.length || removed.length || overBudget) {
   console.error('\n✗ critical path changed\n')
-  console.error(`  chunks:   ${eager.join(', ')}`)
+  console.error(`  chunks:   ${eager.join(', ')} + ${catalog.locale} catalog`)
   console.error(`  expected: ${expected.join(', ')}`)
-  console.error(`  payload:  ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
+  console.error(`  payload:  ${kb.toFixed(1)} kB gz, ${zlib} (ceiling ${MAX_EAGER_KB} kB)`)
   if (added.length) {
     console.error(`\n  NEW on the critical path: ${added.join(', ')}`)
     console.error('  Every visitor now downloads these before first paint.')
-    console.error('  Usually an eager import reaching a lazy module, or a manualChunks')
-    console.error('  entry for a vendor that is not actually eager. Trace it with:')
+    console.error('  Usually an eager import reaching a lazy module, or a chunk group')
+    console.error('  claiming a vendor that is not actually eager. Trace it with:')
     console.error(`    grep -o 'from"\\./vendor-[^"]*"' ${outDir}/assets/index-*.js`)
   }
   if (removed.length) {
     console.error(`\n  no longer eager: ${removed.join(', ')}`)
     console.error('  Check the payload above before calling this a win — deleting a')
-    console.error('  manualChunks entry inlines that vendor into index instead, losing')
+    console.error('  chunk group inlines that vendor into index instead, losing')
     console.error('  the chunk name and its cross-deploy cache key at no byte saving.')
   }
   if (overBudget) {
@@ -173,4 +215,4 @@ if (added.length || removed.length || overBudget) {
   process.exit(1)
 }
 
-console.log(`✓ critical path: ${eager.join(', ')} — ${kb.toFixed(1)} kB gz (ceiling ${MAX_EAGER_KB} kB)`)
+console.log(`✓ critical path: ${eager.join(', ')} + ${catalog.locale} catalog — ${kb.toFixed(1)} kB gz, ${zlib} (ceiling ${MAX_EAGER_KB} kB)`)

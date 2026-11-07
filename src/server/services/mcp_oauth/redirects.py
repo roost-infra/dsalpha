@@ -38,6 +38,10 @@ class CallbackError(StrEnum):
     BLOCKED_ENDPOINT = "blocked_endpoint"
     TOKEN_EXCHANGE_FAILED = "token_exchange_failed"
     SERVER_CHANGED = "server_changed"
+    # A sign-in that was to save its server could not: the server refused the
+    # new token, the name was taken meanwhile, the install failed. The
+    # redirect's ``mcp_detail`` says which, and nothing of the save is left.
+    INSTALL_FAILED = "install_failed"
     INTERNAL = "internal"
 
 # Below this a listener needs root on a POSIX box, so a redirect naming one is
@@ -135,9 +139,17 @@ def sanitize_return_to(value: str | None) -> str:
 
     A leading '/' followed by '/' or '\\' is protocol-relative once the browser
     normalizes backslashes ('/\\evil.com' → '//evil.com'), which would redirect
-    off-site — so the second character must be a normal path char.
+    off-site — so the second character must be a normal path char. Whitespace
+    and control characters are refused anywhere: ``urlsplit`` and browsers
+    both drop tab, CR and LF, so '/\\t/evil.com' becomes '//evil.com' after
+    this check has passed it.
     """
-    if value and value.startswith("/") and value[1:2] not in ("/", "\\"):
+    if (
+        value
+        and value.startswith("/")
+        and value[1:2] not in ("/", "\\")
+        and not any(c.isspace() or not c.isprintable() for c in value)
+    ):
         return value
     return DEFAULT_RETURN_TO
 

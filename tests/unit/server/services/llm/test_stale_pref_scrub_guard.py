@@ -14,7 +14,7 @@ from src.server.services.llm.availability import cleanup_stale_model_preferences
 
 STORED_PREFS = {
     "preferred_model": "some-model",
-    "preferred_flash_model": "some-flash",
+    "preferred_background_model": "some-background",
     "fetch_model": "some-fetch",
     "compaction_model": "some-compaction",
     "fallback_models": ["fallback-a", "fallback-b"],
@@ -89,10 +89,10 @@ async def test_the_legacy_column_still_answers_for_a_key_the_column_never_set():
         AsyncMock(
             return_value={
                 "other_preference": {"preferred_model": "pre-move-model"},
-                "model_preference": {"preferred_flash_model": "flash"},
+                "model_preference": {"preferred_background_model": "background"},
             }
         ),
     ):
         pref = await get_model_preference("user-1")
     assert pref["preferred_model"] == "pre-move-model"
-    assert pref["preferred_flash_model"] == "flash"
+    assert pref["preferred_background_model"] == "background"

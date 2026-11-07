@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * An interrupt that replays AFTER the resume turn that answered it must still
  * settle, for every HITL family.
@@ -16,7 +17,7 @@
  * turn is still running, which is what a missing `run_id` says.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -25,7 +26,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 const OPENING_TURN = {
@@ -62,7 +62,7 @@ async function replayTailInterrupt(
   return { rt, read };
 }
 
-function cardOn(messages: MessageRecord[], bucket: string) {
+function cardOn(messages: ChatMessage[], bucket: string) {
   const bubble = messages.find((m) => m.id === 'history-assistant-0') as unknown as AssistantMessage;
   return (bubble as unknown as Record<string, Record<string, Record<string, unknown>>>)?.[bucket]?.['int-1'];
 }
@@ -76,29 +76,6 @@ function expectNothingToReArm(rt: ReturnType<typeof buildRuntime>['rt']) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('history replay — an interrupt that replays after its answer', () => {
-  it('settles an approved plan', async () => {
-    // A bare approve travels with no message and no answer-map entry, so the
-    // resume's empty content is what says approved — the same rule the
-    // forward resolver uses.
-    const { rt, read } = await replayTailInterrupt(
-      { description: 'Pull the 10-K and chart revenue.' },
-      resume({ hitl_interrupt_ids: ['int-1'] }),
-    );
-
-    expect(cardOn(read(), 'planApprovals')?.status).toBe('approved');
-    expectNothingToReArm(rt);
-  });
-
-  it('settles a rejected plan, which rides the resume content', async () => {
-    const { rt, read } = await replayTailInterrupt(
-      { description: 'Pull the 10-K and chart revenue.' },
-      resume({ hitl_interrupt_ids: ['int-1'] }, 'Use the 10-Q instead.'),
-    );
-
-    expect(cardOn(read(), 'planApprovals')?.status).toBe('rejected');
-    expectNothingToReArm(rt);
-  });
-
   it('settles an answered question, keeping the answer', async () => {
     const { rt, read } = await replayTailInterrupt(
       { type: 'ask_user_question', question: 'Which fiscal year?', options: ['2024', '2025'] },
@@ -217,18 +194,6 @@ describe('history replay — an interrupt that replays after its answer', () => 
     expect(rt.historyHasUnresolvedInterruptRef.current).toBe(true);
   });
 
-  it('settles a plan rejected with no feedback', async () => {
-    // A bare reject is the one shape the server DOES record, as a null answer.
-    // Reading only the content here would call this plan approved.
-    const { rt, read } = await replayTailInterrupt(
-      { description: 'Model the filing' },
-      resume({ hitl_interrupt_ids: ['int-1'], hitl_answers: { 'int-1': null } }),
-    );
-
-    expect(cardOn(read(), 'planApprovals')?.status).toBe('rejected');
-    expectNothingToReArm(rt);
-  });
-
   it('settles a proposal rejected with a message', async () => {
     // The server records neither a bare approve nor a reject that carried a
     // message, so absence alone cannot mean approved: the reject's message is
@@ -274,7 +239,6 @@ describe('history replay — an interrupt that replays after its answer', () => 
     // live in fromHistoryEvent, so a family added to one and not the other
     // would write a card under a name nothing renders.
     const families: Array<[string, Record<string, unknown>]> = [
-      ['planApprovals', { description: 'Model the filing' }],
       ['userQuestions', { type: 'ask_user_question', question: 'Which year?', options: ['2024'] }],
       ['creditPauses', { type: 'credit_pause' }],
       ['workspaceProposals', { type: 'create_workspace', workspace_name: 'Filings' }],

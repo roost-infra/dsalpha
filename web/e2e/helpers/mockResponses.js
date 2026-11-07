@@ -39,26 +39,46 @@ export const defaultResponses = {
       },
     },
   },
-  'GET /workspaces': { workspaces: [], total: 0, limit: 20, offset: 0 },
+  'GET /workspaces': (route) => {
+    const includeHome = new URL(route.request().url()).searchParams.get('include_home') === 'true';
+    const workspaces = includeHome
+      ? [{
+          workspace_id: 'ws-home',
+          name: 'Home',
+          status: 'unbound',
+          is_home: true,
+          config: {},
+          created_at: '2025-01-01T00:00:00Z',
+          updated_at: '2025-01-01T00:00:00Z',
+        }]
+      : [];
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ workspaces, total: workspaces.length, limit: 20, offset: 0 }),
+    });
+  },
   // What ChatAgent fetches one path segment below /chat. Left unmocked these
   // 404, and ThreadGallery's not-found effect navigates back to /chat -- so a
   // test that names /chat/<id> silently measures the workspace gallery above it
   // and passes. The id is fixed rather than echoed from the URL because nothing
-  // downstream compares the two; `status` is what decides the flash path.
+  // downstream compares the two; `is_home` is what decides the Home path.
   'GET /workspaces/*': {
     workspace_id: 'a0000001-0000-4000-8000-000000000001',
     name: 'Research',
     description: 'Main workspace',
     status: 'ready',
+    is_home: false,
     config: {},
     created_at: '2025-01-01T00:00:00Z',
     updated_at: '2025-01-01T00:00:00Z',
   },
   'GET /threads': { threads: [], total: 0, limit: 20, offset: 0 },
-  'POST /workspaces/flash': {
-    workspace_id: 'ws-flash',
-    name: 'Flash',
-    status: 'flash',
+  'POST /workspaces/home': {
+    workspace_id: 'ws-home',
+    name: 'Home',
+    status: 'unbound',
+    is_home: true,
     config: {},
   },
   'GET /models': {
@@ -70,6 +90,10 @@ export const defaultResponses = {
     },
   },
   'GET /skills': { skills: [] },
+  // Every flag off, as a failed read reads them. Unmocked, the read 404s and is
+  // retried once a second later, and the composer's model list waits on it, so
+  // each page with a composer drew its pills a second or more late.
+  'GET /features': { features: [] },
   'GET /market-data/snapshots/indexes': { snapshots: [] },
   'GET /market-data/intraday/indexes/*': { data: [] },
   'GET /news': { results: [], count: 0, next_cursor: null },
@@ -106,6 +130,7 @@ export const sampleWorkspace = (overrides = {}) => ({
   name: 'Research',
   description: 'Main workspace',
   status: 'ready',
+  is_home: false,
   config: {},
   created_at: '2025-01-01T00:00:00Z',
   updated_at: '2025-01-01T00:00:00Z',
@@ -246,24 +271,6 @@ export const sseEvents = {
       tool_call_id: toolCallId,
       turn_index: turnIndex,
       ...(artifact ? { artifact } : {}),
-    },
-  }),
-
-  interrupt: (interruptId, plan = 'Here is my plan:\n1. Step one\n2. Step two') => ({
-    event: 'interrupt',
-    data: {
-      thread_id: 'b0000001-0000-4000-8000-000000000001',
-      turn_index: 0,
-      interrupts: [
-        {
-          id: interruptId,
-          type: 'plan_approval',
-          action_request: {
-            action: 'SubmitPlan',
-            args: { plan },
-          },
-        },
-      ],
     },
   }),
 

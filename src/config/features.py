@@ -15,7 +15,9 @@ Each feature carries two orthogonal controls:
 Three definition layers, resolved in order:
 
 1. **Catalog** (this module): every feature the codebase knows about, with its
-   hard defaults and the frontend-facing label/description. A feature must be
+   hard defaults and the frontend-facing label/description/tradeoffs, in
+   English; a web locale translates them under ``settings.featureCatalog.<key>``
+   (``web/src/locales``) and falls back to this copy. A feature must be
    declared here to exist anywhere else.
 2. **Deployment posture** (``config.yaml`` ``features:`` section): per-deploy
    override of ``enabled`` / ``gate`` / ``min_tier``; unset fields inherit
@@ -29,7 +31,7 @@ module stays user-agnostic so the agent library can consult defaults.
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Mapping, NamedTuple
+from typing import Literal, Mapping, NamedTuple
 
 from src.config import settings
 from src.config.settings import get_infrastructure_config
@@ -57,14 +59,35 @@ class FeatureSpec:
     gate: FeatureGate = FeatureGate.NONE
     min_tier: int | None = None  # plan gate only
     tradeoffs: str | None = None  # honest cost of opting in, shown in Settings
+    #: Where the user turns it on, when that is somewhere other than
+    #: Experiments: Claude Code's opt-in is made by connecting it under Model access.
+    home: Literal["model_access"] | None = None
 
 
 FEATURES: dict[str, FeatureSpec] = {
+    "wakeups": FeatureSpec(
+        key="wakeups",
+        label="Wakeups",
+        description=(
+            "Lets the agent pick a thread back up by itself to carry on a task: "
+            "at a time, every few minutes, when a price moves, or when an order "
+            "it placed fills. Pending wakeups show in the chat tray and the "
+            "Status panel, where you can cancel any of them."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_OUT,
+        tradeoffs=(
+            "A wakeup that fires while the thread is idle starts a turn by "
+            "itself, which costs as much as any turn; checking every 5 minutes "
+            "can take up to 24 turns over two hours. Turning this off cancels "
+            "every pending wakeup."
+        ),
+    ),
     "market_watch": FeatureSpec(
         key="market_watch",
         label="Market watch",
         description=(
-            "Adds a Watch toggle to chat: keep a per-thread list of symbols "
+            "Adds a Market watch toggle to chat: keep a per-thread list of symbols "
             "whose live quotes stream into the conversation while you work, "
             "so the agent reasons from current intraday prices instead of "
             "stale lookups."
@@ -74,7 +97,7 @@ FEATURES: dict[str, FeatureSpec] = {
         tradeoffs=(
             "Quotes are re-injected into the model's context as they update, "
             "which can occasionally distract the agent from its main task and "
-            "invalidate the prompt cache — expect slightly slower, costlier "
+            "invalidate the prompt cache. Expect slightly slower, costlier "
             "turns while a watch list is active."
         ),
     ),
@@ -90,9 +113,110 @@ FEATURES: dict[str, FeatureSpec] = {
         gate=FeatureGate.OPT_IN,
         tradeoffs=(
             "Crawling bills per delivered page up to the call's page limit, "
-            "so a broad crawl costs more than targeted fetches. Experimental — "
+            "so a broad crawl costs more than targeted fetches. Experimental: "
             "behavior and pricing may change."
         ),
+    ),
+    "todo_write": FeatureSpec(
+        key="todo_write",
+        label="Task checklist (legacy)",
+        description=(
+            "Gives the agent a TodoWrite tool to keep a checklist of its steps "
+            "on long tasks, shown as a live todo list in chat."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_IN,
+        tradeoffs=(
+            "Each checklist update is an extra tool call, which adds a little "
+            "time and cost to long turns. Legacy, and may be removed in a "
+            "future release."
+        ),
+    ),
+    "scratchpad": FeatureSpec(
+        key="scratchpad",
+        label="Scratchpad and working notes",
+        description=(
+            "Gives the agent a scratchpad folder in each thread for its "
+            "intermediate files, and has it keep running notes there: key "
+            "findings, decisions and why, and corrections you give mid-task. "
+            "The notes carry a long task through after older messages in the "
+            "thread are summarized."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_OUT,
+        tradeoffs=(
+            "The agent spends a few extra tool calls per task keeping its "
+            "notes. The scratchpad and its notes are deleted when you archive "
+            "the thread, so keep anything you want to last in the workspace's "
+            "own files."
+        ),
+    ),
+    "provider_compaction": FeatureSpec(
+        key="provider_compaction",
+        label="Provider compaction",
+        description=(
+            "When a long thread is compacted, Claude and OpenAI models "
+            "summarize it with their provider's own compaction rather than "
+            "ours, which keeps more of what they knew: Claude keeps its "
+            "reasoning in the turns it keeps. To turn it off for one model "
+            "only, use Per-model settings on the Model tab."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_OUT,
+        tradeoffs=(
+            "OpenAI's summary is encrypted, so only OpenAI models can read it "
+            "and the compaction card shows a plain record of the conversation "
+            "instead. Switch such a thread to another provider's model and it "
+            "gets that record, which leaves out the earlier tool results."
+        ),
+    ),
+    # Off in every deployment until an operator turns it on; then each user
+    # opts in. The system switch lists the Claude Code models
+    # (``src.llms.claude_code.rows_available``) and a user's opt-in lets
+    # their turns run on one (``resolve_llm_config``).
+    "claude_code_runtime": FeatureSpec(
+        key="claude_code_runtime",
+        label="Claude Code runtime (preview)",
+        description=(
+            "Runs your Claude threads through Claude Code on your own Claude "
+            "plan. It signs in with a setup token, a separate credential you "
+            "make for LangAlpha that never touches your own Claude Code "
+            "sign-in. Claude Code runs on your own computers, and where this "
+            "server offers it, also on cloud computers, with your setup token "
+            "or your Anthropic API key. Choose where it runs in Settings under "
+            "Model access."
+        ),
+        enabled=False,
+        gate=FeatureGate.OPT_IN,
+        home="model_access",
+    ),
+    # Off in every deployment until an operator turns it on in config.yaml's
+    # ``features:``; no user toggle, since "Summarize long threads after a
+    # break" (``Tuning.cold_compaction``) already decides it per user. On, a
+    # completed turn arms its thread's summary while the thread is idle on a
+    # warm cache (``services.idle_compaction``), on routes whose cache entries
+    # live an hour only.
+    "idle_compaction": FeatureSpec(
+        key="idle_compaction",
+        label="Idle compaction",
+        description=(
+            "Summarizes a long Claude thread while it sits idle, before its "
+            "hour-long prompt cache expires, so the next message neither waits "
+            "for a summary nor sends the whole conversation again. Applies only "
+            "where the cache lasts an hour, such as a Claude subscription."
+        ),
+        enabled=False,
+        gate=FeatureGate.NONE,
+    ),
+    "a_share_pack": FeatureSpec(
+        key="a_share_pack",
+        label="A-share market pack",
+        description=(
+            "Switches the dashboard news widget to the Chinese-language CN "
+            "market feed (Chinese locales only)."
+        ),
+        enabled=True,
+        gate=FeatureGate.OPT_IN,
     ),
 }
 

@@ -12,7 +12,8 @@ manifest and mcp_document hold plugin.json / mcp.json exactly as shipped
 (mcp_document NULL = absent or invalid component). Nothing binary is stored
 at the plugin level: skill bytes live in the sibling user_skills archives,
 and export regenerates the package from these three sources. content_hash is
-the sha256 of the fetched source archive, for update no-op detection.
+a sha256 over the selected plugin subtree after dialect adaptation (each path
+and its bytes), not over the fetched archive, for update no-op detection.
 
 The provenance FKs are ON DELETE RESTRICT, not CASCADE or SET NULL: a DB
 cascade would delete component rows while skipping the purges their delete

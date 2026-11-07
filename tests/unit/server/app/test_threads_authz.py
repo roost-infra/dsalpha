@@ -12,7 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from ptc_agent.config.agent import CredentialSource
-from tests.conftest import create_test_app
+from tests.conftest import create_test_app, pin_chat_limit
 
 THREADS_MOD = "src.server.app.threads.messaging"
 
@@ -50,11 +50,11 @@ def _app_for(user_id: str):
     IDOR guard is the only thing under test.
     """
     from src.server.app.threads import router
-    from src.server.dependencies.usage_limits import ChatAuthResult, enforce_chat_limit
+    from src.server.dependencies.usage_limits import ChatAuthResult
 
     app = create_test_app(router)
-    app.dependency_overrides[enforce_chat_limit] = lambda: ChatAuthResult(
-        user_id=user_id, access_tier=0
+    pin_chat_limit(
+        app, ChatAuthResult(user_id=user_id, access_tier=0)
     )
     return app
 
@@ -74,13 +74,25 @@ def _stub_downstream(owner_id, ws_owner=CALLER):
 
     with (
         patch(
-            f"{THREADS_MOD}.get_thread_owner_id",
-            new=AsyncMock(return_value=owner_id),
+            f"{THREADS_MOD}.get_thread_auth_meta",
+            new=AsyncMock(
+                return_value=(
+                    {"user_id": owner_id, "workspace_id": "ws-placeholder", "llm_model": None}
+                    if owner_id is not None
+                    else None
+                )
+            ),
         ),
         # Workspace IDOR guard reads the workspace owner via get_workspace.
         patch(
             "src.server.database.workspace.get_workspace",
-            new=AsyncMock(return_value={"user_id": ws_owner, "status": "running"}),
+            new=AsyncMock(
+                return_value={
+                    "workspace_id": "ws-placeholder",
+                    "user_id": ws_owner,
+                    "status": "running",
+                }
+            ),
         ),
         patch.object(setup_module, "agent_config", MagicMock()),
         patch(
@@ -120,7 +132,6 @@ def _stub_downstream(owner_id, ws_owner=CALLER):
 _PTC_BODY = {
     "workspace_id": "ws-placeholder",
     "messages": [{"role": "user", "content": "test query"}],
-    "agent_mode": "ptc",
 }
 
 
@@ -157,7 +168,7 @@ async def test_post_existing_thread_owned_by_caller_proceeds():
 
 @pytest.mark.asyncio
 async def test_post_new_thread_no_owner_proceeds():
-    """Brand-new thread (get_thread_owner_id -> None) -> guard passes, 200.
+    """Brand-new thread (get_thread_auth_meta -> None) -> guard passes, 200.
 
     Uses the new-thread route, which mints a fresh uuid before the guard runs.
     """

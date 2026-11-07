@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import AuthConfirm from '@/pages/Login/AuthConfirm';
 
-vi.mock('@/pages/Login/WavesBackground', () => ({ default: () => null }));
+vi.mock('@/pages/Login/EdgeGrain', () => ({ default: () => null }));
 
 vi.mock('@/config/hostMode', () => ({
   isPlatformMode: true,

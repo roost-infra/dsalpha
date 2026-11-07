@@ -1,21 +1,37 @@
-"""Thread maintenance — compact and offload under the exclusive thread guard.
+"""Thread maintenance — compact, offload and the hand-off at a model switch,
+under the exclusive thread guard.
 
-Both mutations resolve the thread's graph and checkpoint state, run the
-operation with a cross-worker stop key, and persist the resulting
-context_window event. Cancel dispatch and status reads live in
-services/cancel_dispatch.py and services/thread_status.py.
+Each mutation resolves the thread's graph and checkpoint state, runs the
+operation with a cross-worker stop key, and writes its result, with the
+``context_window`` marker replay shows for a compact or an offload. Cancel
+dispatch and status reads live in services/cancel_dispatch.py and
+services/thread_status.py.
 """
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
+from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException
 
+from ptc_agent.agent.middleware.runtime_context import TurnContext
+from ptc_agent.agent.roles import AgentRole
+from ptc_agent.core.project_context import ProjectContext
+from src.llms.claude_code import ClaudeCodeTarget, ClaudeTurnFailed, claude_replied_last, is_claude_code_model
+from src.server.contracts.run_times import run_settled_at
 from src.server.handlers.cancellation import cancellation_as_http
+from src.server.services.computer_manager import ComputerNotRunning, attaching_only
+from src.server.services.history.projector import context_window_record
+from src.server.services.thread_agent import thread_route
 from src.server.utils.checkpoint_helpers import (
     build_checkpoint_config,
     get_checkpointer,
+    interrupt_records,
+    turn_base_checkpoint_id,
+    update_at_commit,
 )
 
 # Import setup module to access initialized globals
@@ -24,24 +40,96 @@ from src.server.app import setup
 logger = logging.getLogger(__name__)
 
 
-async def _resolve_graph_and_state(
-    thread_id: str, verb: str, config=None, checkpointer=None, user_id=None
-) -> tuple:
+@dataclass(frozen=True)
+class ThreadAgent:
+    """The thread's agent, built as its next turn would build it, and the
+    state that turn would start from."""
+
+    thread_id: str
+    graph: Any
+    state: Any
+    messages: list
+    workspace_id: str
+    #: Pinned to the thread's workspace folder; None without a sandbox.
+    backend: Any
+    project: ProjectContext | None
+
+    async def ask(self, ask, values: dict | None = None):
+        """``ask`` answered by the agent's own model chain
+        (``ask_between_turns``), with the project bound as a run binds it, on
+        ``values``, the thread's state by default. Raises ``NoCompaction`` when
+        the agent compacts nothing (compaction off in its config)."""
+        from ptc_agent.agent.middleware.compaction import ask_between_turns
+        from ptc_agent.core.project_context import project_bound
+
+        with project_bound(self.project):
+            return await ask_between_turns(
+                self.graph.agent,
+                self.state.values if values is None else values,
+                ask,
+                thread_id=self.thread_id,
+                store=setup.store,
+            )
+
+    async def compact_claude_code(self):
+        """The CLI's own compaction of the thread's Claude Code session
+        (``ClaudeTurn.compact_between_turns``), with the project bound as a
+        run binds it; None when there is nothing to compact."""
+        from ptc_agent.core.project_context import project_bound
+
+        with project_bound(self.project):
+            return await self.graph.turn.compact_between_turns(self.state.values)
+
+    async def write(self, values: dict, verb: str, *, saver: Any = None) -> bool:
+        """Write ``values`` where the state was read (``_update_graph_state``),
+        through ``saver`` when given: a fence's, for a write that must die
+        with its lock while the agent was built and read without one."""
+        graph = self.graph if saver is None else self.graph.agent.copy(update={"checkpointer": saver})
+        return await _update_graph_state(graph, self.state, values, self.thread_id, verb)
+
+
+async def _thread_agent(
+    thread_id: str,
+    verb: str,
+    config=None,
+    checkpointer=None,
+    user_id=None,
+    *,
+    held: AsyncExitStack,
+    role: AgentRole = "analyst",
+    checkpoint_id: str | None = None,
+) -> ThreadAgent:
     """Validate thread, build graph, get state, build backend.
 
     ``config`` is the resolved AgentConfig; defaults to ``setup.agent_config``.
     ``checkpointer`` overrides the global pooled saver — a mutation passes its
     fence-bound saver so checkpoint writes die with the lock session (I2).
     ``user_id`` identifies the caller to the session acquire, whose MCP resolve
-    is owner-scoped.
+    is owner-scoped. ``held`` is the caller's stack, which keeps the backend's
+    folder in place until the caller's block ends.
 
-    Returns:
-        (graph, lg_config, state, messages, backend)
+    The agent is built as the thread's next turn would build it, in ``role``,
+    from the inputs the turn's build reads (``AgentInputs``): the tools and
+    the prompt a model call between turns sends have to be that turn's, or
+    the provider's cache misses and a provider's own compaction is refused.
+    What only a turn has (its row, its run, its relay sessions) it leaves out.
+
+    Inside ``attach_only`` the computer's session is taken only while it
+    runs, and ``ComputerNotRunning`` raised otherwise. ``checkpoint_id`` reads
+    the state there rather than where the next turn would start.
     """
     from src.server.database import conversation as qr_db
+    from src.server.database.workspace import get_workspace
+    from src.server.database.workspace_folders import (
+        WorkspaceFolderMoving,
+        is_top_level,
+        workspace_folder_in_use,
+    )
+    from src.server.utils.error_sanitization import sandbox_unreachable_detail
     from src.server.services.workspace_manager import WorkspaceManager
     from ptc_agent.agent.graph import build_ptc_graph_with_session
     from ptc_agent.agent.backends.sandbox import SandboxBackend
+    from ptc_agent.core.paths import SandboxLayout
 
     # Validate thread + workspace
     thread_info = await qr_db.get_thread_with_summary(thread_id)
@@ -53,17 +141,49 @@ async def _resolve_graph_and_state(
             status_code=400,
             detail=f"Thread {thread_id} has no associated workspace",
         )
+    # The row holds a uuid.UUID; the session and its asset sync key on the str
+    # the request paths pass.
+    workspace_id = str(workspace_id)
 
     # Session
     workspace_manager = WorkspaceManager.get_instance()
     try:
-        session = await workspace_manager.get_session_for_workspace(
-            workspace_id, user_id=user_id
-        )
+        if attaching_only():
+            session = await workspace_manager.get_session_if_running(
+                workspace_id, user_id=user_id
+            )
+            if session is None:
+                raise ComputerNotRunning(f"workspace {workspace_id} is not running")
+        else:
+            session = await workspace_manager.get_session_for_workspace(
+                workspace_id, user_id=user_id
+            )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Backend. Pinned to the thread's workspace folder because these routes
+    # run outside a turn, where nothing has bound a project: an unpinned
+    # backend would file this thread's saved attachments on the machine root,
+    # which a later delete of the workspace would leave behind. No run keeps a
+    # settle off this folder: ``held`` keeps the folder in place, and the row,
+    # and the project the agent is built on, are read under it.
+    backend = None
+    if hasattr(session, "sandbox") and session.sandbox is not None:
+        try:
+            await held.enter_async_context(workspace_folder_in_use(workspace_id))
+        except WorkspaceFolderMoving as e:
+            raise HTTPException(status_code=503, detail=sandbox_unreachable_detail(e)) from None
+        row = await get_workspace(workspace_id) or {}
+        dir_name = row.get("dir_name")
+        if dir_name and not is_top_level(dir_name):
+            raise HTTPException(
+                status_code=503,
+                detail=sandbox_unreachable_detail(WorkspaceFolderMoving(workspace_id)),
+            )
+        layout = SandboxLayout(session.sandbox.working_dir).for_workspace(dir_name)
+        backend = SandboxBackend(session.sandbox, layout.workspace)
 
     # Graph
     checkpointer = checkpointer if checkpointer is not None else get_checkpointer()
@@ -72,17 +192,34 @@ async def _resolve_graph_and_state(
         raise HTTPException(
             status_code=500, detail="Agent configuration not initialized"
         )
-    from src.server.app.workspace_sandbox import _set_cached_signed_url
+    from src.server.database.user import get_user_profile_for_prompt
+    from src.server.services.thread_agent import AgentInputs
 
+    inputs = await AgentInputs.read(
+        session,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        thread_id=thread_id,
+        role=role,
+        user_profile=await get_user_profile_for_prompt(user_id) if user_id else None,
+    )
     graph = await build_ptc_graph_with_session(
-        session=session, config=effective_config, checkpointer=checkpointer,
-        on_signed_url=_set_cached_signed_url,
+        session=session,
+        config=effective_config,
+        checkpointer=checkpointer,
+        # Only a summary reads the cache clock (see ``_previous_run``).
+        turn_context=await _previous_run(thread_id) if verb in ("compact", "idle_compact") else None,
+        **inputs.build_kwargs(),
     )
 
-    # State with timeout
-    lg_config = build_checkpoint_config(thread_id)
+    # State with timeout, read where the next turn would start, so the write
+    # lands on the thread's pointer rather than on a branch a fork abandoned.
+    base_checkpoint_id = checkpoint_id or await turn_base_checkpoint_id(checkpointer, thread_id)
     try:
-        state = await asyncio.wait_for(graph.aget_state(lg_config), timeout=10.0)
+        state = await asyncio.wait_for(
+            graph.aget_state(build_checkpoint_config(thread_id, base_checkpoint_id)),
+            timeout=10.0,
+        )
     except asyncio.TimeoutError:
         logger.error(f"aget_state timed out for thread {thread_id} during {verb}")
         raise HTTPException(
@@ -97,26 +234,122 @@ async def _resolve_graph_and_state(
     if not messages:
         raise HTTPException(status_code=400, detail=f"No messages to {verb}")
 
-    # Backend
-    backend = None
-    if hasattr(session, "sandbox") and session.sandbox is not None:
-        backend = SandboxBackend(session.sandbox)
-
-    return graph, lg_config, state, messages, backend
+    return ThreadAgent(
+        thread_id=thread_id,
+        graph=graph,
+        state=state,
+        messages=messages,
+        workspace_id=workspace_id,
+        backend=backend,
+        project=inputs.project,
+    )
 
 
 async def _update_graph_state(
-    graph, config: dict, values: dict, thread_id: str, verb: str
-) -> None:
-    """Timeout-wrapped aupdate_state call."""
+    graph, state, values: dict, thread_id: str, verb: str
+) -> bool:
+    """Write ``values`` onto the checkpoint ``state`` was read at, and move
+    the thread's commit pointer onto the write when it still points there
+    (``update_at_commit``); whether it moved.
+
+    Left beside the pointer, the write is seen by the next turn, which runs
+    from the latest checkpoint, but not by anything reading the committed
+    branch until that turn ends: replay, and the window's slice coverage.
+    """
+    built_on = ((state.config or {}).get("configurable") or {}).get("checkpoint_id")
     try:
-        await asyncio.wait_for(graph.aupdate_state(config, values), timeout=10.0)
+        advanced = await update_at_commit(
+            graph, thread_id, built_on, values, timeout=10.0
+        )
     except asyncio.TimeoutError:
         logger.error(f"aupdate_state timed out for thread {thread_id} during {verb}")
         raise HTTPException(
             status_code=504,
             detail=f"Timed out updating state for thread: {thread_id}",
         )
+    if not advanced:
+        logger.info(
+            f"[{verb}] thread {thread_id}: commit pointer is not at {built_on}, "
+            "left in place"
+        )
+    return advanced
+
+
+async def _summary_since_the_turn(thread_id: str, state):
+    """The summary written since the thread's latest turn started, which a
+    compact now is about to replace, or None.
+
+    Replay reads a turn's summaries from the state its span ends on, and the
+    compact's write becomes that end, so without a copy on the compact's
+    marker the turn would lose the one the agent wrote during it, or the one
+    an earlier compact after it installed. A summary from before the turn
+    shows where it was written. A failed read keeps no copy.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from src.server.services.history.reader import CheckpointHistoryReader
+
+    values = state.values or {}
+    event = values.get("_summarization_event")
+    message = event.get("summary_message") if isinstance(event, dict) else None
+    if not isinstance(message, HumanMessage) or not message.id:
+        return None
+    built_on = ((state.config or {}).get("configurable") or {}).get("checkpoint_id")
+    try:
+        reader = CheckpointHistoryReader.get_instance()
+        anchors, _ = await asyncio.wait_for(
+            reader.aget_turn_anchors(thread_id, built_on), timeout=10.0
+        )
+        if not anchors:
+            return None
+        before = await asyncio.wait_for(
+            reader.aget_state(thread_id, anchors[-1].input_checkpoint_id),
+            timeout=10.0,
+        )
+    except Exception:
+        logger.warning(
+            f"[compact] thread {thread_id}: could not read the latest turn's "
+            f"start; a summary it wrote is not kept on the marker",
+            exc_info=True,
+        )
+        return None
+    prior = ((before.values or {}) if before else {}).get("_summarization_event")
+    prior_message = prior.get("summary_message") if isinstance(prior, dict) else None
+    if getattr(prior_message, "id", None) == message.id:
+        return None
+    return message
+
+
+def _summary_props(*, original_count: int, new_count: int, summary_text: str, source: str) -> dict:
+    """What replay's marker and the client read of a summary installed
+    between turns. Action "summarize" is the wire protocol's."""
+    return {
+        "action": "summarize",
+        "signal": "complete",
+        "original_message_count": original_count,
+        "new_message_count": new_count,
+        "summary_length": len(summary_text),
+        "source": source,
+    }
+
+
+async def compaction_write(agent: ThreadAgent, compaction) -> dict:
+    """The values installing ``compaction`` between turns with the marker
+    replay shows the summary by, the same a manual /compact writes
+    (``_installed``); replay reads the "View summary" panel's text from the
+    summary the marker names."""
+    props = _summary_props(
+        original_count=compaction.original_count,
+        new_count=len(compaction.messages),
+        summary_text=compaction.summary.text,
+        source=compaction.summary.source,
+    )
+    marker = context_window_record(
+        props,
+        summary_message_id=compaction.event["summary_message"].id,
+        replaced=await _summary_since_the_turn(agent.thread_id, agent.state),
+    )
+    return {**compaction.update(agent.state.values), "ui": [marker]}
 
 
 @asynccontextmanager
@@ -140,21 +373,270 @@ async def _hold_thread_mutation(thread_id: str, verb: str):
         raise HTTPException(status_code=503, detail=str(e))
 
 
+async def _previous_run(thread_id: str) -> TurnContext:
+    """What a turn's build knows of the thread's previous run, which a call
+    between turns needs too: when it settled, by the run ledger, which a
+    cancelled call refreshed the provider's cache at without a stamp in the
+    checkpoint. A failed read leaves it unknown."""
+    from src.server.database.runs import lifecycle as tl_db
+    from src.server.services.runs.pending_input import cache_clock_attempt
+
+    try:
+        attempt = await cache_clock_attempt(thread_id, await tl_db.get_latest_attempt(thread_id))
+    except Exception:
+        logger.debug("previous run read failed for thread %s", thread_id, exc_info=True)
+        return TurnContext()
+    return TurnContext(previous_run_settled_at=run_settled_at(attempt))
+
+
+async def _resolver(user_id: str, thread_id: str, meta: dict, route):
+    """``thread_resolver`` for a call between turns, which no composer
+    started, so the thread's row sets its effort and fast mode, and its
+    latest run the subagents its tools name, as that run's build was given
+    them: tools that differ from the turn's miss its whole cached prefix. A
+    failed read builds the default subagents."""
+    from src.server.database.api_keys import is_byok_active
+    from src.server.database.runs import lifecycle as tl_db
+    from src.server.services.thread_agent import thread_resolver
+
+    try:
+        latest = await tl_db.get_latest_attempt(thread_id)
+    except Exception:
+        logger.debug("latest run read failed for thread %s", thread_id, exc_info=True)
+        latest = None
+    return thread_resolver(
+        user_id,
+        thread_id,
+        route,
+        thread=meta,
+        is_byok=await is_byok_active(user_id),
+        enabled_subagents=((latest or {}).get("metadata") or {}).get("subagents_enabled"),
+    )
+
+
+async def _summarize(agent: ThreadAgent, config):
+    """The pipeline automatic compaction runs when the agent compacts nothing,
+    on the user's resolved config, naming the notes when the user's flag is
+    on, as the agent build does."""
+    from ptc_agent.agent.middleware.compaction import compact_messages
+    from ptc_agent.agent.middleware.compaction.notes import ThreadScratchpad
+
+    logger.info(f"[compact] thread {agent.thread_id}: the agent compacts nothing")
+    scratchpad = (
+        ThreadScratchpad.resolve(config, agent.backend.workspace_dir, agent.thread_id)
+        if agent.backend is not None and config is not None
+        else None
+    )
+    return await compact_messages(
+        agent.messages,
+        agent.state.values,
+        config,
+        thread_id=agent.thread_id,
+        backend=agent.backend,
+        workspace_id=agent.workspace_id,
+        notes_dir=scratchpad.notes_dir if scratchpad is not None else None,
+    )
+
+
+@asynccontextmanager
+async def _recorded(agent: ThreadAgent, user_id: str | None, verb: str):
+    """Record the model calls made inside in the usage records, as a turn's
+    are. They find the token tracker a turn gets on the runnable config around
+    them, which ``ask_between_turns`` and the summarizer both call the model
+    under, and land on a row of their own: no run is open between turns to
+    hold them. The row is the thread's, under the caller, with ``verb`` on
+    its token usage to tell it from a turn's, and is written once the
+    operation has ended, so its status is the operation's.
+
+    The tracker runs inline: a call's end is reported in a callback shielded
+    from cancellation, which on an executor thread could still be running
+    when a Stop or a timeout reads the tracker."""
+    from langchain_core.callbacks import BaseCallbackManager
+    from langchain_core.runnables.config import var_child_runnable_config
+
+    from src.utils.tracking import TokenTrackingManager
+
+    tracker = TokenTrackingManager.initialize_tracking(thread_id=agent.thread_id)
+    tracker.run_inline = True
+    ambient = var_child_runnable_config.get() or {}
+    callbacks = ambient.get("callbacks")
+    if isinstance(callbacks, BaseCallbackManager):
+        callbacks = callbacks.copy()
+        callbacks.add_handler(tracker)
+    else:
+        callbacks = [*(callbacks or ()), tracker]
+    token = var_child_runnable_config.set({**ambient, "callbacks": callbacks})
+    status = "error"
+    try:
+        yield
+        status = "completed"
+    except asyncio.CancelledError:
+        status = "cancelled"
+        raise
+    finally:
+        var_child_runnable_config.reset(token)
+        records = tracker.get_per_call_records()
+        if records and user_id:
+            # A Stop landing here still owes the calls that answered.
+            await asyncio.shield(_record_usage(agent, user_id, verb, records, status))
+
+
+async def _record_usage(
+    agent: ThreadAgent, user_id: str, verb: str, records: list, status: str
+) -> None:
+    from src.server.services.persistence.usage import UsagePersistenceService
+
+    usage = UsagePersistenceService(
+        thread_id=agent.thread_id, workspace_id=agent.workspace_id, user_id=user_id
+    )
+    await usage.track_llm_usage(records)
+    if usage._token_usage is not None:
+        usage._token_usage["between_turns"] = verb
+    # The calls' own billing types, for when pricing fails and the row
+    # falls back to the hint, as a turn's falls back to its key's.
+    is_byok = not any(r.get("billing_type", "platform") == "platform" for r in records)
+    if not await usage.persist_usage(response_id=str(uuid4()), status=status, is_byok=is_byok):
+        logger.error(
+            "[usage] %s row not written for thread_id=%s; %d record(s) are unrecoverable",
+            verb,
+            agent.thread_id,
+            len(records),
+        )
+
+
+def _refuse_claude_code(on_claude_code: bool) -> None:
+    """Refuse an offload on a Claude Code thread, or a summary its own model does not make. Claude Code manages its own
+    session, and the thread's messages are only the record replay and
+    transcripts read, so rewriting them changes nothing Claude sees, while a
+    write through the ordinary graph drops what the runtime keeps beside them.
+    Called inside the mutation fence, which orders it against a model switch."""
+    if on_claude_code:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "type": "claude_code_compacts_itself",
+                "message": "Claude Code manages this thread's context itself.",
+            },
+        )
+
+
+def _refuse_while_awaiting_user(agent: ThreadAgent) -> None:
+    """Refuse a compaction while a call Claude Code deferred waits for the
+    user: the compaction's CLI would load the session with that call pending
+    and nothing to run it, and run until the compaction budget."""
+    from ptc_agent.agent.claude_code.session import awaiting_user
+
+    if awaiting_user(agent.state.values.get("claude_session"), agent.messages):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "awaiting_input",
+                "verb": "compact",
+                "message": "Cannot compact while a question or approval is waiting on this thread. Answer or dismiss it, then try again.",
+            },
+        )
+
+
+def _claude_code_failure(e: ClaudeTurnFailed, model: str) -> HTTPException:
+    """A compaction the CLI failed, answered as a turn that failed the same
+    way is: in admission's words for what admission refuses, else with the
+    status its answer carried."""
+    from src.server.services.llm.claude_code import claude_code_refusal
+    from src.server.services.runs.stream_errors import classify_stream_exception
+    from src.server.utils.error_sanitization import sanitize_error_text
+
+    refusal = claude_code_refusal(e, model)
+    if refusal is not None:
+        return HTTPException(status_code=400, detail=refusal)
+    failure = classify_stream_exception(e)
+    status = failure["status_code"] or (502 if failure["kind"] == "upstream" else 500)
+    return HTTPException(status_code=status, detail=f"Failed to trigger compaction: {sanitize_error_text(str(e))}")
+
+
+async def _compaction_config(thread_id: str, user_id: str | None) -> tuple[Any, AgentRole]:
+    """The config and role a manual compaction runs on, resolved as the
+    thread's next turn would be. A summary changes no answer, so it runs on
+    the default rather than wait on a reconnect, except that only Claude Code
+    compacts a Claude Code session: a thread holding one of its models falls
+    back neither to the default nor to the base config."""
+    agent_cfg = setup.agent_config
+    if not (user_id and agent_cfg is not None):
+        return agent_cfg, "analyst"
+    meta, route = await thread_route(thread_id, user_id)
+    on_claude_code = is_claude_code_model(meta.get("llm_model"))
+    try:
+        from src.server.services.llm import thread_model
+
+        agent_cfg = await thread_model.resolve_turn_config(
+            user_id,
+            thread_id,
+            named=None,
+            held=meta.get("llm_model"),
+            fall_back=not on_claude_code,
+            resolve=await _resolver(user_id, thread_id, meta, route),
+        )
+    except HTTPException:
+        # 402 insufficient credits, 403 revoked key, etc. are intentional
+        # user-facing signals — don't silently downgrade to platform config.
+        raise
+    except Exception as e:
+        if on_claude_code:
+            from src.server.services.runs.stream_errors import classify_stream_exception
+
+            logger.warning(f"[compact] resolving the Claude Code model failed for user {user_id}", exc_info=True)
+            status = 502 if classify_stream_exception(e)["kind"] == "upstream" else 500
+            raise HTTPException(status_code=status, detail="Failed to trigger compaction") from e
+        logger.warning(
+            f"[compact] resolve_llm_config failed for user {user_id}: {e}; "
+            "falling back to base agent_config"
+        )
+        agent_cfg = setup.agent_config
+    return agent_cfg, route.role
+
+
+async def _installed(
+    agent: ThreadAgent,
+    update: dict,
+    *,
+    original_count: int,
+    new_count: int,
+    summary_text: str,
+    source: str,
+    **marker: Any,
+) -> dict:
+    """Write a compaction's ``update`` with the marker replay shows for it,
+    and the response the client reads. Action "summarize" is the wire
+    protocol's; ``marker`` names the summary replay reads the "View summary"
+    panel from, when the thread's messages hold one."""
+    props = _summary_props(
+        original_count=original_count, new_count=new_count, summary_text=summary_text, source=source
+    )
+    await agent.write({**update, "ui": [context_window_record(props, **marker)]}, "compact")
+    logger.info(
+        f"Manual compaction completed for thread {agent.thread_id}: "
+        f"{original_count} -> {new_count} messages"
+    )
+    return {"success": True, "thread_id": agent.thread_id, **props, "summary_text": summary_text}
+
+
 @cancellation_as_http("compact")
 async def trigger_compaction(
     thread_id: str,
-    keep_messages: int = 5,
     *,
     user_id: str | None = None,
 ) -> dict:
     """Manually trigger context compaction for a thread.
 
-    When ``user_id`` is set, applies that user's compaction_model + profile
-    so manual /compact matches the auto path.
+    Sent as the agent's own model call (``ask_between_turns``), built and
+    resolved as the thread's next turn would be, so a provider that compacts
+    the conversation itself does here as it does mid-turn, from its cache, and
+    the summary runs on the model and credential the thread's turns do. A
+    Claude Code thread's session is compacted by the CLI itself, and its
+    messages, the record replay reads, stay as they are.
     """
     try:
-        from ptc_agent.agent.middleware.compaction import compact_messages
-        from src.server.app import setup
+        from ptc_agent.agent.middleware.compaction import Compact, NoCompaction
+        from ptc_agent.agent.middleware.compaction.compact import NOTHING_TO_COMPACT
 
         # The mutation fence FIRST — before any graph state reads or writes:
         # exclusive T(thread) refuses while a fenced run or tail writer is
@@ -162,132 +644,52 @@ async def trigger_compaction(
         # and the op key holds concurrent message POSTs at admission. The
         # runner also owns the user-Stop path (local cancel / cross-worker
         # stop flag).
-        async with _hold_thread_mutation(thread_id, "compact") as mutation:
-            agent_cfg = setup.agent_config
-            if user_id and agent_cfg is not None:
-                try:
-                    from src.server.database.api_keys import is_byok_active
-                    from src.server.services.llm.config import resolve_llm_config
-
-                    is_byok = await is_byok_active(user_id)
-                    agent_cfg = await resolve_llm_config(
-                        setup.agent_config,
-                        user_id,
-                        request_model=None,
-                        is_byok=is_byok,
-                        mode="ptc",
-                        thread_id=thread_id,
-                    )
-                except HTTPException:
-                    # 402 insufficient credits, 403 revoked key, etc. are intentional
-                    # user-facing signals — don't silently downgrade to platform config.
-                    raise
-                except Exception as e:
-                    logger.warning(
-                        f"[compact] resolve_llm_config failed for user {user_id}: {e}; "
-                        "falling back to base agent_config"
-                    )
-                    agent_cfg = setup.agent_config
-
-            graph, lg_config, state, messages, backend = await _resolve_graph_and_state(
+        async with (
+            _hold_thread_mutation(thread_id, "compact") as mutation,
+            AsyncExitStack() as held,
+        ):
+            agent_cfg, role = await _compaction_config(thread_id, user_id)
+            agent = await _thread_agent(
                 thread_id, "compact", config=agent_cfg,
-                checkpointer=mutation.saver, user_id=user_id,
+                checkpointer=mutation.saver, user_id=user_id, held=held, role=role,
             )
-
-            original_count = len(messages)
-
-            compaction_cfg = agent_cfg.compaction if agent_cfg else None
-            model_name = (agent_cfg.llm.compaction or "") if agent_cfg and agent_cfg.llm else ""
-
-            # Mirror PTCAgent.create_agent client priority: subsidiary → main → factory.
-            # Copy before handing the client to compact_messages — it calls
-            # maybe_disable_streaming (src/llms/api_call.py) which sets
-            # streaming=False in-place. Without the copy, the fallback path
-            # (agent_cfg == setup.agent_config) would permanently mutate the
-            # shared main-agent client and break SSE streaming for every
-            # subsequent chat workflow.
-            compaction_client = None
-            if agent_cfg is not None:
-                subsidiary = agent_cfg.subsidiary_llm_clients.get("compaction")
-                if subsidiary is not None:
-                    compaction_client = subsidiary.model_copy()
-                elif agent_cfg.llm_client is not None:
-                    compaction_client = agent_cfg.llm_client.model_copy()
-
-            # Read previous event from state (for chained compactions).
-            # The state key "_summarization_event" is preserved as a wire/storage
-            # contract (values live in the LangGraph checkpointer DB).
-            previous_event = state.values.get("_summarization_event")
-
-            try:
-                result = await compact_messages(
-                    messages=messages,
-                    keep_messages=keep_messages,
-                    model_name=model_name,
-                    backend=backend,
-                    previous_event=previous_event,
-                    compaction_config=compaction_cfg,
-                    llm_client=compaction_client,
+            await held.enter_async_context(_recorded(agent, user_id, "compact"))
+            # Only Claude Code compacts a thread Claude last replied on, and it
+            # compacts no other: its session would not be the one the thread runs on.
+            on_claude_code = isinstance(getattr(agent_cfg, "llm_client", None), ClaudeCodeTarget)
+            _refuse_claude_code(on_claude_code != claude_replied_last(agent.messages))
+            if on_claude_code:
+                _refuse_while_awaiting_user(agent)
+                try:
+                    session = await agent.compact_claude_code()
+                except ClaudeTurnFailed as e:
+                    raise _claude_code_failure(e, agent_cfg.llm_client.model) from e
+                if session is None:
+                    raise HTTPException(status_code=400, detail=NOTHING_TO_COMPACT)
+                return await _installed(
+                    agent, session.update(), original_count=session.original_count,
+                    new_count=session.new_count, summary_text=session.summary_text, source="provider",
                 )
+            try:
+                try:
+                    compaction = await agent.ask(Compact())
+                except NoCompaction:
+                    compaction = await _summarize(agent, agent_cfg)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
-            # Merge any Tier 1 offloaded IDs from compact_messages into existing state
-            existing_arg_ids = set(state.values.get("_offloaded_tool_call_ids") or ())
-            existing_read_ids = set(state.values.get("_offloaded_read_result_ids") or ())
-
-            # Write CompactionEvent + offloaded IDs + reset batch counter.
-            # State key "_summarization_event" preserved for DB compatibility.
-            await _update_graph_state(
-                graph,
-                lg_config,
-                {
-                    "_summarization_event": result["event"],
-                    "_truncation_batch_count": 0,
-                    "_offloaded_tool_call_ids": (
-                        existing_arg_ids | result.get("offloaded_arg_ids", set())
-                    ),
-                    "_offloaded_read_result_ids": (
-                        existing_read_ids | result.get("offloaded_read_ids", set())
-                    ),
-                },
-                thread_id,
-                "compact",
+            # The view that was compacted, as automatic compaction counts it,
+            # not every message the checkpoint has kept since the thread began.
+            return await _installed(
+                agent,
+                compaction.update(agent.state.values),
+                original_count=compaction.original_count,
+                new_count=len(compaction.messages),
+                summary_text=compaction.summary.text,
+                source=compaction.summary.source,
+                summary_message_id=compaction.event["summary_message"].id,
+                replaced=await _summary_since_the_turn(thread_id, agent.state),
             )
-
-            new_message_count = result["preserved_count"]
-            summary_text = result.get("summary_text", "")
-            summary_length = len(summary_text)
-
-            logger.info(
-                f"Manual compaction completed for thread {thread_id}: "
-                f"{original_count} -> {new_message_count} messages"
-            )
-
-            # Persist context_window event to last response for replay.
-            # Action value "summarize" preserved as SSE wire protocol.
-            # summary_text is stored so the history-replay view can show the
-            # collapsible "View summary" panel just like the live-stream path.
-            await _persist_context_window_event(
-                thread_id,
-                {
-                    "action": "summarize",
-                    "signal": "complete",
-                    "original_message_count": original_count,
-                    "new_message_count": new_message_count,
-                    "summary_length": summary_length,
-                    "summary_text": summary_text,
-                },
-            )
-
-            return {
-                "success": True,
-                "thread_id": thread_id,
-                "original_message_count": original_count,
-                "new_message_count": new_message_count,
-                "summary_length": summary_length,
-                "summary_text": summary_text,
-            }
 
     except HTTPException:
         raise
@@ -295,9 +697,11 @@ async def trigger_compaction(
         # CancelledError (user Stop / client disconnect) is handled by the
         # @cancellation_as_http wrapper, which sees it after the mutation
         # fence releases.
+        from src.server.utils.error_sanitization import sanitize_error_text
+
         logger.exception(f"Error triggering compaction for thread {thread_id}: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Failed to trigger compaction: {str(e)}"
+            status_code=500, detail=f"Failed to trigger compaction: {sanitize_error_text(str(e))}"
         )
 
 
@@ -306,100 +710,107 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
     """
     Manually trigger tool-arg offloading for a thread (Tier 1 only).
 
-    Truncates large tool arguments in older messages and offloads the
-    originals to the sandbox filesystem. No LLM summarization is performed.
-    ``user_id`` identifies the caller to the session acquire, same as
+    Records large tool arguments and stale Read results in older messages as
+    offloaded, an argument only once the transcript that keeps it is saved.
+    No LLM summarization is performed. ``user_id`` identifies the caller to the
+    session acquire, same as
     :func:`trigger_compaction`.
 
     Args:
         thread_id: The thread/conversation ID to offload
 
     Returns:
-        Dict with success, thread_id, message_count, offloaded_args, offloaded_reads
+        Dict with success, thread_id, message_count, offloaded_args,
+        offloaded_reads, and next_summary, what the next send summarizes
+        first after the offload (see ``read_next_summary``)
     """
     try:
-        from ptc_agent.agent.middleware.compaction import offload_tool_args
+        from ptc_agent.agent.middleware.compaction import (
+            Measure,
+            OffloadSettings,
+            offload_tool_args,
+            record_offloads,
+        )
+        from ptc_agent.agent.middleware.compaction.rebuild import (
+            LAST_ANSWER_KEY,
+            offloaded_reading,
+        )
+        from src.server.database.conversation import get_thread_auth_meta
+        from src.server.services.thread_status import UNREAD, read_next_summary
 
         # Same fence as /compact — /offload also writes checkpoint state and
         # could race a running workflow's _offloaded_tool_call_ids updates.
         # The exclusive-T lock + ledger gate are deterministic, so the old
         # fail-open/fail-closed tracker asymmetry is gone.
-        async with _hold_thread_mutation(thread_id, "offload") as mutation:
-            graph, lg_config, state, messages, backend = await _resolve_graph_and_state(
-                thread_id, "offload", checkpointer=mutation.saver, user_id=user_id
+        async with (
+            _hold_thread_mutation(thread_id, "offload") as mutation,
+            AsyncExitStack() as held,
+        ):
+            _refuse_claude_code(is_claude_code_model((await get_thread_auth_meta(thread_id) or {}).get("llm_model")))
+            agent = await _thread_agent(
+                thread_id, "offload", checkpointer=mutation.saver, user_id=user_id, held=held
             )
+            messages, state = agent.messages, agent.state
+            # A thread following a Claude Code default holds no model of its own.
+            _refuse_claude_code(claude_replied_last(messages))
 
-            # Load already-offloaded IDs from graph state (persisted in checkpoint)
-            already_offloaded: set[str] = set(
-                state.values.get("_offloaded_tool_call_ids") or ()
-            )
-            already_offloaded_reads: set[str] = set(
-                state.values.get("_offloaded_read_result_ids") or ()
-            )
-            if already_offloaded:
-                logger.info(
-                    f"Loaded {len(already_offloaded)} already-offloaded IDs "
-                    f"for thread {thread_id}"
-                )
-
-            # Call offload_tool_args (Tier 1 only)
-            compaction_cfg = setup.agent_config.compaction if setup.agent_config else None
+            # Set: resolving the graph above refuses to run without it.
+            settings = OffloadSettings.from_config(setup.agent_config.compaction)
             try:
-                result = await offload_tool_args(
-                    messages=messages,
-                    backend=backend,
-                    already_offloaded=already_offloaded,
-                    compaction_config=compaction_cfg,
+                offloaded_arg_ids, offloaded_read_ids = await offload_tool_args(
+                    messages,
+                    state.values,
+                    settings,
+                    thread_id=thread_id,
+                    backend=agent.backend,
+                    workspace_id=agent.workspace_id,
                 )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
-            offloaded_args = result["offloaded_args"]
-            offloaded_reads = result["offloaded_reads"]
-            new_ids = result.get("new_offloaded_ids", set())
+            offloaded_args = len(offloaded_arg_ids)
+            offloaded_reads = len(offloaded_read_ids)
 
-            # Update graph state: truncated messages + offloaded IDs + batch counter
-            state_update: dict = {"messages": result["messages"]}
-            if new_ids:
-                # new_offloaded_ids contains both arg and read IDs — merge into both
-                # state fields (extra IDs in either set are harmless, they're just guards)
-                state_update["_offloaded_tool_call_ids"] = already_offloaded | new_ids
-                state_update["_offloaded_read_result_ids"] = (
-                    already_offloaded_reads | new_ids
-                )
-                state_update["_truncation_batch_count"] = len(messages)
-
-            await _update_graph_state(
-                graph,
-                lg_config,
-                state_update,
-                thread_id,
-                "offload",
-            )
-
-            logger.info(
-                f"Manual offload completed for thread {thread_id}: "
-                f"{offloaded_args} tool args, {offloaded_reads} read results"
-                f"{f', {len(already_offloaded)} previously offloaded (skipped)' if already_offloaded else ''}"
-            )
-
-            # Persist context_window event to last response for replay
-            await _persist_context_window_event(
-                thread_id,
+            # Ids only, never messages: the checkpoint keeps every message and
+            # the middleware applies the recorded ids on every call. Unlike
+            # the automatic pass, this one does not wait for an idle turn: the
+            # user asked for it now. The marker rides the same write.
+            marker = context_window_record(
                 {
                     "action": "offload",
                     "signal": "complete",
                     "offloaded_args": offloaded_args,
                     "offloaded_reads": offloaded_reads,
-                },
+                }
+            )
+            update = record_offloads(state.values, offloaded_arg_ids, offloaded_read_ids)
+            # The cuts zero the measurement the composer's hint reads, so
+            # what they leave is measured as the next turn start will read it.
+            # A failed measure leaves the hint unsaid, as a zeroed one is.
+            if update:
+                after = {**state.values, **update}
+                try:
+                    reading = offloaded_reading(after, await agent.ask(Measure(), after))
+                except Exception:
+                    logger.debug(f"Offload measure failed for thread {thread_id}", exc_info=True)
+                    reading = None
+                if reading is not None:
+                    update[LAST_ANSWER_KEY] = reading
+            await agent.write({**update, "ui": [marker]}, "offload")
+
+            logger.info(
+                f"Manual offload completed for thread {thread_id}: "
+                f"{offloaded_args} tool args, {offloaded_reads} read results"
             )
 
+            next_summary = await read_next_summary(thread_id, values={**state.values, **update})
             return {
                 "success": True,
                 "thread_id": thread_id,
-                "message_count": result["original_count"],
+                "message_count": len(messages),
                 "offloaded_args": offloaded_args,
                 "offloaded_reads": offloaded_reads,
+                "next_summary": None if next_summary is UNREAD else next_summary,
             }
 
     except HTTPException:
@@ -414,34 +825,145 @@ async def trigger_offload(thread_id: str, *, user_id: str | None = None) -> dict
         )
 
 
-async def _persist_context_window_event(thread_id: str, data: dict) -> None:
-    """Append a context_window SSE event to the latest response's sse_events for replay.
 
-    Best-effort: logs warnings on failure but never raises. Uses a server-side
-    JSONB append so we never read or rewrite the whole sse_events blob per model
-    call (the old read-modify-write also clobbered concurrent appends).
+async def _summary_to_hand_off(thread_id: str):
+    """The summary the thread's next turn opens on, when only the provider
+    that wrote it can read it and its model has not written it out yet; else
+    None. None too while a step waits on the user: a write ends that step, and
+    the answer the user gives would have nothing to resume.
+
+    Read off the raw checkpoint, which holds both, rather than the thread's
+    state: every model switch asks, and the state replays the message deltas,
+    which a long thread makes slow (about 170 ms against 2 ms on one of 1,800
+    messages)."""
+    from langchain_core.messages import HumanMessage
+
+    from ptc_agent.agent.middleware.compaction.utils import handed_off
+    from src.llms.provider_compaction import is_opaque
+
+    checkpointer = get_checkpointer()
+    base = await turn_base_checkpoint_id(checkpointer, thread_id)
+    saved = await checkpointer.aget_tuple(build_checkpoint_config(thread_id, base))
+    values = (saved.checkpoint.get("channel_values") or {}) if saved else {}
+    event = values.get("_summarization_event")
+    message = event.get("summary_message") if isinstance(event, dict) else None
+    if not isinstance(message, HumanMessage) or not is_opaque(message) or handed_off(message):
+        return None
+    if interrupt_records(saved.pending_writes):
+        return None
+    return message
+
+
+async def hand_off_on_switch(
+    thread_id: str, user_id: str, previous_model: str | None
+) -> bool:
+    """When a switch from ``previous_model`` (None for the account default)
+    leaves the thread on a model that cannot read the summary its provider
+    compacted it into, have that model write the summary out for the new one,
+    and say whether it is.
+
+    True only once the hand-off holds the thread, so a send from then on waits
+    for it at admission. The new model reads the digest the summary carries
+    when the hand-off cannot start (a turn or background tasks still hold the
+    thread), fails, or dies with its worker.
     """
+    from src.server.handlers.chat.detached import fire_and_forget
+
     try:
-        from src.server.database.conversation import append_sse_event
+        # Checked again under the fence; asked first so a switch with nothing
+        # to hand off never holds the thread.
+        if await _hand_off_config(thread_id, user_id, previous_model) is None:
+            return False
+    except Exception:
+        logger.warning(f"[handoff] thread {thread_id}: switch not read", exc_info=True)
+        return False
+    started = asyncio.get_running_loop().create_future()
+    fire_and_forget(
+        _hand_off(thread_id, user_id, previous_model, started),
+        name=f"handoff_{thread_id[:8]}",
+    )
+    return await asyncio.shield(started)
 
-        cw_event = {
-            "event": "context_window",
-            "data": {
-                "thread_id": thread_id,
-                "agent": "agent",
-                **data,
-            },
-        }
-        updated = await append_sse_event(thread_id, cw_event)
-        if not updated:
-            logger.debug(
-                f"No responses found for thread {thread_id}, skipping context_window persist"
-            )
-            return
 
-        logger.debug(
-            f"Persisted context_window event ({data.get('action')}) "
-            f"for thread {thread_id}"
-        )
+async def _hand_off_config(thread_id: str, user_id: str, model: str | None):
+    """The config ``model`` runs under on the thread and the role it runs in,
+    when the summary is still to hand off, the thread's model cannot read it,
+    and ``model`` can; else None."""
+    from src.llms.provider_compaction import replays
+
+    summary = await _summary_to_hand_off(thread_id)
+    if summary is None:
+        return None
+    meta, route = await thread_route(thread_id, user_id)
+    resolve = await _resolver(user_id, thread_id, meta, route)
+    try:
+        switched_to = (await resolve(meta.get("llm_model"))).get_llm_client()
+    except Exception:
+        # A model that cannot run now reads the text when it can.
+        switched_to = None
+    if switched_to is not None and replays(summary, switched_to):
+        return None
+    try:
+        config = await resolve(model)
+        readable = replays(summary, config.get_llm_client())
     except Exception as e:
-        logger.warning(f"Failed to persist context_window event for {thread_id}: {e}")
+        logger.info(f"[handoff] thread {thread_id}: {model!r} cannot run ({e})")
+        return None
+    if not readable:
+        logger.info(f"[handoff] thread {thread_id}: {model!r} cannot read the summary")
+        return None
+    return config, route.role
+
+
+async def _hand_off(
+    thread_id: str, user_id: str, model: str | None, started: asyncio.Future
+) -> None:
+    """``model``, the one the thread was on, writes out the summary only its
+    provider can read (``HandOff``), in place of the digest; ``started`` is
+    True once it holds the thread and has checked it has one to write.
+    Nothing is written when it cannot: the digest stays."""
+    from ptc_agent.agent.middleware.compaction import HandOff, NoCompaction
+    from src.config.settings import get_compaction_timeout
+
+    try:
+        async with (
+            _hold_thread_mutation(thread_id, "handoff") as mutation,
+            AsyncExitStack() as held,
+        ):
+            target = await _hand_off_config(thread_id, user_id, model)
+            if target is None:
+                return
+            config, role = target
+            started.set_result(True)
+            # A send waiting on the hand-off is held at least this long, so
+            # the hand-off ends, written or given up, before it is refused.
+            async with asyncio.timeout(get_compaction_timeout()):
+                agent = await _thread_agent(
+                    thread_id, "handoff", config=config,
+                    checkpointer=mutation.saver, user_id=user_id, held=held, role=role,
+                )
+                # Ends with ``held``, after the write and outside the timeout.
+                await held.enter_async_context(_recorded(agent, user_id, "handoff"))
+                try:
+                    written = await agent.ask(HandOff())
+                except NoCompaction:
+                    logger.info(f"[handoff] thread {thread_id}: the agent compacts nothing")
+                    return
+            if written is None:
+                return
+            event = agent.state.values["_summarization_event"]
+            await agent.write(
+                {"_summarization_event": {**event, "summary_message": written}}, "handoff"
+            )
+            logger.info(
+                f"[handoff] thread {thread_id}: {model!r} wrote out its summary "
+                f"({len(written.content)} chars)"
+            )
+    except HTTPException as e:
+        # Before it starts, the thread is held (a turn, background tasks,
+        # another mutation); after, its agent could not be built.
+        stage = "given up" if started.done() else "not started"
+        logger.info(f"[handoff] thread {thread_id}: {stage} ({e.detail})")
+    finally:
+        if not started.done():
+            started.set_result(False)

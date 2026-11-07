@@ -34,6 +34,7 @@ import {
 } from 'recharts';
 
 import type { FactorLibraryItem } from '@/api/factors';
+import { useLocale } from '@/hooks/useLocale';
 import { createFormatter } from '@/lib/format';
 import {
   icDecaySeries,
@@ -114,6 +115,9 @@ function AxisTick({ x, y, payload }: { x?: number; y?: number; payload?: { value
 
 export function FactorCharts({ item, period }: { item: FactorLibraryItem; period: string | null }) {
   const { t } = useTranslation();
+  // createFormatter is locale-parameterised now: the formatter objects are
+  // module-level (one Intl cache per option set), the locale comes from render.
+  const locale = useLocale();
   const tearsheet = item.metrics?.tearsheet;
 
   const periods = useMemo(() => periodsOf(tearsheet), [tearsheet]);
@@ -166,7 +170,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
                 : t('factors.library.monotonic.no', {
                     rho: monotonicity.rho === null || monotonicity.rho === undefined
                       ? '—'
-                      : plain1(monotonicity.rho),
+                      : plain1(monotonicity.rho, locale),
                   })}
             </span>
           ) : null
@@ -189,7 +193,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
                     <div className="factor-tooltip">
                       <div className="factor-tooltip__label">{point.label}</div>
                       <div className="factor-tooltip__value">
-                        {point.value === null ? t('factors.library.notMeasured') : pct2(point.value)}
+                        {point.value === null ? t('factors.library.notMeasured') : pct2(point.value, locale)}
                       </div>
                     </div>
                   );
@@ -212,9 +216,9 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
         note={decayRising ? t('factors.library.charts.icRising') : t('factors.library.charts.icNote')}
       >
         <div className="factor-chart__stats">
-          <Stat label="IC" value={stats.mean === null ? '—' : corr(stats.mean)} />
-          <Stat label="IR" value={stats.ir === null ? '—' : corr(stats.ir)} />
-          <Stat label="t" value={stats.tStat === null ? '—' : plain1(stats.tStat)} />
+          <Stat label="IC" value={stats.mean === null ? '—' : corr(stats.mean, locale)} />
+          <Stat label="IR" value={stats.ir === null ? '—' : corr(stats.ir, locale)} />
+          <Stat label="t" value={stats.tStat === null ? '—' : plain1(stats.tStat, locale)} />
           <Stat
             label={t('factors.library.detail.samples')}
             value={stats.days === null ? '—' : String(stats.days)}
@@ -224,7 +228,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
             value={
               stats.halfLifeDays === null
                 ? t('factors.library.detail.halfLifeNone')
-                : t('factors.library.detail.days', { value: plain1(stats.halfLifeDays) })
+                : t('factors.library.detail.days', { value: plain1(stats.halfLifeDays, locale) })
             }
           />
         </div>
@@ -244,7 +248,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
                     <div className="factor-tooltip">
                       <div className="factor-tooltip__label">{point.period}</div>
                       <div className="factor-tooltip__value">
-                        {point.value === null ? t('factors.library.notMeasured') : corr(point.value)}
+                        {point.value === null ? t('factors.library.notMeasured') : corr(point.value, locale)}
                       </div>
                     </div>
                   );
@@ -288,7 +292,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
                       <div className="factor-tooltip__value">
                         {point.spread === null
                           ? t('factors.library.notMeasured')
-                          : pct2(point.spread)}
+                          : pct2(point.spread, locale)}
                       </div>
                     </div>
                   );
@@ -310,11 +314,11 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
         <div className="factor-chart__stats">
           <Stat
             label={t('factors.library.turnover.top')}
-            value={turnover[0]?.value === null ? '—' : pct1(turnover[0]?.value ?? 0)}
+            value={turnover[0]?.value === null ? '—' : pct1(turnover[0]?.value ?? 0, locale)}
           />
           <Stat
             label={t('factors.library.turnover.bottom')}
-            value={turnover[1]?.value === null ? '—' : pct1(turnover[1]?.value ?? 0)}
+            value={turnover[1]?.value === null ? '—' : pct1(turnover[1]?.value ?? 0, locale)}
           />
         </div>
         {turnover.some((bar) => bar.value !== null) ? (
@@ -344,7 +348,7 @@ export function FactorCharts({ item, period }: { item: FactorLibraryItem; period
                     <div className="factor-tooltip">
                       <div className="factor-tooltip__label">{point.label}</div>
                       <div className="factor-tooltip__value">
-                        {point.value === null ? t('factors.library.notMeasured') : pct1(point.value)}
+                        {point.value === null ? t('factors.library.notMeasured') : pct1(point.value, locale)}
                       </div>
                     </div>
                   );

@@ -9,6 +9,10 @@ interface ToggleSwitchProps {
   className?: string;
   /** Accessible name — the visual label beside the pill isn't associated with it. */
   ariaLabel?: string;
+  /** Lets a `<label htmlFor>` beside the pill toggle it too. */
+  id?: string;
+  /** The id of the line that describes what the switch does. */
+  ariaDescribedBy?: string;
 }
 
 /**
@@ -16,17 +20,19 @@ interface ToggleSwitchProps {
  * Deliberately a plain button rather than the Radix switch — it preserves the
  * exact markup and theme-var styling both call sites already shipped.
  */
-export function ToggleSwitch({ checked, onChange, disabled, className, ariaLabel }: ToggleSwitchProps): React.ReactElement {
+export function ToggleSwitch({ checked, onChange, disabled, className, ariaLabel, id, ariaDescribedBy }: ToggleSwitchProps): React.ReactElement {
   return (
     <button
+      id={id}
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-describedby={ariaDescribedBy}
       onClick={onChange}
       disabled={disabled}
       className={cn(
-        'relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out',
+        'tap-target relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors',
         className,
       )}
       style={{
@@ -35,7 +41,7 @@ export function ToggleSwitch({ checked, onChange, disabled, className, ariaLabel
       }}
     >
       <span
-        className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out"
+        className="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition"
         style={{
           transform: checked ? 'translateX(16px)' : 'translateX(0)',
         }}

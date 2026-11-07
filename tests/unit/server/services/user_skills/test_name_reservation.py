@@ -49,6 +49,11 @@ class TestTheListingIsReadEveryTime:
         assert _registered_skill_names() is _registered_skill_names()
 
 
+def test_a_retired_builtin_name_is_free_for_a_user_skill():
+    """Compaction tells the user's skill by that name from the retired one."""
+    assert not {"secretary", "automation"} & _registered_skill_names()
+
+
 class TestADirectoryThatWillNotOpen:
     """``is_dir`` swallows OSError; ``iterdir`` is the one that raises.
 

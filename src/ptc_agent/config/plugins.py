@@ -58,6 +58,9 @@ class ServerMeta(BaseModel):
     # expects through the namespace's ``secrets[]``, which also says where
     # each one binds; the request model refuses this key on a user server.
     vault_blueprints: list[VaultBlueprint] = Field(default_factory=list)
+    # The mark this server wears when it is a different brand from its
+    # package's, as a site or the https address of the image itself.
+    icon: str | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -315,7 +318,6 @@ def bundled_skill_dirs() -> list[Path]:
 
     A bundle carries its skills as directories rather than as a list, so a
     package that ships one is read the same way whether it arrived in the
-    image or as an upload. The manifest's ``skills`` key only says what the
-    Plugins page should show.
+    image or as an upload. Nothing reads the manifest's ``skills`` key.
     """
     return [d for p in _bundle_dirs() if (d := p / "skills").is_dir()]

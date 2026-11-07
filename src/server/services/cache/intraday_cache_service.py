@@ -20,14 +20,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.config.settings import get_ohlcv_ttl
 from src.data_client import get_market_data_provider
-from src.server.services.cache._instrument_clock import clock_for
+from src.data_client.instrument_clock import clock_for
 from src.server.services.cache._ohlcv_envelope import (
-    _EMPTY_RESULT_TTL,
-    _build_envelope,
     _is_stale_date,
     _needs_refresh,
+    bars_from,
     is_watermark_stale,
-    series_identity,
+    window_covers,
 )
 from src.server.services.cache._series_cache_core import (
     _SeriesCacheCore,
@@ -309,7 +308,6 @@ class IntradayCacheService(_SeriesCacheCore):
         normalized = symbol.removeprefix("I:").lstrip("^").upper()
 
         base_ttl = self._ttl_for(interval)
-        cache = get_cache_client()
         clock = clock_for(normalized, is_index)
         phase = clock.market_phase()
 
@@ -318,6 +316,12 @@ class IntradayCacheService(_SeriesCacheCore):
             normalized, interval, from_date, to_date, is_index, live=live,
         )
         is_live = IntradayCacheKeyBuilder._is_live(to_date) if live is None else live
+        if envelope is not None and is_live and not window_covers(envelope, from_date, clock.tz):
+            logger.info(
+                "Cache %s %s: cached window does not reach from=%s → fetch and extend",
+                normalized, interval, from_date,
+            )
+            envelope = None
 
         if envelope is not None:
             bars = envelope["bars"]
@@ -349,7 +353,7 @@ class IntradayCacheService(_SeriesCacheCore):
                     _, fresh = await self._find_cached(
                         normalized, interval, from_date, to_date, is_index, live=live,
                     )
-                    if fresh is not None:
+                    if fresh is not None and (not is_live or window_covers(fresh, from_date, clock.tz)):
                         fresh_elapsed = time.time() - fresh.get("fetched_at", 0)
                         if not _should_discard_envelope(fresh, interval=interval, elapsed=fresh_elapsed, gap_grace_s=_COVERAGE_GAP_GRACE_S, is_live=is_live, clock=clock):
                             envelope = fresh
@@ -383,7 +387,7 @@ class IntradayCacheService(_SeriesCacheCore):
                 return IntradayFetchResult(
                     symbol=normalized,
                     interval=interval,
-                    data=bars,
+                    data=bars_from(bars, from_date, clock.tz),
                     cached=True,
                     ttl_remaining=ttl_remaining,
                     background_refresh_triggered=bg_triggered,
@@ -398,45 +402,28 @@ class IntradayCacheService(_SeriesCacheCore):
         # --- Cache miss: full fetch (pinned publisher first) ---
         logger.info("Cache MISS %s %s: fetching from=%s to=%s", normalized, interval, from_date, to_date)
         try:
-            data, source, truncated = await self._pinned_fetch(
-                normalized, interval, from_date, to_date, is_index, user_id,
-            )
             cache_key = self._build_key(normalized, interval, from_date, to_date, is_index, live=live)
+            data, truncated, new_envelope = await self._fetch_and_store(
+                cache_key, normalized, interval, from_date, to_date, is_index, user_id,
+                phase=phase, clock=clock, base_ttl=base_ttl,
+            )
             first_t = data[0].get("time") if data else None
             last_t = data[-1].get("time") if data else None
             logger.info(
                 "Cache MISS %s %s: got %d bars from %s, first=%s last=%s, key=%s",
-                normalized, interval, len(data), source, first_t, last_t, cache_key,
+                normalized, interval, len(data), new_envelope["header"]["publisher"],
+                first_t, last_t, cache_key,
             )
-
-            closed = phase == "closed"
-            complete = closed and len(data) > 0
-            effective_ttl = self._effective_ttl(base_ttl, complete, clock)
-
-            # Use short TTL for empty results so we retry quickly
-            if not data:
-                effective_ttl = _EMPTY_RESULT_TTL
-            instrument_key, schema = series_identity(normalized, interval, is_index)
-            new_envelope = _build_envelope(
-                data, phase, complete, stored_ttl=effective_ttl, truncated=truncated,
-                data_date=clock.current_trading_date(),
-                instrument_key=instrument_key, schema=schema, publisher=source,
-            )
-
-            await cache.set(cache_key, new_envelope, ttl=effective_ttl)
-            if source and data:
-                await self._write_pin(normalized, interval, is_index, source)
-
             return IntradayFetchResult(
                 symbol=normalized,
                 interval=interval,
-                data=data,
+                data=bars_from(data, from_date, clock.tz),
                 cached=False,
-                ttl_remaining=effective_ttl,
+                ttl_remaining=new_envelope["stored_ttl"],
                 background_refresh_triggered=False,
                 cache_key=cache_key,
                 watermark=new_envelope["header"]["watermark"],
-                complete=complete,
+                complete=new_envelope["complete"],
                 market_phase=phase,
                 truncated=truncated,
                 header=new_envelope["header"],
@@ -501,7 +488,6 @@ class IntradayCacheService(_SeriesCacheCore):
         background_refreshes = 0
 
         base_ttl = self._ttl_for(interval)
-        cache = get_cache_client()
 
         # Phase 1: parallel cache lookups (try all source-namespaced keys)
         cache_misses: List[str] = []
@@ -535,10 +521,13 @@ class IntradayCacheService(_SeriesCacheCore):
 
             if envelope is not None:
                 env_elapsed = time.time() - envelope.get("fetched_at", 0)
-                if _should_discard_envelope(envelope, interval=interval, elapsed=env_elapsed, gap_grace_s=_COVERAGE_GAP_GRACE_S, is_live=is_live, clock=clock):
+                if (
+                    (is_live and not window_covers(envelope, from_date, clock.tz))
+                    or _should_discard_envelope(envelope, interval=interval, elapsed=env_elapsed, gap_grace_s=_COVERAGE_GAP_GRACE_S, is_live=is_live, clock=clock)
+                ):
                     cache_misses.append(sym)
                     return
-                results[normalized] = envelope["bars"]
+                results[normalized] = bars_from(envelope["bars"], from_date, clock.tz)
                 resolved_keys[sym] = key
                 cache_hits += 1
                 # Historical windows never background-delta-refresh: the delta
@@ -561,32 +550,14 @@ class IntradayCacheService(_SeriesCacheCore):
                 phase = clock.market_phase()
                 async with self._semaphore:
                     try:
-                        data, source, truncated = await self._pinned_fetch(
-                            normalized, interval, from_date, to_date, is_index, user_id,
-                        )
-                        results[normalized] = data
                         key = self._build_key(
                             normalized, interval, from_date, to_date, is_index,
                         )
-
-                        closed = phase == "closed"
-                        complete = closed and len(data) > 0
-                        eff_ttl = self._effective_ttl(base_ttl, complete, clock)
-                        if not data:
-                            eff_ttl = _EMPTY_RESULT_TTL
-                        instrument_key, schema = series_identity(normalized, interval, is_index)
-                        env = _build_envelope(
-                            data, phase, complete, stored_ttl=eff_ttl, truncated=truncated,
-                            data_date=clock.current_trading_date(),
-                            instrument_key=instrument_key, schema=schema, publisher=source,
+                        data, _, _ = await self._fetch_and_store(
+                            key, normalized, interval, from_date, to_date, is_index, user_id,
+                            phase=phase, clock=clock, base_ttl=base_ttl,
                         )
-                        # Awaited (not fire-and-forget create_task): keeps the
-                        # data-then-pin write order and errors surface into the
-                        # per-symbol except below. Symbols still run concurrently
-                        # via the fetch_from_api gather.
-                        await cache.set(key, env, ttl=eff_ttl)
-                        if source and data:
-                            await self._write_pin(normalized, interval, is_index, source)
+                        results[normalized] = bars_from(data, from_date, clock.tz)
 
                     except Exception as e:
                         logger.error(f"Failed to fetch {sym}: {e}")

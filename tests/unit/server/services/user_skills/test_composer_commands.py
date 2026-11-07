@@ -103,7 +103,7 @@ def test_the_preview_shows_the_skill_the_operator_actually_delivers(
     from src.server.app import setup
     from src.server.services.user_skills.validate import configured_skill_dirs
 
-    registry = get_skill_registry(None)
+    registry = get_skill_registry()
     shipped = next(n for n in registry if registry[n].source_dir is None)
     (tmp_path / shipped).mkdir()
     (tmp_path / shipped / "SKILL.md").write_text("# OPERATOR OVERRIDE")

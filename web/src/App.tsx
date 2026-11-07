@@ -1,6 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { MotionConfig } from 'framer-motion';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { I18nProvider } from 'react-aria-components';
+import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router';
+import { useQueryClient } from '@tanstack/react-query';
 import AppSidebar from './components/Sidebar/AppSidebar';
 import { SIDEBAR_DEFAULT_WIDTH, clampSidebarWidth } from './components/Sidebar/sidebarWidth';
 import { useScrollMemory } from './lib/scrollMemory';
@@ -11,23 +12,41 @@ import AuthConfirm from './pages/Login/AuthConfirm';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from './contexts/AuthContext';
 import { useIsMobile } from './hooks/useIsMobile';
+import { useLocale } from './hooks/useLocale';
 import { useSetupGate } from './hooks/useSetupGate';
 import { isPlatformMode, APP_ENTRY_PATH } from './config/hostMode';
+import { PRIVACY_URL } from './config/supportLinks';
 import { AUTH_BROADCAST_CHANNEL, type AuthBroadcastMessage } from './lib/oauthPopup';
+import { inAppPath } from './lib/inAppPath';
+import { clearSetupReturn } from './lib/setupReturn';
 import { OnboardingProvider, OnboardingHostGate } from './pages/Onboarding';
+import { WELCOME_PATH } from './pages/Onboarding/welcome/paths';
+import { StaleBuildBoundary } from './components/StaleBuildBoundary';
+import { ConnectConsentHost } from './pages/Plugins/components/ConnectConsentHost';
+import { ConnectLandingHost } from './pages/Plugins/components/ConnectLandingHost';
 import { ThreadLifecycleFeed } from './lib/threadLifecycle/ThreadLifecycleFeed';
-import { markBooted, watchStaleBuild } from './lib/staleBuild';
+import { WarmHome } from './components/WarmHome';
+import { HostedSignInGate } from './components/HostedSignInGate';
+import { forgetHostedSignIn, hostedSignInReturn, landAfterSignIn } from './lib/hostedSignIn';
+import { markBooted, reloadIfStale, watchStaleBuild } from './lib/staleBuild';
+import { appSectionOf } from './lib/appRoutes';
+import { lazyWithMotion } from './lib/lazyWithMotion';
 import './App.css';
 
 // Login carries the market-tape canvas subsystem (~2k lines that only a
 // logged-out visitor ever renders) — split it out of the main bundle.
+// Login, reset and the legal pages animate nothing, so they stay on plain
+// React.lazy: lazyWithMotion would fetch framer before the logged-out first
+// screen could render. One that gains motion moves to lazyWithMotion.
 const LoginPage = React.lazy(() => import('./pages/Login/LoginPage'));
 // The public share route reuses the chat transcript renderer, so a static import
 // pulled the whole ChatAgent tree — plus the markdown and chart vendors it reaches
 // — into the entry chunk that every visitor loads before login.
-const SharedChatView = React.lazy(() => import('./pages/SharedChat/SharedChatView'));
-const SetupWizard = React.lazy(() => import('./pages/Setup/SetupWizard'));
-const PrivacyPolicy = React.lazy(() => import('./pages/Legal/PrivacyPolicy'));
+const SharePage = lazyWithMotion(() => import('./pages/SharedChat/SharePage'));
+const SetupWizard = lazyWithMotion(() => import('./pages/Setup/SetupWizard'));
+// The welcome flow renders in place of the whole app layout, so it is the
+// shell's to load rather than one of Main's routes.
+const Welcome = lazyWithMotion(() => import('./pages/Onboarding/welcome/Welcome'));
 const Legal = React.lazy(() => import('./pages/Legal/Legal'));
 const ResetPassword = React.lazy(() => import('./pages/Login/ResetPassword'));
 
@@ -103,13 +122,12 @@ function AuthCallback() {
       return;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const redirectTo = params.get('redirect');
-    if (redirectTo && isSafeRedirect(redirectTo)) {
+    const redirectTo = inAppPath(new URLSearchParams(window.location.search).get('redirect'));
+    if (redirectTo) {
       window.location.href = redirectTo;
       return;
     }
-    navigate('/dashboard', { replace: true });
+    landAfterSignIn(navigate);
   }, [stated, isPopup, isLoggedIn, navigate]);
 
   if (failure) {
@@ -168,27 +186,26 @@ function CallbackRoute() {
   return <AuthCallback />;
 }
 
-// Rejects protocol-relative URLs (`//evil.com/x`) and cross-origin absolutes —
-// both would let `?redirect=` be weaponized for phishing after OAuth.
-function isSafeRedirect(target: string): boolean {
-  // Resolving against the current origin normalizes backslash tricks
-  // (`/\evil.com` -> `//evil.com`) that a prefix test would admit.
-  try {
-    return new URL(target, window.location.origin).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-/** Redirects to dashboard or a ?redirect= target after login. */
+/**
+ * Redirects to dashboard or a ?redirect= target after login. A desktop window
+ * that signed in on the portal comes back here without the query, so the target
+ * it left with stands in. Read once: `App` clears that note once signed in.
+ */
 function RootRedirect() {
-  const params = new URLSearchParams(window.location.search);
-  const redirectTo = params.get('redirect');
-  if (redirectTo && isSafeRedirect(redirectTo)) {
+  const [redirectTo] = useState(() =>
+    inAppPath(new URLSearchParams(window.location.search).get('redirect') ?? hostedSignInReturn())
+  );
+  if (redirectTo) {
     window.location.href = redirectTo;
     return null;
   }
   return <Navigate to="/dashboard" replace />;
+}
+
+/** Leaves the app for an address outside it, without a history entry to come back to. */
+function ExternalRedirect({ to }: { to: string }) {
+  window.location.replace(to);
+  return null;
 }
 
 /** Legacy shared-host entry path — sends stale /app links to the root entry. */
@@ -203,12 +220,52 @@ function LegacyAppPathRedirect() {
  */
 const SIDEBAR_COLLAPSED_KEY = 'app-sidebar-collapsed';
 const SIDEBAR_WIDTH_KEY = 'app-sidebar-width';
+/** Route state that only saves the page a fetch (the sidebar's workspace name and status). */
+const ROUTE_HINTS = new Set(['workspaceName', 'workspaceStatus']);
+/** A thread the URL names finds its workspace again after a load; a new one does not. */
+const NAMED_THREAD = /^\/chat\/t\/(?!__default__(?:\/|$))[^/]+/;
 
 function AuthenticatedShell() {
   const isMobile = useIsMobile();
   const location = useLocation();
+  const onWelcome = location.pathname === WELCOME_PATH;
   const hideTabBar = isMobile && location.pathname.startsWith('/chat/t/');
   const { isLoading, needsSetup } = useSetupGate();
+
+  // A new build is taken on a switch between sections, never inside one: chat
+  // keeps every thread it has opened mounted, with its unsent message, while
+  // its threads are switched, and only leaving the section lets them go. Not
+  // on a switch that hands something over in its route state (a message the
+  // dashboard sends into chat), which the page it opens takes and clears. And
+  // a macrotask later, once the writes in flight have landed: the page being
+  // left saves what it still holds as it unmounts (a dashboard edit on its
+  // debounce), and by then that write has started. The timer is not cancelled
+  // when the page that opens rewrites its own route state: the switch was
+  // decided on the state it arrived with.
+  const queryClient = useQueryClient();
+  const section = appSectionOf(location.pathname);
+  // An empty one hands nothing over (a thread opened from Automations), and
+  // nor do hints the page that opens reads again after a load.
+  const namesThread = NAMED_THREAD.test(location.pathname);
+  const handsOver =
+    location.state != null &&
+    Object.entries(location.state as object).some(
+      ([key, v]) => v !== undefined && !ROUTE_HINTS.has(key) && !(key === 'workspaceId' && namesThread),
+    );
+  const shownSection = useRef(section);
+  useEffect(() => {
+    if (section === shownSection.current) return;
+    const left = shownSection.current;
+    shownSection.current = section;
+    if (!left || !section || handsOver) return;
+    setTimeout(() => reloadIfStale(() => queryClient.isMutating() === 0), 0);
+  }, [section, handsOver, queryClient]);
+
+  // Reaching any page outside setup ends a visit another page sent here, so
+  // its return can't catch a later setup opened from inside the app.
+  useEffect(() => {
+    clearSetupReturn();
+  }, []);
 
   // Warm the target route's chunk while /users/me resolves — the gate below
   // otherwise serializes two network legs (profile fetch, then the lazy
@@ -216,7 +273,8 @@ function AuthenticatedShell() {
   // this is free when the gate is already settled. Mount-only: later
   // navigations mount their lazy component directly.
   useEffect(() => {
-    preloadRouteChunk(window.location.pathname);
+    if (window.location.pathname === WELCOME_PATH) void Welcome.preload().catch(() => {});
+    else preloadRouteChunk(window.location.pathname);
   }, []);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -270,11 +328,11 @@ function AuthenticatedShell() {
   }, []);
   // Published on the document root, not on .app-layout: custom properties only
   // inherit downward, and every fixed overlay that has to dodge the sidebar
-  // (the getting-started card, the dashboard's floating chat and edit toolbar)
+  // (the dashboard's floating chat and edit toolbar)
   // is viewport-anchored — some of them portalled clean out of the layout
   // subtree. Off the root they'd read the collapsed default from tokens.css and
   // sit under the sidebar. 0 on mobile, where no sidebar renders at all.
-  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? '80px' : `${sidebarWidth}px`;
+  const sidebarWidthVar = isMobile ? '0px' : sidebarCollapsed ? 'var(--sidebar-rail-width)' : `${sidebarWidth}px`;
   useLayoutEffect(() => {
     const root = document.documentElement;
     root.style.setProperty('--sidebar-width', sidebarWidthVar);
@@ -296,23 +354,47 @@ function AuthenticatedShell() {
   return (
     <OnboardingProvider>
       <ThreadLifecycleFeed />
-      <div className="app-layout">
-        {!isMobile && (
-          <AppSidebar
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={toggleSidebar}
-            width={sidebarWidth}
-            onWidthChange={handleSidebarWidthChange}
-          />
-        )}
-        {isMobile && !hideTabBar && <BottomTabBar />}
-        <main ref={mainRef} className={`app-main${hideTabBar ? ' app-main--no-tab' : ''}`}>
-          <Main />
-        </main>
-      </div>
-      <OnboardingHostGate />
+      <WarmHome />
+      {onWelcome ? (
+        // Full screen and none of the app's chrome: the flow is the page.
+        // The hosts below stay, since a brokerage connect it starts asks for
+        // consent and comes back through them.
+        <Suspense fallback={<PageLoading />}>
+          <StaleBuildBoundary>
+            <Welcome />
+          </StaleBuildBoundary>
+        </Suspense>
+      ) : (
+        <>
+          <div className="app-layout">
+            {!isMobile && (
+              <AppSidebar
+                collapsed={sidebarCollapsed}
+                onToggleCollapse={toggleSidebar}
+                width={sidebarWidth}
+                onWidthChange={handleSidebarWidthChange}
+              />
+            )}
+            {isMobile && !hideTabBar && <BottomTabBar />}
+            <main ref={mainRef} className={`app-main${hideTabBar ? ' app-main--no-tab' : ''}`}>
+              <Main />
+            </main>
+          </div>
+          <OnboardingHostGate />
+        </>
+      )}
+      <ConnectConsentHost />
+      <ConnectLandingHost />
     </OnboardingProvider>
   );
+}
+
+/** The app's language for every react-aria control (month and weekday names,
+ *  typeahead order, the controls' own labels) rather than the browser's. A
+ *  component of its own, so a language switch re-renders only what reads it. */
+function AriaLocale({ children }: { children: React.ReactNode }) {
+  const locale = useLocale();
+  return <I18nProvider locale={locale}>{children}</I18nProvider>;
 }
 
 function App() {
@@ -328,6 +410,12 @@ function App() {
     return watchStaleBuild();
   }, []);
 
+  // Once initialized, so `RootRedirect` has read the page the trip was for: a
+  // session can land while the page is still loading.
+  useEffect(() => {
+    if (isInitialized && isLoggedIn) forgetHostedSignIn();
+  }, [isInitialized, isLoggedIn]);
+
   if (!isInitialized) {
     return <PageLoading />;
   }
@@ -335,16 +423,15 @@ function App() {
   const appEntryElement = isLoggedIn ? (
     <RootRedirect />
   ) : (
-    <Suspense fallback={<PageLoading />}>
-      <LoginPage />
-    </Suspense>
+    <HostedSignInGate>
+      <Suspense fallback={<PageLoading />}>
+        <LoginPage />
+      </Suspense>
+    </HostedSignInGate>
   );
 
   return (
-    // reducedMotion="user": every framer-motion transform/layout animation
-    // app-wide collapses to instant for prefers-reduced-motion users (opacity
-    // still animates) — no per-component wiring.
-    <MotionConfig reducedMotion="user">
+    <AriaLocale>
     <Routes>
       <Route path={APP_ENTRY_PATH} element={appEntryElement} />
       {isPlatformMode && APP_ENTRY_PATH === '/' && (
@@ -371,16 +458,21 @@ function App() {
           <ResetPassword />
         </Suspense>
       } />
+      {/* Chats share under /s/, files and apps live under /a/. The codes are
+          one namespace, so either prefix opens any of them. */}
       <Route path="/s/:shareToken" element={
         <Suspense fallback={<PageLoading />}>
-          <SharedChatView />
+          <SharePage />
         </Suspense>
       } />
-      <Route path="/privacy" element={
+      <Route path="/a/:shareToken" element={
         <Suspense fallback={<PageLoading />}>
-          <PrivacyPolicy />
+          <SharePage />
         </Suspense>
       } />
+      {/* The policy is published at its own address; links made to this path
+          still reach it. */}
+      {PRIVACY_URL && <Route path="/privacy" element={<ExternalRedirect to={PRIVACY_URL} />} />}
       <Route path="/legal" element={
         <Suspense fallback={<PageLoading />}>
           <Legal />
@@ -399,7 +491,7 @@ function App() {
         isLoggedIn ? <AuthenticatedShell /> : <Navigate to={APP_ENTRY_PATH} replace />
       } />
     </Routes>
-    </MotionConfig>
+    </AriaLocale>
   );
 }
 

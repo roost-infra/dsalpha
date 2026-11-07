@@ -38,6 +38,10 @@ ENV/
 .env.*.retired
 .env*.bak*
 
+# Per-environment config overlays (APP_ENV)
+/agent_config.*.yaml
+/config.*.yaml
+
 # Production deploy files
 docker-compose.prod.yml
 scripts/load_env.sh
@@ -96,8 +100,6 @@ posts/
 
 docs/libs
 docs/superpowers/
-docs/api/
-docs/api/environments/production.yml
 docs/videos/
 .worktrees/
 .superpowers/
@@ -151,3 +153,9 @@ docs/pr_context/
 *.bak.*
 /migration-backup/
 *.bak
+
+# Vite dep cache written from the repo root
+/.vite/
+
+# Generated per deployment by `python -m scripts.data_probe` against its own data tokens
+data_routing.yaml

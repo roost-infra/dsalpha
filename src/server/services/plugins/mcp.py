@@ -14,7 +14,7 @@ rare entry that truly depends on it a warning rather than an install.
 """
 
 from dataclasses import dataclass, field
-from json import JSONDecodeError, loads
+from json import dumps, loads
 from typing import Any, ClassVar
 
 from jsonschema.validators import validator_for
@@ -229,7 +229,9 @@ def validate_mcp_document(
         )
     try:
         doc = loads(raw.decode("utf-8"))
-    except (JSONDecodeError, UnicodeDecodeError) as e:
+        # As plugin.json: a lone surrogate the stored document cannot encode.
+        dumps(doc, ensure_ascii=False).encode("utf-8")
+    except (ValueError, RecursionError) as e:
         return _component_error("invalid_json", f"mcp.json is not valid JSON: {e}")
     if not isinstance(doc, dict):
         return _component_error("invalid_json", "mcp.json must be a JSON object")

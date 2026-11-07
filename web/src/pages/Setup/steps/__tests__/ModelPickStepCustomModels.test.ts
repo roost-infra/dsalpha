@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * Regression: custom entries must key off ``name``, not ``model_id``.
  *
@@ -12,7 +13,7 @@
  * the full component (same pattern as MethodStep.test.tsx).
  */
 import { describe, it, expect } from 'vitest';
-import { slugifyModelName } from '../slugifyModelName';
+import { slugifyModelName } from '@/components/modelAccess/slugifyModelName';
 import { modelPrefs } from '@/lib/modelPreferences';
 
 interface CustomModelEntry {
@@ -24,12 +25,12 @@ interface CustomModelEntry {
 function existingCustomModelsFor(
   preferences: unknown,
   provider: string,
-  brandKey: string,
+  modelsFrom: string,
 ): string[] {
   if (!preferences) return [];
   const customModels = (modelPrefs(preferences).custom_models ?? []) as CustomModelEntry[];
   return customModels
-    .filter((cm) => cm.provider === provider || cm.provider === brandKey)
+    .filter((cm) => cm.provider === provider || cm.provider === modelsFrom)
     .map((cm) => cm.name ?? cm.model_id);
 }
 
@@ -56,7 +57,7 @@ describe('ModelPickStep.existingCustomModels', () => {
     expect(existingCustomModelsFor(prefs, 'z-ai', 'z-ai')).toEqual(['legacy-model']);
   });
 
-  it('filters by provider or brandKey', () => {
+  it('filters by provider or modelsFrom', () => {
     const prefs = {
       model_preference: {
         custom_models: [

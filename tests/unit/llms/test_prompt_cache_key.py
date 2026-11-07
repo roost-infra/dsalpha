@@ -47,6 +47,7 @@ def _make_llm(
     llm.api_key_override = None
     llm.prompt_cache_key_enabled = prompt_cache_key_flag
     llm.parameters = {}
+    llm.profile_overrides = {}
 
     factory_name = {
         "openai": "_get_openai_llm",
@@ -147,6 +148,7 @@ class TestModelKwargsInjection:
         llm.use_previous_response_id = False
         llm.parameters = {}
         llm.extra_body = {}
+        llm.profile_overrides = {}
         llm.model = "gpt-4o-mini"
         llm.custom_model_name = llm.model
         llm.resolved_reasoning_effort = None
@@ -165,6 +167,7 @@ class TestModelKwargsInjection:
         llm.use_response_api = True
         llm.parameters = {}
         llm.extra_body = {}
+        llm.profile_overrides = {}
         llm.model = "gpt-5"
         llm.custom_model_name = llm.model
         llm.resolved_reasoning_effort = None

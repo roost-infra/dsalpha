@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   CircleDot,
   Clock,
+  CornerUpRight,
   HelpCircle,
+  Hourglass,
   MinusCircle,
   Send,
   ShieldCheck,
@@ -15,7 +17,7 @@ import {
 } from 'lucide-react';
 import { StatusPill } from '@/components/mcp/McpPrimitives';
 import type { OrderMode, OrderStatus } from '@/types/orders';
-import { orderStatusLabel, orderStatusShortLabel } from './status';
+import { orderStatusLabel, orderStatusShortLabel, vendorNamedEnd } from './status';
 
 /**
  * What an order's state is called and what it looks like, for every surface
@@ -24,9 +26,9 @@ import { orderStatusLabel, orderStatusShortLabel } from './status';
  * the other would read as two different orders.
  */
 
-type StatusTone = 'muted' | 'warning' | 'profit' | 'loss';
+export type OrderStatusTone = 'muted' | 'warning' | 'profit' | 'loss';
 
-const TONE: Record<StatusTone, { color: string; bg: string }> = {
+const TONE: Record<OrderStatusTone, { color: string; bg: string }> = {
   muted: { color: 'var(--color-text-tertiary)', bg: 'var(--color-bg-tag)' },
   warning: { color: 'var(--color-warning)', bg: 'var(--color-warning-soft)' },
   profit: { color: 'var(--color-profit)', bg: 'var(--color-profit-soft)' },
@@ -34,7 +36,7 @@ const TONE: Record<StatusTone, { color: string; bg: string }> = {
 };
 
 interface StatusMeta {
-  tone: StatusTone;
+  tone: OrderStatusTone;
   icon: React.ComponentType<{ className?: string }>;
 }
 
@@ -60,7 +62,9 @@ const STATUS_META: Record<OrderStatus, StatusMeta> = {
   partially_filled: { tone: 'muted', icon: CircleDot },
   filled: { tone: 'profit', icon: CheckCircle2 },
   cancelled: { tone: 'muted', icon: MinusCircle },
+  expired: { tone: 'muted', icon: Hourglass },
   rejected_by_vendor: { tone: 'loss', icon: AlertCircle },
+  handed_off: { tone: 'muted', icon: CornerUpRight },
   failed: { tone: 'loss', icon: AlertCircle },
   unknown: { tone: 'muted', icon: HelpCircle },
 };
@@ -87,10 +91,23 @@ const RECEIPT_STATUS_META: Partial<Record<OrderStatus, Partial<StatusMeta>>> = {
   unknown: { tone: 'warning' },
 };
 
+/**
+ * The tone a status wears on a surface, for a card that draws the verdict in
+ * its own type rather than as this pill.
+ */
+export function orderStatusTone(
+  status: OrderStatus,
+  surface: 'ledger' | 'receipt' | 'detail' = 'ledger',
+): OrderStatusTone {
+  const base = STATUS_META[status] ?? STATUS_META.unknown;
+  return (surface === 'receipt' && RECEIPT_STATUS_META[status]?.tone) || base.tone;
+}
+
 export function OrderStatusPill({
   status,
   mode,
   vendorLabel,
+  unlistedAt,
   surface = 'ledger',
 }: {
   status: OrderStatus;
@@ -98,24 +115,29 @@ export function OrderStatusPill({
    *  never reached a market, it is waiting in the broker's own client. */
   mode?: OrderMode | null;
   vendorLabel?: string | null;
+  /** The ledger's `unlisted_at`, which says whether the vendor named how a
+   *  handed-off order ended. Left out, the pill says we do not know. */
+  unlistedAt?: string | null;
   /** The ledger row wears the one-word verdict and carries the sentence as
    *  its tooltip; a receipt and the detail drawer have room for the sentence. */
   surface?: 'ledger' | 'receipt' | 'detail';
 }): React.ReactElement {
   const { t } = useTranslation();
-  const base = STATUS_META[status] ?? STATUS_META.unknown;
-  const meta =
-    surface === 'receipt' ? { ...base, ...(RECEIPT_STATUS_META[status] ?? {}) } : base;
-  const { key, params } = orderStatusLabel(status, mode, vendorLabel);
+  const icon =
+    (surface === 'receipt' && RECEIPT_STATUS_META[status]?.icon) ||
+    (STATUS_META[status] ?? STATUS_META.unknown).icon;
+  const tone = TONE[orderStatusTone(status, surface)];
+  const named = vendorNamedEnd(unlistedAt);
+  const { key, params } = orderStatusLabel(status, mode, vendorLabel, named);
   const sentence = t(key, params);
   const short = surface === 'ledger';
   return (
     <StatusPill
-      icon={meta.icon}
-      label={short ? t(orderStatusShortLabel(status, mode)) : sentence}
+      icon={icon}
+      label={short ? t(orderStatusShortLabel(status, mode, named)) : sentence}
       title={short ? sentence : undefined}
-      color={TONE[meta.tone].color}
-      bg={TONE[meta.tone].bg}
+      color={tone.color}
+      bg={tone.bg}
       testid={`order-status-${status}`}
     />
   );

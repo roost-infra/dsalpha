@@ -201,10 +201,18 @@ async def test_finalizing_a_task_run_never_stamps_it_billed(
     exactly when a resume is about to be admitted.
     """
     mock_cursor.fetchone = AsyncMock(
-        return_value={"status": status, "task_run_id": TASK_RUN_ID}
+        return_value={
+            "status": status,
+            "task_run_id": TASK_RUN_ID,
+            "thread_id": THREAD_ID,
+            "task_id": "abc123",
+        }
     )
 
-    with _pool_of(mock_connection):
+    with _pool_of(mock_connection), patch(
+        "src.server.database.runs.outbox.settle_task_run_steers",
+        AsyncMock(return_value=[]),
+    ):
         await subagent_runs.finalize_task_run(
             task_run_id=TASK_RUN_ID, status=status
         )

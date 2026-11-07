@@ -14,16 +14,34 @@ import re
 
 BLOB_KEY_PREFIX = "blobs/"
 
+# Where a browser's upload into a workspace is assembled before the sandbox
+# pulls it into the folder. Nothing outlives that pull here: the object is
+# deleted once the file is placed, and the next backup stores the file under
+# ``blobs/`` like any other.
+UPLOAD_KEY_PREFIX = "uploads/"
+
 # One blob backs files with different names and MIME types, so any per-file
 # content type would be write-order-dependent and wrong for some referrer.
 # Serving derives Content-Type from the file's extension instead.
 BLOB_CONTENT_TYPE = "application/octet-stream"
 
-# Per-object cap, passed explicitly to the storage facade so its shared
+# A workspace is a filesystem, so its disk is the size limit and the direct
+# path carries no cap of its own: bytes stream from the sandbox to the store
+# and nothing in between holds them. What remains are the two paths that
+# cannot stream, each bounded by the thing that actually constrains it. Both
+# are passed explicitly to the storage facade so its shared
 # STORAGE_MAX_UPLOAD_SIZE default (10MB, sized for avatars and charts) can't
-# reject a file the sync path already accepted. ``FilePersistenceService``
-# derives MAX_FILE_SIZE from this: a file the sync path accepts must be storable.
-MAX_BLOB_BYTES = 100 * 1024 * 1024
+# reject a file the sync path already accepted.
+
+# Relay materializes the whole file in this process: the sandbox runtime's
+# ``download_file`` returns ``bytes``, so the bound is server memory. Files in
+# flight are bounded separately and by weight; see RELAY_MAX_INFLIGHT_BYTES.
+RELAY_MAX_BYTES = 256 * 1024 * 1024
+
+# Inline bytes land in a Postgres ``BYTEA``, hard-capped at 1GB by the wire
+# protocol and painful long before it. This is the number this module has
+# always carried, now applied only to the path it was actually sized for.
+INLINE_MAX_BYTES = 100 * 1024 * 1024
 
 # Garbage-collection windows, shared with scripts/ops/report_orphan_blobs.py.
 # A blob is condemned after GC_GRACE_DAYS with no reference and no writer
@@ -41,6 +59,8 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 # leading it. ``workspaces.user_id`` is free text up to 255 characters, so
 # the shape is checked here rather than assumed.
 _USER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@+-]{0,254}\Z")
+
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
 
 
 class BlobError(Exception):
@@ -62,6 +82,22 @@ def blob_key(user_id: str, sha256: str) -> str:
         msg = f"Refusing to build a blob key for a non-digest: {sha256!r}"
         raise BlobError(msg)
     return f"{BLOB_KEY_PREFIX}{user_id}/{sha256}"
+
+
+def upload_key(user_id: str, upload_id: str) -> str:
+    """Return the object key a workspace upload is assembled under.
+
+    Scoped per user, as :func:`blob_key` is, so the part URLs a browser holds
+    can only ever name its own user's objects. ``upload_id`` is the server's
+    own UUID, checked anyway because the key is built from it.
+    """
+    if not user_id or not _USER_ID_RE.match(user_id):
+        msg = f"Refusing to build an upload key for a malformed user id: {user_id!r}"
+        raise BlobError(msg)
+    if not _UUID_RE.match(upload_id or ""):
+        msg = f"Refusing to build an upload key for a non-UUID: {upload_id!r}"
+        raise BlobError(msg)
+    return f"{UPLOAD_KEY_PREFIX}{user_id}/{upload_id}"
 
 
 # --- registry SQL -------------------------------------------------------------
@@ -91,23 +127,29 @@ CLAIM_SQL = """
      WHERE user_id = %s AND sha256 = ANY(%s) AND condemned_at IS NOT NULL
 """
 
-# Every column a manifest row can reference a blob through: its own object, or
-# the pack chunk it is a member of. Written against a ``workspace_file_blobs
-# b``; the condemn pass, the reap re-check and the orphan report must agree on
-# it exactly. A row references a registry entry only through a workspace of
-# the same user, since that user's object is the one the row's bytes are in.
-# Two EXISTS rather than one OR so each side can use its partial index.
+# Every column a row can reference a blob through: a manifest row's own object
+# or the pack chunk it is a member of, a stored thread transcript file, and a
+# file of a published artifact version.
+# Written against a ``workspace_file_blobs b``; the condemn pass, the reap
+# re-check and the orphan report must agree on it exactly. A row references a
+# registry entry only under the same user, since that user's object is the
+# one the row's bytes are in. One EXISTS per column rather than one OR so each
+# side can use its own index.
 REFERENCED_SQL = (
     "(EXISTS (SELECT 1 FROM workspace_files f"
     " JOIN workspaces w ON w.workspace_id = f.workspace_id"
     " WHERE f.blob_sha256 = b.sha256 AND w.user_id = b.user_id)"
     " OR EXISTS (SELECT 1 FROM workspace_files f"
     " JOIN workspaces w ON w.workspace_id = f.workspace_id"
-    " WHERE f.pack_sha256 = b.sha256 AND w.user_id = b.user_id))"
+    " WHERE f.pack_sha256 = b.sha256 AND w.user_id = b.user_id)"
+    " OR EXISTS (SELECT 1 FROM thread_transcript_files t"
+    " WHERE t.sha256 = b.sha256 AND t.user_id = b.user_id)"
+    " OR EXISTS (SELECT 1 FROM artifact_version_files a"
+    " WHERE a.sha256 = b.sha256 AND a.user_id = b.user_id))"
 )
 
 # The manifest side of the same relation: an unaliased ``workspace_files``
 # predicate for a row whose bytes live in object storage. It enumerates the
-# same two pointer columns as REFERENCED_SQL, so a third one has to land in
-# both.
+# same two ``workspace_files`` columns as REFERENCED_SQL, so a third one
+# there has to land in both.
 BLOB_BACKED_SQL = "(blob_sha256 IS NOT NULL OR pack_sha256 IS NOT NULL)"

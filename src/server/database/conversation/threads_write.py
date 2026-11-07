@@ -14,7 +14,9 @@ from src.server.contracts.status import (
 )
 from src.server.database import pool
 from src.server.database.conversation import _sql, errors
+from src.server.database.share_codes import mint_share_code
 from src.server.utils.pg_sanitize import normalize_uuid
+from src.server.utils.thread_stamp import stamped_title
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,14 @@ def ws_exists_key(workspace_id: str) -> str:
 
 def thread_exists_key(thread_id: str) -> str:
     return f"thread_exists:{thread_id}"
+
+
+async def forget_workspace_exists(workspace_id: str) -> None:
+    """Drop the stamp a thread write trusts in place of the workspace's row,
+    once the row is deleted."""
+    from src.utils.cache.redis_cache import get_cache_client
+
+    await get_cache_client().delete(ws_exists_key(workspace_id))
 
 
 async def calculate_next_thread_index(workspace_id: str, conn=None) -> int:
@@ -79,17 +89,22 @@ async def create_thread(
     conversation_thread_id: str,
     workspace_id: str,
     current_status: str,
-    msg_type: Optional[str] = None,
+    msg_type: str = "ptc",
     thread_index: Optional[int] = None,
     title: Optional[str] = None,
     external_id: Optional[str] = None,
     platform: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    subagents_allowed: Optional[bool] = None,
+    reasoning_effort: Optional[str] = None,
+    fast_mode: Optional[bool] = None,
     conn=None,
 ) -> Dict[str, Any]:
     """
     Create a thread entry (thread_index auto-calculated if not provided).
 
+    `msg_type` names the agent the thread runs on: 'ptc', the full agent, for
+    every new thread.
     `platform` records the user surface the chat originated from. Conventions:
       - "web"                   — main ChatAgent page
       - "market_view:<SYMBOL>"  — MarketView side panel, symbol uppercased
@@ -97,10 +112,16 @@ async def create_thread(
       - NULL                    — no user surface (system-initiated threads)
     `metadata` is the general thread annotation column. Known keys:
       - "origin": {"type": "agent"|"automation"|"system", "id": "<initiator id>"}
-        — who initiated the thread ('agent' id = dispatching flash thread,
+        — who initiated the thread ('agent' id = the dispatching thread,
         'automation' id = automation). Absent origin key = user-initiated.
+        Display-only extras: "name" (the automation's) and "agent" (which
+        agent dispatched: "chief_of_staff").
     `external_id` is only set by channel integrations and combined with platform
     is unique-indexed for dedup. Web-originated threads have external_id NULL.
+    `subagents_allowed` None, or the side the owner's default is on, stores
+    NULL, which follows the default (see ``_sql.stored_subagents_allowed``).
+    `reasoning_effort` and `fast_mode` are the thread's own picks; None stores
+    NULL, which follows the user's Settings.
 
     A concurrent create that loses the `(platform, external_id)` dedup index
     raises ``errors.ExternalIdConflictError`` (routes map it to a 409 / an in-stream
@@ -115,6 +136,7 @@ async def create_thread(
         "msg_type",
         "thread_index",
         "title",
+        "subagents_allowed",
     ]
     base_params = [conversation_thread_id, workspace_id, current_status, msg_type]
     # thread_index is appended per-attempt (may be recalculated on retry)
@@ -129,9 +151,18 @@ async def create_thread(
     if metadata:
         columns.append("metadata")
         extra_params.append(Json(metadata))
+    if reasoning_effort is not None:
+        columns.append("reasoning_effort")
+        extra_params.append(reasoning_effort)
+    if fast_mode is not None:
+        columns.append("fast_mode")
+        extra_params.append(fast_mode)
 
     col_str = ", ".join(columns)
-    placeholders = ", ".join(["%s"] * len(columns))
+    placeholders = ", ".join(
+        _sql.stored_subagents_allowed("%s", "%s") if c == "subagents_allowed" else "%s"
+        for c in columns
+    )
     returning_str = f"{col_str}, created_at, updated_at"
 
     sql = f"""
@@ -146,7 +177,11 @@ async def create_thread(
         if thread_index is None or attempt > 0:
             thread_index = await calculate_next_thread_index(workspace_id, conn=conn)
 
-        params = tuple(base_params + [thread_index, title] + extra_params)
+        params = tuple(
+            base_params
+            + [thread_index, title, subagents_allowed, workspace_id]
+            + extra_params
+        )
 
         try:
             if conn:
@@ -219,11 +254,11 @@ async def update_thread_external_id(
         async with pool.get_db_connection() as conn:
             async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    """
+                    f"""
                     UPDATE conversation_threads
                     SET platform = %s, external_id = %s, updated_at = NOW()
                     WHERE conversation_thread_id = %s
-                    RETURNING conversation_thread_id, workspace_id, current_status, msg_type, thread_index, title, platform, metadata, is_shared, is_pinned, archived_at, created_at, updated_at
+                    RETURNING {_sql._THREAD_COLUMNS}
                 """,
                     (platform, external_id, thread_id),
                 )
@@ -337,43 +372,18 @@ async def set_thread_workspace(
         return False
 
 
-async def update_thread_checkpoint_id(
-    conversation_thread_id: str, checkpoint_id: str, conn=None
-) -> bool:
-    """Update the latest checkpoint ID for a thread without changing status."""
-    try:
-        sql = """
-            UPDATE conversation_threads
-            SET latest_checkpoint_id = %s, updated_at = NOW()
-            WHERE conversation_thread_id = %s
-        """
-        params = (checkpoint_id, conversation_thread_id)
-
-        if conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql, params)
-                return True
-        else:
-            async with pool.get_db_connection() as conn:
-                async with conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(sql, params)
-                    return True
-    except Exception as e:
-        logger.error(f"Error updating thread checkpoint_id: {e}")
-        return False
-
-
 async def advance_thread_checkpoint_id(
     conversation_thread_id: str,
     *,
     from_checkpoint_id: Optional[str],
     to_checkpoint_id: str,
 ) -> bool:
-    """CAS tip advance for root-namespace ui appends after a turn finalized.
+    """CAS tip advance for a root-namespace write outside a turn: a ui append
+    after a turn finalized, a manual compaction or offload.
 
     Not the turn-lifecycle writer (``database/runs/lifecycle.py`` owns that):
     this only moves the tip when it still points at the exact checkpoint the
-    append built on, so a concurrent turn or branch switch keeps ownership.
+    write built on, so a concurrent turn or branch switch keeps ownership.
     """
     try:
         sql = """
@@ -398,10 +408,11 @@ async def ensure_thread_exists(
     user_id: str,
     initial_query: str,
     initial_status: str = "in_progress",
-    msg_type: Optional[str] = None,
     external_id: Optional[str] = None,
     platform: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    subagents_allowed: Optional[bool] = None,
+    resume: bool = True,
 ) -> bool:
     """
     Ensure conversation_threads row exists before workflow starts.
@@ -415,12 +426,16 @@ async def ensure_thread_exists(
         user_id: User ID for logging
         initial_query: Initial query text (used as thread title)
         initial_status: Initial thread status
-        msg_type: Message type (e.g., 'ptc')
         external_id: Optional external thread identifier (e.g. "chat_id:topic_id")
         platform: Optional platform identifier (e.g. "telegram", "slack")
         metadata: Optional thread metadata (see create_thread; e.g. origin
             provenance). Applied only when this call creates the row —
             resume never rewrites it.
+        subagents_allowed: Applied only when this call creates the row;
+            None, or the side the owner's default is on, follows the default.
+        resume: Whether an existing row takes ``initial_status``. False for a
+            send that makes the thread ahead of its admission, which may yet
+            be refused and must leave a thread it found as it was.
 
     Returns:
         True if this call created the thread row, False if it already existed.
@@ -447,12 +462,11 @@ async def ensure_thread_exists(
     # Fast path: both cached and thread exists → just update status, no pool checkout
     # needed for existence checks
     if ws_cached and thread_cached:
-        await update_thread_status(
-            conversation_thread_id, initial_status
-        )
-        logger.debug(
-            f"Resumed thread {conversation_thread_id}, updated status to {initial_status}"
-        )
+        if resume:
+            await update_thread_status(conversation_thread_id, initial_status)
+            logger.debug(
+                f"Resumed thread {conversation_thread_id}, updated status to {initial_status}"
+            )
         return False
 
     # Slow path: at least one cache miss — need a connection.
@@ -497,18 +511,17 @@ async def ensure_thread_exists(
         # Step 3: Create thread if it doesn't exist
         created = False
         if not thread_exists:
-            # Use initial query as thread title (truncate to 255 chars)
-            title = initial_query[:255] if initial_query else None
+            title = stamped_title(initial_query) if initial_query else None
             await create_thread(
                 conversation_thread_id=conversation_thread_id,
                 workspace_id=workspace_id,
                 current_status=initial_status,
-                msg_type=msg_type,
                 thread_index=None,  # Will be calculated inside create_thread using same conn
                 title=title,
                 external_id=external_id,
                 platform=platform,
                 metadata=metadata,
+                subagents_allowed=subagents_allowed,
                 conn=conn,
             )
             # Cache the new thread's existence
@@ -516,15 +529,16 @@ async def ensure_thread_exists(
             created = True
         else:
             # Thread exists (resume scenario), update status
-            await update_thread_status(
-                conversation_thread_id, initial_status, conn=conn
-            )
+            if resume:
+                await update_thread_status(
+                    conversation_thread_id, initial_status, conn=conn
+                )
+                logger.debug(
+                    f"Resumed thread {conversation_thread_id}, updated status to {initial_status}"
+                )
             # Cache thread existence on resume too (in case cache was cold)
             if not thread_cached:
                 stamp_exists.append(thread_key)
-            logger.debug(
-                f"Resumed thread {conversation_thread_id}, updated status to {initial_status}"
-            )
 
     if stamp_exists and cache.enabled and cache.client:
         for key in stamp_exists:
@@ -560,7 +574,11 @@ async def truncate_thread_from_turn(
         # Explicit transaction required (autocommit is ON by default)
         async with conn.transaction():
             async with conn.cursor() as cur:
-                # Always delete all responses at fork turn and beyond
+                # Always delete all responses at fork turn and beyond. The only
+                # per-turn delete of run rows, which turn_base_checkpoint_id
+                # relies on: under a fork's pin it reads a newest step whose run
+                # has no row as one the fork replaced, so a delete for any other
+                # reason would start the next turn behind that step.
                 await cur.execute(
                     """
                     DELETE FROM conversation_responses
@@ -626,6 +644,67 @@ async def delete_thread(conversation_thread_id: str, conn=None) -> bool:
         raise
 
 
+async def delete_unused_thread(conversation_thread_id: str, *, request_key: str) -> bool:
+    """Delete a thread no turn ever started in: the one a refused send made
+    before admission. Whether it was deleted.
+
+    The row lock comes first and the checks after it, in statements of their
+    own: a START that wrote its turn rows has committed by then, and one
+    still to come waits on the lock and then fails on the missing thread,
+    rather than having its rows cascade away under it. A copy of the send
+    under ``request_key`` that another worker admitted keeps the thread too,
+    run or steer, since that copy carries what the refused one claimed.
+    """
+    from src.server.database.runs.lifecycle import request_key_has_run
+    from src.server.database.runs.outbox import steer_key_taken
+
+    async with pool.get_db_connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT 1 FROM conversation_threads
+                     WHERE conversation_thread_id = %s
+                       FOR UPDATE
+                    """,
+                    (conversation_thread_id,),
+                )
+                if await cur.fetchone() is None:
+                    return False
+                if await request_key_has_run(conn, request_key) or (
+                    await steer_key_taken(conn, request_key)
+                ):
+                    return False
+                await cur.execute(
+                    """
+                    DELETE FROM conversation_threads t
+                     WHERE t.conversation_thread_id = %s
+                       AND NOT EXISTS (
+                           SELECT 1 FROM conversation_queries q
+                            WHERE q.conversation_thread_id = t.conversation_thread_id
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM conversation_responses r
+                            WHERE r.conversation_thread_id = t.conversation_thread_id
+                       )
+                    """,
+                    (conversation_thread_id,),
+                )
+                deleted = cur.rowcount > 0
+    # After the commit, as a retry of the send under this thread id would
+    # otherwise skip making the row it needs.
+    if deleted:
+        from src.utils.cache.redis_cache import get_cache_client
+
+        cache = get_cache_client()
+        if cache.enabled and cache.client:
+            try:
+                await cache.client.delete(thread_exists_key(conversation_thread_id))
+            except Exception:
+                logger.debug("Evicting a removed thread's existence failed", exc_info=True)
+    return deleted
+
+
 _UNSET = object()
 
 # Archiving marks the latest attempt seen, in the same statement as the
@@ -658,11 +737,17 @@ async def update_thread_fields(
     title: Any = _UNSET,
     is_pinned: Any = _UNSET,
     archived: Any = _UNSET,
+    llm_model: Any = _UNSET,
+    subagents_allowed: Any = _UNSET,
+    reasoning_effort: Any = _UNSET,
+    fast_mode: Any = _UNSET,
 ) -> Optional[Dict[str, Any]]:
-    """Dynamic update of user-editable thread fields (title, pin, archive).
+    """Dynamic update of user-editable thread fields (title, pin, archive,
+    model, subagent switch, effort, fast mode).
 
-    Only title bumps ``updated_at`` — pin/archive must not reorder the
-    recency sort (same reasoning as ``stamp_thread_seen``). Archiving also
+    Only title bumps ``updated_at``: pin, archive, model, the subagent
+    switch and the thread's tuning must not reorder the recency sort (same reasoning as
+    ``stamp_thread_seen``). Archiving also
     advances the seen cursor in the SAME statement (see ``_ARCHIVE_SEEN_STAMP``).
     Returns the updated row, or None when the thread doesn't exist / nothing
     to set.
@@ -683,6 +768,19 @@ async def update_thread_fields(
             params.append(conversation_thread_id)
         else:
             sets.append("archived_at = NULL")
+    if llm_model is not _UNSET:
+        sets.append("llm_model = %s")
+        params.append(llm_model)
+    if subagents_allowed is not _UNSET:
+        stored = _sql.stored_subagents_allowed("%s", "conversation_threads.workspace_id")
+        sets.append(f"subagents_allowed = {stored}")
+        params.append(subagents_allowed)
+    if reasoning_effort is not _UNSET:
+        sets.append("reasoning_effort = %s")
+        params.append(reasoning_effort)
+    if fast_mode is not _UNSET:
+        sets.append("fast_mode = %s")
+        params.append(fast_mode)
     if not sets:
         return None
 
@@ -694,7 +792,7 @@ async def update_thread_fields(
                     UPDATE conversation_threads
                     SET {", ".join(sets)}
                     WHERE conversation_thread_id = %s
-                    RETURNING conversation_thread_id, workspace_id, current_status, msg_type, thread_index, title, platform, metadata, is_shared, is_pinned, archived_at, last_seen_run_seq, created_at, updated_at
+                    RETURNING {_sql._THREAD_COLUMNS}, last_seen_run_seq
                 """,
                     (*params, conversation_thread_id),
                 )
@@ -710,6 +808,74 @@ async def update_thread_fields(
     except Exception as e:
         logger.error(f"Error updating thread fields: {e}")
         raise
+
+
+async def remember_thread_llm_model(
+    conversation_thread_id: str, llm_model: str, *, seen: Optional[str]
+) -> bool:
+    """Record the model a client named for this thread; True when it changed.
+
+    Only while the thread still holds ``seen``, the model the send read: a
+    pick saved since is newer than the send. Leaves ``updated_at`` alone:
+    picking a model is not activity, and the thread lists sort on it.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE conversation_threads
+                SET llm_model = %s
+                WHERE conversation_thread_id = %s
+                  AND llm_model IS DISTINCT FROM %s
+                  AND llm_model IS NOT DISTINCT FROM %s
+                """,
+                (llm_model, conversation_thread_id, llm_model, seen),
+            )
+            return cur.rowcount > 0
+
+
+async def clear_thread_llm_model(conversation_thread_id: str, llm_model: str) -> bool:
+    """Forget the thread's model, only while it is still ``llm_model``.
+
+    Conditional so a model named after the dead one was read is never lost.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE conversation_threads
+                SET llm_model = NULL
+                WHERE conversation_thread_id = %s AND llm_model = %s
+                """,
+                (conversation_thread_id, llm_model),
+            )
+            return cur.rowcount > 0
+
+
+async def reassign_thread_llm_models(
+    user_id: str, old: str, new: Optional[str], *, conn=None
+) -> int:
+    """Move the user's threads still on the old default model to the new one.
+
+    Only threads on exactly ``old`` move, so one the user pointed elsewhere
+    keeps its model. Returns the number of threads moved; ``updated_at`` is
+    left alone.
+    """
+    async with pool.get_db_connection(conn) as conn, conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE conversation_threads t
+                SET llm_model = %(new)s
+                FROM workspaces w
+                WHERE w.workspace_id = t.workspace_id
+                  AND w.user_id = %(user_id)s
+                  AND w.status != 'deleted'
+                  AND t.llm_model = %(old)s
+                """,
+                {"user_id": user_id, "old": old, "new": new},
+            )
+            return cur.rowcount
 
 
 async def update_thread_title_cas(
@@ -798,17 +964,19 @@ async def stamp_thread_seen(
 async def update_thread_sharing(
     conversation_thread_id: str,
     is_shared: bool,
-    share_token: Optional[str] = None,
     share_permissions: Optional[Dict[str, Any]] = None,
     shared_at: Optional[datetime] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Update sharing settings for a thread.
 
+    Sharing mints the token in the same statement, and only where there is
+    none: the URL a thread was first shared under survives a stop and a
+    re-share, and two shares racing on different workers agree on one token.
+
     Args:
         conversation_thread_id: Thread ID
         is_shared: Whether the thread is publicly shared
-        share_token: Opaque share token (set on first enable)
         share_permissions: Permission dict e.g. {"allow_files": false, "allow_download": false}
         shared_at: Timestamp of last enable
     """
@@ -818,9 +986,9 @@ async def update_thread_sharing(
                 sets = ["is_shared = %s", "updated_at = NOW()"]
                 params: list = [is_shared]
 
-                if share_token is not None:
-                    sets.append("share_token = %s")
-                    params.append(share_token)
+                if is_shared:
+                    sets.append("share_token = COALESCE(share_token, %s)")
+                    params.append(mint_share_code())
 
                 if share_permissions is not None:
                     sets.append("share_permissions = %s")

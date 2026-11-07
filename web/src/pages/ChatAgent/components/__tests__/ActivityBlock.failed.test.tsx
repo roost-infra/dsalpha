@@ -73,18 +73,19 @@ vi.mock('../charts/InlinePreviewCard', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-type ActivityItem = Parameters<typeof ActivityBlock>[0]['items'][number];
+type ActivityItem = Extract<Parameters<typeof ActivityBlock>[0]['items'][number], { type: 'tool_call' }>;
 
 function completedTool(toolName: string, opts: Partial<ActivityItem> = {}): ActivityItem {
   return {
     type: 'tool_call',
     id: opts.id ?? `${toolName}-${Math.random().toString(36).slice(2, 8)}`,
+    toolCallId: opts.id ?? 'test-call',
     toolName,
     toolCall: opts.toolCall ?? { args: {} },
     isComplete: true,
     _liveState: 'completed',
     ...opts,
-  } as ActivityItem;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,7 @@ describe('ActivityBlock, failed tool calls', () => {
       }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
 
     // Folded summary intentionally omits the failed count, failure
     // visibility lives on the per-row badge instead.
@@ -123,7 +124,7 @@ describe('ActivityBlock, failed tool calls', () => {
       }),
     ];
 
-    const { container } = render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    const { container } = render(<ActivityBlock items={items} isStreaming={false} />);
 
     // Expand the accordion.
     fireEvent.click(screen.getByRole('button', { name: SUMMARY_BUTTON_RE }));
@@ -152,7 +153,7 @@ describe('ActivityBlock, failed tool calls', () => {
       }),
     ];
 
-    const { container } = render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    const { container } = render(<ActivityBlock items={items} isStreaming={false} />);
     fireEvent.click(screen.getByRole('button', { name: SUMMARY_BUTTON_RE }));
 
     const failedRow = container.querySelector('.titem.failed');
@@ -171,7 +172,7 @@ describe('ActivityBlock, failed tool calls', () => {
       }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     // Three reads in the fileRead bucket (failures don't split the count).
     expect(summary).toHaveTextContent(/toolArtifact\.categoryCount.fileRead/i);
@@ -187,7 +188,7 @@ describe('ActivityBlock, failed tool calls', () => {
       }),
     ];
 
-    const { container } = render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    const { container } = render(<ActivityBlock items={items} isStreaming={false} />);
     fireEvent.click(screen.getByRole('button', { name: SUMMARY_BUTTON_RE }));
     expect(container.querySelector('.titem.failed')).toBeNull();
     expect(container.querySelector('.nrow-badge')).toBeNull();
@@ -207,7 +208,7 @@ describe('ActivityBlock, memo write/edit fragment', () => {
       }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     expect(summary).toHaveTextContent(/toolArtifact\.categoryCount.memoWrite/i);
     // It must NOT show as a memo read.
@@ -222,7 +223,7 @@ describe('ActivityBlock, memo write/edit fragment', () => {
       }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     expect(summary).toHaveTextContent(/toolArtifact\.categoryCount.memo/i);
     expect(summary).not.toHaveTextContent(/toolArtifact\.categoryCount.memoWrite/i);
@@ -248,7 +249,7 @@ describe('ActivityBlock, priority fragments survive the cap', () => {
       completedTool('Read', { id: 'r-1', toolCall: { args: { file_path: 'work/scratch.md' } } }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     // memoryUpdated must be in the visible 3 even with overflow.
     expect(summary).toHaveTextContent(/toolArtifact\.categoryCount.memoryUpdated/i);
@@ -267,7 +268,7 @@ describe('ActivityBlock, accordion a11y', () => {
       completedTool('Read', { id: 'r-1', toolCall: { args: { file_path: 'work/scratch.md' } } }),
     ];
 
-    render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     expect(summary).toHaveAttribute('aria-expanded', 'false');
 
@@ -280,7 +281,7 @@ describe('ActivityBlock, accordion a11y', () => {
       completedTool('Read', { id: 'r-1', toolCall: { args: { file_path: 'work/scratch.md' } } }),
     ];
 
-    const { container } = render(<ActivityBlock items={items} isStreaming={false} isFirst={false} />);
+    const { container } = render(<ActivityBlock items={items} isStreaming={false} />);
     const summary = screen.getByRole('button', { name: SUMMARY_BUTTON_RE });
     fireEvent.click(summary);
 
@@ -292,5 +293,24 @@ describe('ActivityBlock, accordion a11y', () => {
     expect(region!.getAttribute('aria-labelledby')).toBe(summary.id);
     // The timeline region holds at least one row.
     expect(within(region as HTMLElement).getAllByRole('listitem').length).toBeGreaterThan(0);
+  });
+});
+
+
+describe('file row destinations', () => {
+  it.each(['.agents/user/memory/memory.md', '.agents/user/memo/memo.md'])('opens %s from its canonical title without a redundant index pill', (path) => {
+    const onOpenFile = vi.fn();
+    const { container } = render(<ActivityBlock items={[completedTool('Read', { toolCall: { args: { file_path: path } } })]} isStreaming={false} presentation="expanded" onOpenFile={onOpenFile} />);
+    expect(container.querySelector('.obj')).toBeNull();
+    fireEvent.click(container.querySelector('.titem-title-button')!);
+    expect(onOpenFile).toHaveBeenCalledWith(path);
+  });
+
+  it('opens tool details when the host cannot open files', () => {
+    const item = completedTool('Read', { toolCall: { args: { file_path: 'work/notes.md' } } });
+    const onToolCallClick = vi.fn();
+    const { container } = render(<ActivityBlock items={[item]} isStreaming={false} presentation="expanded" onToolCallClick={onToolCallClick} />);
+    fireEvent.click(container.querySelector('.obj')!);
+    expect(onToolCallClick).toHaveBeenCalledWith(item);
   });
 });

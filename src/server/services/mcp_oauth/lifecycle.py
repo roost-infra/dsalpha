@@ -1,7 +1,8 @@
 """Token lifecycle: refresh single-flight, disconnect, status transitions.
 
-The hot path takes NO lock while the access token has >10 minutes left. When
-due, ``pg_try_advisory_lock`` (never blocking) elects one refresher across all
+The hot path takes NO lock while the access token has >10 minutes left, or
+more than half its lifetime for a token that lives under 20 minutes. When due,
+``pg_try_advisory_lock`` (never blocking) elects one refresher across all
 workers; losers use the still-valid old token immediately, or briefly poll the
 row near expiry. The commit is a ``token_generation`` CAS so a stale winner
 can never clobber a newer bundle — and so is every failure status, because a
@@ -40,8 +41,8 @@ from src.server.database.mcp_oauth import (
     mark_status_if_generation,
 )
 from src.server.database.egress_grants import revoke_grants_for_connection
+from src.server.database.sql_fences import advisory_key
 from src.server.services.mcp_config import same_consented_url
-from src.server.services.writer_guard import advisory_key
 from src.server.services.mcp_oauth.tokens import (
     TokenExchangeError,
     TokenFailure,
@@ -51,7 +52,8 @@ from src.server.services.mcp_oauth.tokens import (
 
 logger = logging.getLogger(__name__)
 
-# No lock while more than this much validity remains.
+# No lock while more than this much validity remains; a token that lives under
+# twice this is due at half its lifetime instead.
 REFRESH_MARGIN_SECONDS = 600
 # A loser may keep using the old token down to this floor.
 OLD_TOKEN_FLOOR_SECONDS = 60
@@ -85,13 +87,32 @@ class AccessToken:
         return f"{self.token_type} {self.access_token}"
 
 
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def _expiry_seconds(row: ConnectionSummary) -> float | None:
-    expires_at = row.expires_at
-    if expires_at is None:
+    if row.expires_at is None:
         return None  # non-expiring token
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    return (expires_at - datetime.now(timezone.utc)).total_seconds()
+    return (_as_utc(row.expires_at) - datetime.now(timezone.utc)).total_seconds()
+
+
+def _refresh_margin(row: ConnectionSummary) -> float:
+    """Validity left at which a token is due: half its lifetime, capped.
+
+    A fixed margin longer than a vendor's token lifetime puts every fresh token
+    inside it, so every relayed call refreshes and rotates the refresh token
+    (IBKR's five-minute tokens did exactly that). Only a refresh stamps
+    ``last_refresh_at``, so a token from a connect has no lifetime on record, or
+    an overstated one from the stamp a reconnect keeps, and gets the ceiling:
+    at most one early refresh.
+    """
+    if row.expires_at is None or row.last_refresh_at is None:
+        return REFRESH_MARGIN_SECONDS
+    lifetime = (_as_utc(row.expires_at) - _as_utc(row.last_refresh_at)).total_seconds()
+    if lifetime <= 0:
+        return REFRESH_MARGIN_SECONDS
+    return min(REFRESH_MARGIN_SECONDS, lifetime / 2)
 
 
 def _usable(row: ConnectionSummary, *, floor: float = 0.0) -> bool:
@@ -125,7 +146,7 @@ async def ensure_fresh_access_token(connection_id: str) -> AccessToken:
         raise TokenUnavailable(str(row.status))
 
     remaining = _expiry_seconds(row)
-    if remaining is None or remaining > REFRESH_MARGIN_SECONDS:
+    if remaining is None or remaining > _refresh_margin(row):
         return _token_view(row)
     if not row.has_refresh_token or row.status == ConnectionStatus.REFRESH_AMBIGUOUS:
         # Nothing to refresh with, or nothing we may retry (an ambiguous refresh
@@ -245,7 +266,7 @@ async def _refresh_single_flight(
                 # spend the refresh token against a surrendered grant.
                 raise TokenUnavailable(str(current.status))
             fresh_remaining = _expiry_seconds(current)
-            if fresh_remaining is None or fresh_remaining > REFRESH_MARGIN_SECONDS:
+            if fresh_remaining is None or fresh_remaining > _refresh_margin(current):
                 return _token_view(current)
             if (
                 not current.refresh_token
@@ -418,6 +439,7 @@ async def disconnect_server(user_id: str, server_name: str) -> bool:
         refuse_attempts_on_connection_change,
     )
     from src.server.database.pool import get_db_connection
+    from src.server.services.mcp_descriptions.jobs import own_description_scope
 
     row = await get_connection(user_id, server_name)
     if row is None:
@@ -441,8 +463,15 @@ async def disconnect_server(user_id: str, server_name: str) -> bool:
             # row keeps publishing the connected tool set while the resolved
             # config no longer carries a connection — the sandbox would dial
             # the vendor directly, with no relay in front of it.
+            # And the description written from them, which a job still
+            # running for the given-up account must not land again.
             await delete_user_and_workspace_tool_schemas_and_bump(
-                user_id, [server_name], conn=conn
+                user_id,
+                [server_name],
+                description_scopes=await own_description_scope(
+                    user_id, server_name, conn=conn
+                ),
+                conn=conn,
             )
     logger.info(
         "[mcp_oauth] disconnected user=%s server=%s connection=%s",

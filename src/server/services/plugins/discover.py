@@ -20,7 +20,7 @@ from typing import Any
 
 from src.server.models.plugin import Diagnostic
 from src.server.services.plugins.errors import PluginAmbiguous, PluginFatal
-from src.server.services.plugins.extension import NAMESPACE
+from src.server.services.plugins.extension import NAMESPACE, prefix_problem
 from src.server.services.plugins.fetch import compose_tree_url
 from src.server.services.plugins.paths import split_member
 from src.server.services.plugins.schemas import MCP_SCHEMA, PLUGIN_SCHEMA, SCHEMA_URL_RE
@@ -35,11 +35,15 @@ _VENDOR_DIRS = {f".{d}-plugin": d for d in _VENDOR_DIALECTS}
 MAX_ROOT_DEPTH = 6
 MAX_CANDIDATES = 200
 
-# A value that is exactly one environment-variable reference, in the vendor
-# dialects' ``${VAR}`` / ``${VAR:-default}`` forms. The name must also be a
-# legal vault-secret name (VaultBlueprint's rule) or the reference stays
-# literal — synthesizing an undeclarable secret would fail the whole install.
-_ENV_REF_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]{0,63})(?::-[^}]*)?\}$")
+# A value that is one environment-variable reference, in the vendor dialects'
+# ``${VAR}`` / ``${VAR:-default}`` forms, optionally behind literal text
+# (``Bearer ${TOKEN}``, the shape nearly every auth header takes). The name
+# must also be a legal vault-secret name (VaultBlueprint's rule) or the
+# reference stays literal: synthesizing an undeclarable secret would fail the
+# whole install. Group 1 is the text ahead of it, group 2 the name.
+_ENV_REF_RE = re.compile(
+    r"^([^${]*)\$\{([A-Za-z_][A-Za-z0-9_]{0,63})(?::-[^}]*)?\}$"
+)
 
 
 # Where the example marketplaces keep their index, in probe order (cursor and
@@ -64,13 +68,43 @@ class PluginCandidate:
     source_url: str | None = None
 
 
+def _read_json(raw: bytes) -> Any:
+    """A document someone else wrote, or None when it does not read.
+
+    Past malformed text, the parser gives up on a number too long to convert
+    (a ValueError of its own) and on nesting past the recursion limit. And a
+    ``\\ud800`` escape decodes to a lone surrogate, which no response can
+    encode, so such a string reads as null and each reader drops it as it
+    drops any other value it cannot use.
+    """
+    try:
+        return _encodable(json.loads(raw.decode("utf-8")))
+    except (ValueError, RecursionError):
+        return None
+
+
+def _encodable(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return None
+        return value
+    if isinstance(value, list):
+        return [_encodable(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _encodable(item)
+            for key, item in value.items()
+            if _encodable(key) is not None
+        }
+    return value
+
+
 def _manifest_preview(raw: bytes) -> tuple[str | None, str | None, str | None]:
     """(name, description, version), best-effort — a broken manifest still
     lists, and fails properly only once actually selected."""
-    try:
-        doc = json.loads(raw.decode("utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None, None, None
+    doc = _read_json(raw)
     if not isinstance(doc, dict):
         return None, None, None
 
@@ -81,39 +115,75 @@ def _manifest_preview(raw: bytes) -> tuple[str | None, str | None, str | None]:
     return _str("name"), _str("description"), _str("version")
 
 
-def _marketplace_entries(files: dict[str, bytes]) -> list[dict[str, Any]]:
-    """The plugin index a marketplace repo publishes, or []. Best-effort:
-    a malformed index degrades to bare traversal, never to a failure."""
+def read_marketplace_index(files: dict[str, bytes]) -> dict[str, Any] | None:
+    """The plugin index a marketplace repo publishes, or None.
+
+    Best-effort: a malformed index reads as none, so the repo degrades to bare
+    traversal rather than failing. ``plugins`` keeps only the entries that are
+    objects.
+    """
     for path in _MARKETPLACE_PATHS:
         raw = files.get(path)
         if raw is None:
             continue
-        try:
-            doc = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
+        doc = _read_json(raw)
         if isinstance(doc, dict) and isinstance(doc.get("plugins"), list):
-            return [e for e in doc["plugins"] if isinstance(e, dict)]
-    return []
+            return {
+                **doc,
+                "plugins": [e for e in doc["plugins"] if isinstance(e, dict)],
+            }
+    return None
 
 
-def _relative_source(value: Any) -> str | None:
-    """A marketplace source that points inside this repo, normalized."""
-    if not isinstance(value, str) or value.startswith("https://"):
+@dataclass(frozen=True)
+class LocalSource:
+    """An index entry whose plugin lives in the index's own repository."""
+
+    path: str  # normalized, relative to the directory holding the index
+
+
+@dataclass(frozen=True)
+class ExternalSource:
+    """An index entry whose plugin lives in another repository."""
+
+    repo: str
+    path: str | None = None
+    ref: str | None = None
+
+    @property
+    def url(self) -> str | None:
+        """The tree URL that installs it; None for a forge or part the
+        installer would refuse."""
+        return compose_tree_url(self.repo, self.path, self.ref)
+
+
+def _local_path(value: Any) -> LocalSource | None:
+    # Any other scheme is not a path that happens to hold a colon.
+    if not isinstance(value, str) or "://" in value:
         return None
     segments = split_member(value)
-    if not segments:
-        return None
-    return "/".join(segments)
+    return LocalSource("/".join(segments)) if segments else None
 
 
-def _external_source(source: Any) -> tuple[str, str | None, str | None] | None:
-    """(repo url, path, ref) for a source living in another repo, or None."""
-    if isinstance(source, str) and source.startswith("https://"):
-        return source, None, None
+def resolve_entry_source(source: Any) -> LocalSource | ExternalSource | None:
+    """Where an index entry's ``source`` points, or None when it names nothing
+    installable.
+
+    The chooser and the Discover listing both read entries through this, so
+    what either offers is what install fetches. A string is a path into this
+    repository or the https address of another; an object is a ``local``
+    path or a ``git``/``git-subdir``/``github`` repository, optionally with a
+    path and a ref (``sha`` when no ref is given).
+    """
+    if isinstance(source, str):
+        if source.startswith("https://"):
+            return ExternalSource(source)
+        return _local_path(source)
     if not isinstance(source, dict):
         return None
     kind = source.get("kind") or source.get("source")
+    if kind == "local":
+        return _local_path(source.get("path"))
     url = source.get("url")
     if kind == "github" and isinstance(source.get("repo"), str):
         url = f"https://github.com/{source['repo']}"
@@ -123,7 +193,7 @@ def _external_source(source: Any) -> tuple[str, str | None, str | None] | None:
     ref = source.get("ref") if isinstance(source.get("ref"), str) else None
     if ref is None and isinstance(source.get("sha"), str):
         ref = source["sha"]
-    return url, path, ref
+    return ExternalSource(url, path, ref)
 
 
 def _entry_str(entry: dict[str, Any], key: str) -> str | None:
@@ -143,41 +213,35 @@ def _apply_marketplace(
     marketplace that vendors a snapshot AND points upstream offers one row,
     the vendored one, which installs without a second fetch).
     """
-    entries = _marketplace_entries(files)
-    if not entries:
+    index = read_marketplace_index(files)
+    if index is None:
         return candidates
     by_path = {c.path: c for c in candidates}
     local_names = {c.name for c in candidates if c.name}
     external: list[PluginCandidate] = []
     seen_urls: set[str] = set()
-    for entry in entries:
-        source = entry.get("source")
-        rel = _relative_source(source)
-        if rel is None and isinstance(source, dict):
-            kind = source.get("kind") or source.get("source")
-            if kind == "local":
-                rel = _relative_source(source.get("path"))
-        if rel is not None:
-            candidate = by_path.get(rel)
+    for entry in index["plugins"]:
+        source = resolve_entry_source(entry.get("source"))
+        if isinstance(source, LocalSource):
+            candidate = by_path.get(source.path)
             if candidate is not None:
                 candidate.name = candidate.name or _entry_str(entry, "name")
                 candidate.description = candidate.description or _entry_str(
                     entry, "description"
                 )
             continue
-        remote = _external_source(source)
-        if remote is None:
+        if source is None:
             continue
         name = _entry_str(entry, "name")
         if name in local_names:
             continue
-        url = compose_tree_url(*remote)
+        url = source.url
         if url is None or url in seen_urls:
             continue
         seen_urls.add(url)
         external.append(
             PluginCandidate(
-                path=remote[1] or "",
+                path=source.path or "",
                 dialect="external",
                 name=name,
                 description=_entry_str(entry, "description"),
@@ -330,12 +394,13 @@ def _adapt_entry(entry: dict[str, Any]) -> None:
 def _strip_env_refs(
     entry_key: str, entry: dict[str, Any], refs: dict[str, list[dict[str, str]]]
 ) -> None:
-    """Move pure ``${VAR}`` env/header values out of the portable doc.
+    """Move ``${VAR}`` env/header values out of the portable doc.
 
-    The stripped reference becomes a bind target recorded in ``refs``; mixed
-    content ("Bearer ${VAR}") stays literal. env maps bind only on stdio
-    entries and headers only on remotes — same rule the bind machinery
-    enforces.
+    The stripped reference becomes a bind target recorded in ``refs``, and
+    text ahead of it ("Bearer ${VAR}") becomes the bind's prefix. A value the
+    prefix rule refuses, or any other mix, stays literal. env maps bind only
+    on stdio entries and headers only on remotes, the same rule the bind
+    machinery enforces.
     """
     field = "env" if entry.get("type") == "stdio" else "headers"
     mapping = entry.get(field)
@@ -345,10 +410,14 @@ def _strip_env_refs(
         match = _ENV_REF_RE.match(value) if isinstance(value, str) else None
         if match is None:
             continue
+        prefix, var = match.group(1), match.group(2)
+        if prefix and prefix_problem(prefix):
+            continue
         del mapping[target]
-        refs.setdefault(match.group(1), []).append(
-            {"server": entry_key, ("env" if field == "env" else "header"): target}
-        )
+        bind = {"server": entry_key, ("env" if field == "env" else "header"): target}
+        if prefix:
+            bind["prefix"] = prefix
+        refs.setdefault(var, []).append(bind)
     if not mapping:
         entry.pop(field, None)
 
@@ -413,7 +482,7 @@ def _take_mcp_document(
             continue
         try:
             parsed = json.loads(raw.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (ValueError, RecursionError):
             return raw
         return parsed if isinstance(parsed, dict) else raw
     return None
@@ -455,7 +524,7 @@ def adapt_dialect(
         parsed = json.loads(manifest_raw.decode("utf-8"))
         if isinstance(parsed, dict):
             manifest = parsed
-    except (json.JSONDecodeError, UnicodeDecodeError):
+    except (ValueError, RecursionError):
         pass
     if manifest is None:
         out["plugin.json"] = manifest_raw
@@ -509,6 +578,7 @@ def adapt_dialect(
     for var in _synthesize_secrets(manifest, refs):
         targets = ", ".join(
             f"{b['server']}.{b.get('header') or b.get('env')}"
+            + (f" (after {b['prefix']!r})" if b.get("prefix") else "")
             for b in refs[var]
         )
         diagnostics.append(
@@ -518,7 +588,7 @@ def adapt_dialect(
                 code="env_ref_mapped",
                 message=(
                     f"${{{var}}} reference on {targets} mapped to a declared "
-                    "vault secret; set it in the bindings step"
+                    "vault secret, which the install asks for"
                 ),
             )
         )

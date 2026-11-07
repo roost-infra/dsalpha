@@ -1,6 +1,9 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useAnimatedText } from '../animated-text';
+import { onPageReturn } from '@/lib/pageVisibility';
 
 const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(' ') + ' ';
 
@@ -45,11 +48,13 @@ describe('useAnimatedText catch-up', () => {
   });
 
   it('never retracts revealed text when the catch-up snap lands inside a run', () => {
+    // Past the word cap, so the mount's cursor already sits inside the run.
     const { result, rerender } = renderHook(({ text }) => useAnimatedText(text, { enabled: true }), {
-      initialProps: { text: 'https://example.com/path' },
+      initialProps: { text: 'https://example.com/a/long/path' },
     });
     const shown = result.current;
-    act(() => rerender({ text: 'https://example.com/path' + 'x'.repeat(1000) }));
+    expect(shown).toBe('https:/');
+    act(() => rerender({ text: 'https://example.com/a/long/path' + 'x'.repeat(1000) }));
     expect(result.current.startsWith(shown)).toBe(true);
     expect(result.current.length).toBeGreaterThanOrEqual(shown.length);
   });
@@ -95,9 +100,41 @@ describe('useAnimatedText catch-up', () => {
         text += words(20);
         act(() => rerender({ text }));
       }
-      // The lag is bounded by the snap threshold plus one chunk, not the whole backlog.
-      expect(result.current.length).toBeGreaterThanOrEqual(text.length - 720);
-      expect(text.startsWith(result.current)).toBe(true);
+      // Nobody watched it arrive: all of it is on screen, nothing left to type.
+      expect(result.current).toBe(text);
+    });
+
+    it('shows a reply that ended while hidden in full', () => {
+      const { result, rerender } = renderHook(({ text, enabled }) => useAnimatedText(text, { enabled }), {
+        initialProps: { text: 'seed ', enabled: true },
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      const text = 'seed ' + words(60) + 'end.';
+      act(() => rerender({ text, enabled: true }));
+      expect(result.current).toBe('seed ' + words(60));
+      act(() => rerender({ text, enabled: false }));
+      expect(result.current).toBe(text);
+    });
+
+    it('shows what the hidden page held in the commit that brings it back', () => {
+      const { result } = renderHook(() => {
+        const [text, setText] = useState('seed ');
+        return { shown: useAnimatedText(text, { enabled: true }), setText };
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      // A live-sized delta, which in view types out (see the first test).
+      const text = 'seed ' + words(30);
+      let atReturn = '';
+      const off = onPageReturn(() => {
+        flushSync(() => result.current.setText(text));
+        atReturn = result.current.shown;
+      });
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      off();
+      expect(atReturn).toBe(text);
     });
   });
 
@@ -112,6 +149,51 @@ describe('useAnimatedText catch-up', () => {
     // The reveal keeps going from where it was rather than jumping to the end.
     expect(result.current.length).toBeLessThan(text.length);
     expect(text.startsWith(result.current)).toBe(true);
+  });
+
+  it('shows text that exists at mount in the first render, with nothing to type', () => {
+    // A bubble that mounts with its reply already in (a reconnect catch-up)
+    // must not commit empty first: without a paint between the two commits it
+    // lays out at zero height, then jumps to full height as a layout shift.
+    const renders: string[] = [];
+    const text = 'seed ' + words(60);
+    const { result } = renderHook(() => {
+      const shown = useAnimatedText(text, { enabled: true });
+      renders.push(shown);
+      return shown;
+    });
+    expect(renders[0]).toBe(text);
+    expect(result.current).toBe(text);
+  });
+
+  it('holds a word still arriving at mount and shows the rest in the first render', () => {
+    // A batch can end inside a word, and the segment it mounts must not show
+    // the stub ("Reven") that the typewriter holds back everywhere else.
+    const renders: string[] = [];
+    const text = 'seed ' + words(60) + 'Reven';
+    const { result } = renderHook(() => {
+      const shown = useAnimatedText(text, { enabled: true });
+      renders.push(shown);
+      return shown;
+    });
+    expect(renders[0]).toBe('seed ' + words(60));
+    expect(result.current).toBe('seed ' + words(60));
+  });
+
+  it('trails a run still arriving at mount by the word cap, as later updates do', () => {
+    const url = 'https://example.com/' + 'a'.repeat(40);
+    const { result } = renderHook(() => useAnimatedText('see ' + url, { enabled: true }));
+    expect(result.current).toBe('see ' + url.slice(0, -24));
+  });
+
+  it('never takes back text shown before the animation turned on', () => {
+    // A block that streams while a tool call above it is still active is not
+    // animated, so it shows all it has, a word still arriving included.
+    const { result, rerender } = renderHook(({ text, enabled }) => useAnimatedText(text, { enabled }), {
+      initialProps: { text: 'seed Reven', enabled: false },
+    });
+    act(() => rerender({ text: 'seed Revenu', enabled: true }));
+    expect(result.current).toBe('seed Reven');
   });
 
   it('shows a finished message in full when it was never animating', () => {

@@ -10,17 +10,20 @@ these tests pin single-conversion per path and that the two never double up.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.data_client.fmp.data_source import FMPDataSource
 from src.data_client.fmp.data_source import normalize_series as fmp_normalize_series
-from src.data_client.normalize import minor_unit_scale
+from src.data_client.fmp.financial_source import FMPFinancialSource
+from src.data_client.normalize import minor_unit_places, scale_quote_prices
 from src.data_client.yfinance.data_source import YFinanceDataSource, _normalize_bar
 from src.data_client.yfinance.data_source import normalize_series as yf_normalize_series
-from src.market_protocol import to_canonical
+from src.data_client.yfinance.financial_source import _get_profile as yf_profile
+from src.data_client.yfinance.financial_source import _get_realtime_quote as yf_realtime_quote
+from market_protocol import to_canonical
 
 LSE = "VOD.L"   # XLON — quotes GBX (pence)
 US = "AAPL"     # XNAS — quotes USD (major units)
@@ -162,7 +165,7 @@ def _yf_snapshot(sym, **over):
 @pytest.mark.asyncio
 async def test_yfinance_intraday_lse_scaled_to_major_units():
     with patch(
-        "src.data_client.yfinance.data_source.yf.Ticker",
+        "src.data_client.yfinance.yahoo.yf.Ticker",
         return_value=_FakeTicker(_yf_df()),
     ):
         bars = await YFinanceDataSource().get_intraday(LSE, "1hour")
@@ -177,7 +180,7 @@ async def test_yfinance_intraday_lse_scaled_to_major_units():
 @pytest.mark.asyncio
 async def test_yfinance_intraday_us_untouched():
     with patch(
-        "src.data_client.yfinance.data_source.yf.Ticker",
+        "src.data_client.yfinance.yahoo.yf.Ticker",
         return_value=_FakeTicker(_yf_df(open_=190.0, high=191.0, low=189.0, close=190.5)),
     ):
         bars = await YFinanceDataSource().get_intraday(US, "1hour")
@@ -216,12 +219,116 @@ async def test_yfinance_snapshot_us_untouched():
     assert s["price"] == 190.0 and s["previous_close"] == 188.0
 
 
+# --- realtime quote (financial source) --------------------------------------
+
+_PENCE_QUOTE = {
+    "symbol": LSE, "price": 117.2, "change": 0.35, "changePercentage": 0.3,
+    "previousClose": 116.85, "open": 116.9, "dayHigh": 118.0, "dayLow": 116.0,
+    "yearHigh": 132.072, "yearLow": 85.235, "priceAvg50": 110.0, "priceAvg200": 100.0,
+    "volume": 24879602, "marketCap": 27152024882, "pe": 20.5, "eps": 5.7,
+}
+
+
+def test_quote_prices_scale_to_major_units_without_touching_the_input():
+    rows = [dict(_PENCE_QUOTE)]
+    scaled = scale_quote_prices(rows, LSE)[0]
+    assert scaled["price"] == pytest.approx(1.172)
+    assert scaled["change"] == pytest.approx(0.0035)
+    assert scaled["yearHigh"] == pytest.approx(1.32072)
+    assert scaled["yearLow"] == pytest.approx(0.85235)
+    assert scaled["priceAvg50"] == pytest.approx(1.10)
+    for unscaled in ("changePercentage", "volume", "marketCap", "pe", "eps"):
+        assert scaled[unscaled] == _PENCE_QUOTE[unscaled]
+    assert rows == [_PENCE_QUOTE]
+
+
+def test_a_us_quote_passes_through_unchanged():
+    rows = [{"price": 331.9, "yearHigh": 351.73, "yearLow": 243.42}]
+    assert scale_quote_prices(rows, US) is rows
+    assert scale_quote_prices([], LSE) == []
+
+
+def test_a_quote_scales_only_the_price_fields_it_carries():
+    assert scale_quote_prices([{"price": 117.2}], LSE) == [{"price": pytest.approx(1.172)}]
+
+
+@pytest.mark.asyncio
+async def test_fmp_realtime_quote_lse_scaled_to_major_units():
+    client = MagicMock()
+    client.get_quote = AsyncMock(return_value=[dict(_PENCE_QUOTE)])
+    row = (await FMPFinancialSource(client).get_realtime_quote(LSE))[0]
+    assert row["price"] == pytest.approx(1.172)
+    assert row["yearLow"] == pytest.approx(0.85235)
+    assert (row["volume"], row["eps"]) == (24879602, 5.7)
+
+
+@pytest.mark.asyncio
+async def test_fmp_realtime_quote_us_untouched():
+    client = MagicMock()
+    client.get_quote = AsyncMock(return_value=[{"price": 331.9}])
+    assert await FMPFinancialSource(client).get_realtime_quote(US) == [{"price": 331.9}]
+
+
+@pytest.mark.asyncio
+async def test_fmp_profile_lse_price_scaled_to_major_units():
+    client = MagicMock()
+    client.get_profile = AsyncMock(return_value=[{"price": 117.2, "change": 0.35, "marketCap": 27152024882}])
+    row = (await FMPFinancialSource(client).get_company_profile(LSE))[0]
+    assert (row["price"], row["change"]) == (pytest.approx(1.172), pytest.approx(0.0035))
+    assert row["marketCap"] == 27152024882
+
+
+def test_yfinance_profile_lse_price_scaled_to_major_units():
+    ticker = MagicMock()
+    ticker.fast_info = {"lastPrice": 117.2, "marketCap": 27152024882, "currency": "GBp"}
+    ticker.info = {"longName": "Vodafone Group Plc"}
+    with patch("src.data_client.yfinance.financial_source.yahoo_ticker", return_value=ticker):
+        row = yf_profile(LSE)[0]
+    assert row["price"] == pytest.approx(1.172)
+    assert row["marketCap"] == 27152024882
+
+
+def _lse_quote_ticker(info: dict):
+    import pandas as pd
+
+    ticker = MagicMock()
+    ticker.history.return_value = pd.DataFrame(
+        [{"Open": 116.9, "High": 118.0, "Low": 116.0, "Close": 117.2, "Volume": 1000}],
+        index=[pd.Timestamp("2026-07-01", tz="Europe/London")],
+    )
+    ticker.history_metadata = {
+        "regularMarketPrice": 117.2, "chartPreviousClose": 116.85,
+        "exchangeTimezoneName": "Europe/London",
+        "regularMarketTime": pd.Timestamp("2026-07-01 16:30", tz="Europe/London"),
+    }
+    ticker.info = info
+    return ticker
+
+
+def test_yfinance_realtime_quote_lse_scaled_to_major_units():
+    ticker = _lse_quote_ticker({"marketCap": 27152024882, "trailingPE": 20.5, "trailingEps": 5.7})
+    with patch("src.data_client.yfinance.yahoo.yf.Ticker", return_value=ticker):
+        row = yf_realtime_quote(LSE)[0]
+    assert row["price"] == pytest.approx(1.172)
+    assert row["change"] == pytest.approx(0.0035)
+    assert row["dayHigh"] == pytest.approx(1.18)
+    assert (row["volume"], row["marketCap"], row["eps"]) == (1000, 27152024882, 5.7)
+
+
+def test_yfinance_realtime_quote_prices_a_missing_market_cap_in_pounds():
+    """Without info's market cap, shares times the pound price, never the pence one."""
+    ticker = _lse_quote_ticker({})
+    ticker.fast_info = {"shares": 1000, "marketCap": 117200.0}
+    with patch("src.data_client.yfinance.yahoo.yf.Ticker", return_value=ticker):
+        row = yf_realtime_quote(LSE)[0]
+    assert row["marketCap"] == pytest.approx(1172.0)
+
 # --- scale resolution + no double-conversion --------------------------------
 
-def test_minor_unit_scale_resolution():
-    assert minor_unit_scale(LSE) == 0.01
-    assert minor_unit_scale(US) == 1.0
-    assert minor_unit_scale("0700.HK") == 1.0  # HKD listing, not pence
+def test_minor_unit_places_resolution():
+    assert minor_unit_places(LSE) == 2
+    assert minor_unit_places(US) == 0
+    assert minor_unit_places("0700.HK") == 0  # HKD listing, not pence
 
 
 def test_no_double_conversion_fmp():
@@ -231,7 +338,7 @@ def test_no_double_conversion_fmp():
     ref = to_canonical(LSE)
     raw = _fmp_bar()
     protocol = fmp_normalize_series([raw], ref=ref, schema="ohlcv-1d").records[0]
-    legacy = FMPDataSource._normalize(raw, _LONDON, minor_unit_scale(LSE))
+    legacy = FMPDataSource._normalize(raw, _LONDON, minor_unit_places(LSE))
     assert protocol.close == pytest.approx(0.985)
     assert legacy["close"] == pytest.approx(0.985)
     assert 0.1 < legacy["close"] < 10
@@ -250,7 +357,7 @@ def test_no_double_conversion_yfinance():
     idx = datetime(2024, 1, 15, 12, tzinfo=timezone.utc)
     legacy_bar = _normalize_bar(
         idx, {"Open": 98.0, "High": 99.0, "Low": 97.0, "Close": 98.5, "Volume": 1000},
-        minor_unit_scale(LSE),
+        minor_unit_places(LSE),
     )
     assert legacy_bar["close"] == pytest.approx(0.985)
     doubled = yf_normalize_series([legacy_bar], ref=ref, schema="ohlcv-1d").records[0]

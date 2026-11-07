@@ -54,8 +54,7 @@ function makeSpec(overrides: Partial<BulkScopeSpec> = {}): BulkScopeSpec {
     onEverywhere: vi.fn(),
     onlyInCount: 3,
     onOnlyIn: vi.fn(),
-    moveCount: 1,
-    onMoveTo: vi.fn(),
+    move: { count: 1, onMoveTo: vi.fn() },
     ...overrides,
   };
 }
@@ -64,8 +63,8 @@ describe('BulkScopeMenu', () => {
   it('shows the eligible count on each entry and runs the everywhere action', () => {
     const spec = makeSpec();
     renderWithProviders(<BulkScopeMenu {...spec} />);
-    expect(screen.getByText('Only in workspaces (3)')).toBeInTheDocument();
-    expect(screen.getByText('Move into workspace (1)')).toBeInTheDocument();
+    expect(screen.getByText('Use in some workspaces (3)')).toBeInTheDocument();
+    expect(screen.getByText('Move into one workspace (1)')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('menuitem', { name: /all workspaces \(2\)/i }));
     expect(spec.onEverywhere).toHaveBeenCalledTimes(1);
@@ -74,10 +73,10 @@ describe('BulkScopeMenu', () => {
   it('disables the whole trigger when nothing is eligible', () => {
     renderWithProviders(
       <BulkScopeMenu
-        {...makeSpec({ everywhereCount: 0, onlyInCount: 0, moveCount: 0 })}
+        {...makeSpec({ everywhereCount: 0, onlyInCount: 0, move: { count: 0, onMoveTo: vi.fn() } })}
       />,
     );
-    expect(screen.getByRole('button', { name: /set scope/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Choose workspaces for the selected items' })).toBeDisabled();
   });
 
   it('stages the workspace checklist and applies the chosen ids', () => {
@@ -111,6 +110,11 @@ describe('BulkScopeMenu', () => {
     renderWithProviders(<BulkScopeMenu {...spec} />);
     // The move submenu renders the second batch of workspace items.
     fireEvent.click(screen.getAllByRole('menuitem', { name: 'Trading' })[1]);
-    expect(spec.onMoveTo).toHaveBeenCalledWith('ws2');
+    expect(spec.move?.onMoveTo).toHaveBeenCalledWith('ws2');
+  });
+
+  it('has no move entry for rows that only live on the account', () => {
+    renderWithProviders(<BulkScopeMenu {...makeSpec({ move: undefined })} />);
+    expect(screen.queryByText(/Move into one workspace/)).not.toBeInTheDocument();
   });
 });

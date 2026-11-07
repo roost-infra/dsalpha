@@ -1,48 +1,78 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
-import {
-  Plus, ArrowUp, X, FileText, Archive, Square, ClipboardList,
-  ChartCandlestick, TextSelect, MoreHorizontal, Mic, MicOff,
-} from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useImperativeHandle, useMemo } from 'react';
+import { Plus, ChartCandlestick } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { TokenUsageRing, type TokenUsageData } from './token-usage-ring';
-import {
-  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuSeparator,
-} from './dropdown-menu';
-import { Loader } from './loader';
 import { usePreferences } from '@/hooks/usePreferences';
+import { useTurnModels } from '@/hooks/useTurnModels';
 import { useEffectiveTuning, useModelProfileWriter } from '@/hooks/useModelProfile';
 import { useFeatureEnabled } from '@/hooks/useFeatures';
+import { homeWorkspaceQuery } from '@/hooks/useHomeWorkspace';
 import { useAllModels } from '@/hooks/useAllModels';
+import { useProviderCatalog } from '@/hooks/useProviderCatalog';
+import { useLapsedSignIn } from '@/hooks/useLapsedSignIn';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { deriveQuickAccessModels } from './chat-input.models';
+import { useLatestRef } from '@/hooks/useLatestRef';
+import { onKeyboardFit, onScreenKeyboardUp, roomAboveKeyboard } from '@/lib/visualViewport';
+import { useFavoriteModels } from '@/hooks/useFavoriteModels';
+import { useSeededModel } from '@/hooks/useSeededModel';
 import { ChatInputRegistry, ContextBus } from '@/lib/contextBus';
+import { AnimatePresence } from '@/lib/framer';
+import { isImeComposing } from '@/lib/ime';
+import { focusWithoutRing } from '@/lib/inputModality';
+import { cn } from '@/lib/utils';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';
 import './chat-input.css';
-import type { ModelOptions, ReadyAttachment, SlashCommand, Workspace } from './chat-input.types';
-import { getSlashCommandIcon, isLargePaste } from './chat-input.helpers';
-import { effortLabelFor } from '@/lib/modelTuning';
-import type { ModelProfile } from '@/lib/modelTuning';
+import type { ComposerDraft, ComposerScope, ComposerSend, ContextPayload, ModelOptions, ReadyAttachment, SlashCommand, ThreadTuning, Workspace } from './chat-input.types';
+import { isLargePaste, getModelDisplayName } from './chat-input.helpers';
+import { effortLabelFor, resolveEffort } from '@/lib/modelTuning';
+import { ChatInputWidgetDeck, MentionAutocompleteList, SlashCommandList } from './chat-input.parts';
 import {
-  ChatInputWidgetDeck, FilePreviewCard, MentionAutocompleteList, SlashCommandList,
-} from './chat-input.parts';
-import { ChatInputModelMenu, ModelTriggerMeasure } from './chat-input.modelMenu';
-import { useToolbarItems } from './chat-input.toolbar';
+  ComposerAttachments, ComposerChips, DraftTokenLayer, DropOverlay, SendStopButton, ToolbarOverflowMenu, VoiceButton, VoiceOverlay,
+} from './chat-input.composerParts';
+import { ChatInputModelMenu, ModelTriggerMeasure, type EffortMenuProps } from './chat-input.modelMenu';
+import type { ModelRowStatus } from './chat-input.modelPicker';
+import { ANTHROPIC_KEY_URL, CLAUDE_CODE_CHOICE_URL, biggerComputer, claudeCodeTokenUrl, isClaudeCodeModel } from '@/lib/claudeCode';
+import type { Payer } from '@/lib/modelPayer';
+import { useWorkspaceClaudeCode } from '@/hooks/useWorkspaceClaudeCode';
+import { deriveRecentModels } from './chat-input.models';
+import { modelGroups } from '@/lib/modelGroups';
+import { useEffortToolbarItem, useToolbarItems } from './chat-input.toolbar';
 import {
-  useToolbarFold, CONTAINER_BORDER, CONTAINER_PX, GROUP_GAP, ICON_BUTTON_W, TOKEN_RING_W, TOOLBAR_GAP,
+  useToolbarFold, CONTAINER_BORDER, CONTAINER_PX, GROUP_GAP, ICON_BUTTON_W, TOOLBAR_GAP,
 } from './chat-input.useToolbarFold';
 import { useMentions } from './chat-input.useMentions';
+import { useQuoteTokens } from './chat-input.useQuoteTokens';
 import { useSlashCommands } from './chat-input.useSlashCommands';
 import { speechSupported, useVoiceInput } from './chat-input.useVoiceInput';
 import { useFileAttachments } from './chat-input.useFileAttachments';
-import { modelPrefs, modelProfile } from '@/lib/modelPreferences';
+import { useDeviceTuningLift } from './chat-input.useDeviceTuningLift';
+import { readSubagentsDefault } from '@/lib/subagentsDefault';
+import { readGivenBack, spellOutQuotes } from './chat-input.quoteTokens';
+import { formatContextBlock } from './chat-input.wire';
 
 /** Autosize cap for the composer textarea; past this the box scrolls. */
 const MAX_TEXTAREA_HEIGHT = 200;
 
+/** What the textarea keeps, two lines of the phone's text, however little room the keyboard leaves. */
+const MIN_TEXTAREA_HEIGHT_OVER_KEYBOARD = 52;
+
+/** A thread that follows Settings for both. */
+const FOLLOWS_SETTINGS = { reasoningEffort: null, fastMode: null } as const;
+
+/** The box with `text` put back: into it when empty, else after what is
+ *  typed, a blank line between, and never twice. */
+function withGivenBack(typed: string, text: string): string {
+  const kept = typed.trimEnd();
+  if (!kept) return text;
+  if (kept === text || kept.endsWith(`\n\n${text}`)) return typed;
+  return `${kept}\n\n${text}`;
+}
 
 export interface ChatInputHandle {
   getModelOptions: () => ModelOptions;
-  addContext: (ctx: { path?: string; snippet?: string; label?: string; lineStart?: number; lineEnd?: number; lineCount?: number; source?: string }) => void;
+  addContext: (ctx: ContextPayload) => void;
   /**
    * Imperatively add a widget context snapshot to the deck. Local-only —
    * this does NOT publish to ContextBus. Use this when re-seeding the deck
@@ -52,14 +82,28 @@ export interface ChatInputHandle {
    */
   addWidgetSnapshot: (snapshot: WidgetContextSnapshot) => void;
   setValue: (text: string) => void;
-  /** Imperatively change the selected model (e.g. the model-fallback
-   *  "Switch to X" action) so the next send uses it. */
-  setModel: (model: string) => void;
+  /**
+   * Puts back what was written elsewhere, or sent and handed back, without
+   * losing what is typed here: the text into an empty box, else after it, a
+   * blank line between, and the files and pills beside what is there now.
+   * `focus: false` leaves focus where it is, for a draft that comes back
+   * while the person may have moved on to something else.
+   */
+  giveBack: (
+    text: string,
+    files?: ReadyAttachment[],
+    rest?: Partial<Pick<ComposerDraft, 'mentions' | 'commands'>> & { focus?: boolean },
+  ) => void;
+  /** Sends what is written, as Enter does. Returns whether there was
+   *  anything to send. */
+  send: () => boolean;
+  focus: () => void;
 }
 
 
 export interface ChatInputProps {
-  onSend: (message: string, planMode: boolean, attachments: ReadyAttachment[], slashCommands: SlashCommand[], modelOptions: ModelOptions) => void;
+  /** The send is also the box as the person wrote it, for `giveBack` should it fail. */
+  onSend: (send: ComposerSend) => void;
   disabled?: boolean;
   isLoading?: boolean;
   /**
@@ -72,10 +116,26 @@ export interface ChatInputProps {
   onStop?: () => void;
   placeholder?: string;
   files?: string[];
-  mode?: 'fast' | 'ptc';
-  onModeChange?: (mode: 'fast' | 'ptc') => void;
-  /** When set, disables switching into PTC mode and shows this reason as a tooltip. */
-  ptcDisabledReason?: string | null;
+  /** Where the send goes. With `onScopeChange` the toolbar offers the scope
+   *  picker. */
+  scope?: ComposerScope;
+  onScopeChange?: ((scope: ComposerScope) => void) | null;
+  /** Shown in the scope picker while there is no workspace to pick. */
+  emptyWorkspacesHint?: string | null;
+  /** The send goes to Home with no scope picker to say so: a Home thread's,
+   *  or the welcome's, whose first message opens one there. Its turns are the
+   *  Chief of Staff's, as a send scoped to all workspaces is. */
+  inHome?: boolean;
+  /**
+   * The Subagents switch, owned by a thread host (`useThreadSubagents`),
+   * which also receives each flip through `onToggleSubagents`. Null while the
+   * host has not read its thread's value, which hides the toggle rather than
+   * claim one. A composer with no thread behind it leaves both unset: it then
+   * holds the pick itself, shown over the user's default, and a PTC send
+   * carries it in its options.
+   */
+  subagentsAllowed?: boolean | null;
+  onToggleSubagents?: ((next: boolean) => void) | null;
   workspaces?: Workspace[] | null;
   selectedWorkspaceId?: string | null;
   onWorkspaceChange?: ((wsId: string) => void) | null;
@@ -92,28 +152,71 @@ export interface ChatInputProps {
   hasExternalContext?: boolean;
   tokenUsage?: TokenUsageData | null;
   onAction?: ((cmd: SlashCommand) => void) | null;
-  initialModel?: string | null;
-  /** Reports the live model selection (fires on mount and every change). */
-  onModelChange?: ((model: string | null) => void) | null;
+  /**
+   * The model the pill shows and a send names, owned by the host's thread
+   * (`useThreadModel`), which also receives each pick through `onPickModel`.
+   * A composer with no thread behind it leaves both unset: it then holds the
+   * pick itself, seeded from the account default, and the pick rides the next
+   * send, which is how such a composer starts its thread on the chosen model.
+   */
+  model?: string | null;
+  onPickModel?: ((model: string) => void) | null;
+  /**
+   * The thread's own reasoning effort and fast mode, over what Settings gives
+   * its model, owned by a thread host (`useThreadTuning`), which also receives
+   * each pick: the level, or null to follow Settings again. A composer with no
+   * thread behind it leaves all three unset: it then holds the picks itself,
+   * and a send hands them to the thread it starts. Either way a pick never
+   * writes Settings, which is the only place a default is set.
+   */
+  tuning?: ThreadTuning;
+  onPickReasoningEffort?: ((effort: string | null) => void) | null;
+  onPickFastMode?: ((fast: boolean | null) => void) | null;
   threadModels?: string[];
   dropdownDirection?: 'up' | 'down';
   minRows?: number;
+  /**
+   * A status item the host shows at the end of the left tools (the chat view
+   * docks its folded tray here). Outside the fold budget on purpose: a host's
+   * status comes and goes on its own clock, and the toggles must not hop into
+   * the overflow menu with it, so the model label gives up the room instead.
+   * Only once the label is down to its floor does the status cost a slot.
+   */
+  toolbarStatus?: React.ReactNode;
+  /**
+   * Context the host gathers above the text box, ruled off from it (the chat
+   * view's queued file comments). The host owns what it holds and what a send
+   * does with it; pair it with `hasExternalContext` when it makes an empty box
+   * sendable. A press on it is its own and does not focus the text box.
+   */
+  deck?: React.ReactNode;
 }
 
 /* --- MAIN COMPONENT --- */
 
-const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput({
+function settleAfterSend(field: HTMLTextAreaElement | null): void {
+  if (!field) return;
+  field.style.height = 'auto';
+  // The answer lands where the on-screen keyboard is.
+  if (onScreenKeyboardUp()) field.blur();
+}
+
+function ChatInput({
   onSend,
   disabled = false,
   isLoading = false,
   isCompacting = false,
   onStop,
-  placeholder = 'Type / for skills, @ for files',
+  placeholder,
   files: workspaceFiles = [],
-  // Mode toggle
-  mode,
-  onModeChange,
-  ptcDisabledReason = null,
+  // Scope picker
+  scope,
+  onScopeChange = null,
+  emptyWorkspacesHint = null,
+  inHome = false,
+  // Subagents switch
+  subagentsAllowed: hostSubagents,
+  onToggleSubagents = null,
   // Workspace selector
   workspaces = null,
   selectedWorkspaceId = null,
@@ -132,81 +235,119 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   // Action commands (e.g. /compact) — dispatched on send, not on selection
   onAction = null,
   // Model selector
-  initialModel = null,
-  onModelChange = null,
-  // All models used in this thread (shown in primary menu)
+  model: hostModel,
+  onPickModel = null,
+  // Thread effort and fast mode
+  tuning: hostTuning,
+  onPickReasoningEffort = null,
+  onPickFastMode = null,
+  // All models used in this thread (listed under the favorites)
   threadModels: threadModelsProp = [],
   // Dropdown direction: 'up' (default, for bottom-positioned inputs) or 'down' (for mid-page inputs like ThreadGallery)
   dropdownDirection = 'up',
   // Minimum visible rows for the textarea (default 1 = compact; pass 2 for roomier non-ChatView callsites)
   minRows = 1,
-}, ref) {
+  toolbarStatus = null,
+  deck = null,
+  ref,
+}: ChatInputProps & { ref?: React.Ref<ChatInputHandle> }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { preferences } = usePreferences();
+  const { preferences, isLoaded: preferencesRead } = usePreferences();
   const marketWatchEnabled = useFeatureEnabled('market_watch');
-  const { validModelNames, metadata: modelMetadata } = useAllModels();
+  const { models: visibleModels, validModelNames, metadata: modelMetadata, payers, isLoading: modelsLoading } = useAllModels();
+  const lapsedSignIn = useLapsedSignIn();
   const otherPref = (preferences as Record<string, Record<string, unknown>> | null)?.other_preference;
-  const starredModels = Array.isArray(otherPref?.starred_models)
-    ? (otherPref.starred_models as unknown[]).filter((m): m is string => typeof m === 'string')
-    : [];
-  // Model routing moved to its own bucket; starred_models above did not,
-  // so the two reads deliberately differ.
-  const mPref = modelPrefs(preferences);
-  const preferredModel = mPref.preferred_model || null;
-  const preferredFlashModel = mPref.preferred_flash_model || null;
   const [message, setMessage] = useState('');
-  const { attachedFiles, setAttachedFiles, isDragging, handleFiles, removeFile, onDragOver, onDragLeave, onDrop, handlePaste } = useFileAttachments({ mode });
-  const [planMode, setPlanMode] = useState(false);
+  const { attachedFiles, setAttachedFiles, isDragging, handleFiles, restoreFiles, removeFile, onDragEnter, onDragOver, onDragLeave, onDrop, handlePaste } = useFileAttachments({ disabled });
   const [watchMode, setWatchMode] = useState(false);
-  // Market watch is a PTC capability. The toggle state survives a switch to
-  // flash (the pill just hides), so every payload derives from this gated
-  // value — a watch flipped on in PTC must never ride a flash send.
-  const effectiveMarketWatch = watchMode && marketWatchEnabled && mode !== 'fast';
+  // The toggle state survives the feature going off (the pill just hides), so
+  // every payload derives from this gated value.
+  const effectiveMarketWatch = watchMode && marketWatchEnabled;
 
-  // Model selector state — use flash model preference when in flash mode
-  const modePreferredModel = mode === 'fast' ? (preferredFlashModel || preferredModel) : preferredModel;
-  const effectiveInitialModel = initialModel || modePreferredModel;
-  const [selectedModel, setSelectedModel] = useState<string | null>(effectiveInitialModel);
+  // The model a send names. A thread host owns it. Without one the composer
+  // holds it, starting on the account default, which with nothing saved is
+  // the deployment's (see useSlotDefaultModels for why it waits on the
+  // preference), and following the default when it changes. A turn in Home
+  // swaps a model it never runs for the default (see useTurnModels).
+  const turn = useTurnModels(inHome || scope === 'all');
+  const [ownModel, setOwnModel] = useSeededModel(turn.defaultModel);
+  const pillModel = turn.resolve(hostModel === undefined ? ownModel : hostModel);
 
   // Per-model tuning is an account preference, not a device one: the server
   // resolves ``profiles[<model>]`` for turns this input never starts (schedules,
-  // automations, subagent role models). ``null`` clears a field; the server
-  // merges per model, so siblings and this model's other fields survive.
+  // automations, subagent role models). Only the device lift below writes it
+  // from here; a pick in the menu is the thread's own.
   const { writeProfile: writeModelProfile } = useModelProfileWriter();
 
-  // Both controls read the account profile straight through, with no local
-  // copy: a failed write rolls the cache back and the pill follows it, instead
-  // of naming a level the next scheduled turn will not run.
-  const { profile: modelTuningProfile, efforts: reasoningEfforts, inherited, effective } =
-    useEffectiveTuning(selectedModel);
-  // The raw override, which is what the effort menu needs: it renders "Default"
-  // from the absence of one. The fast-mode toggle has no such state, so it
-  // reads the resolved value below.
-  const reasoningEffort = modelTuningProfile.reasoning_effort ?? null;
-  const inheritedEffort = inherited.reasoning_effort;
-  // The resolved value, which is what a send carries. Tuning writes are
-  // optimistic and not awaited, so between picking Default and the PUT landing
-  // the composer already reads as cleared while the row still holds the old
-  // level. Sending the raw override omits a cleared level and lets the server
-  // resolve against the row the write is still replacing, so the turn runs a
-  // setting the screen no longer shows. Sending what is displayed cannot
-  // disagree with it.
-  const resolvedEffort = effective.reasoning_effort;
-  const resolvedFastMode = effective.fast_mode;
+  // What Settings gives this model: its profile, else the account default,
+  // else what the model declares. The level is clamped onto the model's
+  // ladder, as the server runs it, so the menu's Default names one it lists.
+  const { efforts: reasoningEfforts, effective: settingsTuning } = useEffectiveTuning(pillModel);
+  const settingsEffort = settingsTuning.reasoning_effort && reasoningEfforts.length > 0
+    ? resolveEffort(settingsTuning.reasoning_effort, reasoningEfforts)
+    : settingsTuning.reasoning_effort;
+  const settingsFast = settingsTuning.fast_mode;
 
-  // Sync selectedModel when initialModel or preferredModel changes
-  useEffect(() => {
-    if (effectiveInitialModel) setSelectedModel(effectiveInitialModel);
-  }, [effectiveInitialModel]);
+  // The thread's own picks over Settings. A thread host owns them. Without
+  // one the composer holds them, following Settings until touched.
+  const [ownTuning, setOwnTuning] = useState<{ reasoningEffort: string | null; fastMode: boolean | null }>(FOLLOWS_SETTINGS);
+  const tuning = hostTuning === undefined ? ownTuning : hostTuning;
+  // What a send carries as the turn's level, and what the pill shows of it.
+  // Saves and Settings writes are optimistic and not awaited, so between a
+  // pick and its write landing the composer already shows the pick while the
+  // row the server reads still holds the old level. Sending nothing would let
+  // the server resolve against the row the write is still replacing, so the
+  // turn runs a setting the screen no longer shows. Sending what is displayed
+  // cannot disagree with it. The level goes out unclamped, as the row holds
+  // it: every client of the turn, a fallback model included, clamps it onto
+  // its own ladder, and a turn no composer started reads the same level from
+  // the row. Only the pill clamps, onto this model's ladder, which names none
+  // until the ladder is known. A thread whose row is unread shows and sends
+  // none, since Settings may not be what it runs, and the server runs the
+  // thread's own.
+  const sentEffort = tuning.reasoningEffort === undefined
+    ? null
+    : tuning.reasoningEffort ?? settingsTuning.reasoning_effort;
+  const resolvedEffort = tuning.reasoningEffort === undefined
+    ? null
+    : tuning.reasoningEffort === null
+      ? settingsEffort
+      : resolveEffort(tuning.reasoningEffort, reasoningEfforts);
+  const resolvedFastMode = tuning.fastMode === undefined ? null : tuning.fastMode ?? settingsFast;
+  // A composer with no thread behind it hands its picks to the thread its
+  // send starts, which keeps them as its own.
+  const ownOverrides = useMemo(() => (hostTuning === undefined ? {
+    ...(ownTuning.reasoningEffort !== null ? { reasoningEffortOverride: ownTuning.reasoningEffort } : {}),
+    ...(ownTuning.fastMode !== null ? { fastModeOverride: ownTuning.fastMode } : {}),
+  } : {}), [hostTuning, ownTuning]);
 
-  // Mirror the live selection to the host (ChatView gates the fallback
-  // suggestion pill on the model the next send will actually use).
-  useEffect(() => {
-    onModelChange?.(selectedModel);
-  }, [selectedModel, onModelChange]);
+  // The Subagents switch a send names. A thread host owns it. Without one the
+  // composer holds a pick, null until touched so the toggle shows the user's
+  // default, and a send names only that pick, leaving the default to the
+  // server. Until the default is read the toggle shows what no preference
+  // means, which a stored default may contradict, so a send names what it
+  // shows.
+  const [ownSubagents, setOwnSubagents] = useState<boolean | null>(null);
+  const ownShown = ownSubagents ?? readSubagentsDefault(preferences);
+  const shownSubagents = hostSubagents === undefined ? ownShown : hostSubagents;
+  const draftSubagents = hostSubagents === undefined
+    ? ownSubagents ?? (preferencesRead ? undefined : ownShown)
+    : undefined;
+  const handleToggleSubagents = useCallback((next: boolean) => {
+    if (hostSubagents === undefined) setOwnSubagents(next);
+    else onToggleSubagents?.(next);
+  }, [hostSubagents, onToggleSubagents]);
 
-  const isCodexModel = selectedModel ? modelMetadata[selectedModel]?.sdk === 'codex' : false;
+  const handlePickModel = useCallback((model: string) => {
+    // The checked row is the model the composer already runs.
+    if (model === pillModel) return;
+    if (hostModel === undefined) setOwnModel(model);
+    else onPickModel?.(model);
+  }, [pillModel, hostModel, setOwnModel, onPickModel]);
+
+  const isCodexModel = pillModel ? modelMetadata[pillModel]?.sdk === 'codex' : false;
 
   // Widget context deck state. Snapshots arrive via ContextBus.attach (when
   // the user clicks "+" on any widget on the page) or via addWidgetSnapshot
@@ -219,6 +360,14 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  // The composer box as state too: the mobile menus portal into it, and render
+  // may only read it from state. The callback ref keeps the ref filled for the
+  // effects and hooks that read it after commit.
+  const [chatContainer, setChatContainer] = useState<HTMLDivElement | null>(null);
+  const attachChatContainer = useCallback((el: HTMLDivElement | null) => {
+    chatContainerRef.current = el;
+    setChatContainer(el);
+  }, []);
 
   // @file mentions and /slash commands — trigger detection, filtering,
   // selection and menu keyboard navigation live in these two machines. Both
@@ -227,56 +376,88 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   const mentions = useMentions({ textareaRef, message, setMessage, workspaceFiles });
   // The workspace context scopes the slash menu: inside a workspace the
   // enabled-skill list is the workspace-effective one (workspace-scoped
-  // skills included, its disables applied).
-  const slash = useSlashCommands({ textareaRef, message, setMessage, mode, workspaceId: selectedWorkspaceId });
+  // skills included, its disables applied). The Chief of Staff runs in Home,
+  // which loads its skills as any workspace does, so the menu lists Home's
+  // rather than those of the workspace the picker remembers.
+  const queryClient = useQueryClient();
+  const { data: homeWorkspaceId = null } = useQuery({
+    ...homeWorkspaceQuery(queryClient),
+    enabled: scope === 'all',
+    select: (workspace) => workspace.workspace_id,
+  });
+  const slashWorkspaceId = scope === 'all' ? homeWorkspaceId : selectedWorkspaceId;
+  const slash = useSlashCommands({ textareaRef, message, setMessage, workspaceId: slashWorkspaceId });
   const {
     mentionedFiles, setMentionedFiles, pruneRemoved: pruneMentions, detectTrigger: detectMention,
-    close: closeMentions, reset: resetMentions, handleKeyDown: mentionKeyDown, open: mentionsOpen,
+    close: closeMentions, reset: resetMentions, handleKeyDown: mentionKeyDown, open: mentionsOpen, addMention, removeMention,
   } = mentions;
   const {
     slashCommands, pruneRemoved: pruneSlash, detectTrigger: detectSlash,
-    close: closeSlash, reset: resetSlash, handleKeyDown: slashKeyDown,
+    close: closeSlash, reset: resetSlash, restore: restoreSlash, handleKeyDown: slashKeyDown,
   } = slash;
 
-  // Voice input (speech recognition) — see chat-input.useVoiceInput.
-  const { isListening, toggleListening, stopListening } = useVoiceInput({ message, setMessage, isLoading });
+  // Pills whose /{command} or @mention text was deleted go with it
+  const pruneDraft = useCallback((draft: string) => {
+    pruneSlash(draft);
+    pruneMentions(draft);
+  }, [pruneSlash, pruneMentions]);
+  // The words of the draft that stand for a skill or a file.
+  const draftTokens = useMemo(() => [
+    ...slashCommands.map((c) => `/${c.name}`),
+    ...mentionedFiles.filter((f) => f.kind === 'file').map((f) => `@${f.path}`),
+  ], [slashCommands, mentionedFiles]);
+  const {
+    heldMentions, quotes, chips, addQuote, handleSelect, handleQuotePress, handleKeyDown: tokenKeyDown, keepWhole,
+  } = useQuoteTokens({ textareaRef, message, setMessage, mentions, draftTokens, pruneDraft });
 
-  // Stop button state
-  const [isStopping, setIsStopping] = useState(false);
+  // Voice input (speech recognition) — see chat-input.useVoiceInput.
+  const { isListening, toggleListening, stopListening, abandonListening } = useVoiceInput({ message, setMessage, isLoading });
+
+  const givenBackBesideRef = useLatestRef(mentionedFiles);
+
+  // The handle is built before the send below, so it reaches it through here.
+  const sendRef = useRef<() => boolean>(() => false);
 
   // Expose addContext method for external callers (e.g. FilePanel, message selection)
   useImperativeHandle(ref, () => ({
     getModelOptions() {
       return {
-        model: selectedModel,
-        reasoningEffort: resolvedEffort,
+        model: pillModel,
+        reasoningEffort: sentEffort,
         fastMode: resolvedFastMode,
         marketWatch: effectiveMarketWatch,
+        subagentsAllowed: draftSubagents,
+        ...ownOverrides,
       };
     },
-    addContext({ path, snippet, label, lineStart, lineEnd, lineCount, source }) {
-      if (snippet) {
-        // Snippet context — add pill with snippet data, don't modify textarea
-        setMentionedFiles((prev) => {
-          // Deduplicate by exact snippet content (handles multiple selections)
-          if (prev.some((f) => f.snippet === snippet && f.path === (path || '') && f.source === (source || undefined))) return prev;
-          return [...prev, { path: path || '', snippet, label, lineStart, lineEnd, lineCount, source }];
-        });
-      } else if (path) {
-        // Whole file context — same behavior as selectFile via @mention
-        setMentionedFiles((prev) => {
-          if (prev.some((f) => f.path === path && !f.snippet)) return prev;
-          return [...prev, { path }];
-        });
-        // Insert @path into message text
-        setMessage((prev) => {
-          if (prev.includes('@' + path)) return prev;
-          const prefix = prev && !prev.endsWith(' ') ? prev + ' ' : prev;
-          return prefix + '@' + path + ' ';
-        });
+    addContext(ctx) {
+      // Dictation rewrites the draft from what it held when it started.
+      if (ctx.kind !== 'chip') abandonListening();
+      switch (ctx.kind) {
+        case 'file':
+          // Same behavior as selectFile via @mention
+          addMention(ctx);
+          setMessage((prev) => {
+            if (prev.includes('@' + ctx.path)) return prev;
+            const prefix = prev && !prev.endsWith(' ') ? prev + ' ' : prev;
+            return prefix + '@' + ctx.path + ' ';
+          });
+          break;
+        case 'quote':
+          addQuote(ctx);
+          break;
+        case 'chip':
+          addMention(ctx);
+          break;
+        case 'attachment': {
+          const { files, text } = ctx;
+          if (files.length) handleFiles(files);
+          if (text) setMessage((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+          break;
+        }
       }
       // Focus the textarea
-      setTimeout(() => textareaRef.current?.focus(), 0);
+      setTimeout(() => focusWithoutRing(textareaRef.current), 0);
     },
     addWidgetSnapshot(snapshot) {
       setWidgetSnapshots((prev) => {
@@ -288,10 +469,23 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       setMessage(text);
       setTimeout(() => textareaRef.current?.focus(), 0);
     },
-    setModel(model) {
-      if (model) setSelectedModel(model);
+    giveBack(text, files = [], { mentions = [], commands = [], focus = true } = {}) {
+      // Through a ref, for what else comes back in the same commit to number against.
+      const back = readGivenBack(text, mentions, givenBackBesideRef.current);
+      givenBackBesideRef.current = [...givenBackBesideRef.current, ...back.mentions];
+      if (back.text) setMessage((prev) => withGivenBack(prev, back.text));
+      restoreFiles(files);
+      if (back.mentions.length > 0) setMentionedFiles((prev) => [...prev, ...back.mentions]);
+      restoreSlash(commands);
+      if (focus) setTimeout(() => textareaRef.current?.focus(), 0);
     },
-  }), [selectedModel, resolvedEffort, resolvedFastMode, effectiveMarketWatch, setMentionedFiles]);
+    send() {
+      return sendRef.current();
+    },
+    focus() {
+      textareaRef.current?.focus();
+    },
+  }), [pillModel, sentEffort, resolvedFastMode, effectiveMarketWatch, draftSubagents, ownOverrides, mentionedFiles, setMentionedFiles, addMention, addQuote, restoreFiles, restoreSlash, handleFiles, abandonListening]);
 
   // Subscribe to ContextBus so this input mirrors the global widget-context
   // deck. Multiple chat inputs can be visible simultaneously (hero card +
@@ -332,78 +526,117 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     }
   }, [prefillMessage, onClearPrefill]);
 
-  // These picks used to be device-local, which meant server-started turns never
-  // saw them. Lift what this device still holds into the account profile, then
-  // drop the keys. Per field, not per record: a profile that already carries one
-  // of the two must not strand the other. And the keys are this value's only
-  // copy until the write lands, so they go only once it has.
-  const liftedModelRef = useRef<string | null>(null);
-  useEffect(() => {
-    // The model's own row has to be in hand first: `reasoningEfforts` reads
-    // empty both while the catalog loads and for a model that declares no
-    // ladder, and the clamp below wants opposite answers for the two.
-    const meta = selectedModel ? modelMetadata[selectedModel] : undefined;
-    if (!selectedModel || !preferences || !meta || liftedModelRef.current === selectedModel) return;
-    liftedModelRef.current = selectedModel;
+  // Effort and fast-mode picks this device still holds go up to the account profile.
+  useDeviceTuningLift({
+    pillModel, preferences, modelMetadata, reasoningEfforts, writeProfile: writeModelProfile,
+  });
 
-    const profile = modelProfile(preferences, selectedModel);
-    const storedEffort = localStorage.getItem(`reasoning_effort:${selectedModel}`);
-    const storedFast = localStorage.getItem(`fast_mode:${selectedModel}`) === 'true';
-    const lift: ModelProfile = {};
-    // These keys predate per-model ladders, when one fixed list of levels was
-    // offered for every model, so a device may hold a level this model never
-    // declared. The account rejects it and a run would drop it anyway, so it
-    // is discarded with the keys rather than lifted.
-    if (storedEffort && reasoningEfforts.includes(storedEffort) && profile.reasoning_effort === undefined) {
-      lift.reasoning_effort = storedEffort;
-    }
-    if (storedFast && profile.fast_mode === undefined) lift.fast_mode = true;
-
-    const dropDeviceKeys = () => {
-      localStorage.removeItem(`reasoning_effort:${selectedModel}`);
-      localStorage.removeItem(`fast_mode:${selectedModel}`);
-    };
-    if (Object.keys(lift).length > 0) {
-      // No release of the guard on failure: the write moves `preferences`
-      // twice, so re-entry is immediate and a rejection would resubmit itself
-      // without bound. A failed lift keeps its device keys and is retried on
-      // the next mount or model switch.
-      writeModelProfile(selectedModel, lift, { onSuccess: dropDeviceKeys });
-    } else {
-      dropDeviceKeys();
-    }
-  }, [selectedModel, preferences, writeModelProfile, modelMetadata, reasoningEfforts]);
-
+  // The menu names null for the level Settings gives, which returns the
+  // thread to following Settings rather than pinning today's value.
   const handleReasoningEffortChange = useCallback((effort: string | null) => {
-    if (selectedModel) writeModelProfile(selectedModel, { reasoning_effort: effort });
-  }, [selectedModel, writeModelProfile]);
+    if (effort === tuning.reasoningEffort) return;
+    if (hostTuning === undefined) setOwnTuning((prev) => ({ ...prev, reasoningEffort: effort }));
+    else onPickReasoningEffort?.(effort);
+  }, [tuning.reasoningEffort, hostTuning, onPickReasoningEffort]);
 
+  // Speed has no Default of its own in the menu, so the side Settings is on
+  // stands for it: flipping there follows Settings again.
   const handleFastModeChange = useCallback((fast: boolean) => {
-    // Both states are explicit. `null` here would mean "inherit", which this
-    // toggle cannot express — and on an account defaulting to fast it would
-    // delete the override and snap straight back to fast. Clearing is the
-    // per-model matrix's job, where Default is its own option.
-    if (selectedModel) writeModelProfile(selectedModel, { fast_mode: fast });
-  }, [selectedModel, writeModelProfile]);
+    const next = fast === settingsFast ? null : fast;
+    if (next === tuning.fastMode) return;
+    if (hostTuning === undefined) setOwnTuning((prev) => ({ ...prev, fastMode: next }));
+    else onPickFastMode?.(next);
+  }, [settingsFast, tuning.fastMode, hostTuning, onPickFastMode]);
 
-  // Reset isStopping once both a running turn and a compaction have finished.
-  useEffect(() => {
-    if (!isLoading && !isCompacting) setIsStopping(false);
-  }, [isLoading, isCompacting]);
+  const tokenLayerRef = useRef<HTMLDivElement>(null);
+  const sizeTokenLayer = useCallback(() => {
+    if (!textareaRef.current || !tokenLayerRef.current) return;
+    tokenLayerRef.current.style.width = `${textareaRef.current.clientWidth}px`;
+    tokenLayerRef.current.style.height = `${textareaRef.current.clientHeight}px`;
+    tokenLayerRef.current.scrollTop = textareaRef.current.scrollTop;
+  }, []);
 
-  const handleStop = useCallback(() => {
-    if (isStopping) return;
-    setIsStopping(true);
-    onStop?.();
-  }, [isStopping, onStop]);
-
-  // Auto-resize textarea; past the cap the box scrolls (overflow-y-auto).
-  useEffect(() => {
+  // Auto-resize textarea; past the cap the box scrolls (overflow-y-auto). A
+  // chip beside it changes its width, and so where the text wraps, and the
+  // layer has to wrap with it, a scrollbar taken out of the width included.
+  const fitTextarea = useCallback(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, MAX_TEXTAREA_HEIGHT) + 'px';
+      // Rounded up: `scrollHeight` rounds a fractional line height down as often as
+      // not, and what fits exactly then comes up short and shows a scrollbar.
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight + 1, MAX_TEXTAREA_HEIGHT) + 'px';
+      sizeTokenLayer();
     }
-  }, [message]);
+  }, [sizeTokenLayer]);
+  useEffect(fitTextarea, [fitTextarea, message, chips.length, draftTokens.length]);
+  // A narrower window wraps the text too. Fitted a frame on, since the fit itself
+  // resizes what is being observed.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    let width = textarea.clientWidth;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (textarea.clientWidth === width) return;
+      width = textarea.clientWidth;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fitTextarea);
+    });
+    observer.observe(textarea);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [fitTextarea]);
+
+  // A composer in a scrolling route grows downward, so with a keyboard up the
+  // text gives up what would push the send row under it. A limit apart from the
+  // height above, measured from the box as it stands: nothing collapses, so the
+  // text keeps its scroll, and a composer hidden with its cached thread keeps its size.
+  const fitToKeyboard = useCallback(() => {
+    const textarea = textareaRef.current;
+    const box = chatContainerRef.current;
+    if (!textarea || !box) return;
+    const active = document.activeElement;
+    // Its picker is anchored to the box as it stands.
+    if (active?.closest('[data-composer-panel]')) return;
+    const room = active === textarea ? roomAboveKeyboard(box) : null;
+    if (room === null) {
+      textarea.style.maxHeight = '';
+      sizeTokenLayer();
+      return;
+    }
+    const shownBefore = textarea.clientHeight;
+    // Not `offsetHeight`: rounded, the limit never settles and the observer below
+    // refits it every frame.
+    textarea.style.maxHeight = Math.max(textarea.getBoundingClientRect().height + room, MIN_TEXTAREA_HEIGHT_OVER_KEYBOARD) + 'px';
+    // The box gives up its foot, and a caret at the end of the text is there.
+    if (textarea.clientHeight < shownBefore && textarea.selectionEnd === textarea.value.length) {
+      textarea.scrollTop = textarea.scrollHeight;
+    }
+    sizeTokenLayer();
+    if ((roomAboveKeyboard(box) ?? 0) < 0) box.scrollIntoView({ block: 'nearest' });
+  }, [sizeTokenLayer]);
+
+  useEffect(fitToKeyboard, [message, fitToKeyboard]);
+  useEffect(() => {
+    if (!chatContainer) return;
+    // Whatever else sizes the box: a pill, an attachment leaving, a deck folding,
+    // with or without motion. A frame later, since changing the box inside its
+    // own callback is a ResizeObserver loop error.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fitToKeyboard);
+    });
+    observer.observe(chatContainer);
+    const stopListening = onKeyboardFit(fitToKeyboard);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      stopListening();
+    };
+  }, [chatContainer, fitToKeyboard]);
 
   // Large text pastes condense into a pill (snippet-mention mechanics) instead
   // of flooding the draft. File pastes keep priority — handlePaste prevents
@@ -414,27 +647,21 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
     const text = e.clipboardData.getData('text/plain');
     if (!isLargePaste(text)) return;
     e.preventDefault();
-    const lineCount = text.split('\n').length;
-    setMentionedFiles((prev) => {
-      if (prev.some((f) => f.source === 'paste' && f.snippet === text)) return prev;
-      return [...prev, { path: '', snippet: text, label: t('context.pastedLines', { count: lineCount }), lineCount, source: 'paste' }];
-    });
-  }, [handlePaste, setMentionedFiles, t]);
+    addMention({ kind: 'chip', source: 'paste', snippet: text, label: t('context.pastedLines', { count: text.split('\n').length }) });
+  }, [handlePaste, addMention, t]);
 
   // Detect @ and / triggers on input change
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
+    const val = keepWhole(e.target.value, e.target.selectionStart);
     setMessage(val);
     const cursorPos = e.target.selectionStart;
 
-    // Pills whose /{command} or @mention text was deleted go with it
-    pruneSlash(val);
-    pruneMentions(val);
+    pruneDraft(val);
 
     // A live /slash trigger wins: the two menus never show at once.
     if (detectSlash(val, cursorPos)) closeMentions();
     else detectMention(val, cursorPos);
-  }, [pruneSlash, pruneMentions, detectSlash, detectMention, closeMentions]);
+  }, [keepWhole, pruneDraft, detectSlash, detectMention, closeMentions]);
 
   // Close both autocompletes on blur
   const handleBlur = useCallback(() => {
@@ -445,7 +672,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
   }, [closeMentions, closeSlash]);
 
   // --- Send ---
-  const hasContent = message.trim() || attachedFiles.length > 0 || !!chartImage || mentionedFiles.some((f) => f.snippet) || widgetSnapshots.length > 0 || hasExternalContext;
+  const hasContent = message.trim() || attachedFiles.length > 0 || !!chartImage || chips.length > 0 || widgetSnapshots.length > 0 || hasExternalContext;
 
   const handleSend = useCallback(() => {
     if (!hasContent || disabled) return;
@@ -467,9 +694,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
         ContextBus.clear();
       }
       setDeckFanned(false);
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
+      settleAfterSend(textareaRef.current);
       return;
     }
 
@@ -481,30 +706,27 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
         type: f.type,
         preview: f.preview,
       }));
-    // Append snippet blocks to message for mentions that have snippets
-    let finalMessage = message;
-    const snippetMentions = mentionedFiles.filter((f) => f.snippet);
-    if (snippetMentions.length > 0) {
-      const blocks = snippetMentions.map((f) => {
-        if (f.source === 'chat') {
-          return `\n<details>\n<summary>[${t('context.fromAgentResponse')}]</summary>\n\n\`\`\`\n${f.snippet}\n\`\`\`\n</details>`;
-        }
-        if (f.source === 'paste') {
-          return `\n<details>\n<summary>[${t('context.pastedText')}]</summary>\n\n\`\`\`\n${f.snippet}\n\`\`\`\n</details>`;
-        }
-        const lineInfo = f.lineStart != null
-          ? ` (lines ${f.lineStart}-${f.lineEnd}, ${f.lineCount} line${f.lineCount !== 1 ? 's' : ''})`
-          : '';
-        return `\n<details>\n<summary>@${f.path}${lineInfo}</summary>\n\n\`\`\`\n${f.snippet}\n\`\`\`\n</details>`;
-      });
+    // Quotes go where they sit among the typed words. Chips' blocks trail.
+    let finalMessage = spellOutQuotes(message, quotes);
+    if (chips.length > 0) {
+      const blocks = chips.map((f) => formatContextBlock(f, t));
       finalMessage = finalMessage.trimEnd() + '\n' + blocks.join('\n');
     }
-    onSend(finalMessage, planMode, readyAttachments, slashCommands, {
-      model: selectedModel,
-      reasoningEffort: resolvedEffort,
-      fastMode: resolvedFastMode,
-      marketWatch: effectiveMarketWatch,
-      widgetSnapshots: widgetSnapshots.length ? widgetSnapshots : undefined,
+    onSend({
+      text: message,
+      files: readyAttachments,
+      mentions: heldMentions,
+      commands: slashCommands,
+      message: finalMessage,
+      modelOptions: {
+        model: pillModel,
+        reasoningEffort: sentEffort,
+        fastMode: resolvedFastMode,
+        marketWatch: effectiveMarketWatch,
+        subagentsAllowed: draftSubagents,
+        ...ownOverrides,
+        widgetSnapshots: widgetSnapshots.length ? widgetSnapshots : undefined,
+      },
     });
     setMessage('');
     attachedFiles.forEach(f => { if (f.preview) URL.revokeObjectURL(f.preview); });
@@ -518,12 +740,17 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       ContextBus.clear();
     }
     setDeckFanned(false);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-    }
-  }, [hasContent, disabled, message, planMode, effectiveMarketWatch, attachedFiles, setAttachedFiles, onSend, onAction,
-    mentionedFiles, resetMentions, slashCommands, resetSlash,
-    selectedModel, resolvedEffort, resolvedFastMode, widgetSnapshots, t]);
+    settleAfterSend(textareaRef.current);
+  }, [hasContent, disabled, message, effectiveMarketWatch, draftSubagents, attachedFiles, setAttachedFiles, onSend, onAction,
+    heldMentions, quotes, chips, resetMentions, slashCommands, resetSlash,
+    pillModel, sentEffort, resolvedFastMode, ownOverrides, widgetSnapshots, t]);
+  useEffect(() => {
+    sendRef.current = () => {
+      if (!hasContent || disabled) return false;
+      handleSend();
+      return true;
+    };
+  }, [hasContent, disabled, handleSend]);
 
   // --- Keyboard & Language Detection ---
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -533,10 +760,13 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       stopListening();
     }
 
+    if (isImeComposing(e)) return;
+
     // An open autocomplete owns the navigation keys (slash menu first — it
     // suppresses the mention menu while active).
     if (slashKeyDown(e)) return;
     if (mentionKeyDown(e)) return;
+    if (tokenKeyDown(e)) return;
 
     if (e.key === 'Enter' && !mentionsOpen) {
       // Cmd/Ctrl+Enter inserts a newline at the cursor (browsers suppress this by default)
@@ -554,12 +784,12 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
         }
         return;
       }
-      if (!e.shiftKey) {
+      if (!e.shiftKey && !onScreenKeyboardUp()) {
         e.preventDefault();
         handleSend();
       }
     }
-  }, [slashKeyDown, mentionKeyDown, mentionsOpen, handleSend, isListening, stopListening, message]);
+  }, [slashKeyDown, mentionKeyDown, tokenKeyDown, mentionsOpen, handleSend, isListening, stopListening, message]);
 
   /* --- Progressive toolbar folding ---
    *
@@ -569,75 +799,141 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
    * renders the SAME components, so any locale / workspace name / model label
    * is measured, never guessed. */
   const toolbarItems = useToolbarItems({
-    mode, onModeChange, ptcDisabledReason,
-    planMode, setPlanMode, watchMode, setWatchMode, marketWatchEnabled,
+    scope, onScopeChange, emptyWorkspacesHint,
+    subagentsAllowed: shownSubagents, onToggleSubagents: handleToggleSubagents,
+    watchMode, setWatchMode, marketWatchEnabled,
     workspaces, selectedWorkspaceId, onWorkspaceChange,
+    menuDirection: dropdownDirection,
+    menuContainer: chatContainer,
+    draftRef: textareaRef,
   });
+  // The effort pill sits beside the model pill and folds last (`slot: 'right'`).
+  const effortLabel = effortLabelFor(t, resolvedEffort);
+  const taskCost = pillModel ? modelMetadata[pillModel]?.task_cost : undefined;
+  const effortProps = useMemo<EffortMenuProps>(() => ({
+    effortLabel,
+    reasoningEffort: resolvedEffort,
+    defaultEffort: settingsEffort,
+    reasoningEfforts,
+    onReasoningEffortChange: handleReasoningEffortChange,
+    fastMode: resolvedFastMode,
+    onFastModeChange: handleFastModeChange,
+    isCodexModel,
+    dropdownDirection,
+    container: chatContainer,
+    taskCost,
+    disabled: modelsLoading,
+  }), [
+    effortLabel, resolvedEffort, settingsEffort, reasoningEfforts, handleReasoningEffortChange, resolvedFastMode,
+    handleFastModeChange, isCodexModel, dropdownDirection, chatContainer, taskCost, modelsLoading,
+  ]);
+  const effortItem = useEffortToolbarItem(effortProps, isMobile);
+  const foldItems = useMemo(() => [...toolbarItems, effortItem], [toolbarItems, effortItem]);
 
   const ringVisible = !!(tokenUsage && tokenUsage.threshold > 0 && tokenUsage.total > 0);
   const micReserved = speechSupported && !!otherPref?.voice_input_enabled;
-  const { measureRowRef, fold } = useToolbarFold({
+  // Right group: the model pill (measured), the mic, and send/stop. A turn
+  // hides the mic but keeps its room, so the fold set holds through it.
+  const rightGroup = (model: number) => GROUP_GAP + model
+    + (micReserved ? TOOLBAR_GAP + ICON_BUTTON_W : 0)
+    + TOOLBAR_GAP + ICON_BUTTON_W;
+  const { measureRowRef, statusRef, fold } = useToolbarFold({
     containerRef: chatContainerRef,
-    items: toolbarItems,
-    // The model pill is measured too, but it isn't foldable.
-    measureKey: `${selectedModel}|${resolvedEffort}|${resolvedFastMode && isCodexModel}`,
+    items: foldItems,
+    // The model pill is measured too, but it isn't foldable. Its label joins
+    // the key because an authored display_name comes with the models request,
+    // which can land after the pill was first measured under the key's label.
+    measureKey: `${pillModel}|${getModelDisplayName(pillModel, modelMetadata)}|${resolvedEffort}|${resolvedFastMode && isCodexModel}`,
     // Left of the first pill: container border + px-3, the attach button, and
     // the optional ring / chart-capture button (see the action bar below).
     fixedLeft: CONTAINER_BORDER + CONTAINER_PX + ICON_BUTTON_W
-      + (ringVisible ? TOOLBAR_GAP + TOKEN_RING_W : 0)
+      + (ringVisible ? TOOLBAR_GAP + ICON_BUTTON_W : 0)
       + (onCaptureChart ? TOOLBAR_GAP + ICON_BUTTON_W : 0),
-    // Right group: the model pill (measured), the mic, and send/stop. Mic
-    // reserve ignores isLoading on purpose — the fold set must not jump when a
-    // turn starts and the mic hides.
-    rightReserve: (widths) => GROUP_GAP + (widths.model ?? 0)
-      + (micReserved ? TOOLBAR_GAP + ICON_BUTTON_W : 0)
-      + TOOLBAR_GAP + ICON_BUTTON_W,
+    rightReserve: (widths) => rightGroup(widths.model ?? 0),
+    rightFloor: (widths) => rightGroup(widths.modelFloor ?? 0),
   });
   const inlineItems = toolbarItems.filter((i) => fold.inline.has(i.id));
-  const foldedItems = toolbarItems.filter((i) => fold.folded.includes(i.id));
+  const foldedItems = foldItems.filter((i) => fold.folded.includes(i.id));
 
-  /** Quick-access models for both the desktop submenu and mobile inline expand */
-  const moreModelsItems = useMemo(
-    () => deriveQuickAccessModels({
-      preferredModel, preferredFlashModel, starredModels, validModelNames,
-      // Don't repeat models already shown in the primary (selected + thread) section.
-      excludeModels: [selectedModel, ...threadModelsProp].filter((m): m is string => !!m),
-    }),
-    [preferredModel, preferredFlashModel, starredModels, validModelNames, selectedModel, threadModelsProp],
-  );
+  const favorites = useFavoriteModels();
+  const { entryFor } = useProviderCatalog();
+  // A Claude Code model runs a turn while the token where the workspace's
+  // computer runs it works or could not be checked, as admission lets it;
+  // otherwise its row says why, and where the user can fix it: that
+  // computer's token, or the saved one. On a cloud computer it may run on
+  // the user's Anthropic API key, which then pays for it.
+  const claudeCode = useWorkspaceClaudeCode(selectedWorkspaceId);
+  const pickerPayers = useMemo((): Record<string, Payer> => (claudeCode.state === 'api_key'
+    ? Object.fromEntries(Object.entries(payers).map(([m, payer]) => [m, isClaudeCodeModel(modelMetadata[m]) ? 'own_key' : payer]))
+    : payers), [claudeCode.state, payers, modelMetadata]);
+  const modelGroupList = useMemo(() => modelGroups({
+    models: turn.models,
+    payers: pickerPayers,
+    brandOf: (group) => {
+      const entry = entryFor(group);
+      if (!entry?.group || entry.group === group) return undefined;
+      return {
+        id: entry.group,
+        label: visibleModels[entry.group]?.display_name ?? entry.group_display_name ?? entry.display_name,
+      };
+    },
+  }), [turn.models, visibleModels, pickerPayers, entryFor]);
+  const recentModels = deriveRecentModels({ selectedModel: pillModel, threadModels: threadModelsProp, validModelNames })
+    .filter((m) => !favorites.models.includes(m) && turn.offers(m));
+  const tokenUrl = claudeCodeTokenUrl(selectedWorkspaceId);
+  const modelRowStatus = (m: string): ModelRowStatus => {
+    if (isClaudeCodeModel(modelMetadata[m])) {
+      switch (claudeCode.state) {
+        case 'checking': return { unavailable: t('modelAccess.status.working') };
+        case 'no_token': return { unavailable: t('chat.modelSelector.claudeCodeSignedOut'), fix: () => navigate(tokenUrl) };
+        case 'rejected': return { unavailable: t('chat.modelSelector.claudeCodeRejected'), fix: () => navigate(tokenUrl) };
+        case 'needs_own_computer': return { unavailable: t('chat.modelSelector.claudeCodeNeedsOwnComputer') };
+        case 'hosted_paused': return { unavailable: t('chat.modelSelector.claudeCodePaused') };
+        case 'hosted_off': return { unavailable: t('chat.modelSelector.claudeCodeHostedOff'), fix: () => navigate(CLAUDE_CODE_CHOICE_URL) };
+        case 'needs_api_key': return { unavailable: t('chat.modelSelector.claudeCodeNeedsApiKey'), fix: () => navigate(ANTHROPIC_KEY_URL) };
+        case 'api_key_endpoint': return { unavailable: t('chat.modelSelector.claudeCodeApiKeyEndpoint'), fix: () => navigate(ANTHROPIC_KEY_URL) };
+        case 'needs_bigger_computer': {
+          const { rowKey, link } = biggerComputer();
+          return { unavailable: t(rowKey), fix: link ? () => window.open(link.url, '_blank', 'noopener,noreferrer') : undefined };
+        }
+        case 'policy_blocked': return { unavailable: t('chat.modelSelector.claudeCodePolicyBlocked') };
+        case 'needs_perl': return { unavailable: t('modelAccess.claudeCode.fail.needs_perl') };
+        case 'computer_unsupported': return { unavailable: t('modelAccess.claudeCode.fail.computer_unsupported') };
+      }
+    }
+    return { tag: lapsedSignIn(m) ? t('modelAccess.status.needsReauth') : undefined };
+  };
 
   return (
     <div
       className="relative w-full"
+      onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
-      {/* Main Container */}
+      {/* Main Container. 22px is concentric with the 12px send button 10px in
+          from the bottom edge (DESIGN.md, Radius); the drag and recording
+          overlays repeat it. */}
       <div
-        ref={chatContainerRef}
-        className={`chat-input-container flex flex-col items-stretch transition-all duration-200 relative z-10 rounded-2xl cursor-text border border-[var(--color-border-input)] bg-[var(--color-bg-card)] ${isListening ? 'recording' : ''}`}
-        onClick={() => textareaRef.current?.focus()}
+        ref={attachChatContainer}
+        className={cn('chat-input-container owns-its-edge scroll-mb-2 flex flex-col items-stretch relative z-10 rounded-[22px] cursor-text border border-(--color-border-input) bg-(--color-bg-card)', isListening && 'recording')}
+        onClick={(event) => {
+          // A press on a control in the box is that control's, and the deck
+          // above the text is its own surface: focusing the text there would
+          // raise a phone's keyboard over the page the press was about.
+          if (event.target instanceof Element && event.target.closest('button, a, input, select, [role="button"], [data-composer-deck]')) return;
+          textareaRef.current?.focus();
+        }}
       >
-        {isListening && (
-          <>
-            <div className="recording-overlay" />
-            <div className="voice-status-hint">
-              <div className="waveform">
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-                <div className="waveform-bar" />
-              </div>
-              <span className="animate-pulse">{t('chat.voice.listening', { defaultValue: 'Listening... (Type to cancel)' })}</span>
-            </div>
-          </>
-        )}
+        {isListening && <VoiceOverlay />}
         <div className="flex flex-col px-3 pt-3 pb-2 gap-2">
+
+          {/* The deck folds, and the column's gap below it cannot: a gap lands
+              whole the frame the deck mounts and vanishes the frame it hides.
+              The deck carries the gap as its own bottom margin, inside the
+              fold, and this cancels the column's. */}
+          {deck && <div data-composer-deck className="-mb-2">{deck}</div>}
 
           {/* Widget context deck — top card visible, others peek behind */}
           {widgetSnapshots.length > 0 && (
@@ -660,128 +956,84 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             />
           )}
 
-          {/* Slash command pills + Mention pills */}
-          {(slashCommands.length > 0 || mentionedFiles.length > 0) && (
-            <div className="mention-pills">
-              {slashCommands.map((cmd) => (
-                <div
-                  key={`slash-${cmd.name}`}
-                  className="mention-pill mention-pill-slash"
-                  title={cmd.description}
-                >
-                  {getSlashCommandIcon(cmd, "h-3 w-3 flex-shrink-0 mention-pill-icon")}
-                  <span>/{cmd.name}</span>
-                  <button
-                    className="mention-pill-remove"
-                    onClick={(e) => { e.stopPropagation(); slash.removeCommand(cmd.name); }}
-                    title="Remove"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              ))}
-              {mentionedFiles.map((f, idx) => {
-                const isSnippet = !!f.snippet;
-                const isPaste = f.source === 'paste';
-                const name = isSnippet ? f.label : f.path.split('/').pop();
-                const pillKey = (f.path || '') + '::' + (f.label || '') + '::' + idx;
-                // Snippet tooltips preview, not mirror — a condensed paste can
-                // be tens of KB and title= renders it all.
-                const tooltip = isSnippet
-                  ? (f.snippet!.length > 500 ? f.snippet!.slice(0, 500) + '…' : f.snippet)
-                  : f.path;
-                return (
-                  <div
-                    key={pillKey}
-                    className={`mention-pill ${isSnippet ? 'mention-pill-snippet' : ''}`}
-                    title={tooltip}
-                  >
-                    {isPaste
-                      ? <ClipboardList className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                      : isSnippet
-                        ? <TextSelect className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                        : <FileText className="h-3 w-3 flex-shrink-0" style={{ color: 'var(--color-accent-primary)' }} />
-                    }
-                    <span>{name}</span>
-                    <button
-                      className="mention-pill-remove"
-                      onClick={(e) => { e.stopPropagation(); mentions.removeMention(f.path, f.label, f.snippet); }}
-                      title="Remove"
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <ComposerAttachments
+            chartImage={chartImage}
+            onRemoveChartImage={onRemoveChartImage}
+            files={attachedFiles}
+            onRemoveFile={removeFile}
+            isMobile={isMobile}
+          />
 
-          {/* Chart image + File Preview Cards */}
-          {(chartImage || attachedFiles.length > 0) && (
-            <div className="flex gap-3 overflow-x-auto pb-2 px-1">
-              {chartImage && (
-                <div className="relative group flex-shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-[var(--color-border-muted)] bg-[var(--color-bg-elevated)] animate-fade-in transition-all hover:border-[var(--color-border-default)]">
-                  <img src={chartImage} alt="Chart" className="w-full h-full object-cover" />
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onRemoveChartImage?.(); }}
-                    className={`absolute top-1 right-1 p-1 bg-black/50 hover:bg-black/70 rounded-full text-white transition-opacity ${isMobile ? 'opacity-60' : 'opacity-0 group-hover:opacity-100'}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
-              {attachedFiles.map((file) => (
-                <FilePreviewCard
-                  key={file.id}
-                  file={file}
-                  onRemove={removeFile}
-                />
-              ))}
-            </div>
-          )}
+          {/* Autocomplete dropdowns (above textarea). A closing menu keeps
+              the list it last showed through its exit: the machines empty
+              their lists the moment they close. */}
+          <AnimatePresence>
+            {mentionsOpen && (
+              <MentionAutocompleteList
+                key="mentions"
+                listRef={mentions.listRef}
+                files={mentions.filtered}
+                activeIndex={mentions.activeIndex}
+                hasWorkspaceFiles={workspaceFiles.length > 0}
+                onSelect={mentions.selectFile}
+                onHover={mentions.setActiveIndex}
+              />
+            )}
+            {slash.open && (
+              <SlashCommandList
+                key="slash"
+                listRef={slash.listRef}
+                commands={slash.filtered}
+                activeIndex={slash.activeIndex}
+                onSelect={slash.selectCommand}
+                onHover={slash.setActiveIndex}
+              />
+            )}
+          </AnimatePresence>
 
-          {/* Autocomplete dropdowns (above textarea) */}
-          {mentionsOpen && (
-            <MentionAutocompleteList
-              listRef={mentions.listRef}
-              files={mentions.filtered}
-              activeIndex={mentions.activeIndex}
-              hasWorkspaceFiles={workspaceFiles.length > 0}
-              onSelect={mentions.selectFile}
-              onHover={mentions.setActiveIndex}
+          {/* Textarea, starting on the line the chips end on while it fits
+              there: its basis grows with the draft until it takes a line of
+              its own, where the text has the whole width to wrap in. */}
+          <div className="relative flex flex-wrap items-start gap-x-2">
+            <ComposerChips chips={chips} onRemove={removeMention} />
+            <div
+              className="relative min-w-0 flex-[1_1_5rem]"
+              style={chips.length > 0 ? { flexBasis: message.includes('\n') ? '100%' : `max(5rem, ${message.length + 1}ch)` } : undefined}
+            >
+            <DraftTokenLayer
+              text={message}
+              tokens={draftTokens}
+              quotes={quotes}
+              layerRef={tokenLayerRef}
+              onQuotePress={handleQuotePress}
+              onWheel={(e) => { if (textareaRef.current) textareaRef.current.scrollTop += e.deltaY; }}
+              className={`font-content ${isMobile ? 'text-base' : 'text-sm'} leading-relaxed transition-opacity ${isListening ? 'opacity-20' : 'opacity-100'}`}
             />
-          )}
-          {slash.open && (
-            <SlashCommandList
-              listRef={slash.listRef}
-              commands={slash.filtered}
-              activeIndex={slash.activeIndex}
-              onSelect={slash.selectCommand}
-              onHover={slash.setActiveIndex}
-            />
-          )}
-
-          {/* Textarea */}
-          <div className="relative">
             <textarea
               ref={textareaRef}
               value={message}
               onChange={handleChange}
               onPaste={handleTextareaPaste}
               onKeyDown={handleKeyDown}
+              onSelect={handleSelect}
               onBlur={handleBlur}
+              onScroll={(e) => { if (tokenLayerRef.current) tokenLayerRef.current.scrollTop = e.currentTarget.scrollTop; }}
               onCompositionStart={() => {
                 // Terminate voice input if IME starts
                 if (isListening) {
                   stopListening();
                 }
               }}
-              placeholder={isListening ? "" : placeholder}
-              className={`font-content w-full bg-transparent border-0 text-[var(--color-text-primary)] ${isMobile ? 'text-base' : 'text-sm'} placeholder:text-[var(--color-text-tertiary)] resize-none overflow-y-auto leading-relaxed block transition-opacity duration-300 ${isListening ? 'opacity-20' : 'opacity-100'}`}
+              // Named apart from the placeholder, which says what state the
+              // thread is in and is empty while listening.
+              aria-label={t("chat.composer.messageLabel")}
+              placeholder={isListening || chips.length > 0 ? "" : (placeholder ?? t("chat.placeholderDefault"))}
+              className={`relative font-content w-full bg-transparent border-0 text-(--color-text-primary) ${isMobile ? 'text-base' : 'text-sm'} placeholder:text-(--color-text-tertiary) resize-none overflow-y-auto leading-relaxed block transition-opacity ${isListening ? 'opacity-20' : 'opacity-100'}`}
               rows={minRows}
               disabled={disabled}
               style={{ minHeight: `${minRows * 1.5}em` }}
             />
+            </div>
           </div>
 
           {/* Action Bar */}
@@ -793,9 +1045,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               {/* Attach Button */}
               <button
                 onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
-                className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 active:scale-95"
+                disabled={disabled}
+                className="press inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5"
                 type="button"
-                aria-label="Attach file"
+                aria-label={t('chat.composer.attachFile')}
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -809,10 +1062,10 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               {onCaptureChart && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onCaptureChart(); }}
-                  className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 active:scale-95"
+                  className="press inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg text-(--color-icon-muted) hover:text-(--color-text-muted) hover:bg-foreground/5"
                   type="button"
-                  title="Attach chart screenshot"
-                  aria-label="Capture chart"
+                  title={t('chat.composer.attachChart')}
+                  aria-label={t('chat.composer.captureChart')}
                 >
                   <ChartCandlestick className="w-4 h-4" />
                 </button>
@@ -823,42 +1076,19 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
                 <React.Fragment key={item.id}>{item.inline({})}</React.Fragment>
               ))}
 
-              {/* ⋯ overflow — only the toggles that didn't fit inline. The
-                  amber dot marks a folded-but-active toggle. */}
               {foldedItems.length > 0 && (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      className="relative inline-flex flex-none items-center justify-center h-8 w-8 rounded-lg transition-colors text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5 data-[state=open]:bg-foreground/5 data-[state=open]:text-[var(--color-text-muted)]"
-                      onClick={(e) => e.stopPropagation()}
-                      type="button"
-                      title={t('chat.moreTools', { defaultValue: 'More tools' })}
-                      aria-label={t('chat.moreTools', { defaultValue: 'More tools' })}
-                    >
-                      <MoreHorizontal className="w-4 h-4" />
-                      {foldedItems.some((item) => item.active) && (
-                        <span
-                          className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full"
-                          style={{ background: 'var(--color-accent-primary)' }}
-                        />
-                      )}
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="start"
-                    side={dropdownDirection === 'down' ? 'bottom' : 'top'}
-                    className="w-52"
-                    container={isMobile ? chatContainerRef.current : undefined}
-                  >
-                    {foldedItems.map((item, idx) => (
-                      <React.Fragment key={item.id}>
-                        {idx > 0 && foldedItems[idx - 1].group !== item.group && <DropdownMenuSeparator />}
-                        {item.menu()}
-                      </React.Fragment>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <ToolbarOverflowMenu
+                  items={foldedItems}
+                  side={dropdownDirection === 'down' ? 'bottom' : 'top'}
+                  container={isMobile ? chatContainer : undefined}
+                />
               )}
+
+              {/* Measured where it paints, for the fold's last resort. The
+                  gap before it moves inside (its own cancelled, its child's
+                  margin in its place), so an absent or hidden status takes
+                  no room and the measured width is the whole cost. */}
+              <span ref={statusRef} className="-ml-1 flex flex-none items-center *:ml-1">{toolbarStatus}</span>
 
               {/* Hidden measure row — the SAME components rendered geometry-only
                   (no handlers, menus, or aria state), so the fold budget can
@@ -866,13 +1096,16 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
               <div
                 ref={measureRowRef}
                 aria-hidden
-                className="invisible pointer-events-none absolute top-0 -left-[9999px] flex items-center gap-1 whitespace-nowrap"
+                className="invisible pointer-events-none absolute top-0 left-[-9999px] flex items-center gap-1 whitespace-nowrap"
               >
-                {toolbarItems.filter((i) => i.visible).map((item) => (
+                {foldItems.filter((i) => i.visible).map((item) => (
                   <span key={item.id} data-measure={item.id}>{item.inline({ measureOnly: true })}</span>
                 ))}
                 <span data-measure="model">
-                  <ModelTriggerMeasure selectedModel={selectedModel} effortLabel={effortLabelFor(t, resolvedEffort)} fastMode={resolvedFastMode} isCodexModel={isCodexModel} />
+                  <ModelTriggerMeasure pill="model" selectedModel={pillModel} metadata={modelMetadata} />
+                </span>
+                <span data-measure="modelFloor">
+                  <ModelTriggerMeasure pill="model" selectedModel={pillModel} metadata={modelMetadata} floor />
                 </span>
               </div>
             </div>
@@ -880,95 +1113,49 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
             {/* Right Tools */}
             <div className="flex flex-row items-center min-w-0 gap-1">
               <ChatInputModelMenu
-                selectedModel={selectedModel}
-                onSelectModel={setSelectedModel}
-                threadModels={threadModelsProp}
-                validModelNames={validModelNames}
-                moreModelsItems={moreModelsItems}
-                hasStarredModels={starredModels.length > 0}
-                reasoningEffort={reasoningEffort}
-                inheritedEffort={inheritedEffort}
-                onReasoningEffortChange={handleReasoningEffortChange}
-                fastMode={resolvedFastMode}
-                onFastModeChange={handleFastModeChange}
-                isCodexModel={isCodexModel}
-                reasoningEfforts={reasoningEfforts}
+                selectedModel={pillModel}
+                metadata={modelMetadata}
+                payers={pickerPayers}
+                groups={modelGroupList}
+                favorites={favorites.models.filter(turn.offers)}
+                recent={recentModels}
+                onToggleFavorite={(m, on) => (on ? favorites.add(m) : favorites.remove(m))}
+                onSelectModel={handlePickModel}
+                rowStatus={modelRowStatus}
                 dropdownDirection={dropdownDirection}
-                containerRef={chatContainerRef}
+                container={chatContainer}
+                draftRef={textareaRef}
+                disabled={modelsLoading}
+                nameHidden={fold.nameHidden}
               />
-              {/* Voice Input Button (Show only if enabled in user settings) */}
-              {speechSupported && !isLoading && !!otherPref?.voice_input_enabled && (
-                <div className="flex items-center">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleListening(); }}
-                    disabled={disabled}
-                    className={`inline-flex flex-none items-center justify-center h-8 w-8 rounded-xl transition-all active:scale-95 mic-button ${isListening ? 'recording' : 'text-[var(--color-icon-muted)] hover:text-[var(--color-text-muted)] hover:bg-foreground/5'}`}
-                    type="button"
-                    title={isListening ? t('chat.voice.stop') : t('chat.voice.start')}
-                    aria-label={isListening ? t('chat.voice.stop') : t('chat.voice.start')}
-                  >
-                    {isListening ? (
-                      <MicOff className="w-4 h-4" />
-                    ) : (
-                      <Mic className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
+              {fold.inline.has(effortItem.id) && effortItem.inline({})}
+              {/* Voice input, when enabled in settings. */}
+              {micReserved && (
+                <VoiceButton
+                  listening={isListening}
+                  hidden={isLoading}
+                  disabled={disabled}
+                  onToggle={toggleListening}
+                />
               )}
-              {/* Send / Stop Button. Stop also shows during a compaction with no
-                  streaming turn (manual /compact|/offload) so the user can
-                  interrupt it; the Enter-key send path stays open for queuing. */}
-              {(isLoading || isCompacting) && onStop ? (
-                <button
-                  className="stop-button w-8 h-8 flex-none rounded-xl flex items-center justify-center transition-colors disabled:cursor-not-allowed"
-                  onClick={(e) => { e.stopPropagation(); handleStop(); }}
-                  disabled={isStopping}
-                  title={isStopping ? t('chat.stopping') : t('chat.stop')}
-                  aria-label={isStopping ? t('chat.stopping') : t('chat.stop')}
-                  type="button"
-                >
-                  {isStopping ? (
-                    <Loader size={16} label={t('chat.stopping')} className="text-current" />
-                  ) : (
-                    <Square className="h-4 w-4" fill="currentColor" />
-                  )}
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleSend(); }}
-                  disabled={!hasContent || disabled}
-                  className="inline-flex flex-none items-center justify-center h-8 w-8 rounded-xl transition-colors active:scale-95 disabled:cursor-default"
-                  style={{
-                    backgroundColor: !hasContent || disabled ? 'var(--color-bg-elevated)' : 'var(--color-btn-primary-bg)',
-                    color: !hasContent || disabled ? 'var(--color-text-quaternary)' : 'var(--color-btn-primary-text)',
-                  }}
-                  type="button"
-                  aria-label="Send message"
-                >
-                  <ArrowUp className="w-4 h-4" />
-                </button>
-              )}
+              <SendStopButton
+                running={isLoading || isCompacting}
+                canSend={!!hasContent && !disabled}
+                onSend={handleSend}
+                onStop={onStop}
+              />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Drag Overlay */}
-      {
-        isDragging && (
-          <div className="absolute inset-0 bg-[var(--color-accent-soft)] border-2 border-dashed border-[hsl(var(--primary))] rounded-2xl z-50 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none">
-            <Archive className="w-10 h-10 text-[hsl(var(--primary))] mb-2 animate-bounce" />
-            <p className="text-[hsl(var(--primary))] font-medium">Drop files to upload</p>
-          </div>
-        )
-      }
+      <DropOverlay active={isDragging} />
 
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept={mode === 'fast' ? "image/png,image/jpeg,image/gif,image/webp,application/pdf" : undefined}
         className="hidden"
         onChange={(e) => {
           if (e.target.files) handleFiles(e.target.files);
@@ -977,7 +1164,7 @@ const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput
       />
     </div>
   );
-});
+}
 
 // Memoized: ChatView re-renders on every streamed chunk, and without the memo
 // the whole composer subtree (model menu, attachment deck, autocomplete) rides

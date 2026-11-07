@@ -25,7 +25,7 @@ from langchain_core.messages import HumanMessage
 from ptc_agent.agent.middleware.runtime_context import (
     KNOWN_SURFACES,
     Surface,
-    TailEnvelopeMiddleware,
+    RowCarrierMiddleware,
     TurnContextMiddleware,
     is_known_surface,
     parse_surface,
@@ -61,7 +61,7 @@ async def _rendered_request(**kwargs) -> str:
         captured["messages"] = list(request.messages)
         return MagicMock()
 
-    await TailEnvelopeMiddleware(now=NOW, guidance="detailed").awrap_model_call(
+    await RowCarrierMiddleware().awrap_model_call(
         ModelRequest(
             model=MagicMock(spec=ChatAnthropic),
             messages=[HumanMessage(content="What moved today?"), *rows],
@@ -135,6 +135,18 @@ class TestThePointerReachesTheModel:
         assert "Surface `" not in text
         assert "started by" not in text
         assert "subagent reporting to a parent agent" not in text
+
+
+class TestTheLowDiskLine:
+    @pytest.mark.asyncio
+    async def test_a_low_disk_is_stated_in_megabytes(self):
+        text = await _rendered_request(disk_free_mb=180)
+
+        assert "The computer's disk is nearly full: 180 MB free" in text
+
+    @pytest.mark.asyncio
+    async def test_no_reading_states_nothing(self):
+        assert "nearly full" not in await _rendered_request()
 
 
 #: What a channel gateway sends for its own surface, since langalpha ships no

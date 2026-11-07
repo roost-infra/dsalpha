@@ -92,6 +92,48 @@ async function configureIntradayDefaults() {
   }
 }
 
+/** The dashboard widget of the given registry type (`data-widget-type` on its frame). */
+function widget(page, type) {
+  return page.locator(`[data-widget-type="${type}"]`);
+}
+
+/** The watchlist/holdings widget from the default layout. */
+function holdingsWidget(page) {
+  return widget(page, 'personal.portfolioWatchlist');
+}
+
+/**
+ * Waits for the grid to stop moving. Each cell fits its content, so a widget
+ * whose data lands after first paint resizes its cell and the cells below it
+ * slide to their new places. A click is a press and a release: a row that
+ * slides out from under the pointer between the two takes the release to the
+ * page behind it, the click goes to an ancestor of both, and Playwright, which
+ * checks only the press, reports the click done while nothing opened.
+ *
+ * Settled is every placeholder gone (a skeleton bar, or a cell holding its
+ * height for one with `data-fit-hold`), so every widget's data is in, and then
+ * no cell moving across a window longer than the shrink debounce in
+ * WidgetFrame, after which a cell reports a smaller height and starts to slide.
+ */
+async function gridSettled(page) {
+  await expect(page.locator('.react-grid-layout').locator('[data-fit-hold], .animate-pulse')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => new Promise((resolve) => {
+    const cells = () => Array.from(document.querySelectorAll('.react-grid-item'), (cell) => {
+      const r = cell.getBoundingClientRect();
+      return `${r.x},${r.y},${r.width},${r.height}`;
+    }).join(' ');
+    const sliding = () => document.getAnimations().some((a) => a.effect?.target?.classList?.contains('react-grid-item'));
+    const start = performance.now();
+    const before = cells();
+    const frame = () => {
+      if (sliding() || cells() !== before) return resolve(false);
+      if (performance.now() - start > 300) return resolve(true);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }))).toBe(true);
+}
+
 // ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
@@ -114,19 +156,23 @@ test.describe('Market Indices & News', () => {
 
     await page.goto('/dashboard');
 
-    // Verify S&P 500 card renders with name, symbol, and price
-    await expect(page.locator('h3', { hasText: 'S&P 500' })).toBeVisible();
-    await expect(page.getByText('^GSPC')).toBeVisible();
-    await expect(page.getByText('5,500.25')).toBeVisible();
+    const markets = widget(page, 'markets.overview');
+
+    // Verify S&P 500 card renders with symbol, name, and price, giving the
+    // page's first paint the budget other specs give it. Each index is a card
+    // whose title (its symbol) is the card's button, its name beside it.
+    await expect(markets.getByRole('button', { name: 'GSPC', exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(markets.getByText('S&P 500', { exact: true })).toBeVisible();
+    await expect(markets.getByText('5,500.25')).toBeVisible();
 
     // Verify NASDAQ card
-    await expect(page.locator('h3', { hasText: 'NASDAQ' })).toBeVisible();
-    await expect(page.getByText('17,200.50')).toBeVisible();
+    await expect(markets.getByText('NASDAQ', { exact: true })).toBeVisible();
+    await expect(markets.getByText('17,200.50')).toBeVisible();
 
     // Verify all 5 index cards are present
-    await expect(page.locator('h3', { hasText: 'Dow Jones' })).toBeVisible();
-    await expect(page.locator('h3', { hasText: 'Russell 2000' })).toBeVisible();
-    await expect(page.locator('h3', { hasText: 'VIX' })).toBeVisible();
+    await expect(markets.getByText('Dow Jones', { exact: true })).toBeVisible();
+    await expect(markets.getByText('Russell 2000', { exact: true })).toBeVisible();
+    await expect(markets.getByRole('button', { name: 'VIX', exact: true })).toBeVisible();
   });
 
   test('news headlines render with tabs', async ({ page }) => {
@@ -145,30 +191,28 @@ test.describe('Market Indices & News', () => {
 
     await page.goto('/dashboard');
 
-    // Headlines render
-    await expect(
-      page.locator('h3[title="Tech Stocks Surge"]'),
-    ).toBeVisible();
-    await expect(
-      page.locator('h3[title="Fed Holds Rates Steady"]'),
-    ).toBeVisible();
+    const news = widget(page, 'news.feed');
 
-    // Tab buttons are present
-    await expect(
-      page.getByRole('button', { name: 'Market Pulse' }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('button', { name: 'Your Portfolio' }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole('button', { name: 'Your Watchlist' }),
-    ).toBeVisible();
+    // Headlines render in the default (Market) feed, one row a story
+    await expect(news.getByTitle('Tech Stocks Surge')).toBeVisible();
+    await expect(news.getByTitle('Fed Holds Rates Steady')).toBeVisible();
 
-    // Clicking "Your Portfolio" tab shows the empty state message
-    await page.getByRole('button', { name: 'Your Portfolio' }).click();
+    // Source tabs are present
+    for (const tab of ['Top', 'Market', 'Portfolio', 'Watchlist']) {
+      await expect(
+        news.getByRole('button', { name: tab, exact: true }),
+      ).toBeVisible();
+    }
+
+    // Switching to the Portfolio tab with no holdings shows its empty state
+    // in place of the market headlines
+    const portfolioTab = news.getByRole('button', { name: 'Portfolio', exact: true });
+    await portfolioTab.click();
+    await expect(portfolioTab).toHaveAttribute('aria-pressed', 'true');
     await expect(
-      page.locator('text=Add stocks to your portfolio'),
+      news.getByText('Add to portfolio to see news'),
     ).toBeVisible();
+    await expect(news.getByTitle('Tech Stocks Surge')).toHaveCount(0);
   });
 
   test('clicking news opens detail modal', async ({ page }) => {
@@ -197,8 +241,12 @@ test.describe('Market Indices & News', () => {
 
     await page.goto('/dashboard');
 
-    // Click the headline
-    await page.locator('h3[title="Earnings Beat Expectations"]').click();
+    // Click the headline once it stays put: the widgets above it are still
+    // loading and resizing their cells when it first shows.
+    const headline = widget(page, 'news.feed').getByTitle('Earnings Beat Expectations');
+    await expect(headline).toBeVisible({ timeout: 15000 });
+    await gridSettled(page);
+    await headline.click();
 
     // Modal opens with article content
     await expect(
@@ -220,10 +268,11 @@ test.describe('Market Indices & News', () => {
     await page.goto('/dashboard');
 
     // Wait for the S&P 500 card to appear
-    await expect(page.locator('h3', { hasText: 'S&P 500' })).toBeVisible();
+    const spx = widget(page, 'markets.overview').getByText('S&P 500', { exact: true });
+    await expect(spx).toBeVisible();
 
-    // Click the S&P 500 card (the motion.div wrapping the card)
-    await page.locator('h3', { hasText: 'S&P 500' }).click();
+    // Click the S&P 500 card: the whole card answers, not only its title
+    await spx.click();
 
     // Should navigate to /market?symbol=^GSPC
     await page.waitForURL('**/market?symbol=*GSPC*');
@@ -260,11 +309,14 @@ test.describe('Watchlist CRUD', () => {
 
     await page.goto('/dashboard');
 
-    // Ensure we are on the Watch tab (default)
-    await expect(page.locator('h2', { hasText: 'Watchlist' })).toBeVisible();
+    const holdings = holdingsWidget(page);
 
-    // Symbol renders
-    await expect(page.getByTestId('watchlist-row-TSLA')).toBeVisible();
+    // The widget opens on its Watch tab by default
+    await expect(holdings.getByText('Watchlist', { exact: true })).toBeVisible();
+
+    // Symbol renders with its quote
+    await expect(holdings.getByTitle('TSLA')).toBeVisible();
+    await expect(holdings.getByText('+2.04%')).toBeVisible();
   });
 
   test('add watchlist item', async ({ page }) => {
@@ -367,13 +419,18 @@ test.describe('Watchlist CRUD', () => {
     await page.goto('/dashboard');
 
     // Wait for the item to render
-    await expect(page.getByTestId('watchlist-row-TSLA')).toBeVisible();
+    const row = holdingsWidget(page).getByTitle('TSLA');
+    await expect(row).toBeVisible();
 
-    // Right-click to open context menu (Radix ContextMenu)
-    await page.getByTestId('watchlist-row-TSLA').click({ button: 'right' });
+    // Right-click to open the row's context menu (Radix ContextMenu)
+    await row.click({ button: 'right' });
 
     // Click "Delete" in context menu (Radix renders items as role="menuitem")
-    await page.getByRole('menuitem', { name: 'Delete' }).click();
+    // and wait for the DELETE to complete
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/watchlists/') && r.request().method() === 'DELETE'),
+      page.getByRole('menuitem', { name: 'Delete' }).click(),
+    ]);
 
     // Verify the DELETE request was made
     expect(deleteCalled).toBe(true);
@@ -450,25 +507,22 @@ test.describe('Portfolio CRUD', () => {
   test('portfolio holdings render', async ({ page }) => {
     await mockAPI(page, portfolioOverrides());
 
-    // Clear the tab selection so it defaults to watchlist, then switch
-    await page.addInitScript(() => {
-      localStorage.removeItem('portfolio_active_tab');
-    });
-
     await page.goto('/dashboard');
 
-    // Switch to Holdings tab
-    await page.getByRole('button', { name: 'Holdings' }).click();
+    const holdings = holdingsWidget(page);
 
-    // Heading changes
-    await expect(page.locator('h2', { hasText: 'Portfolio' })).toBeVisible();
+    // Switch from the default Watch tab to Holdings
+    await holdings.getByRole('button', { name: 'Holdings', exact: true }).click();
+    await expect(
+      holdings.getByRole('button', { name: 'Add Transaction' }),
+    ).toBeVisible();
 
     // Symbol and share count visible
-    await expect(page.getByTestId('portfolio-row-AAPL')).toBeVisible();
-    await expect(page.locator('text=10 shares')).toBeVisible();
+    await expect(holdings.getByTitle('AAPL')).toBeVisible();
+    await expect(holdings.getByText('10 shares')).toBeVisible();
 
-    // Market value ($1,800.00 = 10 shares * $180.00)
-    await expect(page.getByText('$1,800.00').first()).toBeVisible();
+    // Market value ($1,800.00 = 10 shares * $180.00), in the row and the NAV
+    await expect(holdings.getByText('$1,800.00').first()).toBeVisible();
   });
 
   test('add portfolio holding', async ({ page }) => {
@@ -556,29 +610,32 @@ test.describe('Portfolio CRUD', () => {
     await page.goto('/dashboard');
 
     // Switch to Holdings tab
-    await page.getByRole('button', { name: 'Holdings' }).click();
-    await expect(page.getByTestId('portfolio-row-AAPL')).toBeVisible();
+    const holdings = holdingsWidget(page);
+    await holdings.getByRole('button', { name: 'Holdings', exact: true }).click();
+    const row = holdings.getByTitle('AAPL');
+    await expect(row).toBeVisible();
 
-    // Right-click to open context menu (Radix ContextMenu)
-    await page.getByTestId('portfolio-row-AAPL').click({ button: 'right' });
+    // Right-click to open the row's context menu (Radix ContextMenu)
+    await row.click({ button: 'right' });
 
     // Click "Edit" in context menu (Radix renders items as role="menuitem")
     await page.getByRole('menuitem', { name: 'Edit' }).click();
 
-    // Edit dialog opens with pre-filled values
-    await expect(
-      page.locator('text=Edit holding').first(),
-    ).toBeVisible();
+    // Edit dialog opens with the holding's values pre-filled
+    const editDialog = page.getByRole('dialog', { name: /Edit holding/ });
+    await expect(editDialog).toBeVisible();
 
-    // The edit dialog has two number inputs: Quantity and Average Cost Per Share
-    const editDialogInputs = page.locator('[role="dialog"] input[type="number"]');
+    // The edit dialog has two number inputs: Quantity and Average Cost
+    const editDialogInputs = editDialog.getByRole('spinbutton');
+    await expect(editDialogInputs.nth(0)).toHaveValue('10');
+    await expect(editDialogInputs.nth(1)).toHaveValue('150');
     await editDialogInputs.nth(0).fill('20');
     await editDialogInputs.nth(1).fill('155');
 
     // Click Save and wait for the PUT to complete
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/portfolio/') && r.request().method() === 'PUT'),
-      page.getByRole('button', { name: 'Save' }).click(),
+      editDialog.getByRole('button', { name: 'Save' }).click(),
     ]);
 
     // Verify PUT was called with new values
@@ -600,11 +657,13 @@ test.describe('Portfolio CRUD', () => {
     await page.goto('/dashboard');
 
     // Switch to Holdings tab
-    await page.getByRole('button', { name: 'Holdings' }).click();
-    await expect(page.getByTestId('portfolio-row-AAPL')).toBeVisible();
+    const holdings = holdingsWidget(page);
+    await holdings.getByRole('button', { name: 'Holdings', exact: true }).click();
+    const row = holdings.getByTitle('AAPL');
+    await expect(row).toBeVisible();
 
-    // Right-click to open context menu (Radix ContextMenu)
-    await page.getByTestId('portfolio-row-AAPL').click({ button: 'right' });
+    // Right-click to open the row's context menu (Radix ContextMenu)
+    await row.click({ button: 'right' });
 
     // Click "Delete" in context menu (Radix renders items as role="menuitem")
     await page.getByRole('menuitem', { name: 'Delete' }).click();
@@ -614,12 +673,15 @@ test.describe('Portfolio CRUD', () => {
       page.locator('text=Remove this holding from your portfolio?'),
     ).toBeVisible();
 
-    // Click the confirm "Delete" button in the ConfirmDialog
+    // Click the confirm "Delete" button in the ConfirmDialog and wait for the DELETE to complete
     // The ConfirmDialog has two buttons: Cancel and the confirm label (Delete)
     const confirmDialog = page.locator('[role="dialog"]', {
       hasText: 'Remove this holding',
     });
-    await confirmDialog.getByRole('button', { name: 'Delete' }).click();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/portfolio/') && r.request().method() === 'DELETE'),
+      confirmDialog.getByRole('button', { name: 'Delete' }).click(),
+    ]);
 
     // Verify the DELETE request was sent
     expect(deleteCalled).toBe(true);
@@ -631,7 +693,7 @@ test.describe('Portfolio CRUD', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Personalization', () => {
-  test('personalization banner appears when onboarding incomplete', async ({ page }) => {
+  test('the welcome banner appears until an investing profile is saved', async ({ page }) => {
     // Do NOT suppress personalization for this test -- override beforeEach
     await page.addInitScript(() => {
       localStorage.removeItem('langalpha-onboarding-ignored-at');
@@ -651,21 +713,19 @@ test.describe('Personalization', () => {
 
     await page.goto('/dashboard');
 
-    // Personalization banner should appear
-    await expect(
-      page.locator('text=Personalize your experience'),
-    ).toBeVisible();
+    // The banner offering the welcome flow should appear
+    const banner = page.getByTestId('welcome-banner');
+    await expect(banner.getByText('Set up your investing profile')).toBeVisible();
+    await expect(banner.getByRole('button', { name: 'Set up' })).toBeVisible();
 
     // Dismiss button present (X icon with aria-label)
-    const dismissBtn = page.getByRole('button', { name: 'Close' });
+    const dismissBtn = banner.getByRole('button', { name: 'Close' });
     await expect(dismissBtn).toBeVisible();
 
     // Click dismiss to close the banner
     await dismissBtn.click();
 
     // Banner should disappear
-    await expect(
-      page.locator('text=Personalize your experience'),
-    ).not.toBeVisible();
+    await expect(banner).not.toBeVisible();
   });
 });

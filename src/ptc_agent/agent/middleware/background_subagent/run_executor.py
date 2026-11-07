@@ -26,10 +26,6 @@ from ptc_agent.agent.middleware.credit_gate import (
     current_credit_gate,
 )
 from ptc_agent.agent.middleware.background_subagent.outcomes import Outcome
-from ptc_agent.agent.middleware.background_subagent.redis_stream import (
-    parse_steering_payload,
-    steering_queue_key,
-)
 from ptc_agent.agent.middleware.background_subagent.registry import (
     BackgroundTask,
     BackgroundTaskRegistry,
@@ -98,91 +94,41 @@ def _merge_subagent_usage(
         task.tool_usage[name] = task.tool_usage.get(name, 0) + count
 
 
-async def _return_unconsumed_steering(
-    registry: "BackgroundTaskRegistry | None", task: BackgroundTask
+async def _emit_returned_steering(
+    registry: "BackgroundTaskRegistry | None",
+    task: BackgroundTask,
+    run_row: dict[str, Any],
 ) -> None:
-    """Drain the run-scoped steering queue at run end into
-    ``steering_returned`` events — accepted input a run never consumed is
-    surfaced, not left for a later resume or a silent TTL death.
-
-    Read → surface → delete, in that order: the queue is erased only after
-    every entry made it into the event archive, so a spill failure (or a
-    crash) between the two leaves the entries in Redis until TTL instead of
-    silently destroying acknowledged input. No producer can slip in behind
-    the read — the post-push verify sees the terminal meta (written before
-    this sweep) and reclaims its own entry."""
-    try:
-        from src.utils.cache.redis_cache import get_cache_client
-
-        cache = get_cache_client()
-        if not cache.enabled or not cache.client:
-            return
-        if task.redis_write_failed or registry is None:
-            # Torn transport: appends would no-op against the open circuit
-            # and the delete would erase input nothing surfaced.
-            return
-        key = steering_queue_key(task.tool_call_id, task.task_run_id)
-        raw_messages = await cache.client.lrange(key, 0, -1) or []
-        if not raw_messages:
-            return
-        ts = time.time()
-        seq_before = task.captured_event_seq
-        appended = 0
-        for raw in raw_messages:
-            payload = parse_steering_payload(raw)
-            if payload is None:
-                continue
-            appended += 1
+    """Stream the steering the run gave back unread as ``steering_returned``
+    frames, ahead of its ``run_end``. The ledger settled them in the
+    transaction that stamped the cancel or ended the run, and kept them on
+    the row for replay; these frames are the live copy."""
+    facts = run_row.get("replay_facts")
+    returned = facts.get("steering_returned") if isinstance(facts, dict) else None
+    if registry is None or not returned:
+        return
+    ts = time.time()
+    for entry in returned:
+        try:
             # Identity-exact append: this settle may run after cancel
-            # teardown evicted the entry (or its tool_call_id was reused
-            # by a re-registration) — resolving by id would drop the frame
-            # or write it into the replacement task's streams.
+            # teardown evicted the entry (or its tool_call_id was reused by a
+            # re-registration). ``terminal`` lets the frames through a kill's
+            # stream seal: they are unwind bookkeeping.
             await registry.append_event_for_task(
                 task,
                 {
                     "event": "steering_returned",
-                    "data": {
-                        "agent": f"task:{task.task_id}",
-                        "content": payload["content"],
-                        "input_id": payload["input_id"],
-                        "reason": "run_ended",
-                    },
+                    "data": {"agent": f"task:{task.task_id}", **entry},
                     "ts": ts,
                 },
-                # A kill seals the task's streams; the returned-input record
-                # is unwind bookkeeping that must land regardless — without
-                # it the accepted instruction is neither delivered nor
-                # returned anywhere durable, and the queue delete below
-                # erases the last copy.
                 terminal=True,
             )
-        if task.redis_write_failed:
-            return  # a spill tore mid-sweep — keep the queue for the record
-        if task.captured_event_seq - seq_before < appended:
-            # Landed-check: identity-exact appends only skip on the
-            # cancelled/terminal guard, so a seq lag means the frames did
-            # NOT reach the archive — keep the queue as the TTL record
-            # rather than erase acknowledged input nothing surfaced.
+        except Exception:
             logger.warning(
-                "unconsumed-steering sweep withheld; appends did not land",
+                "steering_returned frame append failed",
                 task_id=task.task_id,
-                task_run_id=task.task_run_id,
-                pending=appended,
+                exc_info=True,
             )
-            return
-        await cache.client.delete(key)
-        logger.info(
-            "returned unconsumed steering input",
-            task_id=task.task_id,
-            task_run_id=task.task_run_id,
-            count=len(raw_messages),
-        )
-    except Exception:
-        logger.warning(
-            "unconsumed-steering sweep failed",
-            task_id=task.task_id,
-            exc_info=True,
-        )
 
 
 @asynccontextmanager
@@ -249,8 +195,15 @@ async def _run_background_task(
     async def run_handler() -> ToolMessage | Command:
         current_background_token_tracker.set(tracker)
         set_tool_tracker(tool_tracker)
-        async with _child_credit_lane(task, tracker, tool_tracker, label):
-            return await handler(request)
+        try:
+            async with _child_credit_lane(task, tracker, tool_tracker, label):
+                return await handler(request)
+        finally:
+            # The astream loop sends a held delta only once it is due, so the
+            # run's last one is still held here. It goes out before the
+            # outcome is judged on the stream's health: a spill that fails
+            # after that would leave a "completed" run with no run_end.
+            await _flush_held_delta(task, registry)
 
     handler_task: asyncio.Task[ToolMessage | Command] = asyncio.create_task(
         run_handler()
@@ -364,6 +317,21 @@ async def _run_background_task(
             )
 
 
+async def _flush_held_delta(
+    task: BackgroundTask, registry: "BackgroundTaskRegistry | None"
+) -> None:
+    if registry is None:
+        return
+    try:
+        await registry.flush_held_delta(task)
+    except Exception:
+        logger.warning(
+            "subagent_held_delta_flush_failed",
+            task_id=task.task_id,
+            exc_info=True,
+        )
+
+
 async def _settle_terminal_run(
     task: BackgroundTask,
     *,
@@ -377,8 +345,8 @@ async def _settle_terminal_run(
     Shared by the settling writer and the cancelled-before-spawn paths
     (publish-fence refusal, writer cancelled before its first tick) so every
     terminal honors the stream contract: ledger CAS (deferred run_end) →
-    terminal meta → steering sweep → conditional run_end → stream sentinel +
-    retention → fence release. Terminal meta is written BEFORE the namespace
+    terminal meta → returned steering frames → conditional run_end → stream
+    sentinel + retention → fence release. Terminal meta is written BEFORE the namespace
     releases: every meta write happens while holding N(task:id), so a
     successor (who can only acquire after the release) always writes
     "running" after this writer's terminal state — never under it.
@@ -398,6 +366,7 @@ async def _settle_terminal_run(
         else ("completed" if ledger_status == "completed" else "error")
     )
     run_finalized = False
+    run_row: dict[str, Any] = {}
     # False only when this coroutine provably lost the terminal CAS
     # to a recovery finalizer (whose run_end is already appended).
     # A finalize *exception* keeps it True: the row is still open,
@@ -413,14 +382,15 @@ async def _settle_terminal_run(
                 # A user cancel is not a failure — don't let the
                 # unwind path's default failure text ride the row.
                 failure=None if task.cancelled else ledger_failure,
-                # run_end is appended below, AFTER the steering
-                # sweep — its steering_returned frames must precede
-                # the terminal frame, and nothing may follow it.
+                # run_end is appended below, AFTER the run's
+                # steering_returned frames — they must precede the
+                # terminal frame, and nothing may follow it.
                 defer_run_end=True,
             )
             run_finalized = True
             cas_applied = bool(finalized.get("applied"))
-            row_status = (finalized.get("run") or {}).get("status")
+            run_row = finalized.get("run") or {}
+            row_status = run_row.get("status")
             if row_status:
                 terminal_status = str(row_status)
         except Exception:
@@ -439,17 +409,13 @@ async def _settle_terminal_run(
                 task_id=task.task_id,
                 exc_info=True,
             )
-    # Accepted-but-unconsumed steering must not outlive its run: the
-    # sender was told "success", and the run-scoped queue would
-    # otherwise sit in Redis until TTL. Sweep it into
-    # steering_returned events (after the terminal meta, so producers
-    # that re-check status can no longer enqueue behind the sweep).
-    # A lost CAS skips the sweep: the recovery winner's run_end is
-    # already on the stream, and frames appended after it are never
-    # read — worse, they'd bait append_run_end's tail check into a
-    # second terminal frame. That steering TTLs out with the queue.
-    if task.task_run_id and cas_applied:
-        await _return_unconsumed_steering(registry, task)
+    # Steering the run gave back unread reaches the stream before run_end.
+    # A lost CAS skips it: the recovery winner's run_end is already on the
+    # stream, frames appended after it are never read, and they would bait
+    # append_run_end's tail check into a second terminal frame. Replay still
+    # shows them, from the row.
+    if run_finalized and cas_applied:
+        await _emit_returned_steering(registry, task, run_row)
     # The cursor-bearing run_end closes the v2 run stream — only
     # after a durable CAS won by THIS writer (a lost CAS means the
     # recovery finalizer already appended it; a still-open row must
@@ -462,6 +428,7 @@ async def _settle_terminal_run(
                 task.task_run_id,
                 task_id=task.task_id,
                 outcome=terminal_status,
+                finalized_at=run_row.get("finalized_at"),
             )
         except Exception:
             logger.warning(
@@ -473,7 +440,7 @@ async def _settle_terminal_run(
     # Seal the per-task stream LAST. Content spills XADD with
     # explicit ``{seq}-0`` ids and Redis rejects ids behind the
     # sentinel's auto-generated (timestamp) id — a sentinel written
-    # at astream-loop exit would make the sweep's steering_returned
+    # at astream-loop exit would make the steering_returned frames'
     # spill fail and trip the write circuit-breaker.
     if registry is not None:
         # Identity-exact stream ops: this settle may outlive the task's

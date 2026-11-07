@@ -8,12 +8,26 @@
  */
 
 import type { CustomModelEntry } from '@/components/model/types';
-import type { ModelProfile } from './modelTuning';
+import type { AccountTuning, ModelProfile } from './modelTuning';
+import { HIDDEN_KEY, STARRED_KEY, STARRED_ONLY_KEY, modelList } from './favoriteModels';
 
 export interface PreferencesLike {
   other_preference?: Record<string, unknown> | null;
   model_preference?: Record<string, unknown> | null;
 }
+
+/**
+ * What a change of the default model does to existing threads: `ask` puts the
+ * question to the user each time, the other two answer it in advance.
+ */
+export type DefaultModelScope = 'ask' | 'new_threads' | 'existing_threads';
+
+/** The answer one write carries (`apply_default_to`), never stored itself. */
+export type ApplyDefaultTo = Exclude<DefaultModelScope, 'ask'>;
+
+/** What the Background model runs with no Background default saved: the primary default, or the
+ *  deployment's Background model (Auto). Absent reads as `primary`. */
+export type BackgroundFollows = 'primary' | 'deployment';
 
 /** A sub-provider the user defined, as stored. */
 export interface CustomProviderEntry {
@@ -26,12 +40,12 @@ export interface CustomProviderEntry {
  * The stored model bag: catalog, routing, and the account-wide tuning a model
  * inherits when its own profile is silent.
  *
- * Extends `ModelProfile` because the four tuning fields are the same settings
+ * Extends `AccountTuning` because the tuning fields are the same settings
  * at the account layer that a profile overrides per model.
  */
-export interface ModelPreferences extends ModelProfile {
+export interface ModelPreferences extends AccountTuning {
   preferred_model?: string | null;
-  preferred_flash_model?: string | null;
+  preferred_background_model?: string | null;
   compaction_model?: string | null;
   summarization_model?: string | null;
   fetch_model?: string | null;
@@ -42,6 +56,9 @@ export interface ModelPreferences extends ModelProfile {
   // the server applies (`profiles[<model>]: None`), so the value side is
   // nullable as well as the whole map.
   profiles?: Record<string, ModelProfile | null> | null;
+  /** Absent reads as `ask`. */
+  default_model_scope?: DefaultModelScope | null;
+  background_follows?: BackgroundFollows | null;
 }
 
 /**
@@ -54,7 +71,7 @@ export interface ModelPreferences extends ModelProfile {
  */
 const MOVED_KEYS: readonly (keyof ModelPreferences)[] = [
   'preferred_model',
-  'preferred_flash_model',
+  'preferred_background_model',
   'compaction_model',
   'summarization_model',
   'fetch_model',
@@ -79,11 +96,15 @@ export const MOVED_MODEL_KEYS: ReadonlySet<string> = new Set<string>(MOVED_KEYS)
  */
 export const MODEL_PREF_KEYS: ReadonlySet<string> = new Set<string>([
   ...MOVED_KEYS,
-  // Neither ever lived in `other_preference`: `profiles` is new, and
-  // `prompt_guidance` appears there only if 034's downgrade puts it back. They
-  // route to the model column without having a copy to read underneath.
+  // None ever lived in `other_preference`: `profiles`, `default_model_scope`,
+  // `background_follows` and `native_compaction` are new, and `prompt_guidance`
+  // appears there only if 034's downgrade puts it back. They route to the model
+  // column without having a copy to read underneath.
   'profiles',
   'prompt_guidance',
+  'default_model_scope',
+  'background_follows',
+  'native_compaction',
 ]);
 
 /**
@@ -151,4 +172,122 @@ export function splitPreferenceWrite(patch: PreferencePatch): {
     ...(Object.keys(model).length > 0 ? { model_preference: model } : {}),
     ...(Object.keys(other).length > 0 ? { other_preference: other } : {}),
   };
+}
+
+/** Whether a preferences write changes model configuration, as its variables
+ *  show: anything in the model column, or the quick-access lists that stayed
+ *  in `other_preference`. */
+export function isModelWrite(variables: unknown): boolean {
+  const patch = variables as PreferencesLike | null | undefined;
+  const other = patch?.other_preference ?? {};
+  return patch?.model_preference != null || [STARRED_KEY, HIDDEN_KEY, STARRED_ONLY_KEY].some((key) => key in other);
+}
+
+/** The models on the user's list. They stay in `other_preference` by design
+ *  (see `MODEL_PREF_KEYS`), so they are never read off the model bag. */
+export function starredModels(prefs: unknown): string[] {
+  return modelList((prefs as PreferencesLike | null)?.other_preference?.starred_models);
+}
+
+/** Every single-model slot a model can be named in. */
+const MODEL_SLOTS = [
+  'preferred_model',
+  'preferred_background_model',
+  'compaction_model',
+  'summarization_model',
+  'fetch_model',
+] as const;
+
+/**
+ * The patch that takes the models `isGone` names out of everything that
+ * refers to them: the slots, the fallbacks, the list and their profiles. A
+ * key with nothing to take out is left out of the patch. Emptied, the starred
+ * list is cleared, but the fallbacks are saved as `[]`: cleared, they would
+ * hand the user the deployment's list, fallbacks they never picked.
+ *
+ * Profiles are keyed by name only, so one left behind would be inherited by
+ * whatever answers to that name next: a built-in a removed custom model
+ * shadowed would pick up its effort and compaction.
+ */
+export function pruneModelReferences(prefs: unknown, isGone: (model: string) => boolean): PreferencePatch {
+  const bag = modelPrefs(prefs);
+  const patch: PreferencePatch = {};
+  for (const slot of MODEL_SLOTS) {
+    const value = bag[slot];
+    if (typeof value === 'string' && isGone(value)) patch[slot] = null;
+  }
+  const prune = (key: 'fallback_models' | 'starred_models', list: string[], emptied: [] | null) => {
+    const kept = list.filter((m) => !isGone(m));
+    if (kept.length !== list.length) patch[key] = kept.length > 0 ? kept : emptied;
+  };
+  prune('fallback_models', bag.fallback_models ?? [], []);
+  prune('starred_models', starredModels(prefs), null);
+  const stale = Object.keys(bag.profiles ?? {}).filter(isGone);
+  if (stale.length > 0) patch.profiles = Object.fromEntries(stale.map((m) => [m, null]));
+  return patch;
+}
+
+/** The two model slots: Default, which every composer and thread starts on,
+ *  and Background, the second, cheaper one. Anything else is read as Default. */
+export type ModelSlot = 'default' | 'background';
+
+/** The deployment's defaults, as the models endpoint reports them. A
+ *  deployment that names no Background model reports it as "". */
+export interface DeploymentModelDefaults {
+  default_model?: string;
+  background_model?: string;
+}
+
+/** The preference key that holds the default for `slot`. The one place a
+ *  slot maps to its stored field. */
+export function defaultModelKey(slot: ModelSlot | undefined): 'preferred_model' | 'preferred_background_model' {
+  return slot === 'background' ? 'preferred_background_model' : 'preferred_model';
+}
+
+/**
+ * The model a thread with none of its own runs on in `slot`.
+ *
+ * The same rule the server runs a turn on and uses to decide which threads sit
+ * on the old default when the default moves, so "your default" names one model
+ * on both sides. Background inherits the Default choice unless the user chose
+ * Auto for it, then the deployment's background model, and a deployment
+ * without one runs it on its default model.
+ */
+export function slotDefaultModel(
+  prefs: ModelPreferences,
+  deployment: DeploymentModelDefaults | null | undefined,
+  slot: ModelSlot | undefined,
+): string | null {
+  if (slot === 'background') {
+    const primary = prefs.background_follows === 'deployment' ? null : prefs.preferred_model;
+    return prefs.preferred_background_model || primary
+      || deployment?.background_model || deployment?.default_model || null;
+  }
+  return prefs.preferred_model || deployment?.default_model || null;
+}
+
+/** The Background default control's value for Auto. Not a model name, which an
+ *  option value could not otherwise be told apart from. */
+export const BACKGROUND_AUTO = '__auto__';
+
+/** What the Background default control shows: the saved model, Auto, or '' for
+ *  the primary. Auto beside an unset primary runs what '' does, so it shows
+ *  as ''. */
+export function backgroundDefaultChoice(prefs: ModelPreferences): string {
+  if (prefs.preferred_background_model) return prefs.preferred_background_model;
+  return prefs.background_follows === 'deployment' && prefs.preferred_model ? BACKGROUND_AUTO : '';
+}
+
+/** The threads a write moved off the old default; undefined from a server
+ *  that does not count them. */
+export function threadsMoved(result: unknown): number | undefined {
+  const count = (result as { threads_reassigned?: unknown } | undefined)?.threads_reassigned;
+  return typeof count === 'number' ? count : undefined;
+}
+
+/** The saved answer to "do existing threads follow a new default", `ask` when
+ *  none is saved or the stored value is not one this client knows. */
+export function readDefaultModelScope(prefs: unknown): DefaultModelScope {
+  const scope = modelPrefs(prefs).default_model_scope;
+  return scope === 'new_threads' || scope === 'existing_threads' ? scope : 'ask';
 }

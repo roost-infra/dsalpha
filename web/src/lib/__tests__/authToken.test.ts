@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const getSession = vi.fn();
@@ -20,6 +21,11 @@ vi.mock('../supabase', () => ({
 
 vi.mock('../authCooldown', () => ({
   tokenEndpointCooldownRemainingMs: () => cooldownMs,
+}));
+
+const setStorageUser = vi.fn();
+vi.mock('../userStorage', () => ({
+  setStorageUser: (userId: string | null) => setStorageUser(userId),
 }));
 
 const NOW = new Date('2026-09-01T12:00:00Z').getTime();
@@ -202,6 +208,19 @@ describe('a clock corrected backwards', () => {
     refreshSession.mockResolvedValue({ data: { session: session(3600, 'healed') } });
 
     await expect(refreshAccessToken('fresh')).resolves.toBe('healed');
+  });
+});
+
+describe('who stored values belong to', () => {
+  it('follows the session, so nothing is stored for a user who left', async () => {
+    const { publishSession, clearAuthToken } = await loadModule();
+    setStorageUser.mockClear();
+    publishSession(session(3600) as never);
+    publishSession(null);
+    publishSession(session(3600) as never);
+    clearAuthToken();
+
+    expect(setStorageUser.mock.calls).toEqual([['u1'], [null], ['u1'], [null]]);
   });
 });
 
@@ -518,7 +537,7 @@ describe('storm bounds', () => {
     landReply({ data: { session: session(3600, 'late-A') } });
 
     // The read that started as A answers with nothing rather than B's token.
-    // Refusing the stale reply is only half of it: the axios interceptor stamps
+    // Refusing the stale reply is only half of it: the API client stamps
     // whatever comes back with the CURRENT generation, so a token handed over
     // here would look correctly attributed while carrying a request A's UI
     // built -- a mutation included.

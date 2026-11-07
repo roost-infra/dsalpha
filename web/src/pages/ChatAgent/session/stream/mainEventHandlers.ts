@@ -9,9 +9,10 @@ import { ownerOfToolCall } from '../toolCallOwner';
 import { deriveTaskSegment, applyTaskSegment, applyLaunchReply } from '../subagents/taskSegmentBuilder';
 import type { MessageRecord, SetMessages, ToolCallRecord, ToolCallResultRecord, TodoPayload, HtmlWidgetData } from '../../hooks/utils/types';
 import type { ProvenanceEvent } from '@/types/sse';
-import type { ProvenanceRecord, SubagentTaskRecord, TextSegment } from '@/types/chat';
+import type { ContentSegment, PendingToolCallChunk, ProvenanceRecord, SubagentTaskRecord, TextSegment } from '@/types/chat';
 import { provenanceEventToRecord, provenanceRecordKey } from './provenance';
-import { extractLastReasoningTitle, nextArrivalSeq } from '../streamRefs';
+import { appendTextChunk } from './textChunks';
+import { addToolCallChunk, hasPreparing, removeLandedToolCall, withoutPending } from './toolCallChunks';
 import type { StreamRefs, ToolCallChunkRecord } from '../streamRefs';
 
 /**
@@ -23,18 +24,24 @@ import type { StreamRefs, ToolCallChunkRecord } from '../streamRefs';
  * @param {Function} params.setMessages - State setter for messages
  * @returns {boolean} True if event was handled
  */
-export function handleReasoningSignal({ assistantMessageId, signalContent, refs, setMessages, eventId }: {
+export function handleReasoningSignal({ assistantMessageId, signalContent, refs, setMessages, eventId, elapsedMs }: {
   assistantMessageId: string;
   signalContent: string;
   refs: StreamRefs;
   setMessages: SetMessages;
   eventId?: number | null;
+  /** The server's measured duration on a complete signal. */
+  elapsedMs?: number;
 }): boolean {
   const { contentOrderCounterRef, currentReasoningIdRef } = refs;
-  // Stamped on arrival, not inside the updater: React runs the updater after
-  // a reconnect flush has already flipped the bag live, and a completion the
-  // backlog carried must still fold on arrival rather than take a live turn.
-  const completedAt = refs.isReconnect ? 1 : Date.now();
+  // Read on arrival, not inside the updater. React defers the updater to the
+  // render phase, and by then the flush that carried this event has already
+  // flipped the bag live, so a closure over `refs` reads the live value: a
+  // completion the backlog carried would take a live turn rather than fold,
+  // and a replayed thought would start its clock at the reconnect instant.
+  const fromBacklog = refs.isReconnect;
+  const now = Date.now();
+  const completedAt = fromBacklog ? 1 : now;
 
   if (signalContent === 'start') {
     // Reasoning process has started - create new reasoning process
@@ -62,6 +69,7 @@ export function handleReasoningSignal({ assistantMessageId, signalContent, refs,
             isReasoning: true,
             reasoningComplete: false,
             order: currentOrder,
+            _startedAt: fromBacklog ? undefined : now,
           },
         };
 
@@ -83,12 +91,13 @@ export function handleReasoningSignal({ assistantMessageId, signalContent, refs,
 
           const reasoningProcesses = { ...((msg.reasoningProcesses as Record<string, Record<string, unknown>>) || {}) };
           if (reasoningProcesses[reasoningId]) {
+            const startedAt = reasoningProcesses[reasoningId]._startedAt as number | undefined;
             reasoningProcesses[reasoningId] = {
               ...reasoningProcesses[reasoningId],
               isReasoning: false,
               reasoningComplete: true,
-              reasoningTitle: null,
               _completedAt: completedAt,
+              elapsedMs: elapsedMs ?? (startedAt && !fromBacklog ? completedAt - startedAt : undefined),
             };
           }
 
@@ -131,20 +140,14 @@ export function handleReasoningContent({ assistantMessageId, content, refs, setM
         const reasoningProcesses = { ...((msg.reasoningProcesses as Record<string, Record<string, unknown>>) || {}) };
         if (reasoningProcesses[reasoningId]) {
           const newContent = ((reasoningProcesses[reasoningId].content as string) || '') + content;
-          const reasoningTitle = extractLastReasoningTitle(newContent) ?? (reasoningProcesses[reasoningId].reasoningTitle as string | null) ?? null;
           reasoningProcesses[reasoningId] = {
             ...reasoningProcesses[reasoningId],
             content: newContent,
             isReasoning: true,
-            reasoningTitle,
           };
         }
 
-        return {
-          ...msg,
-          reasoningProcesses,
-          arrivalSeq: nextArrivalSeq(msg),
-        };
+        return { ...msg, reasoningProcesses };
       })
     );
     return true;
@@ -176,19 +179,25 @@ export function handleTextContent({ assistantMessageId, content, finishReason, r
   // Handle finish_reason
   if (finishReason) {
     if (finishReason === 'tool_calls' && !content) {
-      // Message is requesting tool calls, don't mark as complete yet
+      // Message is requesting tool calls, don't mark as complete yet. Its
+      // calls have all landed by now.
+      setMessages((prev: MessageRecord[]) =>
+        prev.some((msg) => msg.id === assistantMessageId && hasPreparing(msg))
+          ? prev.map((msg) => (msg.id === assistantMessageId ? withoutPending(msg) : msg))
+          : prev
+      );
       return false; // Let tool_calls handler process this
     } else if (!content) {
       // Metadata chunk with finish_reason but no content. A "stopped" reason
       // (synthetic from a user stop, live or replayed) also stamps the message
-      // so the per-message "⏹ Stopped" chip renders, and clears any in-flight
-      // tool-call chunks so the "generating (~N chars)…" preparing row stops
-      // shimmering (the partial tool call never completed and is discarded).
+      // so the per-message "⏹ Stopped" chip renders. Either way the model call
+      // is over, so any in-flight tool-call chunks go and the preparing row
+      // stops shimmering (the partial tool call never completed).
       const isStopped = finishReason === 'stopped';
       setMessages((prev: MessageRecord[]) =>
         prev.map((msg: MessageRecord) =>
           msg.id === assistantMessageId
-            ? { ...msg, isStreaming: false, ...(isStopped ? { stopped: true, pendingToolCallChunks: {} } : {}) }
+            ? { ...withoutPending(msg), isStreaming: false, ...(isStopped ? { stopped: true } : {}) }
             : msg
         )
       );
@@ -205,15 +214,7 @@ export function handleTextContent({ assistantMessageId, content, finishReason, r
       prev.map((msg: MessageRecord) => {
         if (msg.id !== assistantMessageId) return msg;
 
-        const newSegments = [
-          ...((msg.contentSegments as unknown[]) || []),
-          {
-            type: 'text',
-            content,
-            order: currentOrder,
-            ...(phase ? { phase } : {}),
-          },
-        ];
+        const newSegments = appendTextChunk((msg.contentSegments as ContentSegment[]) || [], content, currentOrder, phase);
 
         const accumulatedText = ((msg.content as string) || '') + content;
 
@@ -223,7 +224,6 @@ export function handleTextContent({ assistantMessageId, content, finishReason, r
           content: accumulatedText,
           contentType: 'text',
           isStreaming: true,
-          arrivalSeq: nextArrivalSeq(msg),
         };
       })
     );
@@ -272,19 +272,24 @@ export function handleToolCalls({ assistantMessageId, toolCalls, finishReason: _
     const toolCallId = toolCall.id;
 
     if (toolCallId) {
+      // Taken on arrival like `createdAt`, even for a call already recorded
+      // (a skipped counter value orders nothing): run from the updater, it
+      // would count after chunks that arrived later.
+      const arrivalOrder = eventId != null
+        ? eventId + toolIndex * 0.01
+        : ++contentOrderCounterRef.current;
       setMessages((prev: MessageRecord[]) =>
         prev.map((msg: MessageRecord) => {
           if (msg.id !== assistantMessageId) return msg;
 
           const toolCallProcesses = { ...((msg.toolCallProcesses as Record<string, Record<string, unknown>>) || {}) };
           const contentSegments = [...((msg.contentSegments as Record<string, unknown>[]) || [])];
+          const firstLanding = !toolCallProcesses[toolCallId];
 
           let currentOrder: number;
 
           if (!toolCallProcesses[toolCallId]) {
-            currentOrder = eventId != null
-              ? eventId + toolIndex * 0.01
-              : ++contentOrderCounterRef.current;
+            currentOrder = arrivalOrder;
 
             contentSegments.push({
               type: 'tool_call',
@@ -324,7 +329,8 @@ export function handleToolCalls({ assistantMessageId, toolCalls, finishReason: _
             contentSegments,
             toolCallProcesses,
             subagentTasks,
-            pendingToolCallChunks: {},
+            pendingToolCallChunks: removeLandedToolCall(
+              (msg.pendingToolCallChunks as Record<string, PendingToolCallChunk> | undefined) ?? {}, toolCallId, firstLanding),
           };
         })
       );
@@ -357,6 +363,13 @@ export function handleToolCallResult({ assistantMessageId, toolCallId, result, r
     return false;
   }
 
+  // Read on arrival, not inside the updater, for the reason `_startedAt` is:
+  // React defers the updater to the render phase, by which point a backlog
+  // flush has already cleared the flag, so a closure over `refs` would date a
+  // replayed result to the reconnect. A replayed turn is settled anyway and
+  // carries the server's own stamp, so no local one is wanted there.
+  const settledAt = refs.isReconnect ? undefined : Date.now();
+
   setMessages((prev: MessageRecord[]) => {
     // The message that made the call, which is an earlier one whenever a gate
     // stopped it: the resume answers it in the next turn, under a new message.
@@ -383,10 +396,14 @@ export function handleToolCallResult({ assistantMessageId, toolCallId, result, r
           isInProgress: false,
           isComplete: true,
           isFailed,
+          // When this call is one of `ALWAYS_LIVE_TOOLS`, it is what kept the
+          // turn live past the end of the stream, so it is also what ends it.
+          _settledAt: settledAt,
         };
       } else {
-        // Orphaned tool_call_result without matching tool_calls (e.g., SubmitPlan
-        // result arriving in a HITL resume stream). Skip silently.
+        // Orphaned tool_call_result without matching tool_calls (e.g., the result
+        // of a tool that interrupted, arriving in the HITL resume stream while its
+        // call sits on the bubble before). Skip silently.
         return msg;
       }
 
@@ -502,6 +519,8 @@ export function handleTodoUpdate({ assistantMessageId, artifactType, artifactId,
   const baseTodoListId = artifactId || `todo-list-base-${Date.now()}`;
   // Create a unique segment ID that includes timestamp to ensure chronological ordering
   const segmentId = `${baseTodoListId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  // Always create a new segment for each todo_update event to preserve chronological order
+  const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
   setMessages((prev: MessageRecord[]) => {
     const updated = prev.map((msg: MessageRecord) => {
@@ -509,9 +528,6 @@ export function handleTodoUpdate({ assistantMessageId, artifactType, artifactId,
 
       const todoListProcesses = { ...((msg.todoListProcesses as Record<string, unknown>) || {}) };
       const contentSegments = [...((msg.contentSegments as Record<string, unknown>[]) || [])];
-
-      // Always create a new segment for each todo_update event to preserve chronological order
-      const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
       // Add new segment at the current chronological position
       contentSegments.push({
@@ -567,6 +583,7 @@ export function handleHtmlWidget({ assistantMessageId, artifactType, artifactId,
 
   const { html, title } = payload;
   const segmentId = `widget-${artifactId}`;
+  const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
   setMessages((prev: MessageRecord[]) => {
     const updated = prev.map((msg: MessageRecord) => {
@@ -578,8 +595,6 @@ export function handleHtmlWidget({ assistantMessageId, artifactType, artifactId,
       // Prevent duplicates (e.g. on SSE reconnect replay)
       const segmentExists = contentSegments.some((s: Record<string, unknown>) => s.widgetId === segmentId);
       if (segmentExists) return msg;
-
-      const currentOrder = eventId != null ? eventId : ++contentOrderCounterRef.current;
 
       contentSegments.push({
         type: 'html_widget',
@@ -623,24 +638,14 @@ export function handleToolCallChunks({ assistantMessageId, chunks, setMessages }
   setMessages: SetMessages;
 }): void {
   if (!chunks || !Array.isArray(chunks)) return;
+  const seenAt = Date.now();
 
   chunks.forEach((chunk: ToolCallChunkRecord) => {
-    const key = `${chunk.index ?? 0}`;
-
     setMessages((prev: MessageRecord[]) =>
       prev.map((msg: MessageRecord) => {
         if (msg.id !== assistantMessageId) return msg;
-        const pending = { ...((msg.pendingToolCallChunks as Record<string, Record<string, unknown>>) || {}) };
-        const existing = pending[key] || { toolName: null, chunkCount: 0, argsLength: 0, firstSeenAt: Date.now() };
-
-        pending[key] = {
-          toolName: chunk.name || existing.toolName,
-          chunkCount: (existing.chunkCount as number) + 1,
-          argsLength: (existing.argsLength as number) + (chunk.args?.length || 0),
-          firstSeenAt: existing.firstSeenAt,
-        };
-
-        return { ...msg, pendingToolCallChunks: pending, arrivalSeq: nextArrivalSeq(msg) };
+        const pending = (msg.pendingToolCallChunks as Record<string, PendingToolCallChunk> | undefined) ?? {};
+        return { ...msg, pendingToolCallChunks: addToolCallChunk(pending, chunk, seenAt) };
       })
     );
   });

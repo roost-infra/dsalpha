@@ -20,6 +20,27 @@ import { test, expect, mockAPI } from './fixtures.js';
 
 // Where the buttons sit in a hiddenInset window: three lights at x=13/33/53,
 // plus the padding Electron leaves around them.
+// Electron builds the draggable area geometrically: the union of every
+// `-webkit-app-region: drag` box, minus the `no-drag` boxes on top of it.
+// Content may sit over a drag strip (the strip overlaps the page rather than
+// pushing it down), so what is under a point is not the element that hit-tests
+// there. This installs `window.__regionAt(x, y)` to answer the way the shell does.
+const installRegionAt = () => {
+  window.__regionAt = (x, y) => {
+    for (let node = document.elementFromPoint(x, y); node; node = node.parentElement) {
+      const r = getComputedStyle(node).webkitAppRegion;
+      if (r === 'no-drag') return 'no-drag';
+      if (r === 'drag') return 'drag';
+    }
+    for (const el of document.querySelectorAll('*')) {
+      if (getComputedStyle(el).webkitAppRegion !== 'drag') continue;
+      const b = el.getBoundingClientRect();
+      if (x >= b.left && x < b.right && y >= b.top && y < b.bottom) return 'drag';
+    }
+    return 'none';
+  };
+};
+
 const BUTTON_RECT = { w: 78, h: 38 };
 
 const SHELL_BRIDGE = { version: '0.0.0-e2e', platform: 'darwin', windowChrome: 'hidden' };
@@ -29,13 +50,12 @@ const SHELL_BRIDGE = { version: '0.0.0-e2e', platform: 'darwin', windowChrome: '
 // different properties; a route added to one list and not the other would
 // quietly keep half its coverage.
 //
-// The two legal documents are here even though the shell no longer opens either
-// one (every link to them carries a target, so it reaches the system browser
-// instead). They stay because the reason they were exposed is the general one:
-// a route of prose has nothing in the `no-drag` list, so the strip covers its
-// top line. If one is ever linked back into the app window, this is what still
-// measures what that costs.
-const CHROMELESS_ROUTES = ['/setup/method', '/privacy', '/legal', '/s/no-such-token'];
+// The legal page is here even though the shell no longer opens it (every link
+// to it carries a target, so it reaches the system browser instead). It stays
+// because the reason it was exposed is the general one: a route of prose has
+// nothing in the `no-drag` list, so the strip covers its top line. If it is ever
+// linked back into the app window, this is what still measures what that costs.
+const CHROMELESS_ROUTES = ['/setup/method', '/legal', '/s/no-such-token'];
 
 // Any valid v4 UUID; nothing has to exist behind it for the thread gallery to
 // render its back-button row, which is the bar this suite measures.
@@ -319,6 +339,7 @@ test.describe('desktop window chrome', () => {
       // they stop.
       expect(new URL(page.url()).pathname).toBe(route);
 
+      await page.evaluate(installRegionAt);
       const dead = await page.evaluate((stripH) => {
         const main = document.querySelector('.app-main');
         if (!main) return ['no .app-main'];
@@ -334,11 +355,7 @@ test.describe('desktop window chrome', () => {
         xs.push(Math.round(box.right) - 3);
         for (const x of xs) {
           const el = document.elementFromPoint(x, y);
-          let region = 'none';
-          for (let node = el; node; node = node.parentElement) {
-            const r = getComputedStyle(node).webkitAppRegion;
-            if (r === 'drag' || r === 'no-drag') { region = r; break; }
-          }
+          const region = window.__regionAt(x, y);
           // `no-drag` is a control taking its own clicks back, which is the whole
           // point of the rule in chrome.css and is expected wherever a route puts
           // a real bar in the titlebar row. `none` is the row never having been a
@@ -396,14 +413,10 @@ test.describe('desktop window chrome', () => {
     });
     expect(scrolled, 'nothing scrolled; the article is not long enough to test').toBeGreaterThan(0);
 
+    await page.evaluate(installRegionAt);
     const region = await page.evaluate((stripH) => {
       const box = document.querySelector('.app-main').getBoundingClientRect();
-      const el = document.elementFromPoint(Math.round((box.left + box.right) / 2), Math.round(stripH / 2));
-      for (let node = el; node; node = node.parentElement) {
-        const r = getComputedStyle(node).webkitAppRegion;
-        if (r === 'drag' || r === 'no-drag') return r;
-      }
-      return `none <${el ? el.tagName.toLowerCase() : 'nothing'}>`;
+      return window.__regionAt(Math.round((box.left + box.right) / 2), Math.round(stripH / 2));
     }, BUTTON_RECT.h);
     expect(region).toBe('drag');
   });

@@ -16,6 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
+from ptc_agent.agent.middleware.runtime_context.profile import render_user_profile
 from ptc_agent.agent.prompts import (
     guidance_template_vars,
     init_loader,
@@ -37,15 +38,15 @@ class TestDeclaredOrder:
     """What the model and the deployment say, with no user in the picture."""
 
     def test_manifest_lean_model(self):
-        assert resolve_prompt_guidance("claude-opus-5") == "lean"
+        assert resolve_prompt_guidance("claude-opus-5-5") == "lean"
 
     def test_deployment_pin_beats_the_manifest(self):
         with _pinned("detailed"):
-            assert resolve_prompt_guidance("claude-opus-5") == "detailed"
+            assert resolve_prompt_guidance("claude-opus-5-5") == "detailed"
 
     def test_an_invalid_pin_is_ignored(self):
         with _pinned("yolo"):
-            assert resolve_prompt_guidance("claude-opus-5") == "lean"
+            assert resolve_prompt_guidance("claude-opus-5-5") == "lean"
 
     def test_a_custom_entry_declares_for_itself(self):
         assert resolve_prompt_guidance("my-model", {"prompt_guidance": "lean"}) == "lean"
@@ -53,17 +54,17 @@ class TestDeclaredOrder:
     def test_a_custom_entry_shadows_the_builtin_it_is_named_after(self):
         """Custom wins by name everywhere else in resolution, so a custom entry
         silent on the level must not inherit the manifest row's."""
-        assert resolve_prompt_guidance("claude-opus-5", {"model_id": "x"}) == "detailed"
+        assert resolve_prompt_guidance("claude-opus-5-5", {"model_id": "x"}) == "detailed"
 
 
 class TestUserPreference:
     """``guidance_for`` is the one reader of the stored bag."""
 
     def test_empty_bag_falls_through_to_the_manifest(self):
-        assert guidance_for({}, "claude-opus-5") == "lean"
+        assert guidance_for({}, "claude-opus-5-5") == "lean"
 
     def test_user_preference_beats_manifest(self):
-        assert guidance_for({"prompt_guidance": "detailed"}, "claude-opus-5") == "detailed"
+        assert guidance_for({"prompt_guidance": "detailed"}, "claude-opus-5-5") == "detailed"
 
     def test_user_preference_can_opt_a_small_model_into_lean(self):
         assert guidance_for({"prompt_guidance": "lean"}, "gpt-oss-20b") == "lean"
@@ -74,7 +75,7 @@ class TestUserPreference:
 
     @pytest.mark.parametrize("value", ["yolo", "", None, True, 1])
     def test_invalid_preference_falls_through_to_manifest(self, value):
-        assert guidance_for({"prompt_guidance": value}, "claude-opus-5") == "lean"
+        assert guidance_for({"prompt_guidance": value}, "claude-opus-5-5") == "lean"
 
     def test_a_custom_model_declaration_is_reached_through_the_bag(self):
         """A custom model has no manifest row, so its own entry is the only
@@ -95,14 +96,14 @@ class TestPerModelProfiles:
     """
 
     @staticmethod
-    def _tuned(account, profile, model="claude-opus-5"):
+    def _tuned(account, profile, model="claude-opus-5-5"):
         return {
             "prompt_guidance": account,
             "profiles": {model: {"prompt_guidance": profile}},
         }
 
     def test_profile_beats_the_account_wide_value(self):
-        assert guidance_for(self._tuned("lean", "detailed"), "claude-opus-5") == "detailed"
+        assert guidance_for(self._tuned("lean", "detailed"), "claude-opus-5-5") == "detailed"
 
     def test_the_profile_governs_only_its_own_model(self):
         assert guidance_for(self._tuned("lean", "detailed"), "gpt-oss-20b") == "lean"
@@ -110,9 +111,9 @@ class TestPerModelProfiles:
     def test_a_profile_silent_on_guidance_falls_through_to_account_wide(self):
         bag = {
             "prompt_guidance": "detailed",
-            "profiles": {"claude-opus-5": {"reasoning_effort": "high"}},
+            "profiles": {"claude-opus-5-5": {"reasoning_effort": "high"}},
         }
-        assert guidance_for(bag, "claude-opus-5") == "detailed"
+        assert guidance_for(bag, "claude-opus-5-5") == "detailed"
 
     def test_no_model_name_cannot_select_a_profile(self):
         assert guidance_for(self._tuned("detailed", "lean"), None) == "detailed"
@@ -122,7 +123,7 @@ class TestPerModelProfiles:
         after resolution, so a typo in the profile drops the valid account-wide
         setting with it and resolution continues at the manifest.
         """
-        assert guidance_for(self._tuned("detailed", "yolo"), "claude-opus-5") == "lean"
+        assert guidance_for(self._tuned("detailed", "yolo"), "claude-opus-5-5") == "lean"
 
 
 class TestFailSafeDefault:
@@ -135,16 +136,16 @@ class TestFailSafeDefault:
     def test_defaults_to_detailed(self, model_name):
         assert resolve_prompt_guidance(model_name) == "detailed"
 
-    def test_intelligence_score_does_not_drive_guidance(self):
+    def test_intelligence_score_does_not_drive_guidance(self, monkeypatch):
         """`intelligence` is editorial copy for the model picker — a wording
-        change there must not move agent behavior."""
+        change there must not move agent behavior. 5 is the score the frontier
+        entries were seeded from, so it is the one most likely to leak."""
         from src.llms import LLM
 
-        config = LLM.get_model_config()
-        haiku = config.llm_config["claude-haiku-4-5"]
-        assert "prompt_guidance" not in haiku
-        assert haiku.get("intelligence") is not None
-        assert resolve_prompt_guidance("claude-haiku-4-5") == "detailed"
+        monkeypatch.setitem(
+            LLM.get_model_config().llm_config, "_scored", {"intelligence": 5}
+        )
+        assert resolve_prompt_guidance("_scored") == "detailed"
 
 
 class TestTemplateVars:
@@ -224,14 +225,13 @@ class TestBucketIsInvisibleToThePrompt:
     more (see ``test_user_profile_cache_key``), and this pins why."""
 
     def test_model_preference_never_reaches_the_model(self):
-        loader = init_loader()
-        rendered = loader.render(
-            "components/user_profile.md.j2",
-            user_profile={
+        init_loader()
+        rendered = render_user_profile(
+            {
                 "model_preference": {"prompt_guidance": "lean"},
                 "agent_preference": {"proactive_questions": "auto"},
             },
-            sandbox_enabled=True,
+            main_agent_steering=True,
         )
         assert "prompt_guidance" not in rendered
         # Ordinary preferences still reach the model.

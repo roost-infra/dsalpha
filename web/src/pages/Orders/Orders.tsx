@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { AnimatePresence } from 'framer-motion';
+import { AnimatePresence } from '@/lib/framer';
 import { Blocks, Eye, EyeOff } from 'lucide-react';
 import {
   HeaderButton,
@@ -120,12 +120,12 @@ function Orders() {
         <div className="orders-container">
           <div className="flex items-start justify-between gap-3 mb-6">
             <div className="min-w-0">
-              <h2
+              <h1
                 className="text-xl font-semibold mb-1"
                 style={{ color: 'var(--color-text-primary)' }}
               >
                 {t('orders.title')}
-              </h2>
+              </h1>
               <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
                 {t('orders.description')}
               </p>

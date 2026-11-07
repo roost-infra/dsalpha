@@ -51,3 +51,20 @@ class PluginRejected(Exception):
     Distinct from ValueError so a router that maps ValueError to 409 (a
     conflict with installed state) can't swallow it as one.
     """
+
+
+class PluginRefused(PluginRejected):
+    """A refusal the client answers by its ``code``, not only by reading it.
+
+    ``plugin_secrets_required`` is the one the wizard turns into a form, so the
+    descriptors it needs ride in the detail rather than being re-derived from a
+    manifest the client may not hold.
+    """
+
+    def __init__(self, code: str, message: str, **fields: Any):
+        super().__init__(message)
+        self.code = code
+        self.fields = fields
+
+    def detail(self) -> dict[str, Any]:
+        return {"code": self.code, "message": str(self), **self.fields}

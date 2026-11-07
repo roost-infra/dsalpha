@@ -191,7 +191,7 @@ async def test_capture_exception_returns_response_unchanged(monkeypatch, storage
     def boom(*a, **k):
         raise RuntimeError("scan failed")
 
-    monkeypatch.setattr(ic, "_collect_sandbox_paths", boom)
+    monkeypatch.setattr(ic, "collect_sandbox_paths", boom)
     response = _response(AIMessage(content="![a](a.png)"))
 
     out = await _run(_mw(sandbox), response)

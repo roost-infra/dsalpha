@@ -9,15 +9,21 @@ carries its own explanation, because nothing in the system prefix says what a
 change row is.
 """
 
+import re
 from datetime import UTC, datetime
 
 import pytest
 
 from ptc_agent.agent.middleware.runtime_context import (
+    HARNESS_BLOCKS,
     TURN_ROW_KIND,
     render_update_row,
 )
 from ptc_agent.agent.middleware.runtime_context.durable import DurableUpdate
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_block_for,
+    harness_update_kind,
+)
 
 STAMP = datetime(2026, 9, 9, 1, 43, 44, 834070, tzinfo=UTC)
 
@@ -133,3 +139,73 @@ class TestTheRowCarriesItsOwnMeaning:
 
         assert text == "5:00 PM UTC, Wednesday, September 9, 2026"
         assert MEANING not in text
+
+
+class TestHarnessRows:
+    """A harness row takes its words from the block's registry entry."""
+
+    def test_the_roster_row_word_for_word(self):
+        """Rows persist as rendered text, so the wording is pinned once here;
+        every other block is held to the same shape by the registry-wide test
+        in ``test_runtime_context_templates.py``."""
+        assert _row("mcp_servers_changed", text="+- polygon", source="harness") == (
+            "The MCP server list changed after the copy in <mcp-servers> was frozen\n"
+            "\n"
+            "The text below compares it with the frozen copy in <mcp-servers>: where "
+            "they differ, this row is the current one. A later row for the same "
+            "block supersedes it.\n"
+            "\n"
+            "+- polygon"
+        )
+
+    @pytest.mark.parametrize("kind", list(HARNESS_BLOCKS))
+    def test_every_block_maps_to_its_row_kind_and_back(self, kind):
+        assert harness_block_for(harness_update_kind(kind)) is HARNESS_BLOCKS[kind]
+
+    @pytest.mark.parametrize(
+        "kind",
+        [
+            "agent_md_changed",
+            "memory_changed:user",
+            "profile_changed",
+            "baseline_rebuilt",
+            "mcp_servers",
+            "unknown_changed",
+        ],
+    )
+    def test_a_kind_outside_the_registry_has_no_block(self, kind):
+        assert harness_block_for(kind) is None
+
+
+class TestTheRebuiltRow:
+    """The retiring row reaches every role and every flavor of build.
+
+    It used to list every block by name, which told an analyst that an
+    `<activity>` block it never had was current. It now names a block only when
+    the rebuild handed it one to keep in force.
+    """
+
+    @staticmethod
+    def _rebuilt(**provenance) -> str:
+        return render_update_row(
+            DurableUpdate(
+                kind="baseline_rebuilt",
+                schema_version=1,
+                text="2 earlier change row(s) folded in.",
+                provenance={"source": "harness", **provenance},
+                created_at=STAMP,
+            )
+        )
+
+    def test_it_names_no_block(self):
+        text = self._rebuilt()
+
+        assert re.findall(r"<[^>]+>", text) == []
+        assert "folded into the blocks now, so the blocks are current" in text
+        assert text.endswith("2 earlier change row(s) folded in.")
+
+    def test_an_exception_names_only_the_block_it_was_handed(self):
+        text = self._rebuilt(still_in_force=["<skills>"], carried=["skills_changed"])
+
+        assert re.findall(r"<[^>]+>", text) == ["<skills>"]
+        assert "The exception is a row about <skills>" in text

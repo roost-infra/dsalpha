@@ -52,6 +52,15 @@ class AttemptStatus(StrEnum):
     PARTIALLY_FILLED = "partially_filled"
     FILLED = "filled"
     CANCELLED = "cancelled"
+    # The vendor says the order or instruction lapsed on its own schedule, with
+    # nobody cancelling it: a time in force ran out, or a staged instruction
+    # was never confirmed in time. Only a vendor that names it reaches it.
+    EXPIRED = "expired"
+    # A staged instruction the vendor stopped listing: a person sent it, deleted
+    # it or let it expire in the vendor's own client, which does not say which.
+    # Only a person there can trade one, so that is where its outcome is
+    # recorded and where the ledger's part ends.
+    HANDED_OFF = "handed_off"
     REJECTED_BY_VENDOR = "rejected_by_vendor"
     FAILED = "failed"
     UNKNOWN = "unknown"
@@ -78,6 +87,8 @@ TERMINAL_STATUSES: tuple[AttemptStatus, ...] = (
     AttemptStatus.REFUSED,
     AttemptStatus.FILLED,
     AttemptStatus.CANCELLED,
+    AttemptStatus.EXPIRED,
+    AttemptStatus.HANDED_OFF,
     AttemptStatus.REJECTED_BY_VENDOR,
     AttemptStatus.FAILED,
 )
@@ -140,8 +151,14 @@ def _amount(value: Any) -> Any:
     return as_decimal(value) or Decimal(0)
 
 
+#: Decimals are written out in plain digits, because ``str`` turns a crypto
+#: price below a millionth into ``1.2E-7`` and every reader past this one
+#: expects plain digits.
+_PLAIN_DIGITS = PlainSerializer(
+    lambda value: format(value, "f"), return_type=str, when_used="json-unless-none"
+)
 #: A Decimal a vendor may have typed as a string, an int or a float.
-Number = Annotated[Decimal | None, BeforeValidator(as_decimal)]
+Number = Annotated[Decimal | None, BeforeValidator(as_decimal), _PLAIN_DIGITS]
 Text = Annotated[str, BeforeValidator(_string)]
 OptionalText = Annotated[str | None, BeforeValidator(_optional_string)]
 #: Serialized by hand because Pydantic writes UTC as ``Z`` and every row in the
@@ -191,7 +208,7 @@ class _Record(BaseModel):
 
 
 class Money(_Value):
-    amount: Annotated[Decimal, BeforeValidator(_amount)] = Decimal(0)
+    amount: Annotated[Decimal, BeforeValidator(_amount), _PLAIN_DIGITS] = Decimal(0)
     currency: Text = ""
 
 

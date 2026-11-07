@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiMock = vi.hoisted(() => ({
@@ -59,6 +60,7 @@ describe('getStockPrices', () => {
         changePercent: 0,
         isPositive: true,
         quoteAvailable: false,
+        places: 2,
       },
     ]);
   });

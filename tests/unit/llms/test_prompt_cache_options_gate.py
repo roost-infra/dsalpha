@@ -36,6 +36,7 @@ def _build_llm(sdk: str, base_url: str | None, parameters: dict | None = None) -
     llm.use_previous_response_id = False
     llm.parameters = dict(parameters or {})
     llm.extra_body = {}
+    llm.profile_overrides = {}
     llm.model = "gpt-5.6-sol"
     llm.custom_model_name = llm.model
     llm.resolved_reasoning_effort = None

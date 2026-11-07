@@ -29,6 +29,15 @@ _TORN_STREAM_MESSAGE = (
 )
 
 
+class SubagentTimeLimitError(Exception):
+    """A subagent ran past its own wall clock and was stopped.
+
+    The ask for its answer and the tool stop come well before the end, so this
+    is the backstop for a run that kept going anyway, as the turn's own stop is
+    for the main agent.
+    """
+
+
 @dataclass(frozen=True)
 class Outcome:
     """How a run ended, in the one vocabulary every writer publishes."""
@@ -36,11 +45,21 @@ class Outcome:
     status: str
     error: str
     error_type: str
+    # The in-memory terminal where it is finer than the ledger's. A run that
+    # outran its own clock is an error to the ledger, so the user hears of it
+    # (a cancel never reports back), and a timeout to TaskOutput, whose advice
+    # for one is to narrow the task rather than to report a failure.
+    local_status: str | None = None
 
     @classmethod
     def from_exception(cls, e: BaseException) -> "Outcome":
         return cls(
-            status=_settle_status(e), error=str(e), error_type=_error_type(e)
+            status=_settle_status(e),
+            error=str(e),
+            error_type=_error_type(e),
+            local_status=(
+                "timeout" if isinstance(e, SubagentTimeLimitError) else None
+            ),
         )
 
     @classmethod
@@ -62,7 +81,11 @@ class Outcome:
         the ledger row gets: ``success: False`` alone reads as a failure, which
         is wrong for a stop that was neutral by design.
         """
-        return {"success": False, **self.as_failure(), "status": self.status}
+        return {
+            "success": False,
+            **self.as_failure(),
+            "status": self.local_status or self.status,
+        }
 
 
 def _error_type(e: BaseException) -> str:
@@ -71,6 +94,18 @@ def _error_type(e: BaseException) -> str:
     if isinstance(e, CreditStopError):
         return CREDIT_STOP_ERROR_TYPE
     return type(e).__name__
+
+
+def is_time_limit_stop(result: Any) -> bool:
+    """Whether a failed run is a subagent stopped at its own clock.
+
+    The ledger spells it ``error`` so the user hears of it, which leaves the
+    error type as the only thing that tells it from a run that broke.
+    """
+    return (
+        isinstance(result, dict)
+        and result.get("error_type") == SubagentTimeLimitError.__name__
+    )
 
 
 def is_credit_stop(result: Any) -> bool:

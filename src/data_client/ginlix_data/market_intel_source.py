@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.data_client.base import MoverRow
+
 from .client import GinlixDataClient
-from .data_source import INTERVAL_MAP
+from .data_source import INTERVAL_MAP, vendor_epoch_ms
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +84,30 @@ class GinlixMarketIntelSource:
 
     async def get_movers(
         self, direction: str = "gainers", user_id: str | None = None
-    ) -> list[dict[str, Any]]:
-        return await self.client.get_movers(direction, user_id=user_id)
+    ) -> list[MoverRow]:
+        rows = await self.client.get_movers(direction, user_id=user_id)
+        return [self._normalize_mover(row) for row in rows]
+
+    @staticmethod
+    def _normalize_mover(raw: dict[str, Any]) -> MoverRow:
+        """A ginlix-data movers row as a :class:`MoverRow`.
+
+        The row has no price field: the last trade is the price its change was
+        measured at, and the day bar's close stands in when there is none.
+        """
+        day = raw.get("day") or {}
+        trade = raw.get("last_trade") or {}
+        price = trade.get("price")
+        volume, vwap = day.get("volume"), day.get("vwap")
+        return {
+            "symbol": raw.get("ticker") or "N/A",
+            "price": price if price is not None else day.get("close"),
+            "change": raw.get("change"),
+            "change_percent": raw.get("change_percent"),
+            "volume": volume,
+            "traded_value": volume * vwap if volume is not None and vwap is not None else None,
+            "traded_at": vendor_epoch_ms(trade.get("time")) if price is not None else None,
+        }
 
     async def close(self) -> None:
         pass  # client lifecycle managed by get_ginlix_data_client singleton

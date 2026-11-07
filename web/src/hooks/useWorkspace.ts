@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { queryKeys } from '../lib/queryKeys';
-import { getWorkspace } from '../pages/ChatAgent/utils/api';
+import { cachedHomeRow, workspaceDetailQuery } from '../pages/ChatAgent/utils/workspaceQueries';
 import type { Workspace, WorkspacesResponse } from '../types/api';
 
 /**
@@ -19,10 +19,8 @@ export function useWorkspace(
   const queryClient = useQueryClient();
 
   return useQuery({
-    queryKey: queryKeys.workspaces.detail(workspaceId ?? ''),
-    queryFn: () => getWorkspace(workspaceId!),
+    ...workspaceDetailQuery(workspaceId ?? ''),
     enabled: !!workspaceId,
-    staleTime: 5 * 60_000,
     retry: (failureCount, error) => {
       const status = (error as { response?: { status?: number } })?.response?.status;
       if (status === 403 || status === 404) return false;
@@ -37,5 +35,10 @@ export function useWorkspace(
       }
       return undefined;
     },
+    // The surfaces that open Home without a list that holds it resolve it
+    // through Home's own query first, so that row names it while the detail
+    // loads. Only as a placeholder: it is as of Home's first read, before a
+    // start gave it a computer, a folder and a current status.
+    placeholderData: () => cachedHomeRow(queryClient, workspaceId),
   });
 }

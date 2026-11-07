@@ -1,4 +1,5 @@
-"""The composite and the Flash binder split one server's tools the same way."""
+"""How the composite install splits one server's tools between the sandbox
+wrappers and the direct path."""
 
 from __future__ import annotations
 

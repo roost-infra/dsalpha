@@ -1,8 +1,16 @@
-import { useCallback, useState } from 'react';
+import { createElement, useCallback, useState } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { ToastAction } from '@/components/ui/toast';
 import { toast } from '@/components/ui/use-toast';
 import { invalidatePluginFanout } from '@/hooks/usePlugins';
+import { useLocale } from '@/hooks/useLocale';
+import { formatList } from '@/lib/format';
+import {
+  formatApiErrorDetail,
+  mcpSignInNeeded,
+  type McpSignInNeeded,
+} from '@/pages/ChatAgent/utils/api';
 import { runBulk } from '../utils/bulkRun';
 
 /**
@@ -58,21 +66,48 @@ export function useBulkSelection(): BulkSelection {
   return { selecting, selected, start, exit, toggle, setMany };
 }
 
-/** ServerRowShell selection props for one row, or nothing outside select mode. */
-export function rowSelection(selection: BulkSelection, key: string) {
-  if (!selection.selecting) return {};
-  return {
-    selecting: true,
-    selected: selection.selected.has(key),
-    onSelectToggle: () => selection.toggle(key),
-  };
+/**
+ * A value that changes whenever the rows an action would reach do. Keyed by
+ * the selected rows ON SCREEN, not the retained selection: a selection
+ * survives a filter change on purpose, so a confirm armed on the rows one
+ * filter showed would otherwise fire on the rows the next filter shows. The
+ * Set's identity says nothing (rebuilt on every toggle) and its size too
+ * little: dropping two rows and picking two others leaves the count as it was.
+ */
+export function bulkSelectionKey(targetKeys: Iterable<string>): string {
+  return [...targetKeys].sort().join('\u0000');
 }
 
-/** One executable unit of a bulk action; `key` only labels failures. */
-export interface BulkTarget {
+/** One executable unit of a bulk action. */
+export interface BulkTarget<R = unknown> {
   key: string;
-  run: () => Promise<unknown>;
+  /** What the user calls the row, which the result names it by if it fails. */
+  name: string;
+  run: () => Promise<R>;
 }
+
+/** What a bulk action did, which its result is titled by. */
+export type BulkVerb = 'enable' | 'disable' | 'remove' | 'uninstall' | 'scope';
+/** What a tab's rows are, which the result counts. */
+export type BulkNoun = 'plugin' | 'connector' | 'skill' | 'subagent';
+
+export interface BulkRunOptions<R = unknown> {
+  verb: BulkVerb;
+  noun: BulkNoun;
+  /**
+   * Starts the sign-in a switch-on was refused for, from the result's own
+   * button, so the outcome and its next step are one message rather than two.
+   * Given the first refusal's servers: the result names every row refused,
+   * and a sign-in that lands lets the next switch through or names the next.
+   */
+  signIn?: (servers: McpSignInNeeded[]) => void;
+  /** Lines about what the rows that succeeded took with them, from the
+   *  values their runs returned, said before any failure. */
+  outcome?: (results: R[]) => string[];
+}
+
+/** Names a result spells out before it counts the rest. */
+const NAMED = 3;
 
 /**
  * Runs a bulk fan-out with progress, then invalidates ONCE (each target hits a
@@ -90,25 +125,87 @@ export function useBulkRunner(
   invalidate: (qc: QueryClient) => void = invalidatePluginFanout,
 ) {
   const { t } = useTranslation();
+  const locale = useLocale();
   const queryClient = useQueryClient();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const run = useCallback(
-    async (targets: BulkTarget[]) => {
+    async <R>(targets: BulkTarget<R>[], opts: BulkRunOptions<R>) => {
       if (targets.length === 0) return;
       setProgress({ done: 0, total: targets.length });
       try {
-        const result = await runBulk(targets, (target) => target.run(), {
-          onProgress: (done, total) => setProgress({ done, total }),
+        const results: R[] = [];
+        const result = await runBulk(
+          targets,
+          async (target) => {
+            results.push(await target.run());
+          },
+          { onProgress: (done, total) => setProgress({ done, total }) },
+        );
+        // A refused sign-in is a next step, not a fault: it is said apart from
+        // the failures, by name, and offered rather than reported.
+        const refused = result.failed.flatMap(({ item, error }) => {
+          const servers = mcpSignInNeeded(error);
+          return servers ? [{ item, servers }] : [];
         });
-        const parts = [t('plugins.bulk.okPart', { count: result.ok.length })];
-        if (result.failed.length > 0) {
-          parts.push(t('plugins.bulk.failPart', { count: result.failed.length }));
+        const failed = result.failed.filter(({ error }) => !mcpSignInNeeded(error));
+        const names = (items: BulkTarget[]) => {
+          const shown = items.slice(0, NAMED).map((item) => item.name);
+          if (items.length > NAMED) {
+            shown.push(t('plugins.bulk.moreNames', { count: items.length - NAMED }));
+          }
+          return formatList(shown, locale);
+        };
+        // Titled by what happened: what changed when anything did, otherwise
+        // what could not be done to all of them.
+        const done = result.ok.length > 0;
+        const what = t(`plugins.bulk.noun.${opts.noun}`, {
+          count: done ? result.ok.length : targets.length,
+        });
+        const lines: string[] = done && opts.outcome ? opts.outcome(results) : [];
+        if (refused.length > 0) {
+          lines.push(
+            t('plugins.bulk.needSignIn', {
+              count: refused.length,
+              names: names(refused.map((r) => r.item)),
+            }),
+          );
         }
+        if (failed.length > 0) {
+          lines.push(
+            t(done ? 'plugins.bulk.failedNamed' : 'plugins.bulk.failedReason', {
+              names: names(failed.map((f) => f.item)),
+              reason: formatApiErrorDetail(failed[0].error),
+            }),
+          );
+        }
+        const firstRefused = refused[0]?.servers;
+        const signIn = opts.signIn;
         toast({
-          variant: result.failed.length > 0 ? 'destructive' : undefined,
-          title: t('plugins.bulk.resultTitle'),
-          description: parts.join(' · '),
+          // Alarm only when nothing changed. A run that did most of what was
+          // asked is titled by that, and a red toast under "Switched on 3"
+          // says the opposite of its own title; the failure line names the
+          // row and the reason, which is what the user acts on.
+          variant: !done && failed.length > 0 ? 'destructive' : undefined,
+          title: t(done ? `plugins.bulk.done.${opts.verb}` : `plugins.bulk.notDone.${opts.verb}`, {
+            what,
+          }),
+          description:
+            lines.length > 0
+              ? lines.map((line) => createElement('span', { key: line, className: 'block' }, line))
+              : undefined,
+          // The sign-in is the one next step a refusal has, so it rides this
+          // message and keeps it up until it is answered.
+          action:
+            firstRefused && signIn
+              ? createElement(
+                  ToastAction,
+                  { altText: t('plugins.oauth.signIn'), onClick: () => signIn(firstRefused) },
+                  t('plugins.oauth.signIn'),
+                )
+              : undefined,
+          // Names take longer to read than a count.
+          duration: firstRefused && signIn ? undefined : result.failed.length > 0 ? 8000 : undefined,
         });
       } finally {
         setProgress(null);
@@ -116,7 +213,7 @@ export function useBulkRunner(
       }
       selection.exit();
     },
-    [invalidate, queryClient, selection, t],
+    [invalidate, locale, queryClient, selection, t],
   );
 
   return { progress, run };

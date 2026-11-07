@@ -29,6 +29,7 @@ def _stub_llm(**fields) -> LLM:
     llm.default_headers = None
     llm.parameters = {}
     llm.extra_body = {}
+    llm.profile_overrides = {}
     llm.model = "claude-test-id"
     llm.custom_model_name = "claude-test"
     llm.resolved_reasoning_effort = None
@@ -92,6 +93,10 @@ class TestClientStamp:
 
         platform = _stub_llm(api_key_override=None)
         assert platform.get_llm().metadata["billing_type"] == "platform"
+
+        # A keyless endpoint the user saved is theirs, not the platform's.
+        keyless = _stub_llm(api_key_override="", provider_info={"access_type": "local", "base_url": None})
+        assert keyless.get_llm().metadata["billing_type"] == "byok"
 
     def test_effort_and_tier_ride_the_client(self):
         client = _stub_llm(

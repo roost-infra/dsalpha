@@ -3,17 +3,54 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
-from src.data_client.base import FetchResult
-from src.data_client.normalize import build_series
-from src.market_protocol import InstrumentRef, Series
-from src.market_protocol.symbology import index_legacy_to_polygon
+from src.data_client.base import FetchResult, IntervalNotSupported
+from src.data_client.instrument_clock import clock_for
+from src.data_client.normalize import build_series, change_from
+from market_protocol import InstrumentRef, Series
+from market_protocol import display_spelling, index_families, to_legacy_api
 
 from .client import GinlixDataClient
 
 logger = logging.getLogger(__name__)
+
+
+def vendor_epoch_ms(value: Any) -> int | None:
+    """Unix ms from a vendor epoch in s / ms / µs / ns (Massive stamps trades in ns)."""
+    if not isinstance(value, (int, float)) or value <= 0:
+        return None
+    if value >= 1e17:
+        return int(value // 1_000_000)
+    if value >= 1e14:
+        return int(value // 1_000)
+    if value >= 1e11:
+        return int(value)
+    return int(value * 1000)
+
+
+def _index_quote(ticker: str, session: dict[str, Any], as_of: int | None) -> tuple[Any, Any, int | None]:
+    """The move of the index level shown, and when that level printed.
+
+    The feed's own move is rounded and can trail the level by minutes in
+    session. The feed can also stop refreshing an index's stamp and move once a
+    new session opens: the move then reads exactly 0, stamped before the newest
+    session that has opened (before it opens, the zero may be the stamped
+    session's own). A level that moved on since is not dated by the old stamp;
+    one that has not is a previous close with no move of the new session yet.
+    """
+    close, previous = session.get("close"), session.get("previous_close")
+    if as_of is not None and close is not None and session.get("change") == 0:
+        clock = clock_for(ticker, True)
+        stamped = datetime.fromtimestamp(as_of / 1000, clock.tz).date().isoformat()
+        if clock.expected_latest_daily_date() > stamped:
+            if close == previous:
+                return None, None, as_of
+            as_of = None
+    if close is not None and previous:
+        return (*change_from(close, previous), as_of)
+    return session.get("change"), session.get("change_percent"), as_of
 
 
 def normalize_series(rows: list[dict], *, ref: InstrumentRef, schema: str) -> Series:
@@ -34,10 +71,24 @@ INTERVAL_MAP: dict[str, tuple[str, int]] = {
     "4hour": ("hour", 4),
 }
 
-# Legacy bare index symbol → Polygon wire spelling, from the protocol symbology
-# (single source of truth); reverse for snapshot response → bare lookup.
-_INDEX_SYMBOL_MAP: dict[str, str] = index_legacy_to_polygon()
-_REVERSE_INDEX_SYMBOL_MAP: dict[str, str] = {v: k for k, v in _INDEX_SYMBOL_MAP.items()}
+# Legacy bare index symbol → ginlix-data's wire spelling, which is Polygon's:
+# the family behind an ``I:`` prefix (``GSPC`` → ``I:SPX``). Reverse for
+# snapshot response → bare lookup.
+INDEX_TICKERS: dict[str, str] = {
+    to_legacy_api(ref): f"I:{ref.index_family}" for ref in index_families()
+}
+_REVERSE_INDEX_TICKERS: dict[str, str] = {v: k for k, v in INDEX_TICKERS.items()}
+
+
+def index_ticker(symbol: str) -> str:
+    """ginlix-data spelling of a Yahoo/FMP-style or bare index symbol.
+
+    An index the protocol has no family for keeps its own name (``I:{bare}``).
+    """
+    if symbol.startswith("I:"):
+        return symbol
+    bare = symbol.lstrip("^").upper()
+    return INDEX_TICKERS.get(bare, f"I:{bare}")
 
 
 class GinlixDataSource:
@@ -69,14 +120,6 @@ class GinlixDataSource:
         return cls._LOOKBACK_BY_INTERVAL.get(interval, 7)
 
     @staticmethod
-    def _index_symbol(symbol: str) -> str:
-        """Convert a Yahoo/FMP-style index symbol to ginlix-data format."""
-        if symbol.startswith("I:"):
-            return symbol
-        bare = symbol.lstrip("^").upper()
-        return _INDEX_SYMBOL_MAP.get(bare, f"I:{bare}")
-
-    @staticmethod
     def _default_dates(
         from_date: str | None, to_date: str | None, lookback_days: int
     ) -> tuple[str, str]:
@@ -97,9 +140,9 @@ class GinlixDataSource:
         user_id: str | None = None,
     ) -> FetchResult:
         market = "index" if is_index else "stock"
-        api_symbol = self._index_symbol(symbol) if is_index else symbol
+        api_symbol = index_ticker(symbol) if is_index else symbol
         if interval not in INTERVAL_MAP:
-            raise ValueError(f"Unsupported interval: {interval}")
+            raise IntervalNotSupported(f"Unsupported interval: {interval}")
         timespan, multiplier = INTERVAL_MAP[interval]
         lookback = self._LOOKBACK_BY_INTERVAL.get(interval, 7)
         from_date, to_date = self._default_dates(from_date, to_date, lookback)
@@ -137,7 +180,7 @@ class GinlixDataSource:
         user_id: str | None = None,
     ) -> FetchResult:
         market = "index" if is_index else "stock"
-        api_symbol = self._index_symbol(symbol) if is_index else symbol
+        api_symbol = index_ticker(symbol) if is_index else symbol
         from_date, to_date = self._default_dates(
             from_date, to_date, self._DAILY_LOOKBACK_DAYS
         )
@@ -174,7 +217,7 @@ class GinlixDataSource:
     ) -> list[dict[str, Any]]:
         """Fetch batch snapshots, converting index symbols as needed."""
         if asset_type == "indices":
-            api_symbols = [self._index_symbol(s) for s in symbols]
+            api_symbols = [index_ticker(s) for s in symbols]
         else:
             api_symbols = symbols
         raw = await self.client.get_snapshots(asset_type, api_symbols, user_id=user_id)
@@ -194,15 +237,32 @@ class GinlixDataSource:
         last_trade = raw.get("last_trade", {})
         last_minute = raw.get("last_minute", {})
         ticker = raw.get("ticker", "")
-        # For indices, reverse-map I:SPX → GSPC etc.
+        change, change_percent = session.get("change"), session.get("change_percent")
+        # The feed's newest stamp, not the last trade's alone: a thin name on a
+        # realtime feed can go minutes without a print while its quote keeps
+        # moving, and that is not a delay. An index has only its own stamp.
+        as_of = max(
+            (
+                ms for ms in (
+                    vendor_epoch_ms((last_trade or {}).get("last_updated")),
+                    vendor_epoch_ms((raw.get("last_quote") or {}).get("last_updated")),
+                    vendor_epoch_ms(raw.get("last_updated")),
+                ) if ms
+            ),
+            default=None,
+        )
         if asset_type == "indices":
-            ticker = _REVERSE_INDEX_SYMBOL_MAP.get(ticker, ticker.removeprefix("I:"))
+            ticker = _REVERSE_INDEX_TICKERS.get(ticker, ticker.removeprefix("I:"))
+            change, change_percent, as_of = _index_quote(ticker, session, as_of)
+        else:
+            # A stock comes back in Massive's spelling (BRK.B) and leaves in ours (BRK-B).
+            ticker = display_spelling(ticker)
         return {
             "symbol": ticker,
             "name": raw.get("name"),
             "price": session.get("close"),
-            "change": session.get("change"),
-            "change_percent": session.get("change_percent"),
+            "change": change,
+            "change_percent": change_percent,
             "previous_close": session.get("previous_close"),
             "open": session.get("open"),
             "high": session.get("high"),
@@ -210,6 +270,7 @@ class GinlixDataSource:
             "volume": int(session["volume"]) if session.get("volume") is not None else None,
             "market_status": raw.get("market_status"),
             "last_trade_price": last_trade.get("price") if last_trade else None,
+            "as_of": as_of,
             # Close of the most recent minute aggregate — the consolidated last
             # sale. Unlike last_trade (and the session change fields derived
             # from it), it excludes odd-lot prints that don't update the
@@ -227,6 +288,9 @@ class GinlixDataSource:
             "early_trading_change_percent": session.get("early_trading_change_percent"),
             "late_trading_change": session.get("late_trading_change"),
             "late_trading_change_percent": session.get("late_trading_change_percent"),
+            # When the last trade printed: the shown price's own time, which a
+            # thin name's newer quote stamp in ``as_of`` does not share.
+            "last_trade_at": vendor_epoch_ms((last_trade or {}).get("last_updated")),
         }
 
     async def close(self) -> None:

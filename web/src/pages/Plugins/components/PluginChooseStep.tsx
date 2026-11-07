@@ -2,7 +2,8 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { TagBadge } from '@/components/mcp/McpPrimitives';
 import type { PluginCandidate } from '@/pages/ChatAgent/utils/api';
-import { StepError } from './StepError';
+import type { Refusal } from '@/pages/ChatAgent/utils/api/refusal';
+import { RefusalBox } from './RefusalView';
 
 /**
  * The chooser between source and installing: shown when the source turned
@@ -17,13 +18,14 @@ export function PluginChooseStep({
   candidates,
   onPick,
   onBack,
-  error,
+  refusal,
 }: {
   candidates: PluginCandidate[];
   onPick: (candidate: PluginCandidate) => void;
   /** Return to the source step, carrying the repo that produced this list. */
   onBack: () => void;
-  error: string | null;
+  /** Why the last pick did not install. */
+  refusal: Refusal | null;
 }) {
   const { t } = useTranslation();
 
@@ -98,7 +100,7 @@ export function PluginChooseStep({
         ))}
       </div>
 
-      <StepError error={error} />
+      {refusal && <RefusalBox refusal={refusal} />}
 
       <div className="flex justify-start">
         <button

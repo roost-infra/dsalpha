@@ -1,9 +1,10 @@
 """What a turn knows about itself, carried whole from the request to the stack.
 
-These four values are read off the request that opened the turn and are used in
-exactly one place, the turn anchor row. Threading them one by one made every
-builder between the handler and the middleware restate a list it has no other
-interest in, and adding a fifth meant editing five signatures.
+These values are read when the turn opens, mostly off its request, and are used
+at the turn boundary: the anchor row, and the zones its clock is stamped in and
+its tools read. Threading them one by one made every builder between the
+handler and the middleware restate a list it has no other interest in, and
+adding one meant editing every signature between them.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from datetime import datetime
 
 @dataclass(frozen=True, slots=True)
 class TurnContext:
-    """Per-turn runtime context for the turn anchor row. Every field is optional.
+    """Per-turn runtime context for the turn anchor row, and the previous
+    run's settle time for compaction's cache clock. Every field is optional.
 
     A context-free build (thread maintenance, a subagent stack, a test) passes
     no context at all, which is the same thing as passing one whose fields are
@@ -22,6 +24,39 @@ class TurnContext:
     """
 
     last_turn_at: datetime | None = None
+    # When the thread's previous run settled, by the run ledger, which a call
+    # that was cancelled or failed still counts toward: it refreshed the
+    # provider's prompt cache. Read by the main agent's compaction to judge
+    # whether that cache has expired at this turn's start.
+    previous_run_settled_at: datetime | None = None
+    # The send asked to keep its whole context: no summary for a cold cache
+    # alone at this turn's start (see ``compaction.rebuild``).
+    keep_full_context: bool = False
+    # When the server received the turn's send (epoch seconds), when that
+    # summary is judged; None at the turn start (see ``compaction.rebuild``).
+    sent_at: float | None = None
     platform: str | None = None
     origin: str | None = None
+    # The agent that sent an agent-origin turn (``chief_of_staff``),
+    # which the turn row names as acting for the user.
+    origin_agent: str | None = None
     surface_rules: str | None = None
+    # A turn nobody sent (the harness reporting finished background work) runs
+    # under the last rules stated, the way a resumed interrupt does, rather
+    # than taking back the rules of the conversation it reports into.
+    inherits_rules: bool = False
+    # Set only once the shared disk is low enough to change what the agent
+    # should do; None states nothing. A subagent's stack never carries it.
+    disk_free_mb: int | None = None
+    # Whether a current reading backs disk_free_mb being None; only then may a
+    # turn take back an earlier low-disk line.
+    disk_known: bool = False
+    # The zone the profile or the request names. The stamp, the identity block
+    # and a subagent's row state it, so "9am tomorrow" means the same thing to
+    # the model and a tool. None when neither names one: the stamp then keeps
+    # the frozen identity's zone, never a locale default.
+    timezone: str | None = None
+    # The zone the turn's tools read a local time in, and the run records:
+    # ``timezone``, else the request locale's default, since a tool needs a
+    # clock even when nothing named one.
+    tool_timezone: str = "UTC"

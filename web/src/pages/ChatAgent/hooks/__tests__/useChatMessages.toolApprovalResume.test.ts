@@ -89,7 +89,7 @@ describe('useChatMessages: a refused resume of a tool approval', () => {
     mockStatus.mockReset();
     mockStatus.mockResolvedValue({ can_reconnect: false, status: 'completed' });
     mockSend.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent(toolInterrupt);
       return { disconnected: false };
     });
@@ -100,7 +100,7 @@ describe('useChatMessages: a refused resume of a tool approval', () => {
     await waitFor(() => expect(mockReplay).toHaveBeenCalled());
     await settleMountEffect();
     await act(async () => {
-      await result.current.handleSendMessage('buy one AAPL', false);
+      await result.current.handleSendMessage('buy one AAPL');
     });
     await waitFor(() => expect(approvalCard(result.current.messages)?.status).toBe('pending'));
     return result;
@@ -141,9 +141,42 @@ describe('useChatMessages: a refused resume of a tool approval', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     await waitFor(() => expect(mockSendHitl).toHaveBeenCalledTimes(2));
-    expect(mockSendHitl.mock.calls[1][2]).toEqual({
+    expect(mockSendHitl.mock.calls[1][0]).toEqual({
       [INTERRUPT_ID]: { decisions: [{ type: 'approve' }] },
     });
+  });
+
+  // A resume the server never started ends with a `resend` notice and a clean
+  // close, not a drop. Settling the turn there would leave the stopped call
+  // unanswered behind a card that reads answered; the reconnect finds no run
+  // and reloads the thread, whose pause still waits.
+  it('looks for the run when the server started none, instead of settling the turn', async () => {
+    const result = await raiseApproval();
+    mockSendHitl.mockImplementation(async (...args: unknown[]) => {
+      const opts = args[3] as {
+        onEvent: (e: Record<string, unknown>) => void;
+        onRunIdResolved?: (runId: string) => void;
+      };
+      opts.onRunIdResolved?.('run-unstarted');
+      opts.onEvent({
+        event: 'retry',
+        thread_id: 'th-x',
+        auto_retry: true,
+        retry_count: 1,
+        max_retries: 3,
+        recovery: 'resend',
+      });
+      return { disconnected: false, aborted: false };
+    });
+    const statusCalls = mockStatus.mock.calls.length;
+
+    await act(async () => {
+      result.current.handleApproveToolCall(INTERRUPT_ID, INTERRUPT_ID, { index: 0, count: 1 });
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() => expect(mockSendHitl).toHaveBeenCalledTimes(1));
+
+    await waitFor(() => expect(mockStatus.mock.calls.length).toBeGreaterThan(statusCalls));
   });
 });
 
@@ -160,7 +193,7 @@ describe('useChatMessages: an interrupt that stopped two calls', () => {
     mockStatus.mockReset();
     mockStatus.mockResolvedValue({ can_reconnect: false, status: 'completed' });
     mockSend.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent(batchedInterrupt);
       return { disconnected: false };
     });
@@ -175,7 +208,7 @@ describe('useChatMessages: an interrupt that stopped two calls', () => {
     await waitFor(() => expect(mockReplay).toHaveBeenCalled());
     await settleMountEffect();
     await act(async () => {
-      await result.current.handleSendMessage('place both orders', false);
+      await result.current.handleSendMessage('place both orders');
     });
 
     const cards = () => result.current.messages
@@ -200,7 +233,7 @@ describe('useChatMessages: an interrupt that stopped two calls', () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     await waitFor(() => expect(mockSendHitl).toHaveBeenCalledTimes(1));
-    expect(mockSendHitl.mock.calls[0][2]).toEqual({
+    expect(mockSendHitl.mock.calls[0][0]).toEqual({
       [BATCH_ID]: {
         decisions: [{ type: 'approve' }, { type: 'reject', message: 'not this one' }],
       },

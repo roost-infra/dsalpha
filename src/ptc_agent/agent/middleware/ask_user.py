@@ -12,6 +12,10 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, tool
 from langgraph.types import Command, interrupt
 
+from src.server.models.chat import rejection_feedback
+
+TOOL_NAME = "AskUserQuestion"
+
 try:
     from langchain.tools import InjectedToolCallId
 except ImportError:
@@ -30,7 +34,7 @@ class AskUserMiddleware(AgentMiddleware):
         self._ask_user_tool = self._create_ask_user_tool()
 
     def _create_ask_user_tool(self) -> BaseTool:
-        @tool("AskUserQuestion")
+        @tool(TOOL_NAME)
         def ask_user_question(
             question: str,
             options: list[str],
@@ -73,7 +77,7 @@ class AskUserMiddleware(AgentMiddleware):
                     decision = decisions[0]
                     if decision.get("type") == "reject":
                         skipped = True
-                        answer = decision.get("message", "")
+                        answer = rejection_feedback(decision.get("message"))
                     else:
                         answer = decision.get("message", "")
             elif isinstance(response, str):

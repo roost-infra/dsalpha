@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { useScrollMemory } from '@/lib/scrollMemory';
 import { getNewsArticle } from '../Dashboard/utils/api';
+import { useLocale } from '@/hooks/useLocale';
+import { formatTimestamp } from '@/lib/format';
 
 interface ArticleSentiment {
   ticker: string;
@@ -63,6 +65,7 @@ function NewsDetailPage() {
 function NewsArticleView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const locale = useLocale();
   const [article, setArticle] = useState<NewsArticle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -83,7 +86,7 @@ function NewsArticleView() {
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 p-8" style={{ color: 'var(--color-text-secondary)' }}>
-        <span aria-hidden="true" className="flex-shrink-0">
+        <span aria-hidden="true" className="shrink-0">
           <Loader size={24} className="text-current" />
         </span>
         <p>Loading article...</p>
@@ -108,7 +111,7 @@ function NewsArticleView() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto" style={{ color: 'var(--color-text-primary)' }}>
+    <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto" style={{ color: 'var(--color-text-primary)', paddingTop: 'calc(var(--page-top) - 3px)' }}>
       {/* Back button */}
       <button
         onClick={handleBack}
@@ -127,7 +130,7 @@ function NewsArticleView() {
         <div className="flex items-center gap-3 flex-wrap">
           {article.published_at && (
             <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-              {new Date(article.published_at).toLocaleString()}
+              {formatTimestamp(article.published_at, locale)}
             </span>
           )}
           {article.author && (
@@ -199,14 +202,14 @@ function NewsArticleView() {
             {article.sentiments.map((s, i) => (
               <div key={i} className="flex items-start gap-3 text-xs rounded-md p-2.5" style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border-muted)' }}>
                 <span
-                  className="flex-shrink-0 font-mono font-medium px-1.5 py-0.5 rounded"
+                  className="shrink-0 font-mono font-medium px-1.5 py-0.5 rounded"
                   style={{ color: 'var(--color-accent-primary)', backgroundColor: 'var(--color-bg-tag)' }}
                 >
                   {s.ticker}
                 </span>
                 {s.sentiment && (
                   <span
-                    className="flex-shrink-0 font-medium px-1.5 py-0.5 rounded"
+                    className="shrink-0 font-medium px-1.5 py-0.5 rounded"
                     style={{
                       color: s.sentiment === 'positive' ? 'var(--color-profit)' : s.sentiment === 'negative' ? 'var(--color-loss)' : 'var(--color-text-secondary)',
                       backgroundColor: 'var(--color-bg-tag)',

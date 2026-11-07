@@ -210,6 +210,33 @@ class TestPersistUsageEffectiveByok:
         assert mock_create.call_args[0][0]["is_byok"] is False
 
 
+class TestPersistUsageProducer:
+    """The row names its producer: a turn's caller leaves it to the default."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("named", "stored"),
+        [({}, "ptc"), ({"msg_type": "task"}, "task")],
+        ids=["turn", "subagent"],
+    )
+    async def test_row_names_its_producer(self, named, stored):
+        svc = _make_service()
+        mock_create = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_get_conn():
+            yield MagicMock()
+
+        with patch(
+            f"{DB_MODULE}.create_usage_record", mock_create
+        ), patch(
+            "src.server.database.pool.get_db_connection", mock_get_conn
+        ):
+            await svc.persist_usage(response_id="resp-1", **named)
+
+        assert mock_create.call_args[0][0]["msg_type"] == stored
+
+
 class TestTrackLlmUsageErrorPath:
     """Error path in track_llm_usage must not corrupt is_byok derivation."""
 

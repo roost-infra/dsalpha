@@ -1,8 +1,9 @@
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, Check, Minus, Monitor } from 'lucide-react';
+import { AlertTriangle, Check, Minus } from 'lucide-react';
 import type { Brokerage, CapabilityGroup } from '../brokerages';
 import { DetailField } from './DetailOverlay';
 import { RowNote } from './RowNote';
+import { NativeOnlyNote } from './DesktopDownloadLink';
 
 /**
  * The two sections a brokerage detail has that no other server does: what the
@@ -40,7 +41,7 @@ export function CapabilityList({
             <GrantGlyph on={on} settled={settled} />
             <div className="min-w-0">
               <p
-                className="text-xs font-medium"
+                className="text-sm font-medium"
                 style={{
                   color:
                     // Amber only where it is both real and granted. A declined
@@ -56,7 +57,7 @@ export function CapabilityList({
                 {t(`plugins.brokerages.capabilities.${group.key}.label`)}
               </p>
               <p
-                className="text-[0.6875rem] mt-0.5"
+                className="text-xs mt-0.5"
                 style={{
                   color: on
                     ? 'var(--color-text-tertiary)'
@@ -104,7 +105,7 @@ function GrantGlyph({ on, settled }: { on: boolean; settled: boolean }) {
       title={label}
       aria-label={label}
       role="img"
-      className="flex-shrink-0 mt-0.5"
+      className="shrink-0 mt-0.5"
       style={{
         color: on ? 'var(--color-text-secondary)' : 'var(--color-text-quaternary)',
       }}
@@ -158,7 +159,7 @@ export function BrokerFacts({
             </RowNote>
           )}
           {vendor.native_callback_only && (
-            <RowNote icon={Monitor}>{t('plugins.oauth.nativeOnlyNote')}</RowNote>
+            <NativeOnlyNote />
           )}
         </div>
       )}

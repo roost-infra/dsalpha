@@ -564,6 +564,7 @@
 }
 
 .spin {
+  /* motion-exempt: a spinner's rotation period, its own pace and not a UI duration */
   animation: factor-spin 1s linear infinite;
 }
 

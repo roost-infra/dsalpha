@@ -30,7 +30,7 @@ export function BrandMark({
   size = 'sm',
   className,
 }: {
-  /** Seeds the monogram fallback and its tint; ignored when `kind` is given. */
+  /** Seeds the monogram fallback and its tint; with `kind`, only a subagent's. */
   name: string;
   art?: BrandArt;
   /** Draw this kind's glyph instead of a monogram when there is no art. */
@@ -44,7 +44,7 @@ export function BrandMark({
 
   if (!art || failedSrc === art.src) {
     return kind ? (
-      <KindTile kind={kind} size={size} className={className} />
+      <KindTile kind={kind} name={name} size={size} className={className} />
     ) : (
       <IdentityTile name={name} size={size} className={className} />
     );
@@ -55,12 +55,16 @@ export function BrandMark({
       alt=""
       aria-hidden
       className={cn(
-        'flex-shrink-0 object-contain',
+        'shrink-0 object-contain',
         TILE_SIZES[size],
-        // A logo drawn as a transparent dark glyph disappears on a dark
-        // surface; the ones that ship that way say so and get a light bed.
-        art.padded && 'bg-white p-0.5',
+        // A mark drawn in black would vanish on the dark theme's surfaces, so
+        // it is turned light there; the half turn of hue puts an accent it
+        // carries back near its own color after the inversion.
+        art.ink && 'invert hue-rotate-180 [[data-theme=light]_&]:filter-none',
         className,
+        // After the caller's class, whose rounding is for the stand-in: a bare
+        // glyph has no edge to round, only corners to lose.
+        art.bare && 'rounded-none',
       )}
       onError={() => setFailedSrc(art.src)}
     />

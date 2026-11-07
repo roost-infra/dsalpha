@@ -41,7 +41,7 @@ A required input that cannot be sourced is written into the cell as required-and
 
 ## Build Workflow
 
-**Execution pattern**: build the DCF as a saved Python script (for example `work/<task_name>/build_dcf.py`) rather than inline `ExecuteCode`. Model building is iterative: you will debug formulas, tweak assumptions and rerun, and a saved script lets you `Edit` one section and rerun cheaply. Read `references/workbook-patterns.md` before writing the build script; it carries the row layouts and formula patterns. For all formatting, number formats and colour standards, follow `.agents/skills/xlsx/SKILL.md`.
+**Execution pattern**: build the DCF as a saved Python script (for example `<task_name>/build_dcf.py`) rather than inline `ExecuteCode`. Model building is iterative: you will debug formulas, tweak assumptions and rerun, and a saved script lets you `Edit` one section and rerun cheaply. Read `references/workbook-patterns.md` before writing the build script; it carries the row layouts and formula patterns. For all formatting, number formats and colour standards, follow `.agents/skills/xlsx/SKILL.md`.
 
 **Formulas, not hardcoded values.** Every projection, margin, discount factor, present value and sensitivity cell is a live Excel formula. A number computed in Python and written into the cell is a defect even when the value is right today. With openpyxl, `ws["F29"] = "=E29*(1+B$10)"` is correct and `ws["F29"] = 12500.0` is not. The only typed numbers a DCF should hold are historical actuals, the assumption drivers in the scenario blocks, current market data (share price, diluted shares, debt, cash), and a solved value under the one exception `.agents/skills/xlsx/SKILL.md` allows (the reverse DCF driver, Step 10). If you catch yourself computing a value in Python and writing the result, stop and write the formula instead. The model has to move when the user changes an assumption, and a hardcode breaks every downstream tie-out silently, because the check still evaluates and still reads OK.
 
@@ -66,14 +66,14 @@ Do not build the model end to end and present it complete.
 - **Ratios and metrics**: `get_financial_ratios(symbol)`; **growth rates**: `get_growth_metrics(symbol)`
 - **Historical valuation**: `get_historical_valuation(symbol)` for the DCF fair value against price and the enterprise-value history; the exit-multiple back-check takes its comparison from `evToEBITDA` in `get_financial_ratios`
 - **Risk-free rate**: macro MCP `get_treasury_rates()`, the 10Y
-- **Equity risk premium**: macro MCP `get_market_risk_premium()`; the record carries no observation date, so the as-of is the retrieval date and the basis comment says so
+- **Equity risk premium**: macro MCP `get_market_risk_premium()`; `as_of` is null (the table is undated), so the basis comment cites the table that `method` names and says it is undated, not the run date
 - **Consensus and price**: `get_company_overview`
 - **Beta**: `yf_fundamentals` MCP `compare_valuations([symbol])`, the `beta` field on the symbol's record; where the basis comment needs a window and frequency the model controls, regress the name's returns against an index over bars from `yf_price` MCP `get_stock_history(ticker, period="5y", interval="1month")` and record that basis instead
 - **Web search and fetch**: current price, debt and cash when a tool does not carry them
 
 Validate before building: net debt against net cash, diluted shares against recent buybacks or issuance, historical margins against the business model, growth against sector norms, tax rate in a defensible range.
 
-**Done when** every input the model needs exists with a source and an as-of, and the validation list above has been walked.
+**Done when** every input the model needs exists with a source and an as-of (or is marked undated), and the validation list above has been walked.
 
 ### Step 2: Historical Analysis (3-5 years)
 
@@ -306,7 +306,7 @@ The build script writes this sheet **last**, once every other sheet exists and i
 
 ## Verify Before Delivering
 
-File: `[Ticker]_DCF_Model_[Date].xlsx` under `$WORK_DIR/work/{task}/`.
+File: `[Ticker]_DCF_Model_[Date].xlsx` under `{task}/`.
 
 1. **Structure**: the four sheets of `references/workbook-patterns.md`; scenario blocks with the year header row; the case selector driving a selected-case block; grids at the bottom of the DCF sheet with odd dimensions; the `Checks` sheet; blue inputs, black formulas, green links; a comment on every hardcoded input; borders around major sections
 2. **`python .agents/skills/xlsx/scripts/recalc.py model.xlsx 30`** until status is "success"; on errors read `.agents/skills/dcf-model/TROUBLESHOOTING.md`

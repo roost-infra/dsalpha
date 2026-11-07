@@ -17,7 +17,8 @@
  * balance: they are the thing most at risk.
  */
 import { test, expect, mockAPI } from './fixtures.js';
-import { keyboardFocus, outlineOn, tabTo, unpainted } from './helpers/focusPaint.js';
+import { edgeOn, keyboardFocus, outlineOn, tabTo, unpainted } from './helpers/focusPaint.js';
+import { sampleWorkspace } from './helpers/mockResponses.js';
 
 // The account button in the sidebar footer, chosen because it is a plain
 // DropdownMenu over the shared ui/ wrapper -- whatever is true here is true of
@@ -26,6 +27,26 @@ const ROW = '.sidebar-account-row';
 
 // Somewhere in the page body with nothing interactive under it.
 const EMPTY = { x: 760, y: 300 };
+
+// A route's content mounts from its own lazily loaded chunk after the shell
+// has painted, and on a loaded machine that first paint outlasts the 5s
+// default: under CPU contention the dashboard search box, the Workspaces field
+// and the settings select each failed to appear within it. So a wait for a
+// page after navigating gets the budget the other specs give a first paint.
+const FIRST_PAINT = { timeout: 15_000 };
+
+// The Workspaces search box shows only once there is a workspace to search,
+// and the default account holds Home alone. So the gallery opens on one.
+async function openGallery(page) {
+  await page.route(/\/api\/v1\/workspaces(?:\?|$)/, (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const includeHome = new URL(route.request().url()).searchParams.get('include_home') === 'true';
+    const home = { workspace_id: 'ws-home', name: 'Home', status: 'unbound', is_home: true, config: {} };
+    const workspaces = includeHome ? [home, sampleWorkspace()] : [sampleWorkspace()];
+    return route.fulfill({ json: { workspaces, total: workspaces.length, limit: 100, offset: 0 } });
+  });
+  await page.goto('/chat');
+}
 
 /** Is a focus indicator actually painted on the element that holds focus? */
 async function ringed(page) {
@@ -39,7 +60,7 @@ async function ringed(page) {
 test.beforeEach(async ({ page }) => {
   await mockAPI(page);
   await page.goto('/dashboard');
-  await expect(page.locator(ROW)).toBeVisible();
+  await expect(page.locator(ROW)).toBeVisible(FIRST_PAINT);
 });
 
 test.describe('a flow driven entirely by the mouse', () => {
@@ -235,7 +256,7 @@ const CLICKED = [
     field: 'the Workspaces search box',
     sel: WORKSPACE_SEARCH,
     rings: WORKSPACE_PILL,
-    open: (page) => page.goto('/chat'),
+    open: openGallery,
   },
   {
     // The shared primitive is the other half of the app's text fields: it drew
@@ -243,6 +264,7 @@ const CLICKED = [
     // always-on pseudo-class, so it rang on a click for its own reasons.
     field: 'a shared ui/ Input',
     sel: SHARED_INPUT,
+    edge: true,
     open: async (page) => {
       await page.goto('/chat');
       await page.getByRole('button', { name: /new workspace/i }).first().click();
@@ -251,11 +273,11 @@ const CLICKED = [
 ];
 
 test.describe('a text field clicked with the mouse', () => {
-  for (const { field, sel, open } of CLICKED) {
+  for (const { field, sel, open, edge } of CLICKED) {
     test(`leaves no ring on ${field}`, async ({ page }) => {
       if (open) await open(page);
       const target = page.locator(sel);
-      await expect(target).toBeVisible();
+      await expect(target).toBeVisible(FIRST_PAINT);
 
       // The resting paint is the reference, because "no ring" is not the same
       // question as "no outline": half the app draws its ring as a Tailwind
@@ -268,7 +290,53 @@ test.describe('a text field clicked with the mouse', () => {
       const clicked = await outlineOn(page, sel);
       expect(clicked.focused).toBe(true);
       expect(unpainted(clicked.style, clicked.color)).toBe(true);
+      if (edge) {
+        // A bordered field marks the click with its edge, not a ring: the
+        // accent border and the one-pixel soft halo the focused-field rule in
+        // tokens.css draws. A ring-2 is 2px, so the width is the tell.
+        await expect.poll(() => edgeOn(page, sel)).toMatchObject({ accent: true, halo: true });
+      } else {
+        expect(clicked.shadow).toBe(resting.shadow);
+      }
+    });
+  }
+});
+
+/**
+ * The focused edge is a shadow, and a shadow draws on a field with no border
+ * as well: a faint rectangle inside a box that is already lit. So a borderless
+ * field inside an edge-owning box (the composer, the dashboard search form, a
+ * `rings-within` pill) must stay exactly as it rested, and the box is what
+ * takes the edge. This is the regression a global field rule reopens first.
+ * The composer owns its edge to keep it neutral: its pills open menus against
+ * it, and an accent edge beside them competes for the eye.
+ */
+test.describe('a borderless field inside a box that owns the edge', () => {
+  const BOXED = [
+    { field: 'the chat composer', sel: COMPOSER, box: '.chat-input-container', lit: false },
+    { field: 'the dashboard search box', sel: SEARCH, box: '.dashboard-search-form' },
+    {
+      field: 'the Workspaces search box',
+      sel: WORKSPACE_SEARCH,
+      box: WORKSPACE_PILL,
+      open: openGallery,
+    },
+  ];
+
+  for (const { field, sel, box, open, lit = true } of BOXED) {
+    test(`keeps ${field} quiet and ${lit ? 'lights' : 'leaves'} its box on a click`, async ({ page }) => {
+      if (open) await open(page);
+      const target = page.locator(sel);
+      await expect(target).toBeVisible(FIRST_PAINT);
+      const resting = await outlineOn(page, sel);
+
+      await target.click();
+      const clicked = await outlineOn(page, sel);
+      expect(clicked.focused).toBe(true);
+      expect(unpainted(clicked.style, clicked.color)).toBe(true);
       expect(clicked.shadow).toBe(resting.shadow);
+      // The boxes transition their edge, so the read waits for it to settle.
+      await expect.poll(() => edgeOn(page, box)).toMatchObject({ accent: lit });
     });
   }
 });
@@ -281,7 +349,7 @@ test.describe('a text field reached by keyboard', () => {
   for (const { field, sel, rings, open } of CLICKED) {
     test(`rings ${field}`, async ({ page }) => {
       if (open) await open(page);
-      await expect(page.locator(sel)).toBeVisible();
+      await expect(page.locator(sel)).toBeVisible(FIRST_PAINT);
       await keyboardFocus(page, sel);
       expect(await outlineOn(page, sel)).toMatchObject({ focused: true });
       expect(await outlineOn(page, rings ?? sel)).toMatchObject({ style: 'solid' });
@@ -291,7 +359,7 @@ test.describe('a text field reached by keyboard', () => {
   test('wears the same ring as every other control', async ({ page }) => {
     // The tab order is only complete once the route has mounted; walking it
     // early wraps through a shorter ring and never arrives.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await tabTo(page, SEARCH);
     const field = await outlineOn(page, SEARCH);
     expect(field.style).toBe('solid');
@@ -353,8 +421,8 @@ test.describe('a field whose container is the indicator', () => {
   const PILL = WORKSPACE_PILL;
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/chat');
-    await expect(page.getByPlaceholder('Search workspaces...')).toBeVisible();
+    await openGallery(page);
+    await expect(page.getByPlaceholder('Search workspaces...')).toBeVisible(FIRST_PAINT);
   });
 
   test('rings the Workspaces pill when the field inside it is tabbed to', async ({ page }) => {
@@ -362,12 +430,11 @@ test.describe('a field whose container is the indicator', () => {
     expect(await outlineOn(page, PILL)).toMatchObject({ style: 'solid' });
   });
 
-  test('leaves the pill unringed on a click', async ({ page }) => {
-    const resting = await outlineOn(page, PILL);
+  test('leaves the pill unringed on a click, wearing the edge instead', async ({ page }) => {
     await page.getByPlaceholder('Search workspaces...').click();
     const clicked = await outlineOn(page, PILL);
     expect(unpainted(clicked.style, clicked.color)).toBe(true);
-    expect(clicked.shadow).toBe(resting.shadow);
+    await expect.poll(() => edgeOn(page, PILL)).toMatchObject({ accent: true, halo: true });
   });
 
   test('leaves the field itself unringed either way, so the two never stack', async ({ page }) => {
@@ -417,7 +484,7 @@ async function leaveWindowAndReturn(page) {
 test.describe('a field left focused while the user is in another app', () => {
   for (const { field, sel } of PARKED) {
     test(`comes back unringed on ${field}`, async ({ page }) => {
-      await expect(page.locator(sel)).toBeVisible();
+      await expect(page.locator(sel)).toBeVisible(FIRST_PAINT);
       const resting = await outlineOn(page, sel);
       await page.click(sel);
       // Typing is what makes this reachable: it flips the recorded device to
@@ -436,7 +503,7 @@ test.describe('a field left focused while the user is in another app', () => {
   test('comes back still ringed for someone who tabbed to it', async ({ page }) => {
     // The over-eager fix passes every assertion above by never re-deciding at
     // all. A keyboard user has to leave and return to their own indicator.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await keyboardFocus(page, SEARCH);
     expect(await outlineOn(page, SEARCH)).toMatchObject({ style: 'solid' });
 
@@ -448,12 +515,13 @@ test.describe('a field left focused while the user is in another app', () => {
     // Passing over the restore must consume exactly one focusin. If the flag
     // outlives it, the first control the user reaches after coming back
     // inherits the verdict of the one they left.
-    await expect(page.locator(SEARCH)).toBeVisible();
+    await expect(page.locator(SEARCH)).toBeVisible(FIRST_PAINT);
     await page.click(SEARCH);
     await page.keyboard.type('AAPL');
     await leaveWindowAndReturn(page);
 
-    await tabTo(page, ROW);
+    // The dashboard's widgets put every row's attach button in the tab order.
+    await tabTo(page, ROW, 120);
     expect(await outlineOn(page, ROW)).toMatchObject({ focused: true });
     const ring = await outlineOn(page, ROW);
     expect(ring.style === 'solid' || ring.shadow !== 'none').toBe(true);
@@ -474,14 +542,14 @@ test.describe('a field left focused while the user is in another app', () => {
  * way.
  */
 test.describe('a native select', () => {
-  // The timezone field, the one select on this tab carrying grouped options.
-  // Named rather than taken positionally so the helpers below stay strict: a
-  // selector matching two controls should fail loudly, not silently pick one.
-  const SELECT = 'select:has(optgroup)';
+  // The language field, the one native select on General. Named rather than
+  // taken positionally so the helpers below stay strict: a selector matching
+  // two controls should fail loudly, not silently pick one.
+  const SELECT = 'select:has(option[value="zh-CN"])';
 
   test.beforeEach(async ({ page }) => {
-    await page.goto('/settings');
-    await expect(page.locator(SELECT)).toBeVisible();
+    await page.goto('/settings?tab=general');
+    await expect(page.locator(SELECT)).toBeVisible(FIRST_PAINT);
   });
 
   /**

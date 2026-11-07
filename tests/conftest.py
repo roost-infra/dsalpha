@@ -7,6 +7,8 @@ and sample data factories.
 
 pytest_plugins = ["tests.integration.sandbox.metrics.conftest"]
 
+import inspect
+import os
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -14,8 +16,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from httpx import ASGITransport, AsyncClient
+
+# Runs before any ``src`` import: ``src.config`` calls ``load_dotenv()``, which
+# would otherwise pull ``LANGSMITH_TRACING=true`` from a developer's .env and
+# bill every test run as a trace. ``load_dotenv`` never overrides a var that is
+# already set, so pinning it here wins. Set LANGALPHA_TEST_TRACING=1 to trace
+# a run on purpose.
+if os.environ.get("LANGALPHA_TEST_TRACING") != "1":
+    for _flag in ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGCHAIN_TRACING"):
+        os.environ[_flag] = "false"
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +81,9 @@ def mock_db_connection(mock_connection):
     """
 
     @asynccontextmanager
-    async def _fake_get_db_connection():
-        yield mock_connection
+    async def _fake_get_db_connection(conn=None):
+        # A passed connection is yielded unchanged, as the real one does.
+        yield conn if conn is not None else mock_connection
 
     with patch(
         "src.server.database.pool.get_db_connection",
@@ -90,29 +103,57 @@ def create_test_app(*routers) -> FastAPI:
 
     - No real DB/Redis/Daytona init (avoids setup.py lifespan)
     - Auth bypassed: get_current_user_id returns "test-user-123"
-    - Rate limits bypassed: WorkspaceLimitCheck/ChatRateLimited passthrough
+    - Rate limits bypassed: ComputerLimitCheck passthrough, and every turn
+      admitted (``pin_chat_limit``)
     """
     from src.server.dependencies.usage_limits import (
         ChatAuthResult,
-        enforce_chat_limit,
-        enforce_workspace_limit,
+        enforce_computer_limit,
     )
+    from src.server.dependencies.principal import Principal, get_principal
     from src.server.utils.api import get_current_user_id
 
     app = FastAPI()
     for router in routers:
         app.include_router(router)
 
-    # Override auth
+    # Override auth. The scoped routes read the caller through get_principal,
+    # which follows whatever user a test pins on get_current_user_id, as a
+    # session, and runs for real once a test drops that override.
     app.dependency_overrides[get_current_user_id] = lambda: "test-user-123"
 
+    async def principal_as_session(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(
+            HTTPBearer(auto_error=False)
+        ),
+    ) -> Principal:
+        pinned = request.app.dependency_overrides.get(get_current_user_id)
+        if pinned is None:
+            return await get_principal(request, credentials)
+        user = pinned()
+        return Principal(
+            user_id=await user if inspect.isawaitable(user) else user, auth="session"
+        )
+
+    app.dependency_overrides[get_principal] = principal_as_session
+
     # Override rate limits
-    app.dependency_overrides[enforce_workspace_limit] = lambda: "test-user-123"
-    app.dependency_overrides[enforce_chat_limit] = lambda: ChatAuthResult(
-        user_id="test-user-123"
-    )
+    app.dependency_overrides[enforce_computer_limit] = lambda: "test-user-123"
+    pin_chat_limit(app, ChatAuthResult(user_id="test-user-123"))
 
     return app
+
+
+def pin_chat_limit(app: FastAPI, result) -> None:
+    """Every turn ``app`` admits holds ``result`` (a ``ChatAuthResult``), in
+    place of ``chat_limit_for``."""
+    from src.server.dependencies.usage_limits import chat_limiter
+
+    async def limit(user_id: str):
+        return result
+
+    app.dependency_overrides[chat_limiter] = lambda: limit
 
 
 @pytest_asyncio.fixture
@@ -143,7 +184,6 @@ def mock_workspace_manager():
     manager = AsyncMock()
     manager.create_workspace = AsyncMock()
     manager.get_session = AsyncMock()
-    manager.stop_workspace = AsyncMock()
     manager.delete_workspace = AsyncMock()
     manager.start_workspace = AsyncMock()
     manager.archive_workspace = AsyncMock()
@@ -152,13 +192,21 @@ def mock_workspace_manager():
 
 
 @pytest.fixture
-def mock_session_service():
-    """AsyncMock of SessionService with common methods."""
-    service = AsyncMock()
-    service.get_session = AsyncMock()
-    service.cleanup = AsyncMock()
-    service.shutdown = AsyncMock()
-    return service
+def mock_computer_manager():
+    """AsyncMock of ComputerManager, with the surface the computer routes call.
+
+    The router imports the manager inside each handler, so a test patches
+    ``src.server.app.computers._computer_manager`` to return this.
+    """
+    manager = AsyncMock()
+    manager.get_session_for_computer = AsyncMock()
+    manager.start_computer = AsyncMock()
+    manager.stop_computer = AsyncMock()
+    manager.archive_computer = AsyncMock()
+    manager.set_computer_spec = AsyncMock()
+    manager.set_computer_always_on = AsyncMock()
+    manager.remove_computer_with_workspaces = AsyncMock(return_value=[])
+    return manager
 
 
 @pytest.fixture
@@ -205,6 +253,52 @@ def sample_workspace_dict():
             "sort_order": sort_order,
             "created_at": now,
             "updated_at": now,
+        }
+        data.update(overrides)
+        return data
+
+    return _make
+
+
+@pytest.fixture
+def sample_computer_dict():
+    """Factory for computer DB row dicts (the shape ``_COMPUTER_COLS`` returns)."""
+
+    def _make(
+        computer_id=None,
+        user_id="test-user-123",
+        kind="daytona",
+        name="My computer",
+        status="running",
+        provider_ref="sandbox-abc",
+        is_primary=True,
+        resource_tier="standard",
+        is_always_on=False,
+        root_dir="/home/workspace",
+        **overrides,
+    ):
+        now = datetime.now(timezone.utc)
+        data = {
+            "computer_id": computer_id or str(uuid.uuid4()),
+            "user_id": user_id,
+            "kind": kind,
+            "provider_ref": provider_ref,
+            "name": name,
+            "is_primary": is_primary,
+            "status": status,
+            "resource_tier": resource_tier,
+            "is_always_on": is_always_on,
+            "platform_secret_version": 0,
+            "mcp_config_version": 0,
+            "root_dir": root_dir,
+            "layout_version": 3,
+            "provider_config": {},
+            "artifacts": {},
+            "last_activity_at": None,
+            "stopped_at": None,
+            "created_at": now,
+            "updated_at": now,
+            "config": {},
         }
         data.update(overrides)
         return data

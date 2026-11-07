@@ -1,5 +1,5 @@
 /**
- * 缠论画线的 lightweight-charts v4 series primitive。
+ * 缠论画线的 lightweight-charts v5 series primitive。
  *
  * 照 `SelectionPrimitive` / `AgentAnnotationsPrimitive` 的写法：`attached()` 拿
  * chart+series，`paneViews()` 返回分层视图，`draw()` 里用
@@ -13,9 +13,9 @@
  * 缠论用**琥珀色**——三者同时出现在图上时不会互相误读。
  */
 import type {
-  ISeriesPrimitivePaneView,
-  ISeriesPrimitivePaneRenderer,
-  SeriesPrimitivePaneViewZOrder,
+  IPrimitivePaneView,
+  IPrimitivePaneRenderer,
+  PrimitivePaneViewZOrder,
   SeriesAttachedParameter,
   Time,
   IChartApiBase,
@@ -168,14 +168,14 @@ export class ChanPrimitive {
 
   updateAllViews(): void {}
 
-  paneViews(): ISeriesPrimitivePaneView[] {
+  paneViews(): IPrimitivePaneView[] {
     const source = this;
     return [
       {
-        zOrder(): SeriesPrimitivePaneViewZOrder {
+        zOrder(): PrimitivePaneViewZOrder {
           return 'bottom';
         },
-        renderer(): ISeriesPrimitivePaneRenderer {
+        renderer(): IPrimitivePaneRenderer {
           return {
             draw(target: CanvasRenderingTarget2D): void {
               source._drawZhongshu(target);
@@ -184,10 +184,10 @@ export class ChanPrimitive {
         },
       },
       {
-        zOrder(): SeriesPrimitivePaneViewZOrder {
+        zOrder(): PrimitivePaneViewZOrder {
           return 'top';
         },
-        renderer(): ISeriesPrimitivePaneRenderer {
+        renderer(): IPrimitivePaneRenderer {
           return {
             draw(target: CanvasRenderingTarget2D): void {
               source._drawSegments(target);

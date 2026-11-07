@@ -3,7 +3,7 @@
  * active run, not the prior thread's stale run.
  *
  * Within one SPA session the `useChatMessages` instance is reused as the user
- * navigates threads (e.g. clicking a dispatched-PTC card in a flash thread to
+ * navigates threads (e.g. clicking a dispatched-PTC card in a Chief of Staff thread to
  * jump into the running PTC thread). `currentRunIdRef` keeps the last stream's
  * run_id, and `lastEventIdRef` keeps its per-stream-key cursor. On the new
  * thread's load, the reconnect path must repoint at that thread's CURRENT run
@@ -93,7 +93,7 @@ describe('useChatMessages — cross-thread navigation reconnect', () => {
 
   it('supersedes an in-flight stream on the prior thread so the navigated-to thread still loads', async () => {
     // Thread A's reconnect HANGS — it keeps streaming (isStreamingRef stays true).
-    // This mimics a flash report-back streaming on the flash thread when the user
+    // This mimics a report-back streaming on the Chief of Staff thread when the user
     // clicks the dispatch card to jump into the running PTC thread. Before the
     // fix, the thread-load effect's isStreamingRef guard would skip thread B's
     // load and it would appear blank.
@@ -247,9 +247,9 @@ describe('useChatMessages — cross-thread navigation reconnect', () => {
     expect(assistantText(result.current.messages)).toBe('already written');
     expect(result.current.isReconnecting).toBe(false);
 
-    // The live tail streams through as it arrives.
+    // The live tail streams through as it arrives, on the next frame.
     await act(async () => { emit?.(textChunk(' and live')); });
-    expect(assistantText(result.current.messages)).toBe('already written and live');
+    await waitFor(() => expect(assistantText(result.current.liveMessages.get())).toBe('already written and live'));
   });
 
   it('a held event restarts the quiet window; the backlog paints once it goes quiet', async () => {

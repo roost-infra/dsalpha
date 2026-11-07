@@ -46,8 +46,14 @@ def _tool(name: str = TOOL_NAME, stamp: dict | None = None) -> StructuredTool:
 
 
 class _Request:
-    def __init__(self, name: str = TOOL_NAME, call_id: str = "call-1") -> None:
+    def __init__(
+        self,
+        name: str = TOOL_NAME,
+        call_id: str = "call-1",
+        state: dict[str, Any] | None = None,
+    ) -> None:
         self.tool_call = {"id": call_id, "name": name, "args": dict(ARGS)}
+        self.state = state
 
 
 def _state(
@@ -102,6 +108,9 @@ class _FakeLedger:
             "approved" if decision == "approve" else "rejected_by_user"
         )
         return self._receipt(attempt_id)
+
+    async def find(self, message_id, tool_call_id) -> str | None:
+        return self.attempts.get((message_id, tool_call_id))
 
     async def consume(self, attempt_id):
         self.consumed.append(attempt_id)
@@ -335,6 +344,45 @@ async def test_a_call_with_no_attempt_on_this_turn_is_refused():
 
 
 @pytest.mark.asyncio
+async def test_a_call_the_gate_saw_in_an_earlier_run_takes_its_recorded_attempt(
+    monkeypatch,
+):
+    """A regenerate or a retry from past the gate's node starts on a new
+    middleware that never proposed; the call's message and id still name
+    the attempt, which then runs once and only once."""
+    ledger = _FakeLedger()
+    _answer(monkeypatch, {"order_decisions": {"att-1": {"type": "approve"}}})
+    await OrderGovernanceMiddleware(ledger, [_tool()]).aafter_model(_state(), None)
+
+    later_run = OrderGovernanceMiddleware(ledger, [_tool()])
+    handler = _Handler()
+    first = await later_run.awrap_tool_call(_Request(state=_state()), handler)
+    again = await OrderGovernanceMiddleware(ledger, [_tool()]).awrap_tool_call(
+        _Request(state=_state()), handler
+    )
+
+    assert handler.calls == ["call-1"]
+    assert first.artifact[RECEIPT_KEY]["outcome"]["status"] == "submitted"
+    # The ledger's own refusal, with the receipt, not "no approved execution".
+    assert "it is submitted" in again.content
+    assert again.artifact[RECEIPT_KEY]["outcome"]["status"] == "submitted"
+
+
+@pytest.mark.asyncio
+async def test_a_call_no_gate_recorded_is_refused_without_a_write():
+    ledger = _FakeLedger()
+    mw = OrderGovernanceMiddleware(ledger, [_tool()])
+
+    handler = _Handler()
+    result = await mw.awrap_tool_call(_Request(state=_state()), handler)
+
+    assert handler.calls == []
+    assert ledger.attempts == {}
+    assert ledger.consumed == []
+    assert "no approved execution" in result.content
+
+
+@pytest.mark.asyncio
 async def test_a_tool_the_binder_did_not_stamp_as_an_order_passes_through():
     ledger = _FakeLedger()
     plain = _tool("mcp__moomoo__get_positions", stamp={"server": "moomoo", "tool": "x"})
@@ -347,6 +395,19 @@ async def test_a_tool_the_binder_did_not_stamp_as_an_order_passes_through():
     assert handler.calls == ["call-1"]
     assert out.artifact is None
     assert ledger.attempts == {}
+
+
+@pytest.mark.asyncio
+async def test_an_order_call_already_answered_is_not_put_to_the_user(monkeypatch):
+    """A Claude Code turn answers every call of a batch but the one it holds
+    for the user before this runs."""
+    seen = _answer(monkeypatch, {"decisions": [{"type": "approve"}]})
+    mw = OrderGovernanceMiddleware(_FakeLedger(), [_tool()])
+    ai = AIMessage(content="", id="msg-1", tool_calls=[
+        {"id": call, "name": TOOL_NAME, "args": dict(ARGS), "type": "tool_call"} for call in ("call-1", "call-2")
+    ])
+    await mw.aafter_model({"messages": [ai, ToolMessage("Not run.", tool_call_id="call-2")]}, None)
+    assert [r["tool_call_id"] for r in seen[0]["action_requests"]] == ["call-1"]
 
 
 def test_the_sync_path_refuses_every_order():
@@ -380,8 +441,8 @@ async def test_a_stringified_argument_is_hashed_in_the_form_the_relay_will_see(
 ):
     """The approval binds the frame, so both sides have to hash one form.
 
-    ``ToolArgumentParsingMiddleware`` decodes a JSON-looking string argument in
-    place before the tool runs, and the relay hashes what it produced. Hashing
+    ``ToolArgumentParsingMiddleware`` decodes a JSON-looking string argument
+    before the tool runs, and the relay hashes what it produced. Hashing
     the model's raw form at propose time instead left the gate comparing two
     different digests: the attempt was already consumed, so the approved order
     came back refused and unretryable. Providers that number call ids by
@@ -390,7 +451,7 @@ async def test_a_stringified_argument_is_hashed_in_the_form_the_relay_will_see(
     """
     ledger = _FakeLedger()
     mw = OrderGovernanceMiddleware(ledger, [_tool()])
-    _answer(monkeypatch, {})
+    raised = _answer(monkeypatch, {})
     state = _state()
     state["messages"][0].tool_calls[0]["args"] = {
         "legs": '[{"side": "buy", "ratio": 1}]',
@@ -401,11 +462,15 @@ async def test_a_stringified_argument_is_hashed_in_the_form_the_relay_will_see(
 
     # Decoded before the ledger saw it, so the stored hash is over the object.
     assert ledger.proposed_args[0]["legs"] == [{"side": "buy", "ratio": 1}]
-    # And written back onto the call itself, so the approval card, the row and
-    # the frame the relay hashes all read the same value.
-    assert state["messages"][0].tool_calls[0]["args"]["legs"] == [
+    # The approval card reads the same value as the row and the frame.
+    assert raised[0]["action_requests"][0]["args"]["legs"] == [
         {"side": "buy", "ratio": 1}
     ]
+    # The message keeps the args as the model sent them: every later request
+    # carries it, so a rewrite would change the prefix of its later thinking.
+    assert state["messages"][0].tool_calls[0]["args"]["legs"] == (
+        '[{"side": "buy", "ratio": 1}]'
+    )
     # Untouched otherwise: this canonicalizes serialization, it does not coerce.
     assert ledger.proposed_args[0]["quantity"] == 1
 

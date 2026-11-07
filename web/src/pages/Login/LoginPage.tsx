@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Mail, Link2 } from 'lucide-react';
 import { Input } from '../../components/ui/input';
 import { useTranslation, Trans } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { authErrorMessage, type AuthErrorInfo } from '../../lib/authErrors';
+import { PRIVACY_URL } from '../../config/supportLinks';
 import PasswordInput from './PasswordInput';
 import PasswordStrength from './PasswordStrength';
 import { validatePasswordPair, MIN_PASSWORD_LENGTH } from './passwordRequirements';
@@ -260,7 +261,7 @@ function LoginPage() {
   const inboxBackView: LoginView = FLOWS[sentKind].backView;
 
   return (
-    <div className="login-page login-page--split">
+    <div className="login-page login-page--split owns-its-edge">
       <div className="login-page__frame">
       {/* Not gated on visualHidden: the grain is a frame-level texture (visible
           on mobile too) and only animates on ember seeds, which never spawn
@@ -553,15 +554,16 @@ function LoginPage() {
         <p className="login-page__legal">
           {/* Deliberately anchors and not <Link>: these two are documents about
               the product rather than app surface, and the desktop shell hands a
-              window.open of one of our own URLs to the system browser
-              (setWindowOpenHandler in desktop/src/main.js). Routing them through
-              a new window is what keeps a page of prose out of a frameless app
-              window, where the top of it sits under the titlebar drag region. */}
+              window.open to the system browser (setWindowOpenHandler in
+              desktop/src/main.js). Routing them through a new window is what
+              keeps a page of prose out of a frameless app window, where the top
+              of it sits under the titlebar drag region. A build that sets no
+              privacy policy names only the terms. */}
           <Trans
-            i18nKey="auth.agreeToTerms"
+            i18nKey={PRIVACY_URL ? 'auth.agreeToTerms' : 'auth.agreeToTermsOnly'}
             components={{
               1: <a href="/legal" target="_blank" rel="noopener noreferrer" />,
-              2: <a href="/privacy" target="_blank" rel="noopener noreferrer" />,
+              2: <a href={PRIVACY_URL ?? undefined} target="_blank" rel="noopener noreferrer" />,
             }}
           />
         </p>

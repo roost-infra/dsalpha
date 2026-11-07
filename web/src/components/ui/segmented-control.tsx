@@ -6,6 +6,7 @@ export interface SegmentedOption<T extends string> {
   /** Offered but refused. It greys out in place, so the row still says which
    *  answers exist rather than quietly shrinking to the ones that are left. */
   disabled?: boolean;
+  testId?: string;
 }
 
 interface SegmentedControlProps<T extends string> {
@@ -52,7 +53,7 @@ export function SegmentedControl<T extends string>({
       aria-label={label}
       className={
         compact
-          ? 'inline-flex rounded-md overflow-hidden clips-focus-ring flex-shrink-0'
+          ? 'inline-flex rounded-md overflow-hidden clips-focus-ring shrink-0'
           : 'inline-flex rounded-lg overflow-hidden clips-focus-ring'
       }
       style={{ border: '1px solid var(--color-border-muted)' }}
@@ -66,6 +67,7 @@ export function SegmentedControl<T extends string>({
             aria-pressed={selected}
             disabled={disabled || option.disabled}
             onClick={() => onChange(option.value)}
+            data-testid={option.testId}
             className={`flex items-center gap-1.5 font-medium transition-colors disabled:cursor-default ${
               compact ? 'px-2 py-0.5 text-[0.6875rem]' : 'px-2.5 py-1 text-[0.8125rem]'
             }`}

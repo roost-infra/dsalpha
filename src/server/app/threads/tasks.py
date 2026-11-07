@@ -6,13 +6,11 @@ from typing import Annotated, Optional
 from fastapi import Header, Path, Query
 from fastapi.responses import StreamingResponse
 
+from src.server.dependencies.principal import ReadUserId, RunUserId
 # require_thread_owner is called through the module (auth_api.…) so a single
 # definition-site patch governs every route — a consumer-site patch that stops
 # intercepting after a move would silently bypass auth in tests.
 from src.server.utils import api as auth_api
-from src.server.utils.api import (
-    CurrentUserId,
-)
 from src.server.models.chat import SubagentMessageRequest
 
 
@@ -24,7 +22,7 @@ from ._deps import SSE_HEADERS, router
 async def get_subagent_task_status(
     thread_id: str,
     task_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,12}$")],
-    x_user_id: CurrentUserId,
+    x_user_id: ReadUserId,
 ):
     """Durable terminal state of a single subagent task from the run ledger.
 
@@ -35,20 +33,38 @@ async def get_subagent_task_status(
     thread reload — the same ledger truth replay stamps at load time.
     """
     await auth_api.require_thread_owner(thread_id, x_user_id)
-    from src.server.services.history.task_status import resolve_task_details
+    from src.server.services.history.task_status import (
+        resolve_task_details,
+        run_telemetry,
+    )
 
     details = await resolve_task_details(thread_id, [task_id])
     detail = details.get(task_id)
     if detail is None:
         return {"task_id": task_id, "status": None, "error": None}
-    return {"task_id": task_id, "status": detail["status"], "error": detail.get("error")}
+    run = run_telemetry(detail) or {}
+    return {
+        "task_id": task_id,
+        "status": detail["status"],
+        "error": detail.get("error"),
+        "last_activity_ms": detail.get("last_activity_ms"),
+        # The latest run and its bounds, so a stale card's timeline settles
+        # with it; a client keys run facts by the id. Null for a task from
+        # before the ledger.
+        "run_id": detail.get("latest_run_id"),
+        "started_ms": run.get("started_ms"),
+        "finished_ms": run.get("finished_ms"),
+        # Absent, not null, for a run on its launcher's model: the field is
+        # only ever news.
+        **({"model": run["model"]} if run.get("model") else {}),
+    }
 
 
 @router.get("/{thread_id}/tasks/{task_id}/history")
 async def get_subagent_task_history(
     thread_id: str,
     task_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,12}$")],
-    x_user_id: CurrentUserId,
+    x_user_id: ReadUserId,
 ):
     """On-demand checkpoint transcript for one subagent task.
 
@@ -60,7 +76,7 @@ async def get_subagent_task_history(
     transcript belongs to its live stream).
     """
     await auth_api.require_thread_owner(thread_id, x_user_id)
-    from src.server.services.history.replay.task_lane import (
+    from src.server.services.history.replay.run_lane import (
         project_task_transcript,
     )
 
@@ -72,7 +88,7 @@ async def get_subagent_task_history(
 async def stream_subagent_task(
     thread_id: str,
     task_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,12}$")],
-    x_user_id: CurrentUserId,
+    x_user_id: ReadUserId,
     last_event_id: Optional[int] = Query(
         None, description="Last received event ID for reconnect"
     ),
@@ -106,7 +122,7 @@ async def stream_subagent_task(
 async def cancel_subagent_task(
     thread_id: str,
     task_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,12}$")],
-    x_user_id: CurrentUserId,
+    x_user_id: RunUserId,
 ):
     """Stop one background task (e.g. a workflow run) without touching the turn."""
     await auth_api.require_thread_owner(thread_id, x_user_id)
@@ -120,7 +136,7 @@ async def send_subagent_message(
     thread_id: str,
     task_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,12}$")],
     request: SubagentMessageRequest,
-    x_user_id: CurrentUserId,
+    x_user_id: RunUserId,
 ):
     """Send a message/instruction to a running background subagent."""
     await auth_api.require_thread_owner(thread_id, x_user_id)
@@ -131,4 +147,5 @@ async def send_subagent_message(
         task_id=task_id,
         content=request.content,
         user_id=x_user_id,
+        input_id=request.input_id,
     )

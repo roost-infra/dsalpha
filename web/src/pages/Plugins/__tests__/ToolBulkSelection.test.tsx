@@ -98,6 +98,18 @@ const TOOLS: McpToolSummary[] = [
     allowed: ['ptc'],
     approval: false,
   },
+  // Withheld at every grant, so they sit in a dimmed bucket outside every count
+  // and selection below. They are here because a list this short would not
+  // draw a filter at all, and the real one is 88 tools long.
+  ...['account_withdraw', 'account_transfer_out', 'account_close'].map(
+    (name): McpToolSummary => ({
+      name,
+      description: '',
+      input_schema: {},
+      capability: null,
+      always_denied: true,
+    }),
+  ),
 ];
 
 const patch = vi.fn().mockResolvedValue({});
@@ -118,22 +130,25 @@ vi.mock('@/hooks/useMcpServers', async (importOriginal) => {
 
 async function renderDetail() {
   const { ServerDetail } = await import('../components/ServerDetail');
+  const { DetailPageProvider } = await import('../components/DetailPage');
   return renderWithProviders(
-    <ServerDetail
-      data={{
-        origin: 'brokerage',
-        brokerage: VENDOR,
-        server: httpCatalogServer({
-          name: 'moomoo',
-          url: VENDOR.url,
-          oauth_status: 'connected',
-          granted_capabilities: ['market_data', 'trading'],
-          tool_binding: {},
-          binding_preset: null,
-        }),
-      }}
-      onClose={() => {}}
-    />,
+    <DetailPageProvider value={{ section: 'Connectors' }}>
+      <ServerDetail
+        data={{
+          origin: 'brokerage',
+          brokerage: VENDOR,
+          server: httpCatalogServer({
+            name: 'moomoo',
+            url: VENDOR.url,
+            oauth_status: 'connected',
+            granted_capabilities: ['market_data', 'trading'],
+            tool_binding: {},
+            binding_preset: null,
+          }),
+        }}
+        onClose={() => {}}
+      />
+    </DetailPageProvider>,
   );
 }
 
@@ -197,7 +212,7 @@ describe('picking tools', () => {
     await renderDetail();
     fireEvent.click(groupBox(MARKET));
 
-    expect(within(bar()).getByText('3 selected')).toBeInTheDocument();
+    expect(within(bar()).getByText('3 of 4 selected')).toBeInTheDocument();
     expect(groupBox(MARKET)).toHaveAttribute('aria-checked', 'true');
   });
 
@@ -211,7 +226,7 @@ describe('picking tools', () => {
 
     fireEvent.click(groupBox(MARKET));
     expect(groupBox(MARKET)).toHaveAttribute('aria-checked', 'true');
-    expect(within(bar()).getByText('3 selected')).toBeInTheDocument();
+    expect(within(bar()).getByText('3 of 4 selected')).toBeInTheDocument();
   });
 
   it('clears the group from a full header box', async () => {
@@ -231,7 +246,7 @@ describe('picking tools', () => {
     // The label counts what it would take, so the number is the filter's.
     fireEvent.click(screen.getByRole('button', { name: 'Select all 2' }));
 
-    expect(within(bar()).getByText('2 selected')).toBeInTheDocument();
+    expect(within(bar()).getByText('2 of 4 selected')).toBeInTheDocument();
   });
 
   // The opposite rule, and deliberately so: a selection is keyed by name and
@@ -242,7 +257,7 @@ describe('picking tools', () => {
     fireEvent.click(groupBox(MARKET));
     fireEvent.change(filterBox(), { target: { value: 'depth' } });
 
-    expect(within(bar()).getByText('3 selected')).toBeInTheDocument();
+    expect(within(bar()).getByText('3 of 4 selected')).toBeInTheDocument();
   });
 
   // A pinned tool answers 422 to anything but its pin. It carries the pinned
@@ -257,7 +272,7 @@ describe('picking tools', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select every tool shown' }));
     // Four movable tools out of six: neither pinned order tool is one of them.
-    expect(within(bar()).getByText('4 selected')).toBeInTheDocument();
+    expect(within(bar()).getByText('4 of 4 selected')).toBeInTheDocument();
   });
 
   it('drops the bar when the selection is cleared', async () => {

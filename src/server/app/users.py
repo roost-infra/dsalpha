@@ -2,22 +2,23 @@
 
 import asyncio
 import logging
-import re
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import File, UploadFile
 from pydantic import BaseModel
 from src.llms.preferences import (
     MOVED_MODEL_KEYS,
-    TUNING_FIELDS,
+    PROFILE_FIELDS,
     TuningError,
     validate_tuning,
 )
 from src.utils.storage import get_public_url, upload_bytes
 
 from src.server.auth.jwt_bearer import get_current_auth_info, AuthInfo
+from src.server.database.pool import get_db_connection
+from src.server.dependencies.principal import CurrentPrincipal, ReadUserId
 from src.server.database.user import (
     create_user as db_create_user,
     create_user_from_auth,
@@ -25,18 +26,34 @@ from src.server.database.user import (
     find_user_by_email,
     get_user as db_get_user,
     get_user_preferences as db_get_user_preferences,
+    lock_user_preferences as db_lock_user_preferences,
     get_user_with_preferences,
     invalidate_user_prefs_cache,
+    invalidate_user_profile_cache,
     migrate_user_id,
     update_user as db_update_user,
     upsert_user_preferences,
 )
-from ptc_agent.agent.graph import invalidate_user_profile_cache
+from src.server.services.llm.config import BACKGROUND_FOLLOWS
+from src.server.services.llm.custom_catalog import (
+    refuse_custom_model_endpoints,
+    validate_custom_models,
+    validate_custom_providers,
+)
+from src.server.services.llm.payers import ModelPayer, model_payers
+from src.server.services.llm.thread_model import (
+    DEFAULT_MODEL_KEYS,
+    DEFAULT_MODEL_SCOPES,
+    carry_default_change,
+)
+from src.server.services.llm.user_models import model_preference_of
 from src.server.services.onboarding import maybe_complete_onboarding
+from src.server.models.profile_vocabulary import STRUCTURED_PREFERENCES, check_profile
 from src.server.models.user import (
     UserBase,
     UserPreferencesResponse,
     UserPreferencesUpdate,
+    UserPreferencesUpdateResponse,
     UserResponse,
     UserUpdate,
     UserWithPreferencesResponse,
@@ -44,8 +61,6 @@ from src.server.models.user import (
 from src.server.utils.api import CurrentUserId, handle_api_exceptions, raise_not_found
 
 logger = logging.getLogger(__name__)
-
-_VALID_MODALITIES = frozenset({"text", "image", "pdf"})
 
 router = APIRouter(prefix="/api/v1", tags=["Users"])
 
@@ -59,6 +74,61 @@ class AuthSyncRequest(BaseModel):
     avatar_url: Optional[str] = None
     timezone: Optional[str] = None
     locale: Optional[str] = None
+
+
+class AuthPrincipalResponse(BaseModel):
+    user_id: str
+    auth: Literal["session", "service", "oauth", "pat", "computer"]
+    client_id: Optional[str] = None
+    scopes: list[str]
+    # The computer a computer's token belongs to.
+    computer_id: Optional[str] = None
+
+
+@router.get("/auth/principal", response_model=AuthPrincipalResponse)
+async def get_auth_principal(principal: CurrentPrincipal):
+    """Who is calling and, for a token, what it may do. Every token reaches
+    it, whatever its scopes, so a client can show who it signed in as."""
+    return AuthPrincipalResponse(
+        user_id=principal.user_id,
+        auth=principal.auth,
+        client_id=principal.client_id,
+        scopes=list(principal.scopes),
+        computer_id=principal.computer_id,
+    )
+
+
+class CliAuthResponse(BaseModel):
+    # False on a server that asks no credential (oss mode).
+    auth_required: bool
+    # Where `la login` signs in, the issuer's discovery document beside it;
+    # null when this server takes no sign-in from the CLI.
+    issuer: Optional[str] = None
+    client_id: Optional[str] = None
+    # What `la login` asks the issuer for besides who the user is: the API
+    # scopes where this server reads them from the token itself, none where
+    # the platform grants them from the user's consent and plan.
+    scopes: list[str]
+    personal_access_tokens: bool
+
+
+@router.get("/auth/cli", response_model=CliAuthResponse)
+async def get_cli_auth():
+    """How the ``la`` CLI signs in to this server. Public: the CLI asks before
+    it holds any credential."""
+    from src.config.env import AUTH_SERVICE_URL, OAUTH_CLI_CLIENT_ID, OAUTH_RESOURCE_ISSUER
+    from src.config.settings import HOST_MODE
+    from src.server.auth.oauth_resource import oauth_resource_enabled
+    from src.server.services.cli_tokens import SCOPES
+
+    signs_in = oauth_resource_enabled() and bool(OAUTH_CLI_CLIENT_ID)
+    return CliAuthResponse(
+        auth_required=HOST_MODE != "oss",
+        issuer=OAUTH_RESOURCE_ISSUER if signs_in else None,
+        client_id=OAUTH_CLI_CLIENT_ID if signs_in else None,
+        scopes=[] if AUTH_SERVICE_URL else list(SCOPES),
+        personal_access_tokens=bool(AUTH_SERVICE_URL),
+    )
 
 
 @router.post("/auth/sync", response_model=UserWithPreferencesResponse)
@@ -173,6 +243,8 @@ async def get_current_user(
 
     Set ``refresh_tier=true`` to bust the cached platform tier (e.g. after
     invitation redemption). Access tier and plan display name are cached 5 min.
+    While the platform is unreachable they are its last answer, and 503 when
+    it has given none.
     """
     result = await get_user_with_preferences(user_id)
 
@@ -186,15 +258,18 @@ async def get_current_user(
     # costs more than one platform-service round-trip per user per 5 minutes.
     from src.server.dependencies.usage_limits import (
         _fetch_platform_membership,
-        platform_membership_cache_key,
+        quota_service_unavailable,
     )
-    if refresh_tier:
-        from src.utils.cache.redis_cache import get_cache_client
-        cache = get_cache_client()
-        await cache.delete(platform_membership_cache_key(user_id))
-    membership = await _fetch_platform_membership(user_id)
+    membership = await _fetch_platform_membership(user_id, refresh=refresh_tier)
+    if membership is None:
+        # Any tier written here is one the web acts on, and -1 sends the user
+        # to the setup wizard. A 503 leaves a client on what it already holds.
+        raise quota_service_unavailable()
     user_response.access_tier = int(membership.get("access_tier", -1))
     user_response.plan_display_name = membership.get("plan_display_name")
+    from src.server.services.llm.config import deployment_serves_default
+
+    user_response.deployment_serves = deployment_serves_default()
 
     preferences_response = None
     if result["preferences"]:
@@ -262,203 +337,18 @@ async def get_preferences(user_id: CurrentUserId):
     return UserPreferencesResponse.model_validate(preferences)
 
 
-def _validate_custom_models(custom_models: list, custom_providers: list | None = None) -> None:
-    """Validate custom_models list before persisting. Raises HTTPException 400 on invalid data."""
-    from ptc_agent.agent.prompts.guidance import VALID_GUIDANCE
-
-    from src.llms.llm import LLM, CUSTOM_MODEL_NAME_RE
-    from src.llms.model_spec import reasoning_block
-    from src.llms.reasoning import (
-        REASONING_LEVELS,
-        ReasoningSurfaceError,
-        validate_surface,
-    )
-
-    if not isinstance(custom_models, list):
-        raise HTTPException(status_code=400, detail="custom_models must be a list")
-
-    # Reuse the process-wide singleton — building a fresh ModelConfig on every
-    # preferences PUT re-parses models.json + re-scans _flat_providers for
-    # nothing (the manifest is static).
-    mc = LLM.get_model_config()
-    name_re = re.compile(CUSTOM_MODEL_NAME_RE)
-    seen_names: set[str] = set()
-
-    # Shadow semantics: a custom ``name`` MAY collide with a built-in. The
-    # resolver checks custom first, so the user's entry wins. This supports
-    # "route built-in model X through my variant's key" without inventing a
-    # prefix format for preferences.
-
-    valid_providers = {
-        k for k, v in mc.flat_providers.items()
-        if not v.get("platform")
-    }
-    if custom_providers:
-        valid_providers.update(
-            cp["name"] for cp in custom_providers if isinstance(cp, dict) and cp.get("name")
-        )
-
-    for idx, cm in enumerate(custom_models):
-        if not isinstance(cm, dict):
-            raise HTTPException(status_code=400, detail=f"custom_models[{idx}]: must be an object")
-
-        name = cm.get("name")
-        model_id = cm.get("model_id")
-        provider = cm.get("provider")
-
-        if not name:
-            raise HTTPException(status_code=400, detail=f"custom_models[{idx}]: name is required")
-        if not model_id:
-            raise HTTPException(status_code=400, detail=f"custom_models[{idx}]: model_id is required")
-        if not provider:
-            raise HTTPException(status_code=400, detail=f"custom_models[{idx}]: provider is required")
-
-        if not name_re.match(name):
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: name '{name}' is invalid (alphanumeric start, max 63 chars, only .-_:/ allowed)",
-            )
-
-        if name in seen_names:
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: duplicate name '{name}'",
-            )
-        seen_names.add(name)
-
-        if not isinstance(provider, str) or not provider.strip():
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: provider must be a non-empty string",
-            )
-
-        if provider not in valid_providers:
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: provider '{provider}' is not a known BYOK-eligible or custom provider",
-            )
-
-        for field in ("parameters", "extra_body", "reasoning"):
-            val = cm.get(field)
-            if val is not None and not isinstance(val, dict):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"custom_models[{idx}]: {field} must be a JSON object",
-                )
-
-        # Rejected here rather than at request time: an unknown write path is
-        # accepted by the vendor and ignored, so the entry would render an
-        # effort control that reports a level and sends nothing.
-        if isinstance(cm.get("reasoning"), dict) and cm["reasoning"]:
-            try:
-                validate_surface(f"custom_models[{idx}]", cm["reasoning"])
-            except ReasoningSurfaceError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        modalities = cm.get("input_modalities")
-        if modalities is not None:
-            if not isinstance(modalities, list) or len(modalities) == 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"custom_models[{idx}]: input_modalities must be a non-empty list",
-                )
-            for m in modalities:
-                if not isinstance(m, str) or m not in _VALID_MODALITIES:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"custom_models[{idx}]: invalid modality '{m}', allowed: {sorted(_VALID_MODALITIES)}",
-                    )
-            # Ensure "text" is always present
-            if "text" not in modalities:
-                cm["input_modalities"] = ["text"] + modalities
-
-        # A custom model has no manifest entry, so these are the only place it
-        # can declare what it honors. Without them every custom model resolves
-        # to the fail-safe guidance level and gets no effort selector at all.
-        guidance = cm.get("prompt_guidance")
-        if guidance is not None and guidance not in VALID_GUIDANCE:
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: prompt_guidance must be one of {sorted(VALID_GUIDANCE)}",
-            )
-
-        # Either shape: a `reasoning` block, or the flat keys entries saved
-        # before it existed still carry. Whichever it used is written back to,
-        # which is why the shapes are read apart here rather than through
-        # `reasoning_block`: its normalized view cannot say which key to
-        # rewrite. Empty means unused, on the same terms as that function.
-        block = cm.get("reasoning")
-        declared = block if isinstance(block, dict) and block else cm
-        efforts_key = "efforts" if declared is not cm else "reasoning_efforts"
-        default_key = "default" if declared is not cm else "reasoning_effort_default"
-
-        efforts = declared.get(efforts_key)
-        if efforts is not None:
-            if not isinstance(efforts, list) or any(e not in REASONING_LEVELS for e in efforts):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"custom_models[{idx}]: {efforts_key} must be a list drawn from {list(REASONING_LEVELS)}",
-                )
-            # Store in canonical order so the UI renders a ladder, not the
-            # order the client happened to send.
-            declared[efforts_key] = [lv for lv in REASONING_LEVELS if lv in set(efforts)]
-
-        # An entry shadowing a built-in inherits that model's ladder, so a
-        # default may name a level this entry does not list itself.
-        effective_efforts = declared.get(efforts_key)
-        if effective_efforts is None:
-            effective_efforts = reasoning_block(mc.get_model_config(name)).get("efforts") or []
-        default_effort = declared.get(default_key)
-        if default_effort is not None and default_effort not in effective_efforts:
-            raise HTTPException(
-                status_code=400,
-                detail=f"custom_models[{idx}]: {default_key} must be one of {sorted(effective_efforts)}",
-            )
-
-
-def _validate_custom_providers(custom_providers: list) -> None:
-    """Validate custom_providers list before persisting."""
-    if not isinstance(custom_providers, list):
-        raise HTTPException(status_code=400, detail="custom_providers must be a list")
-
-    from src.llms.llm import LLM
-
-    mc = LLM.get_model_config()
-    builtin = set(mc.get_byok_eligible_providers())
-    name_re = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
-    seen: set[str] = set()
-
-    for idx, cp in enumerate(custom_providers):
-        if not isinstance(cp, dict):
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: must be an object")
-
-        name = cp.get("name")
-        parent = cp.get("parent_provider")
-
-        if not name:
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: name is required")
-        if not parent:
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: parent_provider is required")
-        if not name_re.match(name):
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: invalid name '{name}'")
-        if name in builtin:
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: name '{name}' conflicts with built-in provider")
-        if name in seen:
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: duplicate name '{name}'")
-        if parent not in builtin:
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: parent_provider '{parent}' is not a BYOK-eligible provider")
-        seen.add(name)
-
-        ura = cp.get("use_response_api")
-        if ura is not None and not isinstance(ura, bool):
-            raise HTTPException(status_code=400, detail=f"custom_providers[{idx}]: use_response_api must be a boolean")
-
-
-_VALID_OUTPUT_FORMATS = {"markdown", "html"}
-
 # The keys that moved out of ``other_preference``. Read on input only, to
 # re-route a stale client's write; drop with the resolver's legacy read.
 LEGACY_MODEL_KEYS = frozenset(MOVED_MODEL_KEYS)
+
+#: The Background model's preference keys before their rename -> after. No
+#: reader looks under the old names, so a write to one is refused rather than
+#: stored, and the client that sent it learns to reload.
+RENAMED_MODEL_KEYS = {
+    "preferred_flash_model": "preferred_background_model",
+    "flash_follows": "background_follows",
+}
+
 
 def _tuning_400(exc: TuningError) -> HTTPException:
     """The 400 for a tuning value the stored shape does not allow.
@@ -516,12 +406,12 @@ def _validate_model_tuning(model_pref: dict, effective: dict) -> None:
                 )
             # Anything outside the tuning set is a typo that would sit in the
             # row forever doing nothing, so it is rejected at the boundary.
-            unknown = set(profile) - set(TUNING_FIELDS)
+            unknown = set(profile) - set(PROFILE_FIELDS)
             if unknown:
                 raise HTTPException(
                     status_code=400,
                     detail=f"profiles[{model}]: unknown settings {sorted(unknown)}; "
-                           f"allowed: {sorted(TUNING_FIELDS)}",
+                           f"allowed: {sorted(PROFILE_FIELDS)}",
                 )
             # One entry, resolved the way the resolver resolves it: a custom
             # model shadows a built-in of the same name, so reading the
@@ -562,27 +452,60 @@ def _clear_unhonored_efforts(
         patch[model] = {**(patch.get(model) or {}), "reasoning_effort": None}
 
 
-def _validate_agent_preference(agent_pref: dict) -> None:
-    """Validate agent_preference before persisting. Raises HTTPException 400 on invalid data."""
-    # output_format may be absent or None (delete/default); else must be a
-    # known format. Not a Literal on the model so None survives the JSONB merge
-    # as a key deletion rather than being stripped at parse time.
-    if "output_format" in agent_pref:
-        of = agent_pref["output_format"]
-        if of is not None and (not isinstance(of, str) or of not in _VALID_OUTPUT_FORMATS):
+def _refuse_renamed_model_keys(*bags: dict | None) -> None:
+    """Refuse a key in ``RENAMED_MODEL_KEYS``, in either bag it was once read
+    from, naming the key that replaced it."""
+    for bag in bags:
+        for old, new in RENAMED_MODEL_KEYS.items():
+            if bag and old in bag:
+                raise HTTPException(
+                    status_code=400, detail=f"{old} was renamed to {new}"
+                )
+
+
+def _validate_default_model_choices(model_pref: dict) -> None:
+    """Refuse a ``default_model_scope`` or ``background_follows`` no reader
+    acts on. None = key deletion."""
+    for key, allowed in (
+        ("default_model_scope", DEFAULT_MODEL_SCOPES),
+        ("background_follows", BACKGROUND_FOLLOWS),
+    ):
+        value = model_pref.get(key)
+        if value is not None and (not isinstance(value, str) or value not in allowed):
             raise HTTPException(
-                status_code=400,
-                detail=f"output_format must be one of {sorted(_VALID_OUTPUT_FORMATS)}",
+                status_code=400, detail=f"{key} must be one of {sorted(allowed)}"
             )
 
 
-@router.put("/users/me/preferences", response_model=UserPreferencesResponse)
+def _validate_subagents_default(other_pref: dict) -> None:
+    """Refuse a non-boolean ``subagents_default``, which the gate would read as on."""
+    value = other_pref.get("subagents_default")
+    if value is not None and not isinstance(value, bool):
+        raise HTTPException(
+            status_code=400, detail="subagents_default must be true, false, or null"
+        )
+
+
+def _sets_structured_key(patches: dict[str, dict | None]) -> bool:
+    return any(
+        (patch or {}).get(key) is not None
+        for column, patch in patches.items()
+        for key in STRUCTURED_PREFERENCES[column]
+    )
+
+
+@router.put("/users/me/preferences", response_model=UserPreferencesUpdateResponse)
 @handle_api_exceptions("update preferences", logger)
 async def update_preferences(
     request: UserPreferencesUpdate,
     user_id: CurrentUserId,
 ):
-    """Update user preferences (partial, JSONB merge). Raises 404 if user not found."""
+    """Update user preferences (partial, JSONB merge). Raises 404 if user not found.
+
+    A write that changes the default model also moves the threads still on the
+    old one when ``apply_default_to`` (or, without it, the saved
+    ``default_model_scope``) says ``existing_threads``; the response counts them.
+    """
     user = await db_get_user(user_id)
     if not user:
         raise_not_found("User")
@@ -596,6 +519,8 @@ async def update_preferences(
     other_pref = request.other_preference.model_dump(exclude_unset=True) if request.other_preference else None
     model_pref = request.model_preference.model_dump(exclude_unset=True) if request.model_preference else None
 
+    _refuse_renamed_model_keys(model_pref, other_pref)
+
     # The model keys live in their own column now. A client still
     # sending them under other_preference is honored for one release so an old
     # tab does not silently drop the user's settings on the floor.
@@ -604,26 +529,41 @@ async def update_preferences(
         if legacy:
             model_pref = {**legacy, **(model_pref or {})}
 
+    profile = {
+        "risk_preference": risk_pref,
+        "investment_preference": investment_pref,
+        "agent_preference": agent_pref,
+    }
+    sets_structured = _sets_structured_key(profile)
+
+    stored = await db_get_user_preferences(user_id) if model_pref else None
+
     if model_pref:
-        stored = await db_get_user_preferences(user_id)
         stored_model_pref = (stored or {}).get("model_preference") or {}
         effective = _effective_model_preference(stored_model_pref, model_pref)
 
         # Providers before models: a model names the provider it runs on.
         if model_pref.get("custom_providers") is not None:
-            _validate_custom_providers(model_pref["custom_providers"])
+            validate_custom_providers(model_pref["custom_providers"], stored_model_pref)
 
         # Checked against the merged catalog rather than the request, because a
         # patch that only drops a provider names no model and would otherwise
         # skip this. ``effective`` holds the request's own list by reference, so
         # the normalization this does still reaches the row.
         if "custom_models" in model_pref or "custom_providers" in model_pref:
-            _validate_custom_models(
+            validate_custom_models(
                 effective.get("custom_models") or [],
                 effective.get("custom_providers") or [],
+                stored_model_pref,
+            )
+
+        if model_pref.get("custom_models"):
+            await refuse_custom_model_endpoints(
+                model_pref["custom_models"], stored_model_pref.get("custom_models")
             )
 
         _validate_model_tuning(model_pref, effective)
+        _validate_default_model_choices(model_pref)
 
         # After validation, so a bad level in the patch still gets its 400 and
         # only levels already in the row are cleared.
@@ -638,7 +578,11 @@ async def update_preferences(
         other_pref.get("search_provider") is not None
         or other_pref.get("search_depth") is not None
     ):
-        from src.tools.web.manifest import CAPABILITY_SEARCH, providers_with_capability
+        from src.tools.web.manifest import (
+            CAPABILITY_SEARCH,
+            providers_with_capability,
+            search_levels,
+        )
 
         providers = providers_with_capability(CAPABILITY_SEARCH)
 
@@ -654,35 +598,72 @@ async def update_preferences(
             # Depth names are provider-scoped: validate against the provider
             # in this payload, or any provider when none is being set (the
             # effective provider isn't known at write time).
-            if isinstance(sp, str) and sp in providers:
-                valid_depths = {
-                    lv.name for lv in providers[sp].capability(CAPABILITY_SEARCH).levels
-                }
-            else:
-                valid_depths = {
-                    lv.name
-                    for spec in providers.values()
-                    for lv in spec.capability(CAPABILITY_SEARCH).levels
-                }
+            valid_depths = search_levels(sp)
             if not isinstance(sd, str) or sd not in valid_depths:
                 raise HTTPException(
                     status_code=400,
                     detail=f"search_depth must be one of {sorted(valid_depths)}",
                 )
 
-    # Validate agent_preference (output_format shape). None = key deletion.
-    if agent_pref:
-        _validate_agent_preference(agent_pref)
+    if other_pref:
+        _validate_subagents_default(other_pref)
 
+    # Only a write naming a default key can move threads off the old default.
+    changes_default = bool(model_pref) and any(
+        key in model_pref for key in DEFAULT_MODEL_KEYS
+    )
+
+    # One transaction under the profile lock: the default a write replaces is
+    # read where no other write can move it, and the threads move with the
+    # write or not at all, so a failed move leaves nothing a retry cannot redo.
+    threads_reassigned = 0
     try:
-        preferences = await upsert_user_preferences(
-            user_id=user_id,
-            risk_preference=risk_pref,
-            investment_preference=investment_pref,
-            agent_preference=agent_pref,
-            other_preference=other_pref,
-            model_preference=model_pref,
-        )
+        async with get_db_connection() as conn, conn.transaction():
+            # One read under the lock serves the default move and the profile
+            # check. A structured key is checked against the row the write
+            # replaces as well as its vocabulary, because a value the row
+            # already holds passes whatever it is. That exemption only holds
+            # against the row read here: a read before the lock can be
+            # overtaken by another write, and the old value would then be
+            # written back over a newer valid one.
+            locked = (
+                await db_lock_user_preferences(user_id, conn=conn)
+                if changes_default or sets_structured
+                else None
+            )
+            before = locked if changes_default else None
+            if sets_structured:
+                # Every value outside its vocabulary, in any column, in one
+                # 422, so a form can mark them all at once. Raising here rolls
+                # the transaction back with nothing written.
+                profile, problems = check_profile(profile, locked)
+                if problems:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="; ".join(f"{path}: {message}" for path, message in problems),
+                    )
+                risk_pref, investment_pref, agent_pref = (
+                    profile["risk_preference"],
+                    profile["investment_preference"],
+                    profile["agent_preference"],
+                )
+            preferences = await upsert_user_preferences(
+                user_id=user_id,
+                risk_preference=risk_pref,
+                investment_preference=investment_pref,
+                agent_preference=agent_pref,
+                other_preference=other_pref,
+                model_preference=model_pref,
+                conn=conn,
+            )
+            if changes_default:
+                threads_reassigned = await carry_default_change(
+                    user_id,
+                    before=model_preference_of(before),
+                    after=model_preference_of(preferences),
+                    apply_to=request.apply_default_to,
+                    conn=conn,
+                )
     except TuningError as exc:
         raise _tuning_400(exc) from exc
 
@@ -692,7 +673,9 @@ async def update_preferences(
     await maybe_complete_onboarding(user_id)
 
     logger.info(f"Updated preferences for user {user_id}")
-    return UserPreferencesResponse.model_validate(preferences)
+    return UserPreferencesUpdateResponse.model_validate(
+        {**preferences, "threads_reassigned": threads_reassigned}
+    )
 
 @router.delete("/users/me/preferences", status_code=200)
 @handle_api_exceptions("delete preferences", logger)
@@ -709,6 +692,23 @@ async def delete_preferences(user_id: CurrentUserId):
 
     logger.info(f"Cleared preferences and reset onboarding for user {user_id}")
     return {"success": True, "message": "Preferences cleared"}
+
+
+class UserModelsResponse(BaseModel):
+    models: list[ModelPayer]
+
+
+@router.get(
+    "/users/me/models",
+    response_model=UserModelsResponse,
+    response_model_exclude_unset=True,
+)
+async def list_my_models(user_id: ReadUserId):
+    """The models this user can pick and who pays for each, for the ``la``
+    CLI's model list. ``/api/v1/models`` is the deployment's catalog, the same
+    for everyone, and cannot say whose key or plan a model runs on. A row
+    leaves out what it has no answer for (``plan``, ``signed_in``, ``needs``)."""
+    return UserModelsResponse(models=await model_payers(user_id))
 
 
 @router.post("/users/me/avatar", response_model=dict)

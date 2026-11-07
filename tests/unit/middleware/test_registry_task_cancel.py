@@ -67,32 +67,10 @@ async def test_force_cancel_reaches_the_shielded_handler():
 
 
 @pytest.mark.asyncio
-async def test_wait_for_specific_reports_a_stop_instead_of_cancelling_its_waiter():
-    """A stopped writer's ``.result()`` re-raises CancelledError, and that is a
-    BaseException: escaping it cancels the tool node awaiting the task, which
-    langgraph turns into a node cancellation and the whole turn dies."""
-    registry = BackgroundTaskRegistry(thread_id="thread-x")
-    task = await _register(registry)
-    task.asyncio_task = asyncio.create_task(asyncio.Event().wait())
-    task.asyncio_task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task.asyncio_task
-    # The waiter was already past the completed-guard when the stop landed —
-    # that is the only ordering in which the collect block sees a cancellation.
-    assert task.completed is False
-
-    result = await registry.wait_for_specific(task.task_id, timeout=5)
-
-    assert result["success"] is False
-    assert result["status"] == "cancelled"
-    # The entry carries the same verdict: a later non-blocking TaskOutput reads
-    # task.result, and an unset one there reads as an empty success.
-    assert task.result is result
-    assert task.cancelled is True
-
-
-@pytest.mark.asyncio
 async def test_wait_for_all_reports_a_stop_instead_of_cancelling_its_waiter():
+    """A stopped writer's ``.result()`` re-raises CancelledError, and that is a
+    BaseException: escaping it cancels the orchestrator's end-of-run wait, and
+    the whole turn dies with it."""
     registry = BackgroundTaskRegistry(thread_id="thread-x")
     task = await _register(registry)
     task.asyncio_task = asyncio.create_task(asyncio.Event().wait())
@@ -100,9 +78,9 @@ async def test_wait_for_all_reports_a_stop_instead_of_cancelling_its_waiter():
     with pytest.raises(asyncio.CancelledError):
         await task.asyncio_task
 
-    results = await registry.wait_for_all(timeout=5)
+    await registry.wait_for_all(timeout=5)
 
-    assert results[task.tool_call_id]["status"] == "cancelled"
+    assert task.terminal_status == "cancelled"
 
 
 @pytest.mark.asyncio

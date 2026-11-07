@@ -1,14 +1,13 @@
-import { useMemo, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import React, { useMemo } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import SyntaxHighlighter, { oneDark, oneLight } from '../SyntaxHighlighter';
-import { useHtmlSandbox } from './html/useHtmlSandbox';
-import { useHtmlActions } from './html/useHtmlActions';
-import { useDirectLinkGuard } from './html/useDirectLinkGuard';
-import HtmlActionBar from './html/HtmlActionBar';
-import HtmlFullscreenModal from './html/HtmlFullscreenModal';
-import { buildWsfilesUrl } from './html/wsfilesUrl';
+import { ComposerDockSlot } from '../chatView/composerDock';
+import { ArtifactFrames, ServeFailed, type HtmlArtifactView } from './html/ArtifactFrames';
+import { BridgedFrame } from './html/BridgedFrame';
+import { useLiveFrame, type FrameLinkHandler } from './html/liveFrame';
 import './HtmlViewer.css';
+
+export type { HtmlArtifactView } from './html/ArtifactFrames';
 
 interface HtmlViewerProps {
   /** Full source (read unlimited so Source isn't truncated). */
@@ -17,14 +16,36 @@ interface HtmlViewerProps {
   workspaceId: string;
   /** Path within the workspace, e.g. "results/report.html". */
   filePath: string;
-  /** Download the server's original bytes for this file. */
-  onTriggerDownload: () => void;
-  /** Override the served URL (e.g. the public share serve URL). When set, the
-   *  preview iframe and HTML actions point here instead of the wsfiles route. */
-  servedUrlOverride?: string;
-  /** Copy a shareable link to this report (authenticated app only). When set,
-   *  a link button appears in the toolbar. */
-  onCopyShareLink?: (filePath: string) => void;
+  /** The markup rather than the rendered page; the switch is in the panel header. */
+  source?: boolean;
+  /** The serve prefix a share's page was handed. Omitted, the owner's grant
+   *  serves the file. */
+  servePrefix?: string;
+  /** Element id a reference pointed at; the iframe scrolls to it. */
+  anchor?: string | null;
+  /** Bumped by the panel on every reference open, so the same anchor asked for
+   *  twice is two requests rather than one unchanged prop. Read only alongside
+   *  `anchor`. */
+  anchorSeq?: number | null;
+  /** The owner's comments and versions. */
+  artifact?: HtmlArtifactView | null;
+  /** Where a link to another workspace file opens. */
+  onOpenLink?: FrameLinkHandler | null;
+}
+
+/**
+ * A short fingerprint of the file's bytes as the panel last read them. The
+ * live frame is keyed on it, so the agent's edit, once read, loads the file
+ * again (over the old one, scroll carried) while a remount of the same bytes
+ * keeps the browser's copy.
+ */
+function contentHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }
 
 export default function HtmlViewer({
@@ -32,83 +53,22 @@ export default function HtmlViewer({
   fileName,
   workspaceId,
   filePath,
-  onTriggerDownload,
-  servedUrlOverride,
-  onCopyShareLink,
+  source = false,
+  servePrefix,
+  anchor = null,
+  anchorSeq = null,
+  artifact = null,
+  onOpenLink = null,
 }: HtmlViewerProps) {
-  const { t } = useTranslation();
   const { theme } = useTheme();
-  const [mode, setMode] = useState<'preview' | 'source'>('preview');
-  const [fullscreen, setFullscreen] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-
-  const { pushTheme } = useHtmlSandbox({ iframeRef, autoHeight: false });
-
-  const servedUrl = useMemo(
-    () => servedUrlOverride ?? buildWsfilesUrl(workspaceId, filePath, { injectTheme: true }),
-    [servedUrlOverride, workspaceId, filePath],
-  );
-
-  // Byte-faithful served URL (no ?inject=theme) for open-in-new-tab / PDF.
-  const servedUrlPlain = useMemo(
-    () => (servedUrlOverride ? servedUrlOverride.split('?')[0] : undefined),
-    [servedUrlOverride],
-  );
-
-  const actions = useHtmlActions({
-    mode: 'file',
-    workspaceId,
-    filePath,
-    triggerDownload: () => Promise.resolve(onTriggerDownload()),
-    servedUrl: servedUrlPlain,
-  });
-
-  // Owner view (no servedUrl override) opens the raw, non-revocable wsfiles URL
-  // — confirm before exposing it. The public share serve URL is revocable.
-  const { request: openInNewTab, dialog: directLinkDialog } = useDirectLinkGuard(
-    actions.openInNewTab,
-    !servedUrlOverride,
-  );
-
   const isLight = theme === 'light';
+  // Handed only to the owner's panel, which decides that once (`PanelAccess`).
+  const owner = !!artifact;
+  const revision = useMemo(() => contentHash(content), [content]);
 
   return (
     <div className="html-viewer">
-      <div className="html-viewer-toolbar">
-        <div className="html-viewer-tabs">
-          <button
-            className={`html-viewer-tab ${mode === 'preview' ? 'active' : ''}`}
-            onClick={() => setMode('preview')}
-          >
-            {t('filePanel.htmlPreview')}
-          </button>
-          <button
-            className={`html-viewer-tab ${mode === 'source' ? 'active' : ''}`}
-            onClick={() => setMode('source')}
-          >
-            {t('filePanel.htmlSource')}
-          </button>
-        </div>
-        {/* Download/Save-as-PDF live in the file panel header's download menu. */}
-        <HtmlActionBar
-          onFullscreen={() => setFullscreen(true)}
-          onOpenInNewTab={openInNewTab}
-          onCopyLink={onCopyShareLink ? () => onCopyShareLink(filePath) : undefined}
-        />
-      </div>
-      {mode === 'preview' ? (
-        // src= loads: the served response's CSP `sandbox` header intersects
-        // with this attribute — serve.py owns the effective policy and the
-        // link-click rationale (both must carry the popup tokens).
-        <iframe
-          ref={iframeRef}
-          src={servedUrl}
-          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-          className="html-viewer-frame"
-          title={fileName || 'HTML Preview'}
-          onLoad={pushTheme}
-        />
-      ) : (
+      {source && (
         <div className="html-viewer-source">
           <SyntaxHighlighter
             language="markup"
@@ -121,19 +81,43 @@ export default function HtmlViewer({
           </SyntaxHighlighter>
         </div>
       )}
-      {fullscreen && (
-        <HtmlFullscreenModal
-          variant="file"
-          open={fullscreen}
-          onOpenChange={setFullscreen}
-          title={fileName}
-          workspaceId={workspaceId}
-          filePath={filePath}
-          servedUrl={servedUrlOverride}
-          actions={actions}
-        />
+      {/* The owner's frames stay up under Source, so a draft and the place
+          read are where they were on the way back. */}
+      {owner ? (
+        <div className="html-viewer-stage" data-shown={!source}>
+          <ArtifactFrames
+            revision={revision}
+            fileName={fileName}
+            workspaceId={workspaceId}
+            filePath={filePath}
+            view={artifact}
+            shown={!source}
+            anchor={anchor}
+            anchorSeq={anchorSeq}
+            onOpenLink={onOpenLink}
+          />
+        </div>
+      ) : !source && (
+        <div className="html-viewer-stage">
+          <ViewFrame fileName={fileName} workspaceId={workspaceId} filePath={filePath} servePrefix={servePrefix} anchor={anchor} anchorSeq={anchorSeq} onOpenLink={onOpenLink} />
+        </div>
       )}
-      {directLinkDialog}
+      {owner && <ComposerDockSlot workspaceId={workspaceId} path={filePath} tabId={artifact.tabId} ui={artifact.ui} active={artifact.active} />}
     </div>
   );
+}
+
+/** The file as served, read only: a share's view, and a panel that takes no comments. */
+function ViewFrame({ fileName, workspaceId, filePath, servePrefix, anchor, anchorSeq, onOpenLink }: {
+  fileName: string;
+  workspaceId: string;
+  filePath: string;
+  servePrefix?: string;
+  anchor: string | null;
+  anchorSeq: number | null;
+  onOpenLink: FrameLinkHandler | null;
+}): React.ReactElement {
+  const live = useLiveFrame({ workspaceId, filePath, prefix: servePrefix, inject: 'view', anchor, anchorSeq, onOpenLink });
+  if (live.failed) return <ServeFailed onRetry={live.retry} />;
+  return <BridgedFrame source={live.source} title={fileName || 'HTML Preview'} groundKey={filePath} onBridge={live.onBridge} />;
 }

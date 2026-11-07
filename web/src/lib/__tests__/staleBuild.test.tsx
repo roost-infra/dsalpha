@@ -2,18 +2,24 @@ import React from 'react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import {
   isStaleBuildError,
   checkForNewBuild,
+  reloadIfStale,
   reportStaleBuild,
   watchStaleBuild,
   markBooted,
   STALE_BUILD_EVENT,
   __resetStaleBuildForTests,
 } from '../staleBuild';
-import { toast } from '@/components/ui/use-toast';
+import { toast, type ToastProps } from '@/components/ui/use-toast';
+import { holdReload, trackRequest } from '@/lib/reloadHolds';
+import { authGeneration, clearAuthToken } from '@/lib/authToken';
+import { runAuthResets } from '@/lib/authResets';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
+import { Toast, ToastDescription, ToastProvider, ToastTitle, ToastViewport } from '@/components/ui/toast';
+import i18n from '@/i18n';
 
 vi.mock('@/components/ui/use-toast', () => ({ toast: vi.fn() }));
 
@@ -42,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.resetAllMocks();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -268,6 +275,40 @@ describe('reporting is once per session', () => {
     // the app disappears and the latch above stops it coming back.
     expect(vi.mocked(toast).mock.calls[0][0]).toMatchObject({ pinned: true });
   });
+
+  it('follows a language switch while it is up', async () => {
+    // Pinned with no timeout, so it can outlive the language it was raised in.
+    reportStaleBuild('preload');
+    vi.runAllTimers();
+    // Omit<> over the props' index signature widens every field to unknown.
+    const { title, description, action } = vi.mocked(toast).mock.calls[0][0] as Pick<
+      ToastProps,
+      'title' | 'description' | 'action'
+    >;
+    render(
+      <ToastProvider>
+        <Toast open>
+          <ToastTitle>{title}</ToastTitle>
+          <ToastDescription>{description}</ToastDescription>
+          {action}
+        </Toast>
+        <ToastViewport />
+      </ToastProvider>,
+    );
+    const en = i18n.getFixedT('en-US');
+    const zh = i18n.getFixedT('zh-CN');
+    expect(screen.getByText(en('common.staleBuild.title'))).toBeInTheDocument();
+
+    await act(() => i18n.changeLanguage('zh-CN'));
+    try {
+      expect(screen.getByText(zh('common.staleBuild.title'))).toBeInTheDocument();
+      expect(screen.getByText(zh('common.staleBuild.description'))).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: zh('common.staleBuild.reload') })).toBeInTheDocument();
+      expect(screen.queryByText(en('common.staleBuild.title'))).not.toBeInTheDocument();
+    } finally {
+      await act(() => i18n.changeLanguage('en-US'));
+    }
+  });
 });
 
 describe('checkForNewBuild rate and reporting', () => {
@@ -367,6 +408,178 @@ describe('watchStaleBuild wiring', () => {
     vi.runAllTimers();
     expect(toast).not.toHaveBeenCalled();
   });
+
+  it('reports a failed catalog that names a build asset', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const stop = watchStaleBuild();
+    i18n.emit('failedLoading', 'zh-CN', 'translation', new Error(`${CHUNK_MSG}${window.location.origin}/assets/zh-CN-1111.js`));
+    vi.runAllTimers();
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('asks the server about a failed catalog it cannot classify, inside the throttle too', async () => {
+    // Safari names no URL. A language switch is one user action, so it gets its
+    // answer now rather than from the next resume a minute out.
+    const answer = (build: string) => ({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ build }),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(answer('index-CURRENT.js'))
+      .mockResolvedValue(answer('index-NEWER.js'));
+    vi.stubGlobal('fetch', fetchMock);
+    const stop = watchStaleBuild();
+    await checkForNewBuild();
+
+    i18n.emit('failedLoading', 'zh-CN', 'translation', new Error('Importing a module script failed.'));
+    await vi.runAllTimersAsync();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(toast).toHaveBeenCalledTimes(1);
+    stop();
+  });
+});
+
+describe('reloadIfStale', () => {
+  // jsdom cannot reload, so the build this tab reloads away from, recorded
+  // just before the reload, is what shows one was asked for. The e2e suite
+  // covers the reload itself.
+  const reloadedAway = () => sessionStorage.getItem('__la_switch_reload__');
+
+  const serverMovesOn = async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ build: 'index-NEWER.js' }),
+    }));
+    await checkForNewBuild();
+  };
+
+  beforeEach(() => setEntryScript('index-CURRENT.js'));
+
+  it('does nothing on a build the server still serves', () => {
+    reloadIfStale();
+    expect(reloadedAway()).toBeNull();
+  });
+
+  it('reloads once the server says it serves another build', async () => {
+    await serverMovesOn();
+    reloadIfStale();
+    expect(reloadedAway()).toBe('index-CURRENT.js');
+  });
+
+  it('does not reload on an asset failure alone, until the server confirms it', async () => {
+    // A flaky network drops a chunk of a current build the same way a deploy does.
+    reportStaleBuild('resource');
+    reloadIfStale();
+    expect(reloadedAway()).toBeNull();
+    await serverMovesOn();
+    reloadIfStale();
+    expect(reloadedAway()).toBe('index-CURRENT.js');
+  });
+
+  it('does not reload offline', async () => {
+    await serverMovesOn();
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    reloadIfStale();
+    expect(reloadedAway()).toBeNull();
+  });
+
+  it("drops the last account's holds on sign-out, and ignores their late release", async () => {
+    await serverMovesOn();
+    const stalled = holdReload();
+    runAuthResets();
+    const next = holdReload();
+    stalled();
+    reloadIfStale();
+    expect(reloadedAway()).toBeNull();
+    next();
+    reloadIfStale();
+    expect(reloadedAway()).toBe('index-CURRENT.js');
+  });
+
+  it('forgets a reload that reached another build, so coming back to it can reload again', async () => {
+    sessionStorage.setItem('__la_switch_reload__', 'index-CURRENT.js');
+    setEntryScript('index-OTHER.js');
+    markBooted();
+    expect(reloadedAway()).toBeNull();
+    sessionStorage.setItem('__la_switch_reload__', 'index-OTHER.js');
+    markBooted();
+    expect(reloadedAway()).toBe('index-OTHER.js');
+  });
+
+  it('waits for every hold to be released', async () => {
+    await serverMovesOn();
+    const upload = holdReload();
+    const download = holdReload();
+    reloadIfStale();
+    upload();
+    upload();
+    reloadIfStale();
+    expect(reloadedAway()).toBeNull();
+    download();
+    reloadIfStale();
+    expect(reloadedAway()).toBe('index-CURRENT.js');
+  });
+
+  describe('with the page still talking to the server', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('lets a write the page left behind land, then reloads', async () => {
+      await serverMovesOn();
+      const save = trackRequest(authGeneration());
+      reloadIfStale();
+      vi.advanceTimersByTime(500);
+      expect(reloadedAway()).toBeNull();
+      save();
+      vi.advanceTimersByTime(100);
+      expect(reloadedAway()).toBe('index-CURRENT.js');
+    });
+
+    it('waits on work only the caller sees', async () => {
+      await serverMovesOn();
+      let mutating = true;
+      reloadIfStale(() => !mutating);
+      vi.advanceTimersByTime(500);
+      expect(reloadedAway()).toBeNull();
+      mutating = false;
+      vi.advanceTimersByTime(100);
+      expect(reloadedAway()).toBe('index-CURRENT.js');
+    });
+
+    it('gives up on a request that outlasts the wait', async () => {
+      await serverMovesOn();
+      const transfer = trackRequest(authGeneration());
+      reloadIfStale();
+      vi.advanceTimersByTime(2100);
+      transfer();
+      vi.advanceTimersByTime(1000);
+      expect(reloadedAway()).toBeNull();
+    });
+
+    it('waits on nobody for a request the last account left stalled', async () => {
+      await serverMovesOn();
+      trackRequest(authGeneration());
+      clearAuthToken();
+      reloadIfStale();
+      expect(reloadedAway()).toBe('index-CURRENT.js');
+    });
+
+    it('stays once the user has started on the page that opened', async () => {
+      await serverMovesOn();
+      const read = trackRequest(authGeneration());
+      reloadIfStale();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+      read();
+      vi.advanceTimersByTime(1000);
+      expect(reloadedAway()).toBeNull();
+    });
+  });
 });
 
 describe('markBooted', () => {
@@ -405,11 +618,11 @@ describe('StaleBuildBoundary', () => {
     // The whole point of the classification: a boundary that catches everything
     // turns deterministic bugs into "stale build" reports.
     class Catcher extends React.Component<{ children: React.ReactNode }, { hit: boolean }> {
-      state = { hit: false };
+      override state = { hit: false };
       static getDerivedStateFromError() {
         return { hit: true };
       }
-      render() {
+      override render() {
         return this.state.hit ? <div data-testid="outer" /> : this.props.children;
       }
     }
@@ -431,11 +644,11 @@ describe('StaleBuildBoundary', () => {
     // was thrown", so the boundary renders the children that just threw and
     // they throw again — a loop where a rethrow was intended.
     class Catcher extends React.Component<{ children: React.ReactNode }, { hit: boolean }> {
-      state = { hit: false };
+      override state = { hit: false };
       static getDerivedStateFromError() {
         return { hit: true };
       }
-      render() {
+      override render() {
         return this.state.hit ? <div data-testid="outer" /> : this.props.children;
       }
     }

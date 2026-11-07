@@ -15,7 +15,7 @@ import pytest
 from fastapi import Response
 
 from src.server.app import mcp_oauth as mod
-from src.server.services.mcp_oauth import StartedConnect
+from src.server.services.mcp_oauth.connect import StartedConnect
 
 
 def _request(*, origin: str | None = None, cookies: dict | None = None):

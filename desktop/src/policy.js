@@ -31,7 +31,10 @@ const store = require('./store')
  * instead would need credentials it deliberately does not have.
  *
  * `reachedApp` is a shortcut past that round trip, not the decision: once this
- * install has landed on the app, later launches open it directly.
+ * install has landed on the app, later launches open it directly. A launch that
+ * finds the app signed out is sent back to platform sign-in by the app itself
+ * (`web/src/lib/hostedSignIn.ts`), so the shortcut never skips the funnel for a
+ * new account.
  */
 function entryUrl() {
   if (!config.isSaas) {
@@ -74,6 +77,25 @@ function classifyNavigation(url, { isMainWindow }) {
   return 'external'
 }
 
+/**
+ * Where a window.open or target=_blank belongs: the navigation verdicts, with
+ * 'allow' resolved to 'external'.
+ *
+ * Ours asking for a second surface is the opposite of a navigation asking to
+ * stay put, and loading it into this window would replace whatever turn is
+ * streaming here; the shell keeps no popup windows, so the browser is it. The
+ * one exception is the console handing a page to the app while they share the
+ * main window, which is the thread links on its usage page: the console has no
+ * turn to lose, and in the browser the app may not be signed in at all. When
+ * the console has a window of its own the same link is already 'app-window'.
+ */
+function classifyWindowOpen(url, { isMainWindow, openerUrl }) {
+  const verdict = classifyNavigation(url, { isMainWindow })
+  if (verdict !== 'allow') return verdict
+  if (isMainWindow && origins.isApp(url) && origins.isPlatform(openerUrl)) return 'app-window'
+  return 'external'
+}
+
 /** Which chrome flag a loaded URL answers for, or null if the page is not ours. */
 function chromeKeyFor(url) {
   if (origins.isApp(url)) return 'appChrome'
@@ -81,4 +103,4 @@ function chromeKeyFor(url) {
   return null
 }
 
-module.exports = { entryUrl, platformFitsMainWindow, classifyNavigation, chromeKeyFor }
+module.exports = { entryUrl, platformFitsMainWindow, classifyNavigation, classifyWindowOpen, chromeKeyFor }

@@ -6,8 +6,9 @@ default commands), every row's effective trigger, and the user's platform
 command renames. The DB layer re-checks row-vs-row collisions under the
 per-user advisory lock (the race-safe truth); the helpers here own the
 platform-tier checks and the seed policy shared by the upload and
-sandbox-import paths. Conflicts raise ``ValueError`` with the user-facing
-message — the routers map it to 409.
+sandbox-import paths. Conflicts raise ``ValueError`` (``SkillTriggerTaken``
+where a client says which trigger to rename) with the user-facing message —
+the routers map it to 409.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from src.server.database.user_skills import (
+    SkillTriggerTaken,
     list_all_user_skills,
     list_user_skills,
     user_trigger_guard,
@@ -112,11 +114,19 @@ async def ensure_free_of_platform(
     so a fan-out costs one preferences read rather than one per skill.
     """
     if command in reserved_skill_names():
-        raise ValueError(f"/{command} is reserved by a built-in skill or command")
+        raise SkillTriggerTaken(
+            f"/{command} is reserved by a built-in skill or command",
+            code="trigger_reserved",
+            trigger=command,
+        )
     if overrides is None:
         overrides = await get_skill_command_overrides(user_id)
     if command in set(overrides.values()):
-        raise ValueError(f"/{command} is already in use by another skill")
+        raise SkillTriggerTaken(
+            f"/{command} is already in use by another skill",
+            code="trigger_taken",
+            trigger=command,
+        )
 
 
 async def set_platform_alias(

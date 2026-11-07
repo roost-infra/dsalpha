@@ -49,7 +49,8 @@ pnpm run dist                    # real installers (dmg + zip on macOS)
 
 DESKTOP_EDITION=saas \
 DESKTOP_APP_ORIGIN=https://…  \
-DESKTOP_PLATFORM_ORIGIN=https://… pnpm run dist  # a saas package
+DESKTOP_PLATFORM_ORIGIN=https://… \
+DESKTOP_PAIRING_ORIGIN=https://… pnpm run dist  # a saas package
 ```
 
 **`pnpm run preview` is how you see a change before it deploys.** A remote-URL shell
@@ -93,8 +94,8 @@ against that stale artifact is what caught it.
 postinstall, so `require('electron')` now downloads the binary lazily on first use.
 Left alone that turns a missing download into a stall in the middle of whatever
 first touched it; `install-electron` puts the fetch back at install time where a
-failure is a failed install. It is also why `onlyBuiltDependencies` lists only
-`sharp` now: neither electron nor electron-builder has a build script to approve.
+failure is a failed install. It is also why `allowBuilds` in `pnpm-workspace.yaml`
+lists only `sharp`: neither electron nor electron-builder has a build script to approve.
 
 Minimum supported macOS is **12**, raised by Electron 38.
 
@@ -108,6 +109,7 @@ Minimum supported macOS is **12**, raised by Electron 38.
 | App name | `LangAlpha OSS` | `LangAlpha` |
 | Bundle id | `ai.langalpha.desktop.oss` | `ai.langalpha.desktop` |
 | URL scheme | `langalpha-oss://` | `langalpha://` |
+| Remote-control helper label | `ai.langalpha.desktop.oss.helper` | `ai.langalpha.desktop.helper` |
 
 `src/config.js` merges the two and refuses to start a `saas` build with no
 `platformOrigin`: that build would open on the app and silently skip onboarding, which
@@ -119,6 +121,12 @@ there: to the app for an account that is set up, into the wizard for one that is
 `reachedApp` is per-install state and only ever a shortcut past that round trip; reading
 account state off it gets a returning user the wrong first screen,
 being offered a downgrade from the plan they already pay for.
+Every later sign-in passes through that same page. Inside the SaaS edition (read off the
+shell's capabilities), the app sends a signed-out window there instead of showing its own
+sign-in, and a sign-in that still finishes on the app's pages, such as an emailed link opened
+while the app was closed, continues there before the dashboard (`web/src/lib/hostedSignIn.ts`).
+Without that, signing out and registering a new account on an install that has reached the app
+skips the wizard. The OSS edition keeps the app's own sign-in, whatever server it points at.
 
 **The two editions are installable side by side, and all three identity strings
 carry that.** The name is the load-bearing one: `app.getName()` is what
@@ -167,8 +175,11 @@ edition's output directory and refuses a parent holding several.
 | `src/policy.js` | what the shell decides: entry URL, where a navigation belongs. **Pure** — it may not write the store or open anything |
 | `src/origins.js` | what counts as ours: **by origin, never by path** |
 | `src/oauth.js` | system-browser OAuth, intercepted (below) |
-| `src/deeplink.js` | `langalpha://` scheme, for magic links clicked with the app closed |
-| `src/preload.js` | the renderer bridge: version, platform, `setTheme`, `openExternal`, `savePdf` |
+| `src/deeplink.js` | `langalpha://` scheme, for magic links clicked with the app closed, and integration logins, installs and console pages the browser hands back |
+| `src/preload.js` | the renderer bridge: version, platform, `capabilities`, `setTheme`, `openExternal`, `savePdf`, the connector OAuth trio, and `getRemoteControl` / `enableRemoteControl` / `disableRemoteControl` |
+| `src/remoteControl.js` | remote control of this Mac: the helper's login item, its folder, and the confirmation before a pairing (below) |
+| `src/remoteControlState.js` | what remote control reads off the Mac: whether it can run here, the status the app is shown, the menu line. **Pure**, like `policy` |
+| `src/sender.js` | the window an IPC call came from, for the channels that answer only some pages |
 | `src/pdf.js` | renders the calling window to a PDF the user picks a home for; allowlists the options the page may set |
 | `src/downloads.js` | gives a download a visible ending, since a frameless window has no download shelf |
 | `src/notify.js` | the dock bounce that says a file landed |
@@ -207,12 +218,18 @@ testable from Playwright**: its mouse events are CDP synthesized and never reach
 hit test that owns `-webkit-app-region`, and posting real CoreGraphics events needs
 macOS Accessibility permission. Changes here are checked by dragging the window.
 
-**So the frame is feature-detected, not assumed.** After each app load the shell asks the
-page whether anything under the buttons is a drag region (`DRAG_PROBE`, hit-testing three
-points along the strip) and remembers the answer in `appChrome`; window creation reads it.
-An unmounted page returns `null`, which is not "no" and is not recorded. `titleBarStyle`
-is fixed at construction, so a changed answer applies on the next launch rather than
-recreating a window that may have a turn streaming in it.
+**So the frame is feature-detected, not assumed.** After each app load the shell reads the
+page's own declaration, `<meta name="langalpha-window-chrome" content="reserves">` in
+`index.html` (`CHROME_DECLARATION` in `main.js`), and remembers the answer in `appChrome`;
+window creation reads it. A declaration rather than a hit-test, because the strip is only
+painted once the shell says the titlebar is hidden, so measuring it would read back the
+shell's own last answer. A page with no meta is a "no" only when the server really served
+it (a 2xx); an error document declares nothing either and is not recorded. The status is
+the document's, so it carries across the SPA's own `replaceState` moves while it boots.
+A load that failed has none: Chromium's own error page commits at the URL that failed,
+so a failed reload would otherwise be credited with the 200 of the page it replaced.
+`titleBarStyle` is fixed at construction, so a changed answer applies on the next launch
+rather than recreating a window that may have a turn streaming in it.
 
 This is the same rule as the bridge: **feature-detected, never version-detected**. The
 shell releases on a slow cadence and the app deploys continuously, so a shell that only
@@ -234,6 +251,12 @@ that exception, and everything else is a plain `allow`. On `will-navigate` the
 handoff also closes the window that was left behind (a top-level navigation out is the
 user leaving it), while `setWindowOpenHandler` does not, because the page that opened it
 is still using the one it has.
+
+A `window.open` or `target=_blank` of our own origin asks `classifyWindowOpen` instead,
+which sends it to the browser: the shell keeps no popup windows, and loading it here
+would replace a streaming turn. The exception is the console opening the app while they
+share the main window (the thread links on its usage page), which loads in the main
+window, as it already does when the console has a window of its own.
 
 ## OAuth
 
@@ -275,6 +298,54 @@ Three things are load-bearing:
 `begin()` refuses any flow whose `redirect_to` is not one of our origins. Without that
 the shell would drive its own window wherever a crafted authorize URL pointed, carrying
 a code the user had just authorized.
+
+## Links through the scheme
+
+The registered scheme carries four kinds of link, told apart before any window is picked:
+
+- **Everything else** lands on `/callback` on whichever of our origins the main window
+  shows, with the whole query: a magic link or email confirmation, often clicked with
+  the app closed. The route is fixed and nothing is read off the link but its query.
+- **`<scheme>://integrations/login/<name>/callback`** is an integration login the console
+  started in the app and the system browser finished. It becomes that path on the
+  configured console origin, carrying only `code`, `state`, `error` and
+  `error_description`, and is refused whole if a parameter repeats or the name is not
+  `^[a-z][a-z0-9-]{0,31}$`. It lands back on the page that started it: the window whose
+  page sent the user to the browser through `openExternal`, if it still shows the
+  console, restored if minimized. Never focus or blur, which every switch between the
+  app and the browser moves. With none, it goes where a navigation to the console
+  goes, decided before the load, because `navigate` never passes through
+  `will-navigate`. An edition with no console ignores it rather than handing a
+  provider's code to `/callback`. Pages detect it as `integration-login` in the
+  bridge's `capabilities`.
+- **`<scheme>://integrations/install/<name>/callback`** is an integration install the
+  console started in the app and the system browser finished, handled as a login is:
+  that path on the console origin, the same refusals, the same window, and never
+  `/callback`. It carries only `team`, `team_name` and `error`. Pages detect it as
+  `integration-install`.
+- **`<scheme>://console/<page>?…`** is a console page asked to be shown again: the
+  console sent the user to a third party's page in the system browser, that page
+  returned to a console page in the browser, which has no session, and that page
+  hands its query back. Any link whose host reads as `console`, in any case or with a
+  port, is settled here whatever its path, so one this build does not open exactly is
+  dropped and never reaches `/callback`.
+  The path must be exactly a key of `CONSOLE_PAGES` (today only `/desktop/return`,
+  carrying `to`, `outcome` and `session_id`), and the URL is built from that key on
+  the configured console origin, never from the link's path. Parameters the page does
+  not carry are dropped; a repeated parameter, or a carried value outside
+  `^[A-Za-z0-9_-]{1,255}$`, refuses the whole link. It lands as an integration return
+  does: the window that sent the user out if it still shows the console, else any
+  window showing it, else where a console navigation goes, restored and raised. An
+  edition with no console ignores it, with a warning that names none of the link.
+  Pages detect it as `console-return`.
+
+Only an edition with a console advertises these three, and it advertises all of them
+or none (main passes `--langalpha-console-returns=1` when there is a console; the OSS
+edition has none, so it passes the switch empty and the list is empty).
+
+A launch that a link started opens only that link's window. `attach` delivers the queued
+link before the entry opens, and opening the entry as well would cover it, or load
+sign-in over it when both are the console window.
 
 ## When the network does not answer
 
@@ -328,6 +399,53 @@ Its controls reach the main process, so they are kept off every remote page:
 `preload.js` exposes `langalphaOutage` only when `location.protocol === 'file:'`,
 and the main process independently refuses those channels unless the window
 really is showing the page.
+
+## Remote control of this Mac (Preview)
+
+A mac bundle can carry `langalpha-helper`, a Rust binary built in `../helper`, which
+lets the agent use this Mac as an SSH computer. It runs as an SMAppService agent, so
+launchd keeps it up whether or not the app is open, and the app never talks to it
+directly. They share one folder, `~/Library/Application Support/<app name>/helper`:
+the app writes `pairing` there to ask for a pairing and reads `state` to see what the
+helper is doing. All the app does to the process itself is register and unregister
+its login item.
+
+- **Packaging.** `scripts/build.mjs` adds the binary at `Contents/MacOS/langalpha-helper`
+  and a plist generated per edition (`scripts/launch-agent.mjs`) at
+  `Contents/Library/LaunchAgents/<label>.plist`, on mac builds only, through the
+  `mac:` block `scripts/helper-bundle.mjs` writes. With no helper
+  built the app still packages and reports remote control as unsupported;
+  `DESKTOP_REQUIRE_HELPER=1` makes that an error instead. The plist makes the job
+  `Interactive`, as macOS does its own sshd: with no type launchd throttles the CPU
+  and I/O of every command the agent runs.
+- **Signing.** `scripts/sign-mac.mjs` signs the helper itself, then hands the rest
+  of the bundle to electron-builder's signer with the helper skipped. First, because
+  that signer reaches the app's main executable before the helper beside it, and
+  codesign refuses to seal a bundle with unsigned code in `Contents/MacOS`. Itself,
+  because electron-builder signs every nested Mach-O with `entitlementsInherit`, the
+  JIT pair Electron's helpers need, and the helper takes logins from the network and
+  runs no JIT, so it gets an empty set (`resources/entitlements.helper.plist`).
+  `build.mjs` sets it as the signer only on a build that carries the helper.
+- **Enable** checks the URL's shape (https, or http on loopback, and exactly the
+  pairing script path), then asks in a native dialog naming the host and the macOS
+  account, Cancel the default. A saas build first refuses any server but its
+  `pairingOrigin` (`DESKTOP_PAIRING_ORIGIN`, the deployment's API host), so script
+  running in the app cannot pair the Mac elsewhere; an OSS build takes any host,
+  since its server may be reached through a tunnel or a Docker host name. A Mac already paired is torn down only after that yes,
+  since another LangAlpha account signed in on the same macOS account may be using it,
+  and one that cannot be taken down whole is left running as it was.
+- **Never half on.** The login item stays registered only while the Mac is paired or
+  waiting for approval in System Settings. A pairing that is refused, never picked up,
+  or never ends is undone: the item unregistered and the folder deleted, so no helper
+  runs unpaired with nothing to turn it off.
+- **The menu** gets a Remote Control submenu with Pause and Resume while the Mac is
+  paired or the helper's item is on, refreshed by a light poll.
+- **Updates.** launchd keeps the helper it started running when an update swaps the
+  bundle, so the helper watches its own executable: once another file is in its
+  place, it exits when no command, forward or pairing is under way (an hour at
+  most), and `KeepAlive` starts the new build. Nothing on the app's side.
+- **IPC** answers only a window showing the app's own origin, like the connector
+  OAuth channels.
 
 ## Updates
 
@@ -438,7 +556,8 @@ like.
   `--background` moves, move `src/theme.js` with it.
 - **The bridge is feature-detected, never version-detected.** The shell updates on a
   slow cadence while the web app deploys continuously, so a new web build must never
-  require a new shell.
+  require a new shell. Behaviour with no method to look for is a word in
+  `capabilities`.
 - **Nothing auth-related is exposed to the page.** The shell drives sign-in itself, so
   neither SPA needs, or gets, a way to.
 - **A sandboxed preload cannot require arbitrary files.** Its resolver is limited to a

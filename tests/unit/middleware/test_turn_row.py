@@ -10,7 +10,7 @@ anywhere in it costs the row, never the turn.
 """
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from langchain_core.messages import HumanMessage
@@ -400,6 +400,19 @@ class TestTheRunLine:
         assert "Surface `market_view`, symbol AAPL, started by automation" in text
 
     @pytest.mark.asyncio
+    async def test_a_hand_off_from_an_agent_for_the_user_says_so(self):
+        text = (await _row(origin="agent", origin_agent="chief_of_staff")).content
+
+        assert "Started by the Chief of Staff, on the user's behalf" in text
+
+    @pytest.mark.asyncio
+    async def test_an_agent_origin_without_a_named_agent_stays_plain(self):
+        text = (await _row(origin="agent")).content
+
+        assert "Started by agent" in text
+        assert "on the user's behalf" not in text
+
+    @pytest.mark.asyncio
     async def test_nothing_to_say_drops_the_line(self):
         text = (await _row()).content
 
@@ -682,6 +695,134 @@ class TestTheDeliveryRulesRideWhenTheyAreNews:
         assert SLACK_RULES in text
 
 
+class TestANotificationKeepsTheRulesItReportsUnder:
+    """A notification turn is the harness reporting finished background work
+    into the thread that dispatched it. Nobody sent it and it names no surface,
+    so it must neither take a channel's rules back (the report lands in that
+    channel) nor stand in for the person an automation's handoff waits for.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_report_into_a_channel_keeps_the_channel_rules_in_force(self):
+        slack = await _row(platform="slack", surface_rules=SLACK_RULES)
+        report = await _row(inherits_rules=True, state=_state([slack]))
+
+        assert _provenance(report)["rules_key"] == _provenance(slack)["rules_key"]
+        assert "no delivery rules of its own" not in report.content
+        assert SLACK_RULES not in report.content
+
+        # Still the last rules stated, so the channel's next turn does not
+        # repeat them.
+        back = await _row(
+            platform="slack", surface_rules=SLACK_RULES, state=_state([slack, report])
+        )
+        assert SLACK_RULES not in back.content
+
+    @pytest.mark.asyncio
+    async def test_the_same_turn_without_the_flag_takes_the_rules_back(self):
+        """What the flag changes: a turn with no surface otherwise reads as
+        the web app continuing the thread."""
+        slack = await _row(platform="slack", surface_rules=SLACK_RULES)
+        plain = await _row(state=_state([slack]))
+
+        assert _provenance(plain)["rules_key"] == "default"
+        assert "no delivery rules of its own" in plain.content
+
+    @pytest.mark.asyncio
+    async def test_a_plain_turn_after_the_report_still_returns_to_the_default(self):
+        slack = await _row(platform="slack", surface_rules=SLACK_RULES)
+        report = await _row(inherits_rules=True, state=_state([slack]))
+        web = await _row(state=_state([slack, report]))
+
+        assert _provenance(web)["rules_key"] == "default"
+        assert "no delivery rules of its own" in web.content
+
+    @pytest.mark.asyncio
+    async def test_a_report_is_not_the_attended_turn_after_an_automation(self):
+        auto = await _row(platform="web", origin="automation")
+        report = await _row(inherits_rules=True, state=_state([auto]))
+
+        assert _provenance(report)["rules_key"] == "web+automation"
+        assert "waiting for the reply" not in report.content
+
+        manual = await _row(platform="web", state=_state([auto, report]))
+        assert "A person sent this turn and is waiting for the reply." in manual.content
+
+    @pytest.mark.asyncio
+    async def test_a_report_on_a_thread_with_no_rules_states_none(self):
+        report = await _row(inherits_rules=True)
+
+        assert "rules_key" not in _provenance(report)
+        assert "delivery rules" not in report.content
+
+
+class TestTheLowDiskLineIsTakenBack:
+    """The low-disk line is an instruction in a row nothing rewrites, so the
+    first turn after it stops applying has to say so."""
+
+    LOW = "The computer's disk is nearly full"
+    RECOVERED = "no longer reported as nearly full"
+
+    @pytest.mark.asyncio
+    async def test_the_turn_after_a_low_one_states_the_recovery(self):
+        low = await _row(disk_free_mb=180)
+        assert _provenance(low)["disk_low"] is True
+
+        cleared = await _row(disk_known=True, state=_state([low]))
+
+        assert self.RECOVERED in cleared.content
+        assert self.LOW not in cleared.content
+        assert _provenance(cleared)["disk_low"] is False
+
+    @pytest.mark.asyncio
+    async def test_the_recovery_is_stated_once(self):
+        low = await _row(disk_free_mb=180)
+        cleared = await _row(disk_known=True, state=_state([low]))
+
+        again = await _row(disk_known=True, state=_state([low, cleared]))
+
+        assert self.RECOVERED not in again.content
+
+    @pytest.mark.asyncio
+    async def test_a_turn_without_a_reading_takes_nothing_back(self):
+        """A failed read or a reading cleared by a spec change is unknown, not
+        healthy: the recovery waits for a reading that shows it."""
+        low = await _row(disk_free_mb=180)
+
+        unknown = await _row(state=_state([low]))
+        assert self.RECOVERED not in unknown.content
+        assert "disk_low" not in _provenance(unknown)
+
+        known = await _row(disk_known=True, state=_state([low, unknown]))
+        assert self.RECOVERED in known.content
+
+    @pytest.mark.asyncio
+    async def test_a_disk_that_stays_low_is_stated_again(self):
+        low = await _row(disk_free_mb=180)
+
+        still = await _row(disk_free_mb=120, state=_state([low]))
+
+        assert "nearly full: 120 MB free" in still.content
+        assert self.RECOVERED not in still.content
+
+    @pytest.mark.asyncio
+    async def test_a_low_row_behind_the_cutoff_needs_no_recovery(self):
+        low = await _row(disk_free_mb=180)
+
+        cleared = await _row(disk_known=True, state=_state([low], cutoff_index=1))
+
+        assert self.RECOVERED not in cleared.content
+
+    @pytest.mark.asyncio
+    async def test_a_subagent_neither_states_nor_stamps_the_disk(self):
+        low = await _row(disk_free_mb=180)
+
+        sub = await _row(is_subagent=True, disk_known=True, state=_state([low]))
+
+        assert self.RECOVERED not in sub.content
+        assert "disk_low" not in _provenance(sub)
+
+
 class TestTheRowIsRenderedOnce:
     @pytest.mark.asyncio
     async def test_it_renders_identically_at_both_guidance_levels(self):
@@ -787,14 +928,21 @@ class TestTheFactFormOfTheSessionLine:
         )
 
     def test_the_viewer_clock_and_the_holiday_caveat_survive_the_fact_form(self):
+        # A Monday past the published CN calendar, so the caveat is owed. It
+        # follows the calendar's horizon, which each release moves, and stays
+        # in September so the viewer's clock is on daylight time.
+        from market_protocol.calendars import calendar_range
+
+        day = date(calendar_range("XSHG")[1].year + 3, 9, 1)
+        day += timedelta(days=-day.weekday() % 7)
         line = MARKET_CLOCK.describe(
             "CN",
-            datetime(2026, 9, 9, 2, 0, tzinfo=UTC),
+            datetime(day.year, day.month, day.day, 2, 0, tzinfo=UTC),
             viewer_tz="America/New_York",
             relative=False,
         )
 
         assert line == (
-            "CN: regular hours, closes Wed 15:00 CST (Wed 03:00 local), "
+            "CN: regular hours, closes Mon 15:00 CST (Mon 03:00 local), "
             "holidays unverified"
         )

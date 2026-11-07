@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { ErrorBanner } from '../error-banner';
 import type { StructuredError } from '@/utils/rateLimitError';
 
@@ -135,6 +135,14 @@ describe('ErrorBanner', () => {
     consoleErr.mockRestore();
   });
 
+  it('shows an internal failure the server sent no words for as its headline alone', () => {
+    // A run that failed where no error frame could be written for it.
+    const { container } = renderInRouter(<ErrorBanner error={{ message: '', kind: 'internal' }} />);
+    const column = container.querySelector('.flex-col');
+    expect(column?.children).toHaveLength(1);
+    expect(column?.textContent).not.toBe('');
+  });
+
   // Ported from ChatViewErrorBanner.test.tsx (local-copy drift test, deleted):
   // scenarios the ChatView banner relies on that were not covered above.
 
@@ -174,5 +182,19 @@ describe('ErrorBanner', () => {
     expect(screen.getByText(/Daily credit limit reached/)).toBeInTheDocument();
     expect(screen.queryByText(/Rate limit exceeded:/)).not.toBeInTheDocument();
   });
-});
 
+  it('renders a notice as information, not as an error', () => {
+    const err: StructuredError = { message: 'This chat changed somewhere else, so it was refreshed. Try again.', kind: 'notice' };
+    const { container } = renderInRouter(<ErrorBanner error={err} />);
+    const row = screen.getByRole('status');
+    expect(row).toHaveTextContent(err.message);
+    expect(row.getAttribute('style')).toContain('var(--color-text-tertiary)');
+    expect(container.innerHTML).not.toContain('--color-loss');
+  });
+
+  it('keeps the error style for a failure', () => {
+    const { container } = renderInRouter(<ErrorBanner error="Failed to send message" />);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(container.innerHTML).toContain('--color-loss');
+  });
+});

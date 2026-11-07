@@ -10,7 +10,12 @@ import datetime
 
 import pandas as pd
 
-from mcp_servers._yf_common import clean_value, format_datetime, serialize_records
+from mcp_servers._yf_common import (
+    clean_value,
+    format_datetime,
+    minor_unit,
+    serialize_records,
+)
 
 
 class TestCleanValue:
@@ -33,6 +38,11 @@ class TestCleanValue:
     def test_nested_containers_are_cleaned_recursively(self):
         cleaned = clean_value({"a": [float("nan"), 1.0], "b": float("inf")})
         assert cleaned == {"a": [None, 1.0], "b": None}
+
+    def test_time_zone_becomes_its_name(self):
+        # Yahoo's market status carries one, which no JSON encoder takes.
+        edt = datetime.timezone(datetime.timedelta(hours=-4), "EDT")
+        assert clean_value({"tz": edt}) == {"tz": "EDT"}
 
 
 class TestFormatDatetime:
@@ -68,3 +78,12 @@ class TestSerializeRecords:
 
     def test_empty_dataframe_is_empty_list(self):
         assert serialize_records(pd.DataFrame()) == []
+
+
+class TestMinorUnit:
+    def test_pence_is_a_minor_unit_but_pounds_are_not(self):
+        assert minor_unit("GBp") == ("GBP", 100)
+        assert minor_unit("GBX") == ("GBP", 100)
+        assert minor_unit("gbx") == ("GBP", 100)
+        assert minor_unit("GBP") is None
+        assert minor_unit("ZAR") is None

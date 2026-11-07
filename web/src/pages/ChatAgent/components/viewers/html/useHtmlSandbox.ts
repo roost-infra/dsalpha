@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useState } from 'react';
 import { resolveThemeVars } from './buildHtmlSrcDoc';
 
 interface UseHtmlSandboxOptions {
@@ -12,12 +12,13 @@ interface UseHtmlSandboxOptions {
 interface UseHtmlSandboxResult {
   /** Reported iframe height (null until first resize), only set when autoHeight. */
   height: number | null;
-  /** Push current theme vars into the iframe (call after a served iframe loads). */
+  /** Push current theme vars into the iframe (call after a fresh srcdoc loads). */
   pushTheme: () => void;
 }
 
 /**
- * Owns the parent-side postMessage bridge for a sandboxed HTML iframe:
+ * Owns the parent-side postMessage bridge for a srcdoc widget frame (a served
+ * document speaks the page bridge instead, `usePageBridge`):
  * resize → height (when autoHeight), sendPrompt → callback, and a theme
  * MutationObserver that re-pushes widget:themeUpdate on data-theme changes.
  */
@@ -59,10 +60,9 @@ export function useHtmlSandbox({
   }, [handleMessage]);
 
   // Re-push theme vars whenever the app toggles data-theme.
-  const pushThemeRef = useRef(pushTheme);
-  pushThemeRef.current = pushTheme;
+  const onThemeToggle = useEffectEvent(pushTheme);
   useEffect(() => {
-    const observer = new MutationObserver(() => pushThemeRef.current());
+    const observer = new MutationObserver(() => onThemeToggle());
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],

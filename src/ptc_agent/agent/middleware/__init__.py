@@ -3,7 +3,6 @@
 This module provides middleware for LangChain/LangGraph agents:
 
 - background/: Background subagent orchestration
-- plan_mode: Human-in-the-loop plan review
 - tool/: Tool argument parsing, error handling, result normalization
 - caching/: Tool result caching with SSE events
 - file_operations/: File operation SSE event emission and vision middleware
@@ -17,12 +16,6 @@ from .background_subagent import (
     SubagentEventCaptureMiddleware,
 )
 
-# Plan mode middleware
-from .plan_mode import (
-    PlanModeMiddleware,
-    create_plan_mode_interrupt_config,
-)
-
 # Ask user middleware
 from .ask_user import AskUserMiddleware
 
@@ -30,10 +23,12 @@ from .ask_user import AskUserMiddleware
 # is re-exported: the lease, the lane state and the ContextVar are the gate's
 # own wiring and their callers import them from the module directly.
 from .credit_gate import CreditGateMiddleware
+from .repeat_guard import RepeatCallGuardMiddleware
 
 # Tool middleware (argument parsing, error handling, result normalization, leak detection, code validation, empty call retry)
 from .tool import (
     CodeValidationMiddleware,
+    ComputerArgumentGuardMiddleware,
     EmptyToolCallRetryMiddleware,
     LeakDetectionMiddleware,
     ProtectedPathMiddleware,
@@ -90,7 +85,7 @@ from .large_result_eviction import (
 # per-call row to the envelope.
 from .runtime_context import (
     BaselineContextMiddleware,
-    TailEnvelopeMiddleware,
+    RowCarrierMiddleware,
 )
 
 # Market watch middleware (live price injection for watched tickers)
@@ -103,14 +98,19 @@ from .steering import (
     SteeringMiddleware,
 )
 
-# OpenAI prompt-cache breakpoint middleware (GPT-5.6+ explicit caching)
-from .openai_prompt_caching import (
-    OpenAIPromptCachingMiddleware,
+# System-prompt cache breakpoint middleware (OpenAI GPT-5.6+, Claude over OpenRouter)
+from .system_prompt_caching import (
+    SystemPromptCacheMiddleware,
 )
 
 # Cross-provider reasoning sanitizer (origin + shape gates, origin stamping)
 from .reasoning_compat import (
     ReasoningCompatibilityMiddleware,
+)
+
+# Stream heartbeat (wakes the stream's delta lanes while a model call runs)
+from .stream_heartbeat import (
+    StreamHeartbeatMiddleware,
 )
 
 # Subagent steering middleware
@@ -130,17 +130,16 @@ __all__ = [
     "BackgroundSubagentMiddleware",
     "BackgroundSubagentOrchestrator",
     "SubagentEventCaptureMiddleware",
-    # Plan mode
-    "PlanModeMiddleware",
-    "create_plan_mode_interrupt_config",
     # Ask user
     "AskUserMiddleware",
     "CreditGateMiddleware",
+    "RepeatCallGuardMiddleware",
     # Multimodal middleware (for read_file image/PDF support)
     "MultimodalMiddleware",
     "MultimodalStripMiddleware",
     # Tool middleware
     "CodeValidationMiddleware",
+    "ComputerArgumentGuardMiddleware",
     "EmptyToolCallRetryMiddleware",
     "LeakDetectionMiddleware",
     "ProtectedPathMiddleware",
@@ -175,11 +174,13 @@ __all__ = [
     "SubagentSteeringMiddleware",
     # Runtime context
     "BaselineContextMiddleware",
-    "TailEnvelopeMiddleware",
+    "RowCarrierMiddleware",
     # OpenAI prompt caching
-    "OpenAIPromptCachingMiddleware",
+    "SystemPromptCacheMiddleware",
     # Cross-provider reasoning sanitizer
     "ReasoningCompatibilityMiddleware",
+    # Stream heartbeat
+    "StreamHeartbeatMiddleware",
     # Subagent middleware
     "CompiledSubAgent",
     "SubAgent",

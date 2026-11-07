@@ -110,7 +110,7 @@ class TestModelsEndpointIntegration:
         agent_cfg = AgentConfig(
             llm=LLMConfig(
                 name="claude-sonnet-4-5",
-                flash="claude-haiku-4-5",
+                background="claude-haiku-4-5",
                 compaction="claude-haiku-4-5",
                 fallback=["gpt-4o"],
             ),
@@ -138,7 +138,7 @@ class TestModelsEndpointIntegration:
         # System defaults populated from config
         defaults = body["system_defaults"]
         assert defaults["default_model"] == "claude-sonnet-4-5"
-        assert defaults["flash_model"] == "claude-haiku-4-5"
+        assert defaults["background_model"] == "claude-haiku-4-5"
         assert defaults["fallback_models"] == ["gpt-4o"]
 
         # Providers present
@@ -342,17 +342,17 @@ class TestPreferencesIntegration:
         model_pref = resp.json().get("model_preference") or {}
         assert model_pref.get("reasoning_effort") == "high"
 
-    async def test_set_flash_model(self, users_client):
-        """preferred_flash_model should persist."""
+    async def test_set_background_model(self, users_client):
+        """preferred_background_model should persist."""
         resp = await users_client.put(
             "/api/v1/users/me/preferences",
-            json={"other_preference": {"preferred_flash_model": "gpt-4o-mini"}},
+            json={"other_preference": {"preferred_background_model": "gpt-4o-mini"}},
         )
         assert resp.status_code == 200
 
         resp = await users_client.get("/api/v1/users/me/preferences")
         model_pref = resp.json().get("model_preference") or {}
-        assert model_pref.get("preferred_flash_model") == "gpt-4o-mini"
+        assert model_pref.get("preferred_background_model") == "gpt-4o-mini"
 
     async def test_set_fallback_models(self, users_client):
         """fallback_models list should persist."""

@@ -246,7 +246,7 @@ class UsagePersistenceService:
         self,
         response_id: str,
         timestamp: Optional[datetime] = None,
-        msg_type: Optional[str] = None,
+        msg_type: str = "ptc",
         deepthinking: bool = False,
         status: str = "completed",
         conn: Optional[Any] = None,
@@ -270,7 +270,8 @@ class UsagePersistenceService:
         Args:
             response_id: Response identifier
             timestamp: Optional timestamp (defaults to now)
-            msg_type: Base workflow type (chat, technical_analysis, etc.)
+            msg_type: The producer, never a status: 'ptc' for a turn's row,
+                'task' for a subagent's
             deepthinking: Whether deepthinking was enabled
             status: Workflow completion status (completed, error, cancelled, interrupted)
             conn: Optional database connection for transaction support
@@ -303,8 +304,6 @@ class UsagePersistenceService:
             if self._tool_usage:
                 infrastructure_usage = format_infrastructure_usage(self._tool_usage)
 
-            final_msg_type = msg_type or 'ptc'
-
             # Compute is_byok from actual per-call billing data.
             # If we tracked any LLM calls, use real billing data: BYOK only
             # when no call used the platform key.  Otherwise fall back to the
@@ -321,7 +320,7 @@ class UsagePersistenceService:
                 "user_id": self.user_id,
                 "conversation_thread_id": self.thread_id,
                 "workspace_id": self.workspace_id,
-                "msg_type": final_msg_type,
+                "msg_type": msg_type,
                 "status": status,
                 "token_usage": self._token_usage,
                 "infrastructure_usage": infrastructure_usage,
@@ -351,7 +350,7 @@ class UsagePersistenceService:
 
             logger.info(
                 f"[UsagePersistence] Persisted usage for response_id={response_id}, "
-                f"msg_type={final_msg_type}, status={status}, "
+                f"msg_type={msg_type}, status={status}, "
                 f"total_credits={float(total_credits):.2f} "
                 f"(tokens={float(self._token_credits):.2f}, "
                 f"infra={float(self._infrastructure_credits):.2f})"

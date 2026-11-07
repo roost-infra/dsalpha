@@ -1,19 +1,65 @@
-"""FMP (Financial Modeling Prep) async client — targets the stable API.
-
-Responses pass through unchanged except for the sector performance snapshot;
-see :func:`_format_sector_change_pct`.
-"""
+"""FMP (Financial Modeling Prep) async client — targets the stable API."""
 
 import asyncio
 import json
+import math
 import os
 from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Union
 
 import httpx
+from market_protocol import display_spelling, vendor_spelling
+
+from . import walk
+from .walk import Walk
 
 _CACHE_MAX_SIZE = 512
+# A dropped connection or a 5xx is retried on a fresh attempt, a refusal never:
+# a walk makes up to 64 calls, and one transient failure fails the read. A
+# timeout is not retried, so a hung FMP still fails a call in one timeout.
+# ginlix-data's FMP client retries a dropped connection and a 5xx the same
+# number of times, and a timeout too.
+_RETRIES = 2
+_BACKOFF_S = 0.25
+_TRANSIENT = frozenset({500, 502, 503, 504})
+
+
+def _vendor_symbol_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Respell the symbol params in FMP's form.
+
+    Every FMP request passes here, so callers hold our spelling (``600519.SH``)
+    and FMP still receives the ``600519.SS`` it resolves. A blank entry in a
+    list (``AAPL,,MSFT``) names nothing and is dropped; a symbol that cannot be
+    spelled raises :class:`FMPRequestError` rather than reaching FMP.
+    """
+    out = dict(params)
+    try:
+        if isinstance(out.get("symbol"), str):
+            out["symbol"] = vendor_spelling(out["symbol"])
+        if isinstance(out.get("symbols"), str):
+            out["symbols"] = ",".join(
+                vendor_spelling(s) for s in out["symbols"].split(",") if s.strip()
+            )
+    except ValueError as exc:
+        # 400, the status FMP gives a malformed request: callers that map
+        # statuses report it as a bad argument, with the reason.
+        raise FMPRequestError(f"Invalid symbol for FMP: {exc}", status_code=400) from exc
+    return out
+
+
+def _own_symbol_rows(data: Any) -> Any:
+    """Respell the ``symbol`` of each returned row in our spelling, in place.
+
+    The inbound half of :func:`_vendor_symbol_params`: FMP answers a Shanghai
+    listing as ``600519.SS``, and nothing past this client should see that.
+    """
+    rows = data if isinstance(data, list) else [data]
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("symbol"), str):
+            row["symbol"] = display_spelling(row["symbol"])
+    return data
 
 
 class FMPRequestError(Exception):
@@ -23,33 +69,38 @@ class FMPRequestError(Exception):
     request URL or headers; the key travels in the ``apikey`` header.
     """
 
-    def __init__(self, message: str, *, status_code: Optional[int] = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: Optional[int] = None,
+        retry_after: Optional[float] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after = retry_after
+
+
+def _retry_after(value: Optional[str]) -> Optional[float]:
+    """Seconds a ``Retry-After`` header asks for, in either of its forms."""
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        seconds = (when - datetime.now(timezone.utc)).total_seconds()
+    return max(seconds, 0.0) if math.isfinite(seconds) else None
 
 
 def _today_utc() -> date:
     """UTC equivalent of ``date.today()`` — the server runs in UTC; local-clock dates drift."""
     return datetime.now(timezone.utc).date()
-
-
-def _format_sector_change_pct(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Render sector snapshot's ``averageChange`` as a percentage string.
-
-    Stable returns ``averageChange`` as a float already in percent units (e.g.
-    ``1.42832`` means 1.43%, not 142%); the canonical shape downstream parses
-    is the same value as a percentage string under ``changePctStr`` (e.g.
-    ``"1.42832%"``). The numeric copy survives on the artifact under
-    ``changePercentage``, so string and numeric live alongside without ambiguity.
-
-    Returns a fresh dict — the source row may be held by the LRU cache, so
-    in-place mutation would leak the derived field back into cached responses.
-    """
-    if "averageChange" not in row or "changePctStr" in row:
-        return row
-    val = row["averageChange"]
-    formatted = f"{val:.5f}%" if isinstance(val, (int, float)) else str(val)
-    return {**row, "changePctStr": formatted}
 
 
 class FMPClient:
@@ -111,7 +162,7 @@ class FMPClient:
         version: Optional[str] = None,
         use_cache: bool = True,
     ) -> Union[Dict, List]:
-        params = params or {}
+        params = _vendor_symbol_params(params or {})
 
         cache_key = f"{endpoint}:{json.dumps(params, sort_keys=True)}"
 
@@ -123,11 +174,22 @@ class FMPClient:
         client = await self._get_client()
 
         try:
-            response = await client.get(
-                url, params=params, headers={"apikey": self.api_key}
-            )
+            for attempt in range(_RETRIES + 1):
+                try:
+                    response = await client.get(
+                        url, params=params, headers={"apikey": self.api_key}
+                    )
+                except httpx.TimeoutException:
+                    raise
+                except httpx.TransportError:
+                    if attempt == _RETRIES:
+                        raise
+                else:
+                    if response.status_code not in _TRANSIENT or attempt == _RETRIES:
+                        break
+                await asyncio.sleep(_BACKOFF_S * 2**attempt)
             response.raise_for_status()
-            data = response.json()
+            data = _own_symbol_rows(response.json())
 
             if use_cache and data:
                 self._cache[cache_key] = data
@@ -144,6 +206,7 @@ class FMPClient:
             raise FMPRequestError(
                 f"FMP API request failed ({e.response.status_code})",
                 status_code=e.response.status_code,
+                retry_after=_retry_after(e.response.headers.get("Retry-After")),
             )
         except httpx.TimeoutException:
             raise FMPRequestError("FMP API request timed out")
@@ -485,37 +548,6 @@ class FMPClient:
             result.append([quarter, fiscal_year, call_date])
         return result
 
-    async def get_sec_filings(
-        self,
-        symbol: str,
-        filing_type: Optional[str] = None,
-        limit: int = 20,
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
-    ) -> List[Dict]:
-        """SEC filings for a company.
-
-        Stable's ``sec-filings-search/symbol`` requires ``from`` and ``to``
-        dates; when omitted we default to "last 5 years → today" so the
-        contract still works for callers that only pass ``symbol``.
-        Param ``type`` was renamed to ``formType``.
-        """
-        if not from_date:
-            from_date = (_today_utc() - timedelta(days=365 * 5)).isoformat()
-        if not to_date:
-            to_date = _today_utc().isoformat()
-
-        params: Dict[str, Any] = {
-            "symbol": symbol,
-            "limit": limit,
-            "from": from_date,
-            "to": to_date,
-        }
-        if filing_type:
-            params["formType"] = filing_type
-
-        return await self._make_request("sec-filings-search/symbol", params=params)
-
     async def get_historical_earnings_calendar(
         self, symbol: str, limit: int = 20
     ) -> List[Dict]:
@@ -675,41 +707,6 @@ class FMPClient:
         return await self._make_request("company-screener", params=params)
 
     # =====================================================================
-    # Sector Performance
-    # =====================================================================
-
-    async def get_sector_performance(
-        self, target_date: Optional[str] = None
-    ) -> List[Dict]:
-        """Daily snapshot of US sector performance (NASDAQ-listed names).
-
-        Stable's ``sector-performance-snapshot?date=`` requires a date and
-        returns ``[]`` on weekends/holidays; when no date is supplied we walk
-        back up to 7 calendar days to find the most recent trading day, which
-        matches v3's implicit "latest available" behaviour. The numeric
-        ``averageChange`` is rendered as a percentage string under
-        ``changePctStr`` (see :func:`_format_sector_change_pct`).
-
-        The endpoint is per-exchange and defaults to NASDAQ-listed constituents
-        only — the same scope v3's ``sectors-performance`` returned.
-        """
-        if target_date:
-            data = await self._make_request(
-                "sector-performance-snapshot", params={"date": target_date}
-            )
-            return [_format_sector_change_pct(row) for row in (data or [])]
-
-        today = _today_utc()
-        for offset in range(7):
-            probe = (today - timedelta(days=offset)).isoformat()
-            data = await self._make_request(
-                "sector-performance-snapshot", params={"date": probe}
-            )
-            if data:
-                return [_format_sector_change_pct(row) for row in data]
-        return []
-
-    # =====================================================================
     # Technical Indicators
     # =====================================================================
 
@@ -789,10 +786,11 @@ class FMPClient:
         elif isinstance(to_date, date):
             to_date = to_date.isoformat()
 
-        return await self._make_request(
+        rows = await self._make_request(
             "historical-price-eod/full",
             params={"symbol": symbol, "from": from_date, "to": to_date},
         )
+        return walk.eod_answer(rows, from_date)
 
     async def get_intraday_chart(
         self,
@@ -807,9 +805,8 @@ class FMPClient:
         if to_date:
             params["to"] = to_date
 
-        return await self._make_request(
-            f"historical-chart/{interval}", params=params
-        )
+        rows = await self._make_request(f"historical-chart/{interval}", params=params)
+        return walk.intraday_answer(rows, interval, from_date, to_date, _today_utc())
 
     async def get_commodity_price(
         self,
@@ -898,13 +895,32 @@ class FMPClient:
     # =====================================================================
 
     async def get_economic_indicators(self, name: str, limit: int = 50) -> List[Dict]:
-        return await self._make_request(
-            "economic-indicators", params={"name": name, "limit": limit}
-        )
+        """The newest ``limit`` observations of an indicator, newest first, read
+        back from today in UTC (:func:`walk.read_indicator`)."""
+        return await walk.read_indicator(self._make_request, name, limit, _today_utc())
+
+    async def _range(
+        self, endpoint: str, from_date: str, to_date: str, **walk_kwargs: Any
+    ) -> Union[Walk, Dict]:
+        """A range read back by :func:`walk.read_range`."""
+
+        async def request(params: Dict[str, Any]) -> Any:
+            return await self._make_request(endpoint, params=params)
+
+        return await walk.read_range(request, from_date, to_date, **walk_kwargs)
 
     async def get_economic_calendar(
         self, from_date: Optional[str] = None, to_date: Optional[str] = None
     ) -> List[Dict]:
+        """Events in the range; with both bounds a :class:`Walk` (see :meth:`_range`).
+
+        A lone bound is one read: the calendar holds upcoming dates, so where
+        its range ends is FMP's to say.
+        """
+        if from_date and to_date:
+            return await self._range(
+                "economic-calendar", from_date, to_date, from_start=True
+            )
         params: Dict[str, Any] = {}
         if from_date:
             params["from"] = from_date
@@ -915,9 +931,15 @@ class FMPClient:
     async def get_treasury_rates(
         self, from_date: Optional[str] = None, to_date: Optional[str] = None
     ) -> List[Dict]:
-        params: Dict[str, Any] = {}
+        """Daily rates; with a start, a :class:`Walk` to ``to_date`` or today in UTC.
+
+        No rate lies ahead, so a lone start leaves no doubt where the range
+        ends. Without a start it is one read, FMP's own recent window.
+        """
         if from_date:
-            params["from"] = from_date
+            to_date = to_date or _today_utc().isoformat()
+            return await self._range("treasury-rates", from_date, to_date)
+        params: Dict[str, Any] = {}
         if to_date:
             params["to"] = to_date
         return await self._make_request("treasury-rates", params=params)
@@ -928,9 +950,25 @@ class FMPClient:
     async def get_earnings_calendar_by_date(
         self, from_date: Optional[str] = None, to_date: Optional[str] = None
     ) -> List[Dict]:
+        """Reporters in the range; with both bounds a :class:`Walk` (see
+        :meth:`_range`), paged past FMP's 4,000-row answer. A lone bound is one
+        read, as the economic calendar's is, sorted oldest first as the range
+        read is."""
+        if from_date and to_date:
+            return await self._range(
+                "earnings-calendar",
+                from_date,
+                to_date,
+                page_rows=walk.EARNINGS_PAGE_ROWS,
+                window_days=walk.EARNINGS_WINDOW_DAYS,
+                from_start=True,
+            )
         params: Dict[str, Any] = {}
         if from_date:
             params["from"] = from_date
         if to_date:
             params["to"] = to_date
-        return await self._make_request("earnings-calendar", params=params)
+        rows = await self._make_request("earnings-calendar", params=params)
+        if not isinstance(rows, list):
+            return rows
+        return Walk(sorted(rows, key=lambda row: str(row.get("date"))))

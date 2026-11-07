@@ -15,7 +15,7 @@ from typing import Literal
 
 from psycopg.rows import dict_row
 
-from src.server.database.mcp_servers import bump_user_versions
+from src.server.database.mcp_config_version import bump_user_versions
 from src.server.database.pool import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -31,10 +31,10 @@ class AccountDisables:
     bundles: frozenset[str]
 
 
-async def list_account_disables(user_id: str) -> AccountDisables:
+async def list_account_disables(user_id: str, *, conn=None) -> AccountDisables:
     """Everything this account has switched off, split by kind."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT kind, name FROM user_mcp_builtin_disables WHERE user_id = %s",
                 (user_id,),

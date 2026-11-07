@@ -22,13 +22,16 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { isCacheOnlyMeta, queryKeys } from '@/lib/queryKeys';
+import { PING_STREAM_BEAT_MS } from '@/lib/streamSilence';
+import { ALL, refreshArtifactComments, refreshArtifactRecord, refreshArtifactThreads, refreshEveryArtifact } from '@/lib/artifactCache';
+import { threadFieldMutationKey } from '@/lib/threadFieldMutations';
 import { patchThreadTitle } from '@/lib/threadListCache';
 import { isArchivedThreadsKey, patchThreadRows } from '@/lib/threadRowActions';
 import {
   getAuthHeaders,
   streamFetch,
 } from '@/pages/ChatAgent/utils/api/transport';
-import type { Thread } from '@/types/api';
+import type { ArtifactCommentEvent, ArtifactRecordEvent, Thread } from '@/types/api';
 import {
   getLifecycleQueryClient,
   markThreadSeen,
@@ -64,6 +67,8 @@ interface ClientState {
    * 600s cap) and the feed has no replay. */
   resyncOnSnapshot: boolean;
   pendingFullInvalidate: boolean;
+  /** An automation joined or left a thread's line since the last flush. */
+  pendingAutomations: boolean;
   invalidateTimer: ReturnType<typeof setTimeout> | null;
   unsubscribeCache: (() => void) | null;
   detachWindow: (() => void) | null;
@@ -86,6 +91,7 @@ const client: ClientState =
     pendingWorkspaces: new Set(),
     resyncOnSnapshot: false,
     pendingFullInvalidate: false,
+    pendingAutomations: false,
     invalidateTimer: null,
     unsubscribeCache: null,
     detachWindow: null,
@@ -138,12 +144,18 @@ function scheduleInvalidate(workspaceId?: string | null): void {
     if (!qc) return;
     const full = client.pendingFullInvalidate;
     client.pendingFullInvalidate = false;
+    const automations = client.pendingAutomations;
+    client.pendingAutomations = false;
     const workspaces = [...client.pendingWorkspaces];
     client.pendingWorkspaces.clear();
     if (full) {
       // Reconnect resync: one prefix-wide invalidate subsumes the scoped ones.
       void qc.invalidateQueries({ queryKey: queryKeys.threads.all });
       refetchCacheOnlyLists(qc, queryKeys.threads.all);
+      // The automation announcements have no replay either, and a wait that
+      // started while detached would otherwise stay unseen until its poll.
+      void qc.invalidateQueries({ queryKey: queryKeys.automations.all });
+      refreshEveryArtifact(qc);
       return;
     }
     for (const ws of workspaces) {
@@ -151,6 +163,13 @@ function scheduleInvalidate(workspaceId?: string | null): void {
       refetchCacheOnlyLists(qc, queryKeys.threads.byWorkspace(ws));
     }
     void qc.invalidateQueries({ queryKey: queryKeys.threads.recentAll() });
+    // A wait starting or ending moves the whole automations family: the chat
+    // notice, the list and the run feed. Any other turn may be a scheduled
+    // run, which the feed shows and stops polling for once a second page is
+    // loaded.
+    void qc.invalidateQueries({
+      queryKey: automations ? queryKeys.automations.all : queryKeys.automations.runs(),
+    });
   }, INVALIDATE_DEBOUNCE_MS);
 }
 
@@ -188,6 +207,9 @@ function onFeedEvent(raw: Record<string, unknown>): void {
     run_id?: string | null;
     title?: string | null;
     pinned?: boolean | null;
+    subagents_allowed?: boolean | null;
+    reasoning_effort?: string | null;
+    fast_mode?: boolean | null;
     updated_at?: string | null;
   };
   switch (evt.type) {
@@ -238,6 +260,51 @@ function onFeedEvent(raw: Record<string, unknown>): void {
       scheduleInvalidate(evt.workspace_id);
       return;
     }
+    // Subagents switch flipped, here or in another tab. The open thread's
+    // detail is read again rather than patched: events can trail a later flip
+    // made in this tab, and the row is the only order that holds. While a
+    // save of any field there is still out from this tab, a read now would
+    // flicker its control back, so the row is only marked stale and that
+    // save's settle reads it.
+    case 'thread_subagents': {
+      const qc = getLifecycleQueryClient();
+      // null is a value here: the thread went back to following the default.
+      if (qc && evt.thread_id && evt.subagents_allowed !== undefined) {
+        const key = queryKeys.threads.detail(evt.thread_id);
+        const cached = qc.getQueryData<Thread>(key);
+        // A read in flight may have been answered before this change and
+        // land over it, even when the cache agrees with the event for now,
+        // so it is asked again (an invalidation restarts it). A row never
+        // read (its read failed) is read now, since the switch shows nothing
+        // until one lands; a thread no view has open has no query to read.
+        const reading = qc.isFetching({ queryKey: key }) > 0;
+        if (reading || !cached || (cached.subagents_allowed ?? null) !== evt.subagents_allowed) {
+          const saving = qc.isMutating({ mutationKey: threadFieldMutationKey(evt.thread_id) }) > 0;
+          void qc.invalidateQueries({ queryKey: key, ...(saving ? { refetchType: 'none' as const } : {}) });
+        }
+      }
+      return;
+    }
+    // The thread's own effort or fast mode changed, here or in another tab.
+    // Read again rather than patched, and only marked while a save there is
+    // out, for the reasons `thread_subagents` gives.
+    case 'thread_tuning': {
+      const qc = getLifecycleQueryClient();
+      // null is a value for both: the thread went back to following Settings.
+      if (qc && evt.thread_id && evt.reasoning_effort !== undefined && evt.fast_mode !== undefined) {
+        const key = queryKeys.threads.detail(evt.thread_id);
+        const cached = qc.getQueryData<Thread>(key);
+        const reading = qc.isFetching({ queryKey: key }) > 0;
+        const agrees = !!cached
+          && (cached.reasoning_effort ?? null) === evt.reasoning_effort
+          && (cached.fast_mode ?? null) === evt.fast_mode;
+        if (reading || !agrees) {
+          const saving = qc.isMutating({ mutationKey: threadFieldMutationKey(evt.thread_id) }) > 0;
+          void qc.invalidateQueries({ queryKey: key, ...(saving ? { refetchType: 'none' as const } : {}) });
+        }
+      }
+      return;
+    }
     // Archive is a prune too: an archived row leaves the snapshot exactly like
     // a deleted one, so its retained observations (and unseen state) must go.
     case 'thread_deleted':
@@ -257,6 +324,7 @@ function onFeedEvent(raw: Record<string, unknown>): void {
           (rows) => (rows.some((t) => t.thread_id === tid) ? rows.filter((t) => t.thread_id !== tid) : rows),
           evt.type === 'thread_archived' ? { skipKey: isArchivedThreadsKey } : {},
         );
+        refreshArtifactThreads(qc);
       }
       if (evt.thread_id) pruneThread(evt.thread_id);
       scheduleInvalidate(evt.workspace_id);
@@ -275,13 +343,62 @@ function onFeedEvent(raw: Record<string, unknown>): void {
           (rows) => (rows.some((t) => t.thread_id === tid) ? rows.filter((t) => t.thread_id !== tid) : rows),
           { skipKey: (key) => !isArchivedThreadsKey(key) },
         );
+        refreshArtifactThreads(qc);
       }
       scheduleInvalidate(evt.workspace_id);
+      return;
+    }
+    // An automation joined or left the line behind a thread's running turn:
+    // the chat notice and the Automations page both read it through the
+    // automations family, so refetch that. Debounced, since a firing that
+    // queues behind another sends both events at once.
+    case 'automation_waiting':
+    case 'automation_waiting_ended': {
+      client.pendingAutomations = true;
+      scheduleInvalidate();
+      return;
+    }
+    case 'artifact_comment':
+    case 'artifact': {
+      const qc = getLifecycleQueryClient();
+      const event = readArtifactEvent(raw);
+      if (!qc || !event) return;
+      const ref = { artifactId: event.artifact_id, workspaceId: event.workspace_id || null };
+      // A file's comments changed: a send took them, an answer arrived, or
+      // another tab edited or read one. Its comment layer, its counts and the
+      // destination thread's deck read them again, or every deck when the
+      // event names no thread: Mark all read can touch any of them.
+      if (event.type === 'artifact_comment') refreshArtifactComments(qc, [ref], event.thread_id ?? ALL);
+      // A file's record changed: published, updated, unshared, rebound.
+      else refreshArtifactRecord(qc, ref);
       return;
     }
     default:
       return; // forward-compatible: unknown types are ignored
   }
+}
+
+/**
+ * An artifact event, or null for one that names no artifact. Read loosely
+ * past the id, so an event missing a field still reads the file again.
+ */
+function readArtifactEvent(raw: Record<string, unknown>): ArtifactCommentEvent | ArtifactRecordEvent | null {
+  const { type, artifact_id: artifactId } = raw;
+  if (typeof artifactId !== 'string' || !artifactId) return null;
+  const str = (value: unknown) => (typeof value === 'string' ? value : '');
+  const common = { v: 1 as const, artifact_id: artifactId, workspace_id: str(raw.workspace_id), path: str(raw.path) };
+  if (type === 'artifact_comment') {
+    return {
+      ...common,
+      type,
+      thread_id: str(raw.thread_id) || null,
+      comment_ids: Array.isArray(raw.comment_ids) ? raw.comment_ids.filter((id): id is string => typeof id === 'string') : [],
+    };
+  }
+  if (type === 'artifact') {
+    return { ...common, type, shared: raw.shared === true, latest_seq: typeof raw.latest_seq === 'number' ? raw.latest_seq : 0 };
+  }
+  return null;
 }
 
 /** Seed the store from every thread-list response (rows carry lifecycle
@@ -371,6 +488,8 @@ async function runLoop(gen: number): Promise<void> {
             signal: controller.signal,
           },
           onFeedEvent,
+          undefined,
+          { beatMs: PING_STREAM_BEAT_MS },
         );
       } catch {
         // Non-2xx (auth churn, backend restart) → backoff below.

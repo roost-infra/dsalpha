@@ -13,8 +13,8 @@ import { isDirectToolName, parseDirectToolName } from '../../utils/directTools';
  *
  * A direct MCP name is the original signal and still the common one. An order
  * request is also one whatever it is named: the order gate raises its own
- * interrupt, and a keyed request that fell through to the plan-approval branch
- * would render a plan card over a live order.
+ * interrupt, and a keyed request that fell past every branch would leave a
+ * live order waiting with no card to answer it.
  */
 export function isToolApprovalRequest(request: ActionRequest | undefined): boolean {
   if (!request) return false;

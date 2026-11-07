@@ -44,7 +44,9 @@ export type OrderStatus =
   | 'partially_filled'
   | 'filled'
   | 'cancelled'
+  | 'expired'
   | 'rejected_by_vendor'
+  | 'handed_off'
   | 'failed'
   | 'unknown';
 
@@ -60,7 +62,9 @@ export const ORDER_STATUSES: readonly OrderStatus[] = [
   'partially_filled',
   'filled',
   'cancelled',
+  'expired',
   'rejected_by_vendor',
+  'handed_off',
   'failed',
   'unknown',
 ] as const;
@@ -98,6 +102,11 @@ export type OrderTimeInForce =
   | 'overnight_next_day'
   | 'at_the_open';
 
+/** Which hours an order may trade in. `rth` is the regular session alone. */
+export type OrderSession = 'rth' | 'rth_plus_ext' | 'overnight' | 'all_day';
+
+export type OptionRight = 'C' | 'P';
+
 export type OrderType =
   | 'market'
   | 'limit'
@@ -132,7 +141,7 @@ export interface OptionInstrument {
   underlying: string;
   expiration?: string | null;
   strike?: string | null;
-  right?: 'C' | 'P' | null;
+  right?: OptionRight | null;
   multiplier?: number | null;
   vendor_instrument_id?: string | null;
 }
@@ -194,6 +203,6 @@ export interface OrderSummary {
   limit_price?: string | null;
   stop_price?: string | null;
   time_in_force?: OrderTimeInForce | null;
-  session?: string | null;
+  session?: OrderSession | null;
   note?: string | null;
 }

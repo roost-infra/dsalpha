@@ -71,15 +71,20 @@ class SourceRead:
         return self.text or ""
 
 
-def render_diff(baseline_text: str, current_text: str, path: str) -> str:
+def render_diff(
+    baseline_text: str, current_text: str, path: str, *, readable: bool = True
+) -> str:
     """A unified diff of the baseline against the current text, bounded.
 
     Bounded three ways because this rides in every model call until the next
     epoch: an unchanged pair says so in one line, an ordinary edit renders as a
     diff, and a wholesale rewrite renders as a pointer back at the file rather
-    than as a second copy of it. The diff labels date the right side to the
-    row ("this row"), because the row persists and a later row may supersede
-    it; "now" would be false by the time it is read again.
+    than as a second copy of it. A source the model cannot open (``readable``
+    false: a harness block) has nothing to point back at, so a change too
+    large to diff whole ships the current text instead, the only copy the
+    model can read. The diff labels date the right side to the row ("this row"),
+    because the row persists and a later row may supersede it; "now" would be
+    false by the time it is read again.
     """
     if baseline_text == current_text:
         return f"{path} matches its frozen copy again."
@@ -95,6 +100,15 @@ def render_diff(baseline_text: str, current_text: str, path: str) -> str:
     )
     if not lines:
         return f"{path} matches its frozen copy again."
+    if not readable and (
+        len(lines) > DIFF_MAX_LINES or len("\n".join(lines)) > DIFF_MAX_CHARS
+    ):
+        if not current_text.strip():
+            return f"{path} is empty as of this row."
+        return (
+            f"{path} changed too much to diff, so this row carries all of it:"
+            f"\n\n{current_text}"
+        )
     rewritten = len(lines) > DIFF_REWRITE_LINES
     if not rewritten:
         if len(lines) > DIFF_MAX_LINES:

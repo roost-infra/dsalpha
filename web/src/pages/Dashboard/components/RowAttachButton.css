@@ -15,10 +15,14 @@
   cursor: pointer;
   opacity: 0;
   transition:
-    opacity 120ms ease,
-    background-color 120ms ease,
-    color 120ms ease;
+    opacity var(--motion-quick) var(--ease-out),
+    background-color var(--motion-quick) var(--ease-out),
+    color var(--motion-quick) var(--ease-out);
   padding: 0;
+  /* A row's paperclip has another a row away, so its hit area stays within a
+     row's pitch: any taller and a tap fires the paperclip of the row beside it.
+     In a table the cell's clip holds it to the row anyway. */
+  --tap-target-h: 32px;
 }
 
 /* Show on hover within the row's `.row-attach-host` ancestor. List widgets
@@ -38,11 +42,5 @@
   /* Touch devices: always visible. Hover would never trigger. */
   .row-attach {
     opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .row-attach {
-    transition: none;
   }
 }

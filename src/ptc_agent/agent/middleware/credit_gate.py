@@ -104,7 +104,7 @@ _ACQUIRE_MIN_SPACING_SECONDS = 5.0
 # Last resort only. The quota service authors the denial copy and we relay it
 # verbatim; this stands in for the one case where a denial arrives with none,
 # so neither stop surface is left without an explanation.
-_DEFAULT_STOP_MESSAGE = "Stopped by the credit gate."
+DEFAULT_STOP_MESSAGE = "Stopped by the credit gate."
 
 
 class CreditStopError(Exception):
@@ -586,14 +586,18 @@ async def run_with_credit_gate(
     ``gate=None`` the stream passes through untouched (the OSS shape).
     """
     if gate is None:
-        async for event in stream:
-            yield event
+        async with contextlib.aclosing(stream):
+            async for event in stream:
+                yield event
         return
     token = current_credit_gate.set(gate)
     await gate.start()
     try:
-        async for event in stream:
-            yield event
+        # Closed before the lane, so the turn's work has stopped by the time
+        # the gate flushes its spend and leaves the lease.
+        async with contextlib.aclosing(stream):
+            async for event in stream:
+                yield event
     finally:
         # A generator finalized from a task other than the one that started it
         # cannot reset the token; teardown must still run, or the lease and
@@ -613,7 +617,7 @@ def build_pause_payload(lease: CreditLease) -> dict:
         "action_requests": [
             {
                 "type": INTERRUPT_REASON_CREDIT_PAUSE,
-                "message": denial.get("message") or _DEFAULT_STOP_MESSAGE,
+                "message": denial.get("message") or DEFAULT_STOP_MESSAGE,
             }
         ]
     }
@@ -636,7 +640,7 @@ class CreditGateMiddleware(AgentMiddleware):
             return None
         if gate.kind == "task":
             denial = lease.denial or {}
-            raise CreditStopError(denial.get("message") or _DEFAULT_STOP_MESSAGE)
+            raise CreditStopError(denial.get("message") or DEFAULT_STOP_MESSAGE)
         # Main run: pause at a clean checkpoint. Nothing here re-checks on the
         # way back — a resume arrives as a new POST with its own lease, and
         # admission (``enforce_credit_limit``) has already refused it if the

@@ -5,9 +5,10 @@
  * A new interrupt type registers here first, then adds its projection branches.
  */
 
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import { updateMessage } from '../../hooks/utils/messageHelpers';
-import type { HistoryInterruptInfo, MessageRecord, SetMessages } from '../types';
+import { dispatchResultFields, type ToolResultLike } from '../../utils/dispatchResult';
+import type { HistoryInterruptInfo, SetMessages } from '../types';
 
 /** Interrupt types that map to proposal-based HITL cards (workspace, question, ptc, secretary). */
 const PROPOSAL_INTERRUPT_TYPES = new Set([
@@ -28,20 +29,16 @@ const PROPOSAL_DATA_KEY_MAP: Record<string, keyof AssistantMessage> = {
 /**
  * The card bucket each pending interrupt settles into, keyed by the type its
  * pending entry carries — which, unlike the action request's `type`, names a
- * plan approval too, so there is no fallback case to get wrong. Typed against
+ * tool approval too, so there is no fallback case to get wrong. Typed against
  * `AssistantMessage` so a renamed bucket fails here rather than writing a card
  * under a name nothing renders.
  */
 const CARD_BUCKET_FOR_TYPE: Record<string, keyof AssistantMessage> = {
-  plan_approval: 'planApprovals',
   ask_user_question: 'userQuestions',
   credit_pause: 'creditPauses',
   tool_approval: 'toolApprovals',
   ...PROPOSAL_DATA_KEY_MAP,
 };
-
-/** Secretary action interrupt types (for type guard in handlers). */
-const SECRETARY_ACTION_TYPES = new Set(['delete_workspace', 'stop_workspace', 'delete_thread']);
 
 /**
  * Message-map buckets whose entries carry an `interruptId` (rendered HITL
@@ -49,8 +46,8 @@ const SECRETARY_ACTION_TYPES = new Set(['delete_workspace', 'stop_workspace', 'd
  * compile error here instead of a silently-wrong dedup rebuild.
  */
 const INTERRUPT_CARD_BUCKETS = [
-  'planApprovals', 'userQuestions', 'workspaceProposals',
-  'questionProposals', 'ptcAgentProposals', 'secretaryActionProposals',
+  'userQuestions', 'workspaceProposals', 'questionProposals',
+  'ptcAgentProposals', 'secretaryActionProposals',
   'creditPauses', 'toolApprovals',
 ] as const satisfies readonly (keyof AssistantMessage)[];
 
@@ -60,11 +57,11 @@ const INTERRUPT_CARD_BUCKETS = [
  * message is searched rather than the one that was clicked.
  */
 function setCardFields(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   bucket: string,
   cardId: string,
   fields: Record<string, unknown>,
-): MessageRecord[] {
+): ChatMessage[] {
   return messages.map((m) => {
     if (m.role !== 'assistant') return m;
     const cards = (m as unknown as Record<string, Record<string, Record<string, unknown>>>)[bucket];
@@ -75,20 +72,13 @@ function setCardFields(
 
 /** Flip one card's status wherever it lives. */
 function setCardStatus(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   bucket: string,
   cardId: string,
   status: string,
-): MessageRecord[] {
+): ChatMessage[] {
   return setCardFields(messages, bucket, cardId, { status });
 }
-
-/** The segment types whose id lives in a pending entry's `proposalId`. */
-const PROPOSAL_SEGMENT_TYPES = new Set([
-  'create_workspace', 'start_question', 'ptc_agent',
-  'delete_workspace', 'stop_workspace', 'delete_thread',
-  'credit_pause', 'tool_approval',
-]);
 
 /**
  * Drop the history copies of these cards from every bubble, so a reconnect
@@ -100,47 +90,30 @@ const PROPOSAL_SEGMENT_TYPES = new Set([
  * leave those cards standing next to the redelivered pair.
  */
 function stripHistoryInterruptCards(
-  messages: MessageRecord[],
+  messages: ChatMessage[],
   strips: HistoryInterruptInfo[],
-): MessageRecord[] {
-  if (strips.length === 0) return messages;
-  const stripQuestionIds = new Set(
-    strips.filter((s) => s.type === 'ask_user_question' && s.questionId).map((s) => s.questionId!),
-  );
-  const stripProposalIds = new Set(strips.filter((s) => s.proposalId).map((s) => s.proposalId!));
-  const stripPlanApprovalIds = new Set(
-    strips.filter((s) => s.type === 'plan_approval' && s.planApprovalId).map((s) => s.planApprovalId!),
-  );
+): ChatMessage[] {
+  // Question and proposal ids come from distinct interrupts, so one set can
+  // hold both: only card segments carry either id.
+  const ids = new Set(strips.map(historyCardKey).filter((id): id is string => !!id));
+  if (ids.size === 0) return messages;
   return messages.map((m) => {
     if (m.role !== 'assistant') return m;
     const msg = m as AssistantMessage;
-    const newSegments = (msg.contentSegments || []).filter((seg) => {
-      if (seg.type === 'user_question') return !stripQuestionIds.has(seg.questionId);
-      if (PROPOSAL_SEGMENT_TYPES.has(seg.type)) {
-        return !stripProposalIds.has((seg as unknown as { proposalId: string }).proposalId);
-      }
-      if (seg.type === 'plan_approval') return !stripPlanApprovalIds.has(seg.planApprovalId);
-      return true;
-    });
-    const next: AssistantMessage = { ...msg, contentSegments: newSegments };
-    if (stripQuestionIds.size > 0 && msg.userQuestions) {
-      const map = { ...msg.userQuestions };
-      for (const qid of stripQuestionIds) delete map[qid];
-      next.userQuestions = map;
-    }
-    if (stripProposalIds.size > 0) {
-      for (const key of INTERRUPT_CARD_BUCKETS) {
-        const bucket = msg[key];
-        if (!bucket) continue;
-        const map = { ...(bucket as Record<string, unknown>) };
-        for (const pid of stripProposalIds) delete map[pid];
-        (next as unknown as Record<string, unknown>)[key] = map;
-      }
-    }
-    if (stripPlanApprovalIds.size > 0 && msg.planApprovals) {
-      const map = { ...msg.planApprovals };
-      for (const pid of stripPlanApprovalIds) delete map[pid];
-      next.planApprovals = map;
+    const next: AssistantMessage = {
+      ...msg,
+      contentSegments: (msg.contentSegments || []).filter((seg) => {
+        const { questionId, proposalId } = seg as { questionId?: string; proposalId?: string };
+        const id = questionId ?? proposalId;
+        return !id || !ids.has(id);
+      }),
+    };
+    for (const key of INTERRUPT_CARD_BUCKETS) {
+      const bucket = msg[key];
+      if (!bucket) continue;
+      const map = { ...(bucket as Record<string, unknown>) };
+      for (const id of ids) delete map[id];
+      (next as unknown as Record<string, unknown>)[key] = map;
     }
     return next;
   });
@@ -151,7 +124,7 @@ function stripHistoryInterruptCards(
  * exactly one of these at queue time, so the first one present is its key.
  */
 function historyCardKey(info: HistoryInterruptInfo): string | undefined {
-  return info.proposalId ?? info.questionId ?? info.planApprovalId;
+  return info.proposalId ?? info.questionId;
 }
 
 /** Which card a resolved history interrupt writes to, and what it writes. */
@@ -192,9 +165,54 @@ function resolvePendingHistoryInterrupt(
   return true;
 }
 
+/**
+ * Settle the pending proposal a tool result answers. A decline rejects it, and
+ * so does a result with `success: false` on any card but a hand-off's (see
+ * `dispatchResultFields`); anything else approves it. One resume can answer
+ * several interrupts, and their results need not arrive in the order the cards
+ * did, so an interrupt that named its tool call (a dispatch does) is settled
+ * only by that call's result; the rest take the next result in order.
+ */
+function settleProposalFromResult(
+  pending: HistoryInterruptInfo[],
+  toolCallId: string | undefined,
+  result: ToolResultLike,
+  setMessages: SetMessages,
+): boolean {
+  const { content } = result;
+  if (typeof content !== 'string') return false;
+  const named = !!toolCallId && pending.some((p) => p.toolCallId === toolCallId);
+  return resolvePendingHistoryInterrupt(
+    pending,
+    (p) => PROPOSAL_INTERRUPT_TYPES.has(p.type) &&
+      (named ? p.toolCallId === toolCallId : !toolCallId || !p.toolCallId),
+    // Parsed here so a result pays for it only when it settles a proposal.
+    (m) => {
+      let status = 'approved';
+      if (content.startsWith('User declined')) {
+        status = 'rejected';
+      } else if (m.type !== 'ptc_agent') {
+        try {
+          if (JSON.parse(content)?.success === false) status = 'rejected';
+        } catch { /* non-JSON → treat as approved */ }
+      }
+      const extraFields = m.type === 'ptc_agent' && status === 'approved'
+        ? dispatchResultFields(result)
+        : {};
+      return {
+        bucket: PROPOSAL_DATA_KEY_MAP[m.type] || 'questionProposals',
+        key: m.proposalId!,
+        fields: { status, ...extraFields },
+      };
+    },
+    setMessages,
+  );
+}
+
 export {
-  PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP, SECRETARY_ACTION_TYPES,
+  PROPOSAL_INTERRUPT_TYPES, PROPOSAL_DATA_KEY_MAP,
   INTERRUPT_CARD_BUCKETS, CARD_BUCKET_FOR_TYPE,
   setCardStatus, setCardFields, resolvePendingHistoryInterrupt, historyCardKey,
+  settleProposalFromResult,
   stripHistoryInterruptCards,
 };

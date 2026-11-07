@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
-import { Check, ChevronRight, MinusCircle, X } from 'lucide-react';
+import { AlertTriangle, Check, MinusCircle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { OrderStatusPill } from '@/components/orders/OrderStatusPill';
 import { OrdersPageLink } from '@/components/orders/OrdersPageLink';
+import { useLocale } from '@/hooks/useLocale';
 import { useOrder } from '@/hooks/useOrders';
 import { useNoteOrderExists } from '@/hooks/useOrdersVisible';
 import type { ToolApprovalState } from '@/types/chat';
@@ -13,8 +13,11 @@ import { ArgsTable } from './ArgsTable';
 import { StatusPill } from '@/components/mcp/McpPrimitives';
 import { OrderModeBadge } from '@/components/orders/OrderModeBadge';
 import { OrderCard } from './OrderCard';
-import { ORDER_ACTION_KEY, orderSummaryRows } from './orderSummary';
-import { SettledToolStep } from './SettledToolStep';
+import { maskAccountId } from '@/pages/ChatAgent/utils/directTools';
+import { ORDER_ACTION_KEY, orderReadFully, orderTicket } from './orderSummary';
+import { SettledStep } from '../SettledStep';
+import { Disclosure } from '@/components/ui/Disclosure';
+import { FoldChevron, ResolveSwap } from '../decisionCardMotion';
 import { useDirectToolVendorLabel } from './useDirectToolVendor';
 
 /**
@@ -22,8 +25,8 @@ import { useDirectToolVendorLabel } from './useDirectToolVendor';
  * the receipt it becomes.
  *
  * An order has one card in a thread and it is the receipt, so the card that
- * asks looks like the record that answers: the same header, the same field
- * list, the same footer line. Only the pill and the footer change as the order
+ * asks looks like the record that answers: the same header, the same ticket,
+ * the same footer line. Only the pill and the footer change as the order
  * moves, which is what makes approving feel like watching one thing settle
  * rather than one card being replaced by another.
  *
@@ -32,8 +35,10 @@ import { useDirectToolVendorLabel } from './useDirectToolVendor';
  * the size and prices they are approving.
  *
  * The arguments are not on the card. They are the exact frame the vendor will
- * see and they stay one click away, but the summary above them is the question
- * being answered, and a JSON dump beside a live order buries it.
+ * see and they fold under it, because the summary above them is the question
+ * being answered and a JSON dump beside a live order buries it. They start
+ * open only when the adapter could not read the whole order, since then they
+ * are the only full account of it.
  *
  * Once settled the step is a one-line record like every other tool call, with
  * the arguments behind its fold. The receipt above it is the copy of the trade,
@@ -60,8 +65,13 @@ export function OrderApprovalCard({
   resultLost?: boolean;
 }): React.ReactElement {
   const { t } = useTranslation();
+  const locale = useLocale();
   const [reason, setReason] = useState('');
-  const [argsOpen, setArgsOpen] = useState(false);
+  // The arguments are the only full account of an order the adapter could
+  // not read, and of a spread's legs, which the ticket names only by count or
+  // strategy, so for those they start open rather than one click away.
+  const readFully = orderReadFully(order);
+  const [argsOpen, setArgsOpen] = useState(!readFully || order.instrument?.kind === 'combo');
   // The order names its own vendor; the server row is the fallback for a
   // vendor the shipped brokerage list does not carry.
   const vendorLabel = useDirectToolVendorLabel(order.vendor || data.server || '');
@@ -86,22 +96,21 @@ export function OrderApprovalCard({
     />
   );
 
-  if (isRejected || (isApproved && !resultPending)) {
-    return (
-      <SettledOrderStep
-        order={order}
-        approved={isApproved}
-        reason={data.reason}
-        args={argsTable}
-        // The verdict alone would read as the whole story on a card whose
-        // order may have filled. The pill rides the verdict line; the link out
-        // cannot, because that line is a button and a link inside one fights
-        // the fold it opens.
-        status={ledgerRow?.status}
-        attemptId={ledgerRow ? data.attemptId : undefined}
-      />
-    );
-  }
+  const settled = (
+    <SettledOrderStep
+      order={order}
+      approved={isApproved}
+      reason={data.reason}
+      args={argsTable}
+      // The verdict alone would read as the whole story on a card whose
+      // order may have filled. The pill rides the verdict line; the link out
+      // cannot, because that line is a button and a link inside one fights
+      // the fold it opens.
+      status={ledgerRow?.status}
+      unlistedAt={ledgerRow?.unlisted_at}
+      attemptId={ledgerRow ? data.attemptId : undefined}
+    />
+  );
 
   const pill = isApproved ? (
     // The window between the click and the brokerage's answer. The receipt
@@ -123,73 +132,69 @@ export function OrderApprovalCard({
   );
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      data-testid="order-approval-card"
-      data-order-state={isApproved ? 'sending' : canAct ? 'pending' : 'unanswered'}
-    >
-      <OrderCard
-        vendor={order.vendor || data.server || ''}
-        action={order.action}
-        targetRef={order.target_ref}
-        mode={order.mode}
-        vendorLabel={vendorLabel}
-        pill={pill}
-        rows={orderSummaryRows(order)}
-        testid="order-approval"
-        footer={
-          canAct && !isApproved ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="text"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                maxLength={200}
-                placeholder={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
-                aria-label={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
-                className="flex-1 min-w-[10rem] text-sm px-3 py-1.5 rounded-md bg-transparent"
-                style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-primary)' }}
-              />
-              <motion.button
-                type="button"
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onReject?.(reason.trim() || undefined);
-                }}
-                disabled={!onReject}
-                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-md font-medium transition-colors disabled:opacity-50"
-                style={{ backgroundColor: 'var(--color-border-muted)', color: 'var(--color-text-tertiary)' }}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <X className="h-3.5 w-3.5" />
-                {t('toolArtifact.directTool.reject')}
-              </motion.button>
-              <motion.button
-                type="button"
-                onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  onApprove?.();
-                }}
-                disabled={!onApprove}
-                className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-md font-medium transition-colors hover:brightness-110 disabled:opacity-50"
-                style={{ backgroundColor: 'var(--color-btn-primary-bg)', color: 'var(--color-btn-primary-text)' }}
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <Check className="h-3.5 w-3.5 stroke-[2.5]" />
-                {t('toolArtifact.directTool.approve')}
-              </motion.button>
-            </div>
-          ) : null
-        }
-      />
-      <ArgsDisclosure open={argsOpen} onToggle={() => setArgsOpen((v) => !v)}>
-        {argsTable}
-      </ArgsDisclosure>
-    </motion.div>
+    <ResolveSwap resolved={isRejected || (isApproved && !resultPending)} settled={settled}>
+      <div
+        data-testid="order-approval-card"
+        data-order-state={isApproved ? 'sending' : canAct ? 'pending' : 'unanswered'}
+      >
+        <OrderCard
+          vendor={order.vendor || data.server || ''}
+          action={order.action}
+          mode={order.mode}
+          vendorLabel={vendorLabel}
+          account={order.account_ref ? maskAccountId(order.account_ref) : null}
+          pill={pill}
+          ticket={orderTicket(order, { hidden: false, locale })}
+          notice={readFully ? null : <IncompleteNotice />}
+          testid="order-approval"
+          footer={
+            canAct && !isApproved ? (
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="text"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  maxLength={200}
+                  placeholder={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
+                  aria-label={t('toolArtifact.directTool.orderApproval.reasonPlaceholder')}
+                  className="flex-1 min-w-40 text-sm px-3 py-1.5 rounded-md bg-transparent"
+                  style={{ border: '1px solid var(--color-border-muted)', color: 'var(--color-text-primary)' }}
+                />
+                <button
+                  type="button"
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    onReject?.(reason.trim() || undefined);
+                  }}
+                  disabled={!onReject}
+                  className="press flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-md font-medium disabled:opacity-50"
+                  style={{ backgroundColor: 'var(--color-border-muted)', color: 'var(--color-text-tertiary)' }}
+                >
+                  <X className="h-3.5 w-3.5" />
+                  {t('toolArtifact.directTool.reject')}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    onApprove?.();
+                  }}
+                  disabled={!onApprove}
+                  className="press flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-md font-medium hover:brightness-110 disabled:opacity-50"
+                  style={{ backgroundColor: 'var(--color-btn-primary-bg)', color: 'var(--color-btn-primary-text)' }}
+                >
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
+                  {t('toolArtifact.directTool.approve')}
+                </button>
+              </div>
+            ) : null
+          }
+        />
+        <ArgsDisclosure open={argsOpen} onToggle={() => setArgsOpen((v) => !v)}>
+          {argsTable}
+        </ArgsDisclosure>
+      </div>
+    </ResolveSwap>
   );
 }
 
@@ -203,6 +208,7 @@ function SettledOrderStep({
   reason,
   args,
   status,
+  unlistedAt,
   attemptId,
 }: {
   order: OrderProposal;
@@ -212,6 +218,8 @@ function SettledOrderStep({
   /** What the ledger says became of the order. Drawn only where no receipt
    *  will ever say it, so the verdict is not left standing as the whole story. */
   status?: OrderStatus;
+  /** The row's `unlisted_at`, for the pill to say how a handed-off order ended. */
+  unlistedAt?: string | null;
   /** The row the rest of the outcome is written on. Present only beside a
    *  ledger status, since without one there is nothing more to read. */
   attemptId?: string;
@@ -221,22 +229,24 @@ function SettledOrderStep({
     ? t('toolArtifact.directTool.orderApproval.approved')
     : t('toolArtifact.directTool.orderApproval.rejected');
   const step = (
-    <SettledToolStep
-      approved={approved}
+    <SettledStep
+      verdict={approved ? 'approved' : 'rejected'}
       order
       reason={reason}
       label={`${verb} · ${t(ORDER_ACTION_KEY[order.action] || ORDER_ACTION_KEY.place)}`}
       badge={
         <>
           <OrderModeBadge mode={order.mode} />
-          {status && <OrderStatusPill status={status} mode={order.mode} />}
+          {status && (
+            <OrderStatusPill status={status} mode={order.mode} unlistedAt={unlistedAt} />
+          )}
         </>
       }
     >
       <div className="rounded-lg px-4 py-3" style={{ border: '1px solid var(--color-border-muted)' }}>
         {args}
       </div>
-    </SettledToolStep>
+    </SettledStep>
   );
   if (!attemptId) return step;
   // Outside the row, because the row is the button that opens the fold and a
@@ -248,6 +258,22 @@ function SettledOrderStep({
         <OrdersPageLink attemptId={attemptId} />
       </div>
     </div>
+  );
+}
+
+/** Said when the ticket above is shorter than the order: what it leaves out
+ *  is in the arguments, which open with it. */
+function IncompleteNotice(): React.ReactElement {
+  const { t } = useTranslation();
+  return (
+    <p
+      className="flex gap-1.5 pt-2 text-xs leading-relaxed"
+      style={{ color: 'var(--color-warning)' }}
+      data-testid="order-incomplete"
+    >
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-[3px]" aria-hidden="true" />
+      <span>{t('toolArtifact.directTool.orderApproval.incomplete')}</span>
+    </p>
   );
 }
 
@@ -274,28 +300,12 @@ function ArgsDisclosure({
         style={{ color: 'var(--color-text-tertiary)' }}
         aria-expanded={open}
       >
-        <motion.span
-          animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: 0.2 }}
-          className="inline-flex"
-        >
-          <ChevronRight className="h-3 w-3" style={{ color: 'var(--color-icon-muted)' }} />
-        </motion.span>
+        <FoldChevron open={open} className="h-3 w-3" />
         {t('toolArtifact.directTool.orderApproval.arguments')}
       </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden"
-          >
-            <div className="pt-2 pl-4">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Disclosure open={open} className="pt-2 pl-4">
+        {children}
+      </Disclosure>
     </div>
   );
 }

@@ -5,6 +5,7 @@ detection, and untrusted-text neutralization for user MCP servers.
 """
 
 import ast
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from ptc_agent.core.mcp_sanitize import (
     is_untrusted_server,
     iter_arg_credentials,
     iter_arg_flag_pairs,
+    looks_like_placeholder,
     sanitize_tool_name,
     sanitize_tool_set,
     sanitize_tool_text,
@@ -34,13 +36,7 @@ class _Tool:
 class TestIsUserServer:
     """The trust-boundary predicate: everything user-configured is untrusted."""
 
-    def test_workspace_source_is_untrusted(self):
-        srv = MCPServerConfig(name="s", transport="stdio", command="npx", source="workspace")
-        assert is_untrusted_server(srv) is True
-
     def test_user_source_is_untrusted(self):
-        # Inherited (Connectors) servers must sanitize exactly like
-        # workspace-local ones — user-supplied either way.
         srv = MCPServerConfig(name="s", transport="stdio", command="npx", source="user")
         assert is_untrusted_server(srv) is True
 
@@ -54,13 +50,19 @@ class TestIsUserServer:
 
         assert is_untrusted_server(Bare()) is False
 
+    @pytest.mark.parametrize("source", ["workspace", "plugin", "", None])
+    def test_an_unknown_source_is_untrusted(self, source):
+        # Trust is granted by name, so a tier this code does not know gets the
+        # scoped environment rather than the sandbox's whole one.
+        assert is_untrusted_server(SimpleNamespace(source=source)) is True
+
 
 class TestDiscoveryShouldUseSecrets:
     """Effective discovery-secret gating (auth'd remote servers self-enable)."""
 
     def test_explicit_flag_wins(self):
         srv = MCPServerConfig(
-            name="s", transport="stdio", command="npx", source="workspace",
+            name="s", transport="stdio", command="npx", source="user",
             discovery_uses_secrets=True,
         )
         assert discovery_should_use_secrets(srv) is True
@@ -68,14 +70,14 @@ class TestDiscoveryShouldUseSecrets:
     def test_remote_vault_header_auto_enables(self):
         srv = MCPServerConfig(
             name="s", transport="http", url="https://api.example.com/m",
-            headers={"Authorization": "${vault:K}"}, source="workspace",
+            headers={"Authorization": "${vault:K}"}, source="user",
         )
         assert discovery_should_use_secrets(srv) is True
 
     def test_remote_without_vault_header_stays_off(self):
         srv = MCPServerConfig(
             name="s", transport="http", url="https://api.example.com/m",
-            headers={"X-Trace": "literal"}, source="workspace",
+            headers={"X-Trace": "literal"}, source="user",
         )
         assert discovery_should_use_secrets(srv) is False
 
@@ -83,7 +85,7 @@ class TestDiscoveryShouldUseSecrets:
         # Stdio runs untrusted code — the flag must stay opt-in there.
         srv = MCPServerConfig(
             name="s", transport="stdio", command="npx",
-            env={"TOK": "${vault:K}"}, source="workspace",
+            env={"TOK": "${vault:K}"}, source="user",
         )
         assert discovery_should_use_secrets(srv) is False
 
@@ -114,6 +116,26 @@ class TestVaultRefRegex:
     def test_rejects_illegal_secret_name_chars(self):
         assert vault_refs("${vault:bad-name}") == []
         assert vault_refs("${vault:ok_name}") == ["ok_name"]
+
+
+class TestLooksLikePlaceholder:
+    """A blank the user has yet to fill, told apart from a real credential.
+
+    The import loop consults this before sharing one vault secret between two
+    servers, so a false negative sends one vendor's key to another.
+    """
+
+    @pytest.mark.parametrize(
+        "value", ["<your-api-key>", "REPLACE_ME", "xxx", "paste-token-here"]
+    )
+    def test_a_stand_in_is_recognized(self, value):
+        assert looks_like_placeholder(value) is True
+
+    @pytest.mark.parametrize(
+        "value", ["sk-live-9f8e7d6c5b4a3210", "prod", ""]
+    )
+    def test_a_real_value_is_not(self, value):
+        assert looks_like_placeholder(value) is False
 
 
 class TestIterArgCredentials:

@@ -6,7 +6,10 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { EventEmitter } = require('node:events')
 const http = require('node:http')
-const { loadShell, loadEntryWith, cleanup, opened, setOnline, setSaveDialog, tempDir, electronStub } = require('./helpers')
+const {
+  loadShell, loadEntryWith, loadPreload, cleanup, opened, setOnline, setSaveDialog, tempDir, electronStub,
+  windows, isAccount, navigateFrom,
+} = require('./helpers')
 
 after(cleanup)
 
@@ -232,6 +235,26 @@ describe('which window a page lands in', () => {
     assert.equal(policy.classifyNavigation('https://app.example.com/chat', { isMainWindow: true }), 'allow')
   })
 
+  // A window.open of ours is a second surface, and the shell keeps no popups,
+  // so it goes to the browser rather than over a turn streaming in this window.
+  test('a new window of ours goes to the browser', () => {
+    const { policy } = loadShell({ edition: 'saas' })
+    const share = 'https://app.example.com/a/TnVftlXfU0nN?path=index.html'
+    assert.equal(policy.classifyWindowOpen(share, { isMainWindow: true, openerUrl: APP }), 'external')
+    assert.equal(policy.classifyWindowOpen(CONSOLE, { isMainWindow: true, openerUrl: APP }), 'external')
+    assert.equal(policy.classifyWindowOpen(APP, { isMainWindow: true, openerUrl: CONSOLE + '/x' }), 'app-window')
+  })
+
+  // The usage page's thread links: the console has no turn to lose, and the
+  // browser may not be signed in to the app, so the thread opens in place.
+  test('except the console opening the app in the window they share', () => {
+    const { policy } = loadShell({ edition: 'saas' })
+    const thread = 'https://app.example.com/chat/t/123'
+    assert.equal(policy.classifyWindowOpen(thread, { isMainWindow: true, openerUrl: CONSOLE }), 'app-window')
+    assert.equal(policy.classifyWindowOpen(thread, { isMainWindow: false, openerUrl: CONSOLE }), 'app-window')
+    assert.equal(policy.classifyWindowOpen('https://evil.example.com/', { isMainWindow: true, openerUrl: CONSOLE }), 'external')
+  })
+
   // Observed, not predicted. Classifying a navigation must not record it: a
   // verdict of 'allow' on a link that then drops would retire onboarding for an
   // install that never once reached the app, and every later launch would open
@@ -269,6 +292,108 @@ describe('which window a page lands in', () => {
       const { main, store } = loadShell({ edition: 'saas' })
       main.noteAppReached(APP, status)
       assert.equal(store.get('reachedApp'), true, `status ${status} was not an arrival`)
+    }
+  })
+})
+
+// The console's onboarding ends in a document navigation to the app: its last
+// step's Finish and its persistent "skip to app" link both load the app's own
+// address, an absolute URL on its own origin whenever the two are served apart.
+// Driven through the listeners main attaches, because the verdict alone does not
+// say which window the app then shows in, whether the console is left behind,
+// or whether anything was handed to the system browser on the way.
+describe('leaving onboarding for the app', () => {
+  const ONBOARDING = 'https://platform.example.com/onboarding/models'
+  const APP = 'https://app.example.com'
+
+  // A first run that signed in and is now on the wizard's last step.
+  const onboarding = ({ consoleSharesMainWindow }) => {
+    const shell = loadShell({ edition: 'saas' })
+    if (!consoleSharesMainWindow) {
+      shell.store.set('appChrome', true)
+      shell.store.set('platformChrome', false)
+    }
+    shell.main.openLaunchWindows()
+    assert.equal(windows.length, 1)
+    const [console_] = windows
+    assert.deepEqual(console_.loaded, ['https://platform.example.com/login'])
+    console_.loadURL(ONBOARDING)
+    return { ...shell, console_ }
+  }
+
+  test('in the window the console shares, the app simply loads there', () => {
+    const { console_ } = onboarding({ consoleSharesMainWindow: true })
+    assert.ok(!isAccount(console_), 'a first run opened a second window for the console')
+    const before = opened.length
+    const event = navigateFrom(console_, `${APP}/`)
+    assert.equal(event.defaultPrevented, false, 'the hand-off was stopped')
+    assert.equal(windows.length, 1)
+    assert.equal(opened.length, before, 'the app was handed to the system browser')
+  })
+
+  test('from a console window of its own, the app opens in the main window and the console closes', async () => {
+    const { console_ } = onboarding({ consoleSharesMainWindow: false })
+    assert.ok(isAccount(console_))
+    const before = opened.length
+    const event = navigateFrom(console_, `${APP}/`)
+    assert.equal(event.defaultPrevented, true, 'the app would have loaded in the account window')
+    assert.equal(windows.length, 2)
+    const [, app] = windows
+    assert.deepEqual(app.loaded, [`${APP}/`])
+    // The frame the app declared is macOS-only; elsewhere the window keeps its titlebar.
+    const frame = process.platform === 'darwin' ? 'hiddenInset' : 'default'
+    assert.equal(app.options.titleBarStyle, frame, 'the app learned its frame and the window ignored it')
+    await new Promise(setImmediate)
+    assert.equal(console_.isDestroyed(), true, 'the account window was left behind with nothing to show')
+    assert.equal(opened.length, before, 'the app was handed to the system browser')
+  })
+
+  // The wizard's other way out is a page on a third party's site, and that one
+  // does leave: a foreign origin goes to the browser, and the wizard stays where
+  // it was rather than being re-homed to sign-in underneath the user.
+  test('a third-party page goes to the browser and leaves the wizard where it was', () => {
+    const { console_ } = onboarding({ consoleSharesMainWindow: true })
+    const step = 'https://platform.example.com/onboarding/channels'
+    console_.loadURL(step)
+    const elsewhere = 'https://provider.example.net/session/a1'
+    const event = navigateFrom(console_, elsewhere)
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(opened.at(-1), elsewhere)
+    assert.equal(console_.webContents.getURL(), step)
+    assert.equal(windows.length, 1)
+  })
+
+  // A file dropped anywhere on a page that does not take it is a navigation of
+  // the window to that file. It must neither replace the page nor reach the OS
+  // opener, which for a `file:` URL launches whatever owns the file type.
+  test('a file dropped on the window does not navigate it or open the file', () => {
+    const { main, store } = loadShell({ edition: 'saas' })
+    store.set('reachedApp', true)
+    main.openLaunchWindows()
+    const [app] = windows
+    app.loadURL(`${APP}/welcome?step=brokerage`)
+    const before = opened.length
+    const event = navigateFrom(app, 'file:///Users/someone/Desktop/positions.png')
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(opened.length, before, 'a file was handed to the OS opener')
+    assert.equal(app.webContents.getURL(), `${APP}/welcome?step=brokerage`)
+  })
+
+  // The refusal above is the second line. The first is that a drop no page
+  // handles goes nowhere at all: Electron only turns a window into a dropped
+  // file when `navigateOnDragDrop` is on, and with it on the file opens as a
+  // window of its own, a road `will-navigate` never sees. Every window here
+  // leaves it at Electron's default, which is off.
+  test('no window the shell makes opts in to becoming a file let go over it', () => {
+    const { console_ } = onboarding({ consoleSharesMainWindow: false })
+    navigateFrom(console_, `${APP}/`)
+    // Kept before the next load, which starts the window list over.
+    const made = [...windows]
+    loadShell({ edition: 'oss' }).main.openLaunchWindows()
+    made.push(...windows)
+    assert.ok(made.length >= 3, `expected the console, the app and the server picker, got ${made.length}`)
+    for (const win of made) {
+      assert.notEqual(win.options.webPreferences?.navigateOnDragDrop, true, `'${win.options.title}' navigates on a drop`)
     }
   })
 })
@@ -312,6 +437,131 @@ describe('what a finished load is allowed to conclude', () => {
     // document declares nothing either. Reading that as "does not reserve" would
     // reframe the window on an outage instead of on a real rollback.
     assert.equal(store.get('appChrome'), true)
+  })
+
+  // What a first run does: the app loads at its root and moves its own URL to
+  // the dashboard and then the welcome flow before the load event fires. The
+  // document the server answered for is still the one that finished.
+  test('an app that moves its own URL while it boots has still been reached', async () => {
+    const { main, store } = loadShell({ edition: 'saas' })
+    const SAAS_APP = 'https://app.example.com'
+    let at = `${SAAS_APP}/`
+    const win = {
+      isDestroyed: () => false,
+      webContents: Object.assign(new EventEmitter(), {
+        getURL: () => at,
+        executeJavaScript: async () => true,
+      }),
+    }
+    main.watchLoads(win)
+
+    win.webContents.emit('did-navigate', {}, `${SAAS_APP}/`, 200)
+    for (const moved of ['/dashboard', '/welcome']) {
+      at = `${SAAS_APP}${moved}`
+      win.webContents.emit('did-navigate-in-page', {}, at, true)
+    }
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('reachedApp'), true, 'a first run that went straight into the welcome flow never reached the app')
+  })
+
+  // A frame inside the page moving its own address is not the page doing it,
+  // and must not lend the page's status to a URL the page never had.
+  test('a subframe moving its address does not answer for the page', async () => {
+    const { main, store } = loadShell({ edition: 'oss', serverUrl: APP })
+    store.set('appChrome', true)
+    const win = loadedWindow(`${APP}/chart#range=1y`)
+    main.watchLoads(win)
+
+    win.webContents.emit('did-navigate', {}, `${APP}/dashboard`, 200)
+    win.webContents.emit('did-navigate-in-page', {}, `${APP}/chart#range=1y`, false)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('appChrome'), true, 'a status was lent to a URL the page never navigated to')
+  })
+
+  // Cmd-R with the server gone and the machine online. Chromium commits its own
+  // error document at the URL that failed, which is the one the window was
+  // already on, and reports it with `did-fail-load` instead of `did-navigate`.
+  // The 200 still paired with that URL belonged to the page the reload replaced.
+  test('the error page of a reload that failed does not revoke the flag', async () => {
+    const { main, store } = loadShell({ edition: 'oss', serverUrl: APP })
+    store.set('appChrome', true)
+    let at = `${APP}/`
+    let declares = true
+    const win = {
+      isDestroyed: () => false,
+      webContents: Object.assign(new EventEmitter(), {
+        getURL: () => at,
+        executeJavaScript: async () => declares,
+      }),
+    }
+    main.watchLoads(win)
+
+    win.webContents.emit('did-navigate', {}, at, 200)
+    at = `${APP}/dashboard`
+    win.webContents.emit('did-navigate-in-page', {}, at, true)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    declares = null
+    win.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', at, true)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('appChrome'), true, 'an error document was credited with the status of the page it replaced')
+
+    // The server comes back with a build that declares nothing. That load was
+    // really served, so the failure before it must not stop it answering.
+    win.webContents.emit('did-navigate', {}, at, 200)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('appChrome'), false, 'a served load after a failed one was not allowed to answer')
+  })
+
+  // The console handing the main window to the app before its own load was
+  // done. With the two on different sites the app gets a renderer of its own,
+  // and the console's load is reported as aborted only after the app's
+  // `did-navigate` has landed.
+  test("a load cut short by the next one does not take that one's status", async () => {
+    const CONSOLE = 'https://console.example.org'
+    const { main, store } = loadShell({ edition: 'saas', platformOrigin: CONSOLE })
+    const at = 'https://app.example.com/'
+    const win = {
+      isDestroyed: () => false,
+      webContents: Object.assign(new EventEmitter(), {
+        getURL: () => at,
+        executeJavaScript: async () => true,
+      }),
+    }
+    main.watchLoads(win)
+
+    win.webContents.emit('did-navigate', {}, `${CONSOLE}/onboarding`, 200)
+    win.webContents.emit('did-navigate', {}, at, 200)
+    win.webContents.emit('did-fail-load', {}, -3, '', `${CONSOLE}/onboarding`, true)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('reachedApp'), true, 'an aborted load erased the status of the app that replaced it')
+  })
+
+  // A frame failing inside a served page is the frame's business: the page
+  // around it still finished, and still answers.
+  test('a frame that fails inside a served page does not hide that it was served', async () => {
+    const { main, store } = loadShell({ edition: 'oss', serverUrl: APP })
+    store.set('appChrome', true)
+    const win = loadedWindow(`${APP}/dashboard`)
+    main.watchLoads(win)
+
+    win.webContents.emit('did-navigate', {}, `${APP}/dashboard`, 200)
+    win.webContents.emit('did-fail-load', {}, -102, 'ERR_CONNECTION_REFUSED', 'https://widgets.example/embed', false)
+    win.webContents.emit('did-finish-load')
+    await new Promise((r) => setImmediate(r))
+
+    assert.equal(store.get('appChrome'), false, "a subframe's failure was read as the page's")
   })
 
   test('a status belonging to another navigation does not answer for this one', async () => {
@@ -1410,11 +1660,29 @@ describe('packaging a saas build', () => {
         // pathname of `https://u:p@host` is '/'.
         DESKTOP_APP_ORIGIN: 'https://deploy:hunter2@app.example.com',
         DESKTOP_PLATFORM_ORIGIN: 'https://platform.example.com',
+        DESKTOP_PAIRING_ORIGIN: 'https://api.example.com',
       },
     })
     assert.equal(run.status, 1)
     assert.match(run.stderr, /without a username or password/)
     assert.doesNotMatch(run.stderr, /hunter2/, 'and does not echo the password it refused')
+    assert.equal(fs.existsSync(written), before, 'and wrote nothing')
+  })
+
+  test('a saas package names the one server it pairs this Mac with', () => {
+    const before = fs.existsSync(written)
+    const run = spawnSync(process.execPath, [script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        DESKTOP_EDITION: 'saas',
+        DESKTOP_APP_ORIGIN: 'https://app.example.com',
+        DESKTOP_PLATFORM_ORIGIN: 'https://platform.example.com',
+        DESKTOP_PAIRING_ORIGIN: '',
+      },
+    })
+    assert.equal(run.status, 1)
+    assert.match(run.stderr, /DESKTOP_PAIRING_ORIGIN is required/)
     assert.equal(fs.existsSync(written), before, 'and wrote nothing')
   })
 
@@ -1429,6 +1697,7 @@ describe('packaging a saas build', () => {
         // The same origin wearing a trailing slash, because `new URL().origin`
         // normalizes it away and a string compare on the input would not.
         DESKTOP_PLATFORM_ORIGIN: 'https://app.example.com/',
+        DESKTOP_PAIRING_ORIGIN: 'https://api.example.com',
       },
     })
     assert.equal(run.status, 1, 'packaging failed rather than producing a broken build')
@@ -1574,68 +1843,77 @@ describe('captive portal detection', () => {
   })
 })
 
-describe('deep links', () => {
-  test('map onto a callback route on the origin currently shown', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    assert.equal(
-      deeplink.toAppUrl('langalpha://callback?code=MAGIC&type=magiclink', 'https://platform.example.com/login'),
-      'https://platform.example.com/callback?code=MAGIC&type=magiclink',
-    )
-    assert.equal(
-      deeplink.toAppUrl('langalpha://callback?code=MAGIC', 'https://app.example.com/chat'),
-      'https://app.example.com/callback?code=MAGIC',
-    )
+// The bridge is feature-detected, so what it advertises is the whole of how a
+// page learns what this shell can do. Run for real rather than read, because
+// what matters is the value the page receives.
+describe('the bridge says what the shell can do', () => {
+  test('a frozen list naming integration-login when the edition can finish it', () => {
+    const bridge = loadPreload(['--langalpha-console-returns=1']).langalphaDesktop
+    assert.ok(Array.isArray(bridge.capabilities))
+    assert.ok(Object.isFrozen(bridge.capabilities))
+    assert.ok(bridge.capabilities.includes('integration-login'))
+    for (const entry of bridge.capabilities) assert.equal(typeof entry, 'string')
   })
 
-  // The web app relies on this: a confirmation link opened in the default
-  // browser is handed back as `langalpha://`, and only the query survives the
-  // trip. Nothing here knows an email token from an OAuth code, which is what
-  // lets /callback forward one on without the shell learning a second shape.
-  test('carry an email token across, not just an OAuth code', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    assert.equal(
-      deeplink.toAppUrl(
-        'langalpha://callback?token_hash=abc123&type=email',
-        'https://app.example.com/',
-      ),
-      'https://app.example.com/callback?token_hash=abc123&type=email',
-    )
+  // The install link is finished on the same console as the login link, so an
+  // edition that can finish one can finish the other, and says both or neither.
+  test('integration-install listed exactly when integration-login is', () => {
+    const on = loadPreload(['--langalpha-console-returns=1']).langalphaDesktop.capabilities
+    assert.ok(on.includes('integration-install'))
+    assert.ok(on.includes('integration-login'))
+    for (const value of ['', '0', 'true']) {
+      const off = loadPreload([`--langalpha-console-returns=${value}`]).langalphaDesktop.capabilities
+      assert.equal(off.includes('integration-install'), false, `switch '${value}'`)
+      assert.equal(off.includes('integration-login'), false, `switch '${value}'`)
+    }
   })
 
-  test('fall back to the app origin when the current page is not ours', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    assert.equal(
-      deeplink.toAppUrl('langalpha://callback?code=M', 'about:blank'),
-      'https://app.example.com/callback?code=M',
-    )
-    // A link clicked while a foreign page happened to be showing must not send
-    // the code to that page.
-    assert.equal(
-      deeplink.toAppUrl('langalpha://callback?code=M', 'https://evil.example.com/x'),
-      'https://app.example.com/callback?code=M',
-    )
+  // A console page is opened on the same console as both integration returns,
+  // so the one switch says all three or none.
+  test('console-return listed exactly when the switch is on, alongside the integration returns', () => {
+    const on = loadPreload(['--langalpha-console-returns=1']).langalphaDesktop.capabilities
+    assert.deepEqual([...on], ['integration-login', 'integration-install', 'console-return'])
+    assert.ok(Object.isFrozen(on))
+    for (const value of ['', '0', 'true']) {
+      const off = loadPreload([`--langalpha-console-returns=${value}`]).langalphaDesktop.capabilities
+      assert.equal(off.includes('console-return'), false, `switch '${value}'`)
+      assert.ok(Object.isFrozen(off), `switch '${value}'`)
+    }
   })
 
-  test('the path comes from us, never from the link', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    // The "host" of a custom-scheme URL is not a real host and its path is
-    // attacker-controlled, so neither is allowed to steer the destination.
-    const mapped = deeplink.toAppUrl('langalpha://evil.example.com/wherever?code=M', 'about:blank')
-    assert.equal(mapped, 'https://app.example.com/callback?code=M')
+  test('a frozen empty list when the edition has no console to finish it on', () => {
+    const bridge = loadPreload().langalphaDesktop
+    assert.deepEqual(bridge.capabilities, [])
+    assert.ok(Object.isFrozen(bridge.capabilities))
   })
 
-  test('reject anything that is not our scheme', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    assert.equal(deeplink.toAppUrl('https://evil.example.com/callback?code=X', 'about:blank'), null)
-    assert.equal(deeplink.toAppUrl('not a url', 'about:blank'), null)
+  test('each edition\'s windows carry the switch that matches its console', () => {
+    const argsOf = (opts) => {
+      const { main } = loadShell(opts)
+      main.openLaunchWindows()
+      return windows[0].options.webPreferences.additionalArguments
+    }
+    assert.ok(argsOf({ edition: 'oss', serverUrl: 'http://localhost:5173' })
+      .includes('--langalpha-console-returns='))
+    cleanup()
+    assert.ok(argsOf({ edition: 'saas' }).includes('--langalpha-console-returns=1'))
   })
 
-  test('recover the URL from argv, for a windows/linux cold start', () => {
-    const { deeplink } = loadShell({ edition: 'saas' })
-    assert.equal(deeplink.fromArgv(['/path/App', '--flag', 'langalpha://callback?code=Z']),
-      'langalpha://callback?code=Z')
-    assert.equal(deeplink.fromArgv(['/path/App', '--flag']), null)
-    assert.equal(deeplink.fromArgv(undefined), null)
+  // Nothing auth-related is exposed to the page, and a capability is a word
+  // rather than a way in. Pinning the callable surface means a new method has
+  // to be added here on purpose, by someone who has read why.
+  test('and the page gains nothing it can call', () => {
+    const bridge = loadPreload().langalphaDesktop
+    const callable = Object.keys(bridge).filter((k) => typeof bridge[k] === 'function').sort()
+    assert.deepEqual(callable, [
+      'beginMcpOAuth', 'bindMcpOAuth', 'cancelMcpOAuth', 'disableRemoteControl', 'enableRemoteControl',
+      'getRemoteControl', 'openExternal', 'savePdf', 'setTheme',
+    ])
+  })
+
+  test('the web app declares the field it feature-detects', () => {
+    const desktopTs = fs.readFileSync(path.join(__dirname, '..', '..', 'web/src/lib/desktop.ts'), 'utf8')
+    assert.match(desktopTs, /^\s*readonly capabilities\?: readonly string\[\];$/m)
   })
 })
 
@@ -1724,8 +2002,14 @@ describe('the two editions can sit on one machine', () => {
   const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8')
 
   const IDENTITY = {
-    saas: { appId: 'ai.langalpha.desktop', appName: 'LangAlpha', scheme: 'langalpha' },
-    oss: { appId: 'ai.langalpha.desktop.oss', appName: 'LangAlpha OSS', scheme: 'langalpha-oss' },
+    saas: {
+      appId: 'ai.langalpha.desktop', appName: 'LangAlpha', scheme: 'langalpha',
+      helperLabel: 'ai.langalpha.desktop.helper',
+    },
+    oss: {
+      appId: 'ai.langalpha.desktop.oss', appName: 'LangAlpha OSS', scheme: 'langalpha-oss',
+      helperLabel: 'ai.langalpha.desktop.oss.helper',
+    },
   }
 
   test('nothing about the two identities is shared', () => {
@@ -1735,13 +2019,22 @@ describe('the two editions can sit on one machine', () => {
     assert.notEqual(saas.appId, oss.appId)
     assert.notEqual(saas.appName, oss.appName, 'an equal name means an equal userData directory')
     assert.notEqual(saas.scheme, oss.scheme, 'an equal scheme means the OS picks one for both')
+    assert.notEqual(saas.helperLabel, oss.helperLabel, 'an equal label is one launchd job for both')
+  })
+
+  // `<appId>.helper` is the contract the helper, the web and this shell share;
+  // the label is the plist's stem and the name SMAppService is asked about.
+  test('each helper label is its edition\'s bundle id, extended', () => {
+    for (const id of Object.values(IDENTITY)) assert.equal(id.helperLabel, `${id.appId}.helper`)
   })
 
   for (const edition of ['saas', 'oss']) {
     test(`the running ${edition} app agrees with what was packaged`, () => {
-      const { config, deeplink } = loadShell({ edition })
+      const { config, deeplink, remoteControl } = loadShell({ edition })
       assert.equal(config.appName, IDENTITY[edition].appName)
       assert.equal(config.scheme, IDENTITY[edition].scheme)
+      assert.equal(config.helperLabel, IDENTITY[edition].helperLabel)
+      assert.equal(remoteControl.SERVICE_NAME, `${IDENTITY[edition].helperLabel}.plist`)
       // deeplink registers with the OS and parses incoming links off this, so a
       // config it did not read is a scheme nothing answers on.
       assert.equal(deeplink.SCHEME, IDENTITY[edition].scheme)
@@ -1961,18 +2254,20 @@ describe('the window-chrome contract holds across the two processes', () => {
   // What the strip cannot subtract is prose: `no-drag` covers controls, so a
   // route that renders a document with no chrome of its own has its top line
   // inside a drag region, where a press-and-drag moves the window instead of
-  // selecting the text. Terms and privacy are the two such documents this app
-  // ships, and the answer is that neither opens in the shell at all -- an
+  // selecting the text. The legal page is the one such document this app
+  // ships, and the answer is that it never opens in the shell at all -- an
   // anchor with a target reaches setWindowOpenHandler in src/main.js, which
   // hands one of our own URLs to the system browser. A `<Link>` is a
   // client-side navigation that never reaches that handler, and a plain `<a>`
   // navigates this window; both put the document back under the titlebar, and
-  // both look correct in a browser.
+  // both look correct in a browser. The privacy policy is published at its own
+  // address, which leaves the app either way; `/privacy` stays in the pattern
+  // because that path forwards to it.
   test('a legal document is never opened inside the app window', () => {
     const src = path.join(__dirname, '..', '..', 'web/src')
-    // The documents themselves are exempt, and by the same rule rather than as
-    // a hole in it: they only ever render in a browser tab, so a link between
-    // them is an ordinary in-tab navigation. The rule is about app surface.
+    // The document itself is exempt, and by the same rule rather than as a
+    // hole in it: it only ever renders in a browser tab, so a link from it is
+    // an ordinary in-tab navigation. The rule is about app surface.
     const exempt = `pages${path.sep}Legal${path.sep}`
     const offenders = []
     for (const rel of fs.readdirSync(src, { recursive: true })) {
@@ -2258,44 +2553,5 @@ describe('the committed package is unsigned and un-notarized', () => {
     assert.ok(build.includes("'notarytool', 'submit'"), 'disk images are never submitted')
     assert.ok(build.includes("'stapler', 'staple'"), 'disk images are never stapled')
     assert.ok(build.includes("context:primary-signature"), 'the DMG is assessed with the wrong Gatekeeper context')
-  })
-})
-
-// The scheme contract spans three processes and two repos' worth of literals:
-// main writes an argv switch, preload parses it, and the web app maps the value
-// onto the path segment it marks email links with. Every consumer reads only its
-// own half, so renaming a scheme in config.js breaks nothing here, nothing in
-// tsc, and nothing in the web suite — the marked link simply addresses a scheme
-// no build answers on, and the OS opens the wrong app or none. That is the
-// failure this pins: a link marked `langalpha://` reached bare Electron on a
-// machine where the running app was the OSS edition.
-describe('the deep-link scheme contract holds across the two processes', () => {
-  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8')
-
-  test('the switch main writes is the one preload parses', () => {
-    assert.match(read('src/main.js'), /`--langalpha-shell-scheme=\$\{config\.scheme\}`/)
-    assert.match(read('src/preload.js'), /scheme: flag\('shell-scheme'\)/)
-  })
-
-  test('the web app knows every scheme an edition can register', () => {
-    const handoff = read('../web/src/lib/desktopAuthHandoff.ts')
-    for (const edition of ['saas', 'oss']) {
-      const { scheme } = loadShell({ edition }).config
-      assert.match(
-        handoff,
-        new RegExp(`^\\s*'?${scheme}'?:\\s*'[a-z-]+',$`, 'm'),
-        `web handoff table has no entry for the ${edition} scheme '${scheme}'`,
-      )
-    }
-  })
-
-  test('the web app routes the segments it marks links with', () => {
-    const handoff = read('../web/src/lib/desktopAuthHandoff.ts')
-    const app = read('../web/src/App.tsx')
-    const segments = [...handoff.matchAll(/^\s*'?[a-z-]+'?:\s*'([a-z-]+)',$/gm)].map((m) => m[1])
-    assert.ok(segments.length >= 2, 'no segments found in the handoff table')
-    for (const page of ['/auth/confirm', '/reset-password']) {
-      assert.match(app, new RegExp(`path="${page}/:shell"`), `${page} does not serve a marked link`)
-    }
   })
 })

@@ -5,15 +5,16 @@ real sandbox provider (Daytona in CI, memory locally).  Verifies that:
 
 - **Cold path** (first message): creates a new session, hits DB, initializes
   sandbox, syncs assets.
-- **Warm path** (subsequent messages): returns the cached session with zero
-  DB queries when the sync cooldown is active.
+- **Warm path** (subsequent messages): reuses the session and skips asset sync
+  during cooldown, while checking durable identity and project MCP config.
 - **`update_workspace_activity` conditional SQL**: first call writes, second
   call within 60 seconds is a no-op.
 - **`has_ready_session` accuracy**: reflects actual session/sandbox state.
 
-Provider selection:
-  SANDBOX_TEST_PROVIDER=daytona  (CI — requires DAYTONA_API_KEY)
-  SANDBOX_TEST_PROVIDER=memory   (local default — no external deps)
+Provider selection (SANDBOX_TEST_PROVIDERS, else SANDBOX_TEST_PROVIDER):
+  daytona  (sandbox-integration.yml, requires DAYTONA_API_KEY; marked
+            ``provider_daytona``, which routes the file to that job)
+  memory   (default, and the per-PR integration job, no external deps)
 """
 
 from __future__ import annotations
@@ -36,18 +37,32 @@ from ptc_agent.config.core import (
     SecurityConfig,
 )
 from ptc_agent.core.session import SessionManager
-
-pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+from tests.computer_manager_patch import cm_patch
+from tests.integration.conftest import requested_sandbox_providers
 
 # ---------------------------------------------------------------------------
 # Provider detection
 # ---------------------------------------------------------------------------
 
-_PROVIDER = os.getenv("SANDBOX_TEST_PROVIDER", "memory").strip().lower()
+_PROVIDER = "daytona" if "daytona" in requested_sandbox_providers() else "memory"
 
 
 def _is_daytona() -> bool:
     return _PROVIDER == "daytona"
+
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+def _reaches_daytona(test):
+    """Mark a test that creates a session on Daytona when Daytona is in use.
+
+    The mark routes it to the Daytona job and makes its pass count as proof
+    that Daytona worked (tests/integration/conftest.py). The tests here that
+    never create a session, the mocked and database-only ones, stay unmarked:
+    a pass of theirs proves nothing about Daytona.
+    """
+    return pytest.mark.provider_daytona(test) if _is_daytona() else test
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +107,8 @@ def _build_agent_config(sandbox_base_dir: str) -> AgentConfig:
             "DAYTONA_BASE_URL", "https://app.daytona.io/api"
         )
         return _make_agent_config(
-            working_directory="/home/workspace",
+            # snapshot_enabled=False uses Daytona's base image home.
+            working_directory="/home/daytona",
             provider="daytona",
             api_key=api_key,
             base_url=base_url,
@@ -159,14 +175,14 @@ async def workspace_manager(
     yield manager
 
     # Teardown: clean up sessions and reset singleton
-    for ws_id in list(manager._sessions.keys()):
-        session = manager._sessions.get(ws_id)
+    for machine in list(manager._machines.values()):
+        session = machine.session
         if session and session.sandbox:
             try:
                 await session.sandbox.cleanup()
             except Exception:
                 pass
-    manager._sessions.clear()
+    manager._machines.clear()
     SessionManager._sessions.clear()
     WorkspaceManager.reset_instance()
 
@@ -207,6 +223,7 @@ class TestColdWarmSessionPath:
 
         assert result is False
 
+    @_reaches_daytona
     async def test_cold_path_creates_initialized_session(
         self, workspace_manager, running_workspace, metrics_collector
     ):
@@ -227,6 +244,7 @@ class TestColdWarmSessionPath:
         assert session.sandbox is not None
         assert session.sandbox.is_ready()
 
+    @_reaches_daytona
     async def test_warm_path_has_ready_session_returns_true(
         self, workspace_manager, running_workspace, metrics_collector
     ):
@@ -244,6 +262,7 @@ class TestColdWarmSessionPath:
 
         assert result is True
 
+    @_reaches_daytona
     async def test_warm_path_returns_same_session_object(
         self, workspace_manager, running_workspace, metrics_collector
     ):
@@ -265,6 +284,7 @@ class TestColdWarmSessionPath:
 
         assert session1 is session2
 
+    @_reaches_daytona
     async def test_warm_path_makes_only_the_narrow_identity_query(
         self, workspace_manager, running_workspace, metrics_collector
     ):
@@ -292,16 +312,16 @@ class TestColdWarmSessionPath:
         await workspace_manager.get_session_for_workspace(ws_id, user_id=user_id)
 
         # Call 3 (warm) — cooldown active
-        from src.server.services import workspace_manager as workspace_manager_module
+        from src.server.database.workspace import get_workspace_identity
 
-        real_identity = workspace_manager_module.db_get_workspace_identity
+        real_identity = get_workspace_identity
         with (
-            patch(
-                "src.server.services.workspace_manager.db_get_workspace",
+            cm_patch(
+                "db_get_workspace",
                 new_callable=AsyncMock,
             ) as mock_full_row,
-            patch(
-                "src.server.services.workspace_manager.db_get_workspace_identity",
+            cm_patch(
+                "db_get_workspace_identity",
                 side_effect=real_identity,
             ) as spy_identity,
         ):
@@ -320,31 +340,64 @@ class TestColdWarmSessionPath:
             )
             assert session is not None
 
+    @_reaches_daytona
     async def test_sync_cooldown_respected(
         self, workspace_manager, running_workspace, metrics_collector
     ):
-        """Session returned immediately when sync cooldown is active."""
+        """Cooldown skips asset sync but still validates the project config."""
         ws_id = str(running_workspace["workspace_id"])
         user_id = running_workspace["user_id"]
 
-        # Cold
+        initial = await workspace_manager.get_session_for_workspace(
+            ws_id, user_id=user_id
+        )
         await workspace_manager.get_session_for_workspace(ws_id, user_id=user_id)
+        binding = await workspace_manager.resolve_binding(ws_id)
+        # Cooldown skips unchanged assets only when the project config exists.
+        # The empty-server fixture must install one too; otherwise acquisition
+        # correctly performs self-healing, independently of the cooldown timer.
+        from ptc_agent.core.project_context import ProjectContext
 
-        # Warm — measure time. Should be sub-millisecond (no I/O).
-        t0 = time.perf_counter()
-        async with metrics_collector.timed(
-            provider=_PROVIDER, category="session", operation="warm_cooldown",
-            test_name="sync_cooldown_respected",
+        await initial.sandbox._install_tool_modules(
+            project=ProjectContext(ws_id, binding.dir_name or "")
+        )
+        assert not await initial.sandbox.workspace_overlay_missing(
+            workspace_id=ws_id, dir_name=binding.dir_name
+        )
+        assert workspace_manager._sync_cooldown_ok(binding.computer_id, ws_id)
+
+        # A real provider read is required for self-healing even during cooldown;
+        # network latency is not evidence that the asset sync ran again.
+        with (
+            patch.object(
+                workspace_manager, "_sync_sandbox_assets",
+                wraps=workspace_manager._sync_sandbox_assets,
+            ) as sync_assets,
+            patch.object(
+                workspace_manager, "_record_sync",
+                wraps=workspace_manager._record_sync,
+            ) as record_sync,
+            patch.object(
+                initial.sandbox, "workspace_overlay_missing",
+                wraps=initial.sandbox.workspace_overlay_missing,
+            ) as check_overlay,
         ):
-            session = await workspace_manager.get_session_for_workspace(
-                ws_id, user_id=user_id
-            )
-        elapsed_ms = (time.perf_counter() - t0) * 1000
+            async with metrics_collector.timed(
+                provider=_PROVIDER, category="session", operation="warm_cooldown",
+                test_name="sync_cooldown_respected",
+            ):
+                session = await workspace_manager.get_session_for_workspace(
+                    ws_id, user_id=user_id
+                )
 
-        assert session is not None
-        # Warm path should be under 5ms (just dict lookups + lock acquire)
-        assert elapsed_ms < 50, f"Warm path took {elapsed_ms:.1f}ms — expected < 50ms"
+        assert session is initial
+        sync_assets.assert_not_awaited()
+        record_sync.assert_not_called()
+        check_overlay.assert_awaited_once_with(
+            workspace_id=ws_id, dir_name=binding.dir_name
+        )
 
+    @_reaches_daytona
     async def test_cooldown_expired_triggers_sync(
         self, workspace_manager, running_workspace, metrics_collector
     ):
@@ -355,8 +408,8 @@ class TestColdWarmSessionPath:
         # Cold
         await workspace_manager.get_session_for_workspace(ws_id, user_id=user_id)
 
-        # Expire cooldown by backdating _last_sync_at
-        workspace_manager._last_sync_at[ws_id] = time.monotonic() - 60
+        # Expire the cooldown by backdating the record's last_sync_at
+        workspace_manager._machine(ws_id).last_sync_at = time.monotonic() - 60
 
         # This should trigger a re-sync (Phase 2) but still return the same session
         with patch.object(
@@ -374,6 +427,7 @@ class TestColdWarmSessionPath:
             # re-sync just records the new sync timestamp, no user_data sync.
             assert session is not None
 
+    @_reaches_daytona
     async def test_multiple_workspaces_independent_sessions(
         self, workspace_manager, seed_user, patched_get_db_connection,
         metrics_collector,
@@ -430,7 +484,7 @@ class TestHasReadySession:
         mock_session._initialized = False
         mock_session.sandbox = None
 
-        workspace_manager._sessions["ws-test"] = mock_session
+        workspace_manager._machine("ws-test").session = mock_session
         assert workspace_manager.has_ready_session("ws-test") is False
 
     async def test_sandbox_none(self, workspace_manager):
@@ -439,7 +493,7 @@ class TestHasReadySession:
         mock_session._initialized = True
         mock_session.sandbox = None
 
-        workspace_manager._sessions["ws-test"] = mock_session
+        workspace_manager._machine("ws-test").session = mock_session
         assert workspace_manager.has_ready_session("ws-test") is False
 
     async def test_sandbox_not_ready(self, workspace_manager):
@@ -449,9 +503,10 @@ class TestHasReadySession:
         mock_session.sandbox = MagicMock()
         mock_session.sandbox.is_ready.return_value = False
 
-        workspace_manager._sessions["ws-test"] = mock_session
+        workspace_manager._machine("ws-test").session = mock_session
         assert workspace_manager.has_ready_session("ws-test") is False
 
+    @_reaches_daytona
     async def test_full_ready_state(self, workspace_manager, running_workspace):
         """Returns True only when all conditions pass (real sandbox)."""
         ws_id = str(running_workspace["workspace_id"])

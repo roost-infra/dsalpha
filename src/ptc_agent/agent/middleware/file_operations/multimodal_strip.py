@@ -8,17 +8,32 @@ whether a block is legal is a question only this side can answer, on the call
 where the target is actually known.
 
 Split from ``multimodal`` because the two halves share no state and not every
-agent wires both: the Flash assistant has no filesystem tool to intercept, but
-still inherits history full of blocks it may not be able to read.
+agent wires both: an agent with no filesystem tool has nothing to intercept,
+but still inherits history full of blocks it may not be able to read.
 """
 
-from typing import Any
+from collections.abc import Callable, Collection
+from typing import Annotated, Any, Literal
 
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware.types import ExtendedModelResponse, PrivateStateAttr
+from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.types import Command
+from typing_extensions import NotRequired
 
 from ptc_agent.agent.middleware._message_utils import order_tool_results_first
+from ptc_agent.agent.middleware.file_operations.image_fit import fit_images, unsaved_upload_name
+from ptc_agent.agent.middleware.thinking_binding import checked_thinking_end
 from src.llms.attachment_payload import FILE_BLOCK_TYPES, IMAGE_BLOCK_TYPES, block_type
-from src.llms.llm import get_input_modalities, get_max_pdf_pages
+from src.llms.llm import (
+    get_image_types,
+    get_input_modalities,
+    get_max_image_side,
+    get_max_image_side_by_count,
+    get_max_pdf_pages,
+    get_pdf_page_tokens,
+    image_route,
+)
 
 
 def _placeholder_for(
@@ -66,6 +81,16 @@ def _placeholder_for(
     # starts failing here.
     pages = block.get("pages")
     if max_pdf_pages is not None and isinstance(pages, int) and pages > max_pdf_pages:
+        if _unsaved(block):
+            name = block.get("filename") or "file"
+            size = f"{pages} page{'' if pages == 1 else 's'}"
+            return {
+                "type": "text",
+                "text": (
+                    f"[PDF {name} ({size}) is over the current model's "
+                    f"{max_pdf_pages}-page limit and was not sent.{tail}]"
+                ),
+            }
         return {
             "type": "text",
             "text": (
@@ -76,14 +101,44 @@ def _placeholder_for(
     return None
 
 
+def read_sources(messages: list) -> dict[str, str]:
+    """The path or URL each Read call in ``messages`` was given, by call id.
+
+    A Read result is the only attachment that knows where its bytes came
+    from, and only through its call: the image block that carries them goes
+    to the provider as it is, so nothing can be stamped on it.
+    """
+    return {
+        call["id"]: call.get("args", {}).get("file_path") or ""
+        for msg in messages
+        if isinstance(msg, AIMessage)
+        for call in msg.tool_calls or ()
+        if call.get("name") == "Read" and call.get("id")
+    }
+
+
+def _unsaved(block: Any) -> bool:
+    """A composer PDF inlined because it could not be saved anywhere, so the
+    agent has no copy to extract from and no path to give."""
+    return isinstance(block, dict) and block.get("unsaved") is True
+
+
+def _source(msg: Any, sources: dict[str, str]) -> str | None:
+    return sources.get(msg.tool_call_id) or None if isinstance(msg, ToolMessage) else None
+
+
 def strip_unsupported_content_blocks(
     messages: list,
     has_image: bool,
     has_pdf: bool,
     max_pdf_pages: int | None = None,
-    guidance: str = "",
+    guidance: str | Callable[[str | None], str] = "",
+    unreadable: Collection[tuple[int, int]] = (),
 ) -> list:
     """Replace image/file blocks this target can't read with text placeholders.
+
+    ``unreadable`` is the positions (message, block) of images this target
+    can't be given though it reads images, as ``fit_images`` reports them.
 
     ``max_pdf_pages`` is the target's own page ceiling (None = unbounded). A PDF
     over it is dropped here rather than refused at injection, because the ceiling
@@ -91,32 +146,44 @@ def strip_unsupported_content_blocks(
     created it — the same document is fine on a 1M-context route and rejected on
     a 200K one, and only this side knows which one is being called.
 
+    ``guidance`` is one text for every block, or the text for a block given the
+    path or URL its Read was given (None for any other attachment).
+
     Returns the original list when nothing changed, and never mutates a message:
     these are checkpoint objects shared with the rest of the graph.
     """
     result: list = []
     modified = False
-    # The guidance rides on the first placeholder only: the advice is the
-    # same for every block, and the first is the one whose text never moves
-    # when a later turn adds another attachment, so the prefix behind it
-    # stays cached.
-    said = False
+    sources = read_sources(messages) if callable(guidance) else {}
+    # Each guidance rides on the first placeholder it applies to only: the
+    # advice is the same for every block from the same place, and the first
+    # is the one whose text never moves when a later turn adds another
+    # attachment, so the prefix behind it stays cached.
+    said: set[str] = set()
 
-    for msg in messages:
+    for i, msg in enumerate(messages):
         content = getattr(msg, "content", None)
         if not isinstance(content, list):
             result.append(msg)
             continue
 
+        advice = guidance(_source(msg, sources)) if callable(guidance) else guidance
         new_blocks = []
         changed = False
-        for block in content:
+        for j, block in enumerate(content):
+            # Extraction advice would send the model after a copy that does
+            # not exist, so an unsaved block keeps only what to tell the user.
+            tail = _IF_NOT if advice and _unsaved(block) else advice
             placeholder = _placeholder_for(
-                block, has_image, has_pdf, max_pdf_pages, "" if said else guidance
+                block,
+                has_image and (i, j) not in unreadable,
+                has_pdf,
+                max_pdf_pages,
+                "" if tail in said else tail,
             )
             if placeholder is not None:
                 changed = True
-                said = True
+                said.add(tail)
             new_blocks.append(block if placeholder is None else placeholder)
 
         if not changed:
@@ -128,29 +195,153 @@ def strip_unsupported_content_blocks(
     return result if modified else messages
 
 
-def _placeholder_guidance(can_extract: bool) -> str:
-    """What the model should do about a block it cannot see, one sentence or two.
+# What the model should do about a block it cannot see. Rides inside the
+# placeholder rather than in the system prompt, so the advice is decided on the
+# call where the target is known (a fallback or a subagent is judged on its own
+# model) without the cached prefix moving.
+_IF_NOT = (
+    "If that cannot answer the question, tell the user: an unsupported input type "
+    "means switching to a model that accepts it, a page-limit rejection means "
+    "splitting the document or a longer-context model. Answer in best effort otherwise."
+)
+PLACEHOLDER_GUIDANCE = (
+    "The file is still in the workspace: extract it yourself with Python in the "
+    "sandbox (a PDF's text or page renders, OCR or image analysis) before giving up. "
+    + _IF_NOT
+)
 
-    Rides inside every placeholder rather than in the system prompt, so the
-    advice is decided on the call where the target is known (a fallback or a
-    subagent is judged on its own model) without the cached prefix moving.
 
-    ``can_extract`` says whether the agent has a workspace to work the file in.
-    The Flash assistant has no filesystem or code tool at all, so telling it to
-    extract the file itself would send it looking for a tool it never had.
+def placeholder_guidance(source: str | None) -> str:
+    """The guidance for a block read from ``source``.
+
+    A URL's bytes are fetched by the server and never written to the
+    workspace, so telling the model the file is there sends it looking for
+    something that does not exist.
     """
-    extract = (
-        "The file is still in the workspace: extract it yourself with Python in the "
-        "sandbox (a PDF's text or page renders, OCR or image analysis) before giving up. "
-        if can_extract
-        else ""
+    if source and source.startswith(("http://", "https://")):
+        return (
+            f"The file is at {source}: download it in the sandbox and extract it "
+            "yourself with Python (a PDF's text or page renders, OCR or image "
+            "analysis) before giving up. " + _IF_NOT
+        )
+    return PLACEHOLDER_GUIDANCE
+
+
+def _removed_placeholder(
+    block: Any, name: str | None, pages: int | None, unsaved_image: str | None = None
+) -> dict[str, str] | None:
+    """The text standing in for an attachment taken out to fit the context
+    window, or None for a block that is not one. ``unsaved_image`` names an
+    uploaded image whose label says no copy of it was saved."""
+    kind = block_type(block)
+    if kind in IMAGE_BLOCK_TYPES:
+        if unsaved_image is not None:
+            # Nothing to Read: the block was its only copy.
+            return {
+                "type": "text",
+                "text": (
+                    f"[Image {unsaved_image} was removed from the conversation to fit the "
+                    "context window, and no copy was saved. Ask the user to attach it again "
+                    "if you need it.]"
+                ),
+            }
+        image = f"Image {name}" if name else "Image"
+        return {
+            "type": "text",
+            "text": f"[{image} was removed from the conversation to fit the context window.]",
+        }
+    if kind not in FILE_BLOCK_TYPES:
+        return None
+    name = name or block.get("filename") or "PDF"
+    size = f" ({pages} page{'' if pages == 1 else 's'})" if pages else ""
+    if _unsaved(block):
+        # Nothing to Read: the block was its only copy.
+        tail = ", and no copy was saved. Ask the user to attach it again if you need it.]"
+    else:
+        tail = ". Read it again by page range if you need it.]"
+    return {
+        "type": "text",
+        "text": f"[{name}{size} was removed from the conversation to fit the context window{tail}",
+    }
+
+
+def remove_attachments(
+    messages: list,
+    ids: Collection[str],
+    *,
+    pages: Callable[[dict], int | None] = lambda block: block.get("pages"),
+) -> list:
+    """Replace every attachment in the messages ``ids`` names with the
+    placeholder saying it was removed to fit the context window.
+
+    A Read result names its path or URL, which is what reading it again
+    takes; another attachment names the file it carries, if any. ``pages``
+    gives a PDF block's page count, None when it cannot be read.
+
+    Returns the original list when nothing changed, and never mutates a
+    message.
+    """
+    if not ids:
+        return messages
+    sources = read_sources(messages)
+    result: list = []
+    modified = False
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if getattr(msg, "id", None) not in ids or not isinstance(content, list):
+            result.append(msg)
+            continue
+        name = _source(msg, sources)
+        new_blocks = []
+        for j, block in enumerate(content):
+            placeholder = None
+            if isinstance(block, dict):
+                count = pages(block) if block_type(block) in FILE_BLOCK_TYPES else None
+                # An image block reaches the provider as it is, so whether an
+                # upload was saved is read off the label written just before it.
+                unsaved = unsaved_upload_name(content[j - 1]) if j else None
+                placeholder = _removed_placeholder(block, name, count, unsaved)
+            new_blocks.append(block if placeholder is None else placeholder)
+        if new_blocks == content:
+            result.append(msg)
+            continue
+        modified = True
+        result.append(msg.model_copy(update={"content": new_blocks}))
+    return result if modified else messages
+
+
+#: How a thread's images are fitted to Claude: ``"fixed"``, to the side every
+#: image count allows, or ``"count"``, to the side the request's image count
+#: allows, as before the fixed side shipped.
+IMAGE_SIDE_KEY = "image_side_rule"
+
+# TODO(2026-11-25): delete 30 days after this ships, once the threads written before it have aged out. "count" goes with it.
+ImageSideRule = Literal["fixed", "count"]
+
+
+class ImageSideState(AgentState):
+    image_side_rule: NotRequired[Annotated[ImageSideRule, PrivateStateAttr]]
+
+
+def _image_side_rule(request: Any, route: str) -> tuple[ImageSideRule, ImageSideRule | None]:
+    """The thread's rule, and the one to record when it has none yet.
+
+    Chosen once, on the thread's first call to Claude: a thread whose first
+    such call already has an image ahead of thinking was sent it by count, and
+    fitting it anew would invalidate that thinking, so it keeps the count.
+    """
+    stored = (getattr(request, "state", None) or {}).get(IMAGE_SIDE_KEY)
+    if stored or route != "anthropic":
+        return stored or "fixed", None
+    messages = request.messages or []
+    behind = any(
+        isinstance(block, dict) and block_type(block) in IMAGE_BLOCK_TYPES
+        for message in messages[: checked_thinking_end(messages)]
+        if isinstance(message.content, list)
+        for block in message.content
     )
-    return (
-        f"{extract}"
-        "If that cannot answer the question, tell the user: an unsupported input type "
-        "means switching to a model that accepts it, a page-limit rejection means "
-        "splitting the document or a longer-context model. Answer in best effort otherwise."
-    )
+    rule: ImageSideRule = "count" if behind else "fixed"
+    return rule, rule
 
 
 class MultimodalStripMiddleware(AgentMiddleware):
@@ -161,25 +352,32 @@ class MultimodalStripMiddleware(AgentMiddleware):
     request, so one instance serves every model in the graph.
     """
 
+    state_schema = ImageSideState
+
     def __init__(
         self,
         *,
         model_name: str | None = None,
         custom_modalities: list[str] | None = None,
-        can_extract: bool = False,
     ) -> None:
         """
         Args:
             model_name: Configured manifest model, used only to decide whether
                 ``custom_modalities`` applies to the target in hand.
             custom_modalities: Per-model modality override from user preferences.
-            can_extract: Whether this agent has a workspace it could extract an
-                unreadable file in, which changes the advice in the placeholder.
         """
         super().__init__()
         self.model_name = model_name
         self.custom_modalities = custom_modalities
-        self.placeholder_guidance = _placeholder_guidance(can_extract)
+
+    @classmethod
+    def for_config(cls, config: Any) -> "MultimodalStripMiddleware":
+        """The strip an agent built from ``config`` runs, which manual
+        compaction also judges attachments by when that agent has none."""
+        return cls(
+            model_name=config.llm.name if config.llm else None,
+            custom_modalities=config.input_modalities,
+        )
 
     def _resolve_target(self, request: Any) -> tuple[str | None, list[str]]:
         """Name and modalities of the model this request will actually reach.
@@ -189,7 +387,10 @@ class MultimodalStripMiddleware(AgentMiddleware):
         the client in hand. The name comes back too because the PDF page ceiling
         is per-model and has to be looked up against the same target.
         """
-        metadata = getattr(request.model, "metadata", None)
+        return self._target(request.model)
+
+    def _target(self, model: Any) -> tuple[str | None, list[str]]:
+        metadata = getattr(model, "metadata", None)
         stamped = metadata.get("manifest_model") if isinstance(metadata, dict) else None
 
         if not isinstance(stamped, str) or not stamped:
@@ -207,6 +408,31 @@ class MultimodalStripMiddleware(AgentMiddleware):
         overrides = self.custom_modalities if stamped == self.model_name else None
         return stamped, get_input_modalities(stamped, custom_modalities=overrides)
 
+    def receives(self, model: Any) -> Callable[[Any], bool]:
+        """Whether a call to ``model`` is sent a block as it is, rather than
+        the placeholder this strip writes in its place.
+
+        Compaction, outside the resilience stack, counts only those toward its
+        trigger and its fit, judged as here so the two cannot drift. An image
+        the call-time fit cannot decode still counts, as the small overcount
+        it is.
+        """
+        stamped, modalities = self._target(model)
+        has_image, has_pdf = "image" in modalities, "pdf" in modalities
+        max_pdf_pages = get_max_pdf_pages(stamped) if stamped and has_pdf else None
+        return lambda block: (
+            _placeholder_for(block, has_image, has_pdf, max_pdf_pages, "") is None
+        )
+
+    def pdf_page_tokens(self, model: Any) -> int | None:
+        """What a call to ``model`` is charged for a PDF page, where its vendor's
+        charge was measured; None leaves compaction its default estimate.
+
+        Read off the same client as ``receives``, so the vendor is the one the
+        call reaches, a fallback's or a subagent's included.
+        """
+        return get_pdf_page_tokens(image_route(getattr(model, "metadata", None)))
+
     async def awrap_model_call(self, request, handler):
         # Runs for every target, not just modality-limited ones: the interleaving
         # only arises where injection succeeded, which is a model that can see it.
@@ -220,16 +446,41 @@ class MultimodalStripMiddleware(AgentMiddleware):
         # the tool side deliberately no longer attempts.
         max_pdf_pages = get_max_pdf_pages(stamped) if stamped and has_pdf else None
 
+        unreadable: frozenset[tuple[int, int]] = frozenset()
+        route = image_route(getattr(request.model, "metadata", None))
+        rule, update = _image_side_rule(request, route)
+        if has_image:
+            side = get_max_image_side_by_count if rule == "count" else get_max_image_side
+            messages, unreadable = await fit_images(
+                messages, get_image_types(route), lambda count: side(route, count)
+            )
         # Decided on the call where the target is known: a tool-time note judged
         # the configured model and froze that verdict into the transcript, which
         # a subagent on its own model then inherited wrongly. The system prompt
-        # is left alone so the cached prefix does not move with the strip.
+        # is left alone so the cached prefix does not move with the strip, and
+        # every placeholder, an image the fit could not use among them, is
+        # written in this one pass so each guidance stays on the first it
+        # applies to.
         messages = strip_unsupported_content_blocks(
-            messages, has_image, has_pdf, max_pdf_pages, self.placeholder_guidance
+            messages,
+            has_image,
+            has_pdf,
+            max_pdf_pages,
+            placeholder_guidance,
+            unreadable=unreadable,
         )
         if messages is not request.messages:
-            return await handler(request.override(messages=messages))
-        return await handler(request)
+            request = request.override(messages=messages)
+        response = await handler(request)
+        if update is None:
+            return response
+        return ExtendedModelResponse(model_response=response, command=Command(update={IMAGE_SIDE_KEY: update}))
 
 
-__all__ = ["MultimodalStripMiddleware", "strip_unsupported_content_blocks"]
+__all__ = [
+    "MultimodalStripMiddleware",
+    "placeholder_guidance",
+    "read_sources",
+    "remove_attachments",
+    "strip_unsupported_content_blocks",
+]

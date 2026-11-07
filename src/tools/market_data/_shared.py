@@ -1,15 +1,20 @@
 # pyright: ignore
-"""Config/user-id, result-safety, bar-normalization, and FMP-request helpers
-shared by the market-data tool implementations."""
+"""Config/user-id, result-safety, run-outcome, bar-normalization, and
+FMP-request helpers shared by the market-data tool implementations."""
 
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
+import functools
 import logging
 
 from langchain_core.runnables import RunnableConfig
 
 from .utils import finite_or_none
-from src.data_client.market_data_provider import symbol_timezone
+from src.data_client.fallbacks import Fallback, recording
+from src.data_client.market_data_provider import MarketNotCovered
+from src.data_client.normalize import symbol_timezone
+from src.observability import mark_tool_failed, mark_tool_unavailable
+from market_protocol import InvalidSymbol
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +26,67 @@ def _get_user_id(config: Optional[RunnableConfig] = None) -> Optional[str]:
     return config.get("configurable", {}).get("user_id")
 
 
+def fallback_note(taken: List[Fallback]) -> str:
+    """The lines naming each fallback a tool's provider chains took."""
+    reads: Dict[tuple, List[str]] = {}
+    for f in taken:
+        reads.setdefault((f.symbol, f.source, f.error, f.served_by), []).append(f.what)
+    caveat = " (a fallback source can define a field differently)" if any(f.served_by for f in taken) else ""
+    lines = [f"**Source fallbacks**{caveat}:"]
+    for (symbol, source, error, served_by), what in reads.items():
+        missed = f"{source} failed ({error})" if error else f"{source} had none"
+        answered = f"{served_by} answered" if served_by else "no source answered"
+        lines.append(f"- {symbol}: {missed}; {answered} {', '.join(sorted(what))}")
+    return "\n".join(lines)
+
+
+def names_fallbacks(fn):
+    """Append to a tool's text the fallbacks its provider chains took."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        with recording() as taken:
+            content, artifact = await fn(*args, **kwargs)
+        if taken and isinstance(content, str):
+            content = f"{content}\n\n{fallback_note(taken)}"
+        return content, artifact
+
+    return wrapper
+
+
 def _safe_result(result, default=None):
     """Extract result from asyncio.gather, returning default if exception."""
     if isinstance(result, Exception):
         return default
     return result if result is not None else default
+
+
+def _mark_failure(error: BaseException | str) -> None:
+    """Stamp the tool run with the outcome of a market-data call that did not answer.
+
+    A provider's 4xx stays a failure: it cannot tell the agent's bad argument
+    from our own broken request, and an upstream contract break has to reach
+    the alarms.
+    """
+    if isinstance(error, InvalidSymbol):
+        # The agent's mistake, which the error text it gets back tells it.
+        return
+    if isinstance(error, MarketNotCovered):
+        # A market no source covers is the agent asking for what we do not
+        # serve, not a source failing.
+        mark_tool_unavailable(error)
+        return
+    mark_tool_failed(error)
+
+
+def _mark_no_data() -> None:
+    """Stamp a call whose source answered with nothing for the instruments named.
+
+    The instrument had nothing to give (a range before its listing, a ticker
+    no one lists), as an empty page is for WebFetch. A query matching nothing
+    (a screen, a contract filter) is an answer, so it is not marked.
+    """
+    mark_tool_unavailable("no_data")
 
 
 def _normalize_market_bars(

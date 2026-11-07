@@ -49,15 +49,18 @@ at a bucket that has none, before enabling this in a hosted deployment.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import hashlib
 import logging
+from concurrent.futures import Executor
 
 from src.server.database.blob_keys import (
     BLOB_CONTENT_TYPE,
     CLAIM_SQL,
     GC_CONDEMNED_GRACE_HOURS,
     GC_GRACE_DAYS,
-    MAX_BLOB_BYTES,
+    RELAY_MAX_BYTES,
     REFERENCED_SQL,
     REGISTER_SQL,
     BlobError,
@@ -89,6 +92,8 @@ __all__ = [
     "register_blobs",
     "registered_blobs",
     "store_blob",
+    "store_blobs",
+    "store_unregistered_blobs",
     "sweep_blob_garbage",
 ]
 
@@ -142,7 +147,7 @@ async def store_blob(user_id: str, sha256: str, data: bytes) -> None:
         key,
         data,
         BLOB_CONTENT_TYPE,
-        max_size=MAX_BLOB_BYTES,
+        max_size=RELAY_MAX_BYTES,
     )
     if not uploaded:
         msg = f"Blob upload failed for {key} ({len(data)} bytes)"
@@ -158,6 +163,56 @@ async def store_blob(user_id: str, sha256: str, data: bytes) -> None:
         # a manifest row against, so deleting it here could strand that row.
         msg = f"Blob registry insert failed for {key}"
         raise BlobUploadError(msg) from e
+
+
+async def store_blobs(
+    user_id: str, contents: dict[str, bytes], *, concurrency: int = 8
+) -> None:
+    """``store_blob`` for many digests at once: one claim for all of them,
+    the uploads side by side, then one register for those that landed.
+
+    The order per blob is ``store_blob``'s, claim before upload before row,
+    so the batch changes the round trips and not the protocol. A failed
+    upload raises once the rest have settled and been registered.
+    """
+    if not contents:
+        return
+    keys = {sha: blob_key(user_id, sha) for sha in contents}
+    try:
+        async with get_db_connection() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(CLAIM_SQL, (user_id, list(keys)))
+    except Exception as e:
+        msg = f"Blob claim failed for {len(keys)} blobs of user {user_id}"
+        raise BlobUploadError(msg) from e
+    gate = asyncio.Semaphore(concurrency)
+
+    async def put(sha: str) -> bool:
+        async with gate:
+            return await asyncio.to_thread(
+                _storage_upload_bytes,
+                keys[sha],
+                contents[sha],
+                BLOB_CONTENT_TYPE,
+                max_size=RELAY_MAX_BYTES,
+            )
+
+    outcomes = await asyncio.gather(*(put(sha) for sha in keys), return_exceptions=True)
+    landed = [
+        (sha, len(contents[sha]))
+        for sha, outcome in zip(keys, outcomes)
+        if outcome is True
+    ]
+    try:
+        await register_blobs(user_id, landed)
+    except Exception as e:
+        # As in store_blob: the objects are durable and stay.
+        msg = f"Blob registry insert failed for {len(landed)} blobs of user {user_id}"
+        raise BlobUploadError(msg) from e
+    if len(landed) < len(keys):
+        failed = [keys[sha] for sha, outcome in zip(keys, outcomes) if outcome is not True]
+        msg = f"Blob upload failed for {len(failed)} of {len(keys)}: {failed[0]}"
+        raise BlobUploadError(msg)
 
 
 async def registered_blobs(user_id: str, sha256s: list[str]) -> set[str]:
@@ -184,6 +239,22 @@ async def registered_blobs(user_id: str, sha256s: list[str]) -> set[str]:
             return {row[0] for row in await cur.fetchall() if row[1]}
 
 
+async def store_unregistered_blobs(
+    user_id: str, contents: dict[str, bytes], *, concurrency: int = 8
+) -> None:
+    """``store_blobs`` for the digests the user does not hold yet: what a
+    writer of rows that name blobs calls before inserting them, so the
+    registry touch covers the gap until the rows land."""
+    if not contents:
+        return
+    registered = await registered_blobs(user_id, list(contents))
+    await store_blobs(
+        user_id,
+        {sha: data for sha, data in contents.items() if sha not in registered},
+        concurrency=concurrency,
+    )
+
+
 async def register_blobs(user_id: str, entries: list[tuple[str, int]]) -> None:
     """Record ``(sha256, byte_len)`` pairs whose objects are known to exist
     under the user, reviving any the sweep had condemned in the meantime."""
@@ -196,15 +267,8 @@ async def register_blobs(user_id: str, entries: list[tuple[str, int]]) -> None:
             )
 
 
-async def fetch_blob(user_id: str, sha256: str) -> bytes:
-    """Read a blob's bytes back, verifying they still hash to their key.
-
-    The digest check is free relative to the download and turns silent
-    corruption (or a mis-keyed object) into a loud error rather than a file
-    that restores wrong.
-    """
-    key = blob_key(user_id, sha256)
-    data = await asyncio.to_thread(_storage_get_bytes, key)
+def _verified_get(key: str, sha256: str) -> bytes:
+    data = _storage_get_bytes(key)
     # `is None` deliberately: sha256(b"") is a valid blob and b"" is falsy.
     if data is None:
         msg = f"Blob {key} could not be read from object storage"
@@ -216,6 +280,22 @@ async def fetch_blob(user_id: str, sha256: str) -> bytes:
     return data
 
 
+async def fetch_blob(
+    user_id: str, sha256: str, *, executor: Executor | None = None
+) -> bytes:
+    """Read a blob's bytes back, verifying they still hash to their key.
+
+    The digest check is free relative to the download and turns silent
+    corruption (or a mis-keyed object) into a loud error rather than a file
+    that restores wrong. It runs in the download's thread, since hashing
+    megabytes would hold the event loop. ``executor`` (the default pool when
+    None) lets a caller that fetches many at once keep them off that pool.
+    """
+    key = blob_key(user_id, sha256)
+    run = functools.partial(contextvars.copy_context().run, _verified_get, key, sha256)
+    return await asyncio.get_running_loop().run_in_executor(executor, run)
+
+
 async def fetch_blob_range(
     user_id: str,
     sha256: str,
@@ -224,24 +304,36 @@ async def fetch_blob_range(
     *,
     expected_sha256: str | None = None,
 ) -> bytes:
-    """Read one member's bytes out of a pack chunk, verifying them.
+    """Read a byte range of an object: one member out of a pack chunk, or a
+    slice of a file a ranged download asked for.
 
     A member row carries the file's own digest as ``content_hash``; checking
     the slice against it catches a wrong offset or a mis-keyed chunk as
-    loudly as :func:`fetch_blob` catches a corrupt object.
+    loudly as :func:`fetch_blob` catches a corrupt object. A slice that is
+    the whole file is checked the same way; any other has no digest of its
+    own, so only its length is. The check runs in the read's thread, as
+    :func:`fetch_blob`'s does.
     """
     key = blob_key(user_id, sha256)
-    data = await asyncio.to_thread(_storage_get_bytes_range, key, offset, length)
+    return await asyncio.to_thread(
+        _verified_get_range, key, offset, length, expected_sha256
+    )
+
+
+def _verified_get_range(
+    key: str, offset: int, length: int, sha256: str | None
+) -> bytes:
+    data = _storage_get_bytes_range(key, offset, length)
     if data is None:
-        msg = f"Pack {key} could not be read from object storage"
+        msg = f"Object {key} could not be read from object storage"
         raise BlobFetchError(msg)
     if len(data) != length:
-        msg = f"Pack {key} range {offset}+{length} returned {len(data)} bytes"
+        msg = f"Object {key} range {offset}+{length} returned {len(data)} bytes"
         raise BlobFetchError(msg)
-    if expected_sha256 is not None:
+    if sha256 is not None:
         actual = hashlib.sha256(data).hexdigest()
-        if actual != expected_sha256:
-            msg = f"Pack {key} member at {offset} hash mismatch (got {actual})"
+        if actual != sha256:
+            msg = f"Object {key} range at {offset} hash mismatch (got {actual})"
             raise BlobFetchError(msg)
     return data
 

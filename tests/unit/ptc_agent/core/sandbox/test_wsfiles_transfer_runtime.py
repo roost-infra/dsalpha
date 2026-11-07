@@ -6,6 +6,7 @@ the unit-suite tripwire and only ever talk to 127.0.0.1.
 """
 
 import base64
+import errno
 import hashlib
 import os
 import socket
@@ -39,6 +40,8 @@ class _Bucket(ThreadingHTTPServer):
         self.objects: dict[str, bytes] = {}
         self.fail_500: set[str] = set()
         self.redirects: set[str] = set()
+        # Path -> how many more GETs end halfway, the length still declared whole.
+        self.cut: dict[str, int] = {}
         self.hits: dict[str, int] = {}
 
 
@@ -97,6 +100,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        if self.server.cut.get(self.path, 0) > 0:
+            self.server.cut[self.path] -= 1
+            self.wfile.write(body[: len(body) // 2])
+            self.close_connection = True
+            return
         self.wfile.write(body)
 
 
@@ -254,6 +262,29 @@ def test_scan_prior_reuse_vs_rehash(tmp_path):
     out = _scan(tmp_path, prior=wrong_size)
     assert out["reused"] == 0 and out["hashed"] == 1
 
+
+def test_an_mtime_of_zero_never_reuses_a_digest(tmp_path):
+    """A same-size rewrite at the epoch keeps (size, 0), so only the bytes can tell.
+
+    Docker uploads landed at 0 before they were stamped, and an archive can
+    unpack at 0; a row recorded then would otherwise be trusted for good."""
+    p = _write(tmp_path, "f.bin", b"new")
+    os.utime(p, ns=(0, 0))
+    stale = {"f.bin": [3, 0, _sha(b"old")]}
+    out = _scan(tmp_path, prior=stale)
+    assert out["reused"] == 0 and out["hashed"] == 1
+    assert out["entries"][0]["sha256"] == _sha(b"new")
+    one = rt.hash_one({"root": str(tmp_path), "path": "f.bin", "prior": stale["f.bin"]})
+    assert one["sha256"] == _sha(b"new")
+
+
+def test_scan_without_hashing_reads_no_file(tmp_path, monkeypatch):
+    _write(tmp_path, "big.bin", b"abc")
+    monkeypatch.setattr(rt, "_hash_file", lambda _p: pytest.fail("a listing hashed a file"))
+    out = rt.scan({"root": str(tmp_path), "hash": False})
+    entry = out["entries"][0]
+    assert (entry["path"], entry["size"], entry["sha256"]) == ("big.bin", 3, None)
+    assert out["hashed"] == 0
 
 def test_scan_size_describes_the_hashed_bytes(tmp_path, monkeypatch):
     """A file that grows between the stat and the hash is reported with the
@@ -457,18 +488,57 @@ def test_push_size_changed_before_upload_skips_http(tmp_path):
     assert out["results"][_sha(data)]["status"] == "changed"
 
 
-def test_bounded_body_stops_at_the_declared_length_and_notices_the_rest(tmp_path):
+
+def _parts(bucket, data: bytes, part_size: int):
+    return [
+        {"part_number": i + 1, "offset": off, "size": min(part_size, len(data) - off),
+         "url": f"{bucket.base}/part-{i + 1}"}
+        for i, off in enumerate(range(0, len(data), part_size))
+    ]
+
+
+@pytest.mark.enable_socket
+def test_multipart_digest_counts_a_retried_part_once(tmp_path, bucket, monkeypatch):
+    """The server assembles only when ``sent_sha256`` names the object's digest,
+    so a part retried after sending half its bytes must not hash them twice."""
+    data = os.urandom(300_000)
+    final = _write(tmp_path, "big.bin", data)
+    real_request = rt._request
+    failed = []
+
+    def _drop_part_two_once(method, url, timeout_s, body=None, headers=None):
+        if url.endswith("/part-2") and not failed:
+            failed.append(True)
+            body.read(4096)
+            raise ConnectionResetError("dropped mid-part")
+        return real_request(method, url, timeout_s, body=body, headers=headers)
+
+    monkeypatch.setattr(rt, "_request", _drop_part_two_once)
+    out = rt._push_parts(final, _parts(bucket, data, 100_000), len(data), 10, _sha(data))
+    assert out["status"] == "ok" and failed
+    assert out["sent_sha256"] == _sha(data)
+    assert b"".join(bucket.objects[f"/part-{n}"] for n in (1, 2, 3)) == data
+
+
+@pytest.mark.enable_socket
+def test_multipart_same_size_rewrite_is_changed(tmp_path, bucket):
+    """Parts are signed for length only; the store would take these bytes."""
+    scanned = os.urandom(300_000)
+    final = _write(tmp_path, "big.bin", os.urandom(len(scanned)))
+    out = rt._push_parts(final, _parts(bucket, scanned, 100_000), len(scanned), 10, _sha(scanned))
+    assert out["status"] == "changed"
+    assert "sent_sha256" not in out
+
+def test_bounded_body_stops_at_the_declared_length(tmp_path):
     """http.client streams a file to EOF whatever Content-Length says."""
     p = tmp_path / "a.bin"
     p.write_bytes(b"0123456789")
     with open(p, "rb") as fh:
         body = rt._BoundedBody(fh, 4)
         assert b"".join(iter(lambda: body.read(3), b"")) == b"0123"
-        assert body.overrun is True
     with open(p, "rb") as fh:
         body = rt._BoundedBody(fh, 10)
         assert b"".join(iter(lambda: body.read(4), b"")) == b"0123456789"
-        assert body.overrun is False
 
 
 @pytest.mark.enable_socket
@@ -497,6 +567,27 @@ def test_a_file_that_grows_during_its_own_put_is_reported_changed(tmp_path, buck
     # the pooled connection is not left holding bytes the next request would
     # read as its own status line.
     assert bucket.objects[f"/{_sha(data)}"] == data
+
+
+@pytest.mark.enable_socket
+def test_a_file_that_shrinks_during_its_own_put_is_changed_not_unreachable(tmp_path, bucket, monkeypatch):
+    """A short body would leave the store waiting out the timeout, read as an
+    unreachable link, and send the next sync down the relay for nothing."""
+    data = b"scanned bytes\n" * 100
+    _write(tmp_path, "a.bin", data)
+    item = _push_item(bucket, "a.bin", data)
+    real_request = rt._request
+
+    def _truncate_then_request(*args, **kwargs):
+        with open(tmp_path / "a.bin", "r+b") as f:
+            f.truncate(10)
+        return real_request(*args, **kwargs)
+
+    monkeypatch.setattr(rt, "_request", _truncate_then_request)
+    out = rt.push({"root": str(tmp_path), "timeout_s": 10, "items": [item]})
+    res = out["results"][_sha(data)]
+    assert res["status"] == "changed" and "shrank" in res["error"]
+    assert f"/{_sha(data)}" not in bucket.objects
 
 
 @pytest.mark.enable_socket
@@ -553,11 +644,63 @@ def test_pull_ok_applies_mode_and_mtime(tmp_path, bucket):
 
 
 @pytest.mark.enable_socket
+@pytest.mark.parametrize("in_place", [False, True])
+def test_pull_keeps_its_own_time_for_a_recorded_mtime_of_zero(tmp_path, bucket, in_place):
+    # Stamping the 0 back, or leaving a file already at 0 where it holds the
+    # bytes, would leave it rehashed on every later scan.
+    if in_place:
+        os.utime(_write(tmp_path, "epoch.bin", b"restored"), ns=(0, 0))
+    item = _file_item(bucket, "epoch.bin", b"restored", mtime_ns=0)
+    out = rt.pull({"root": str(tmp_path), "timeout_s": 10, "items": [item]})
+    assert out["results"]["epoch.bin"]["status"] == "ok"
+    assert os.stat(tmp_path / "epoch.bin").st_mtime_ns // 1000 != 0
+
+
+@pytest.mark.enable_socket
+def test_pull_onto_the_same_bytes_fetches_nothing(tmp_path, bucket):
+    data = os.urandom(64 * 1024)
+    _write(tmp_path, "kept.bin", data)
+    _write(tmp_path, "stale.bin", os.urandom(len(data)))
+    kept = _file_item(bucket, "kept.bin", data, mode=0o600, mtime_ns=1_600_000_000_000_000_000)
+    stale_bytes = os.urandom(len(data))
+    stale = _file_item(bucket, "stale.bin", stale_bytes)
+    out = rt.pull({"root": str(tmp_path), "timeout_s": 10, "items": [kept, stale]})
+    assert out["results"]["kept.bin"]["status"] == "ok"
+    assert out["results"]["stale.bin"]["status"] == "ok"
+    assert bucket.hits.get(f"/{_sha(data)}") is None
+    assert bucket.hits[f"/{_sha(stale_bytes)}"] == 1
+    st = os.stat(tmp_path / "kept.bin")
+    assert stat.S_IMODE(st.st_mode) == 0o600
+    assert st.st_mtime_ns == 1_600_000_000_000_000_000
+    assert (tmp_path / "stale.bin").read_bytes() == stale_bytes
+
+
+@pytest.mark.enable_socket
 def test_pull_mismatch_leaves_no_file(tmp_path, bucket):
     item = _file_item(bucket, "a.bin", b"served", sha256=_sha(b"expected"))
     out = rt.pull({"root": str(tmp_path), "items": [item]})
     assert out["results"]["a.bin"]["status"] == "mismatch"
     assert not (tmp_path / "a.bin").exists()
+    assert not [p for p in os.listdir(tmp_path) if p.startswith(".wsfiles-")]
+
+
+@pytest.mark.enable_socket
+@pytest.mark.parametrize(
+    "cuts, status, hits", [(1, "ok", 2), (3, "unreachable", 3)], ids=["once", "every-time"]
+)
+def test_pull_retries_a_body_the_store_cut_short(tmp_path, bucket, cuts, status, hits):
+    """A body that ends before its Content-Length is a transfer that broke,
+    not other bytes: it is fetched again, and never reported a mismatch."""
+    data = os.urandom(1000)
+    item = _file_item(bucket, "a.bin", data, sha256=None)
+    bucket.cut[f"/{_sha(data)}"] = cuts
+    out = rt.pull({"root": str(tmp_path), "items": [item]})
+    assert out["results"]["a.bin"]["status"] == status
+    assert bucket.hits[f"/{_sha(data)}"] == hits
+    if status == "ok":
+        assert (tmp_path / "a.bin").read_bytes() == data
+    else:
+        assert not (tmp_path / "a.bin").exists()
     assert not [p for p in os.listdir(tmp_path) if p.startswith(".wsfiles-")]
 
 
@@ -611,6 +754,103 @@ def test_pull_symlink_replaces_file_link_or_empty_dir_but_not_a_populated_one(tm
     assert r["fresh/new"]["status"] == "ok" and os.readlink(tmp_path / "fresh/new") == "target"
     assert r["was_dir"]["status"] == "ok" and os.readlink(tmp_path / "was_dir") == "target"
     assert r["full_dir"]["status"] == "failed" and (tmp_path / "full_dir/child").is_file()
+
+
+def test_pull_symlink_keep_existing_leaves_whatever_is_there(tmp_path):
+    """A deferred link is placed only where nothing is: the turn may have
+    written that path since the look, as a file or a link of its own."""
+    _write(tmp_path, "was_file", b"f")
+    os.symlink("mine", tmp_path / "was_link")
+    items = [
+        {"path": p, "kind": "symlink", "sha256": None, "size": 0, "url": None, "mode": 0, "mtime_ns": 1_500_000_000_000_000_000, "symlink_target": "target", "keep_existing": True}
+        for p in ("was_file", "was_link", "fresh")
+    ]
+    out = rt.pull({"root": str(tmp_path), "items": items})
+    r = out["results"]
+    assert all(r[p]["status"] == "ok" for p in ("was_file", "was_link", "fresh"))
+    assert (tmp_path / "was_file").read_bytes() == b"f"
+    assert os.readlink(tmp_path / "was_link") == "mine"
+    assert os.readlink(tmp_path / "fresh") == "target"
+
+
+def test_pull_dir_keep_existing_leaves_a_standing_dir_as_it_is(tmp_path):
+    """A deferred dir the turn made since the look keeps its own mode and
+    mtime, even when another item's parent is made first; a missing one gets
+    the backup's, open to its owner."""
+    os.makedirs(tmp_path / "mine")
+    os.chmod(tmp_path / "mine", 0o755)
+    before = os.stat(tmp_path / "mine").st_mtime_ns
+    items = [
+        {"path": p, "kind": "dir", "sha256": None, "size": 0, "url": None, "mode": 0o500, "mtime_ns": 1_400_000_000_000_000_000, "symlink_target": None, "keep_existing": True}
+        for p in ("fresh/inner", "mine", "fresh")
+    ]
+    out = rt.pull({"root": str(tmp_path), "items": items})
+    assert all(r["status"] == "ok" for r in out["results"].values())
+    mine = os.stat(tmp_path / "mine")
+    assert stat.S_IMODE(mine.st_mode) == 0o755 and mine.st_mtime_ns == before
+    fresh = os.stat(tmp_path / "fresh")
+    assert stat.S_IMODE(fresh.st_mode) == 0o700
+    assert fresh.st_mtime_ns == 1_400_000_000_000_000_000
+
+
+def test_pull_dir_keep_existing_leaves_what_the_turn_puts_there_during_the_op(tmp_path, monkeypatch):
+    """The turn can make the directory, or a file of the same name, between
+    any look and the restore's own mkdir: either is the turn's, as a file
+    written there keeps its bytes."""
+    mkdir, mine = os.mkdir, str(tmp_path / "mine")
+
+    def turn_makes_it_first(path, *args, **kwargs):
+        if path == mine and not os.path.lexists(mine):
+            mkdir(mine)
+            os.chmod(mine, 0o700)
+            os.utime(mine, ns=(1, 1))
+        return mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(rt.os, "mkdir", turn_makes_it_first)
+    _write(tmp_path, "was_file", b"f")
+    items = [
+        {"path": p, "kind": "dir", "mode": 0o755, "mtime_ns": 1_400_000_000_000_000_000, "keep_existing": True}
+        for p in ("mine", "was_file")
+    ]
+    out = rt.pull({"root": str(tmp_path), "items": items})
+    assert all(r["status"] == "ok" and not r.get("made") for r in out["results"].values())
+    st = os.stat(mine)
+    assert stat.S_IMODE(st.st_mode) == 0o700 and st.st_mtime_ns == 1
+    assert (tmp_path / "was_file").read_bytes() == b"f"
+
+
+def test_pull_a_deferred_dir_an_earlier_op_made_is_stamped_after_its_files(tmp_path):
+    """A relayed batch makes its dirs in one op and places their files in the
+    next; by then a deferred dir is standing, so only the mark the first op
+    reported tells the second it is the restore's to stamp."""
+    item = {"path": "d", "kind": "dir", "mode": 0o750, "mtime_ns": 1_400_000_000_000_000_000, "keep_existing": True}
+    first = rt.pull({"root": str(tmp_path), "items": [item], "defer_dir_modes": True})
+    assert first["results"]["d"] == {"status": "ok", "http": None, "error": None, "made": True}
+    child = _staged(tmp_path, "d/f.md", b"f", keep_existing=True)
+    out = rt.pull({"root": str(tmp_path), "items": [child, dict(item, made=True)]})
+    assert out["results"]["d"]["status"] == "ok" and out["results"]["d/f.md"]["status"] == "ok"
+    st = os.stat(tmp_path / "d")
+    assert stat.S_IMODE(st.st_mode) == 0o750 | 0o300
+    assert st.st_mtime_ns == 1_400_000_000_000_000_000
+
+
+def test_pull_never_makes_again_a_dir_an_earlier_op_made_and_the_turn_removed(tmp_path):
+    item = {"path": "gone/d", "kind": "dir", "mode": 0o750, "mtime_ns": 1, "keep_existing": True, "made": True}
+    out = rt.pull({"root": str(tmp_path), "items": [item]})
+    assert out["results"]["gone/d"]["status"] == "ok"
+    assert not (tmp_path / "gone").exists()
+
+
+def test_pull_a_deferred_dir_takes_what_later_batches_place_beneath_it(tmp_path):
+    """The deferred pass places a dir in its first batch and the files under
+    it in later ones, beside a turn that writes there too: a backup's
+    read-only mode would refuse them all."""
+    ro = {"path": "ro", "kind": "dir", "mode": 0o500, "mtime_ns": 1, "keep_existing": True}
+    rt.pull({"root": str(tmp_path), "items": [ro]})
+    later = _staged(tmp_path, "ro/late.md", b"late", keep_existing=True)
+    out = rt.pull({"root": str(tmp_path), "items": [later]})
+    assert out["results"]["ro/late.md"]["status"] == "ok"
+    assert (tmp_path / "ro/late.md").read_bytes() == b"late"
 
 
 @pytest.mark.enable_socket
@@ -735,6 +975,90 @@ def test_pull_file_places_a_staged_relay_upload(tmp_path):
     assert out["results"]["n.txt"] == {"status": "failed", "http": None, "error": "missing url", "ms": out["results"]["n.txt"]["ms"]}
     assert not (tmp_path / "s.txt").exists() and not (tmp_path / "w.txt").exists()
     assert not [p for p in os.listdir(tmp_path) if p.startswith(".wsfiles-")]
+
+
+def _staged(root, rel: str, data: bytes, **over):
+    name = f".wsfiles-relay-{len(os.listdir(root))}"
+    (root / name).write_bytes(data)
+    return {"path": rel, "kind": "file", "file": name, "sha256": _sha(data), "size": len(data),
+            "mode": 0o644, "mtime_ns": 1, **over}
+
+
+def test_pull_keep_existing_never_replaces_a_file_written_after_the_look(tmp_path, monkeypatch):
+    """A deferred file the turn writes while its backup copy is on the way is
+    the newer one: placement keeps it, where a plain item is still replaced."""
+    place = rt._place
+
+    def turn_writes_first(tmp, final, item, http=None):
+        with open(final, "wb") as f:
+            f.write(b"turn")
+        return place(tmp, final, item, http)
+
+    monkeypatch.setattr(rt, "_place", turn_writes_first)
+    kept = _staged(tmp_path, "note.md", b"backup", keep_existing=True)
+    plain = _staged(tmp_path, "plain.md", b"backup")
+    out = rt.pull({"root": str(tmp_path), "items": [kept, plain]})
+    assert {p: r["status"] for p, r in out["results"].items()} == {"note.md": "ok", "plain.md": "ok"}
+    assert (tmp_path / "note.md").read_bytes() == b"turn"
+    assert (tmp_path / "plain.md").read_bytes() == b"backup"
+    assert not [p for p in os.listdir(tmp_path) if p.startswith(".wsfiles-")]
+
+
+def test_pull_stamps_the_bytes_before_they_are_placed(tmp_path, monkeypatch):
+    """A file written at the path just after the placement must keep its own
+    mtime: stamped with the backup's, a scan that trusts a size and mtime it
+    has seen would never read the new bytes."""
+    seen = {}
+
+    def watch(real):
+        def call(src, dst, *args, **kwargs):
+            seen[os.path.basename(dst)] = os.stat(src).st_mtime_ns
+            return real(src, dst, *args, **kwargs)
+        return call
+
+    monkeypatch.setattr(rt.os, "link", watch(os.link))
+    monkeypatch.setattr(rt.os, "replace", watch(os.replace))
+    when = 1_400_000_000_000_000_000
+    items = [_staged(tmp_path, "kept.md", b"backup", keep_existing=True, mtime_ns=when),
+             _staged(tmp_path, "plain.md", b"backup", mtime_ns=when)]
+    out = rt.pull({"root": str(tmp_path), "items": items})
+    assert {p: r["status"] for p, r in out["results"].items()} == {"kept.md": "ok", "plain.md": "ok"}
+    assert seen["kept.md"] == when and seen["plain.md"] == when
+
+
+def test_pull_keep_existing_places_a_missing_file_and_keeps_a_present_one(tmp_path, monkeypatch):
+    """Without hard links the placement falls back to a look then a rename."""
+    (tmp_path / "there.md").write_bytes(b"turn")
+    for no_links in (False, True):
+        if no_links:
+            def refuse(src, dst):
+                raise OSError(errno.EXDEV, "cross-device link")
+            monkeypatch.setattr(rt.os, "link", refuse)
+            (tmp_path / "missing.md").unlink()
+        items = [_staged(tmp_path, "there.md", b"backup", keep_existing=True),
+                 _staged(tmp_path, "missing.md", b"backup", keep_existing=True, mode=0o600)]
+        out = rt.pull({"root": str(tmp_path), "items": items})
+        assert {p: r["status"] for p, r in out["results"].items()} == {"there.md": "ok", "missing.md": "ok"}
+        assert (tmp_path / "there.md").read_bytes() == b"turn"
+        assert (tmp_path / "missing.md").read_bytes() == b"backup"
+        assert stat.S_IMODE(os.stat(tmp_path / "missing.md").st_mode) == 0o600
+        assert not [p for p in os.listdir(tmp_path) if p.startswith(".wsfiles-")]
+
+
+def test_pull_pack_keep_existing_member_leaves_a_present_file(tmp_path):
+    members = {"a.txt": b"aaa", "b.txt": b"bb"}
+    data = b"".join(members[p] for p in sorted(members))
+    (tmp_path / ".wsfiles-relay-x").write_bytes(data)
+    (tmp_path / "a.txt").write_bytes(b"turn")
+    entries, off = [], 0
+    for p in sorted(members):
+        entries.append({"path": p, "offset": off, "size": len(members[p]), "sha256": _sha(members[p]),
+                        "mode": 0o644, "mtime_ns": 1, "keep_existing": True})
+        off += len(members[p])
+    out = _pull(tmp_path, {"kind": "pack", "file": ".wsfiles-relay-x", "sha256": _sha(data), "size": len(data), "members": entries})
+    assert {p: r["status"] for p, r in out["results"].items()} == {"a.txt": "ok", "b.txt": "ok"}
+    assert (tmp_path / "a.txt").read_bytes() == b"turn"
+    assert (tmp_path / "b.txt").read_bytes() == b"bb"
 
 
 def test_pull_removes_staging_files_no_item_claims(tmp_path):
@@ -1019,6 +1343,47 @@ def test_pack_with_nothing_to_pack_writes_no_chunk(tmp_path):
     assert os.listdir(tmp_path / "_internal/packs") == []
 
 
+def test_pack_releases_the_previous_runs_chunks_before_writing(tmp_path):
+    first = _pack(tmp_path, _members(tmp_path, {"a.txt": b"aaa"}))["chunks"]
+    members = _members(tmp_path, {"b.txt": b"bbb"})
+    second = rt.pack({
+        "root": str(tmp_path), "out_dir": "_internal/packs", "members": members,
+        "release": [c["path"] for c in first],
+    })["chunks"]
+    assert not (tmp_path / first[0]["path"]).exists()
+    assert (tmp_path / second[0]["path"]).is_file()
+
+
+def test_pack_refuses_to_write_beside_a_chunk_it_could_not_release(tmp_path):
+    """The removals before it are quiet; this is where one that missed is caught."""
+    (tmp_path / "_internal/packs/op-prev/chunk-x").mkdir(parents=True)
+    members = _members(tmp_path, {"b.txt": b"bbb"})
+    with pytest.raises(OSError, match="could not be removed"):
+        rt.pack({
+            "root": str(tmp_path), "out_dir": "_internal/packs", "members": members,
+            "release": ["_internal/packs/op-prev/chunk-x"],
+        })
+    assert os.listdir(tmp_path / "_internal/packs") == ["op-prev"]
+
+
+def test_a_pack_that_fails_part_way_removes_what_it_wrote(tmp_path, monkeypatch):
+    """A full disk failed the pack after a chunk was down. Left in place, the
+    chunks held the room every later backup needed until the age sweep."""
+    members = _members(tmp_path, {f"f{i}.bin": bytes([i]) * 4 for i in range(5)})
+    real_replace, closed = os.replace, []
+
+    def replace(src, dst):
+        closed.append(dst)
+        if len(closed) == 2:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(rt.os, "replace", replace)
+    with pytest.raises(OSError):
+        _pack(tmp_path, members, max_bytes=10)
+    assert os.listdir(tmp_path / "_internal/packs") == []
+
+
 @pytest.mark.enable_socket
 def test_push_unlink_removes_the_file_after_upload(tmp_path, bucket):
     data = b"chunk bytes"
@@ -1091,6 +1456,62 @@ def test_pull_pack_extracts_every_member_with_one_get(tmp_path, bucket):
     assert os.listdir(tmp_path / "_internal/packs") == []
 
 
+@pytest.mark.enable_socket
+def test_pull_never_writes_through_a_link_out_of_its_root(tmp_path, bucket):
+    """A workspace folder links the shared skills from the computer root; a row
+    recorded before the link must not land in every sibling's copy."""
+    shared = tmp_path / "shared/pdf"
+    shared.mkdir(parents=True)
+    (shared / "SKILL.md").write_bytes(b"current")
+    before = os.stat(shared)
+    root = tmp_path / "folder"
+    (root / ".agents/skills").mkdir(parents=True)
+    os.symlink("../../../shared/pdf", root / ".agents/skills/pdf")
+    link = {"sha256": None, "size": 0, "url": None, "mode": 0, "mtime_ns": 1, "symlink_target": "x"}
+    out = _pull(
+        root,
+        {"path": ".agents/skills/pdf", "kind": "dir", "mode": 0o700, "mtime_ns": 1},
+        _file_item(bucket, ".agents/skills/pdf/SKILL.md", b"stale"),
+        {"path": ".agents/skills/pdf/ref", "kind": "symlink", **link},
+        _pack_item(bucket, {".agents/skills/pdf/lib/a.py": b"stale", "notes.md": b"mine"}),
+    )
+    leaves = ("failed", "path leaves root through a link")
+    assert {p: (r["status"], r["error"]) for p, r in out["results"].items()} == {
+        ".agents/skills/pdf": leaves,
+        ".agents/skills/pdf/SKILL.md": leaves,
+        ".agents/skills/pdf/ref": leaves,
+        ".agents/skills/pdf/lib/a.py": leaves,
+        "notes.md": ("ok", None),
+    }
+    assert os.listdir(shared) == ["SKILL.md"]
+    assert (shared / "SKILL.md").read_bytes() == b"current"
+    after = os.stat(shared)
+    assert (after.st_mode, after.st_mtime_ns) == (before.st_mode, before.st_mtime_ns)
+    assert (root / "notes.md").read_bytes() == b"mine"
+
+
+def test_pull_never_places_a_link_through_one_it_just_placed(tmp_path):
+    """Step 1 checks every parent before any link exists, so a stale row under
+    a linked name passes it; step 3 places the ancestor link first."""
+    shared = tmp_path / "shared/pdf"
+    shared.mkdir(parents=True)
+    (shared / "helper").write_bytes(b"current")
+    root = tmp_path / "folder"
+    (root / ".agents/skills").mkdir(parents=True)
+    link = {"sha256": None, "size": 0, "url": None, "mode": 0, "mtime_ns": 1}
+    out = _pull(
+        root,
+        {"path": ".agents/skills/pdf", "kind": "symlink", "symlink_target": "../../../shared/pdf", **link},
+        {"path": ".agents/skills/pdf/helper", "kind": "symlink", "symlink_target": "x", **link},
+    )
+    assert {p: (r["status"], r["error"]) for p, r in out["results"].items()} == {
+        ".agents/skills/pdf": ("ok", None),
+        ".agents/skills/pdf/helper": ("failed", "path leaves root through a link"),
+    }
+    assert not os.path.islink(shared / "helper")
+    assert (shared / "helper").read_bytes() == b"current"
+
+
 def test_pull_pack_consumes_a_chunk_already_in_the_sandbox(tmp_path):
     """The relay path uploads the chunk itself; the runtime verifies, slices and removes it."""
     members = {"names/trailing. ": b"sp", "names/new\nline.txt": b"nl", "c.txt": b"ccc"}
@@ -1135,6 +1556,19 @@ def test_pull_pack_member_mismatch_is_confined_to_that_member(tmp_path, bucket):
     out = _pull(tmp_path, item)
     assert {p: r["status"] for p, r in out["results"].items()} == {"a.txt": "ok", "b.txt": "mismatch"}
     assert (tmp_path / "a.txt").read_bytes() == b"aaa" and not (tmp_path / "b.txt").exists()
+
+
+@pytest.mark.enable_socket
+def test_pull_pack_restores_a_chunk_its_manifest_names_only_part_of(tmp_path, bucket):
+    """A member that changed while its chunk was repacked keeps its row on the
+    old chunk while its sibling moves on, and restore weighs the item by the
+    rows that remain. The chunk is still whole and its digest still matches."""
+    item = _pack_item(bucket, {"a.txt": b"aaa", "b.txt": b"bbb"})
+    item["members"] = item["members"][1:]
+    item["size"] = 3
+    out = _pull(tmp_path, item)
+    assert {p: r["status"] for p, r in out["results"].items()} == {"b.txt": "ok"}
+    assert (tmp_path / "b.txt").read_bytes() == b"bbb" and not (tmp_path / "a.txt").exists()
 
 
 @pytest.mark.enable_socket
@@ -1185,3 +1619,109 @@ def test_main_accepts_both_spec_forms(tmp_path, monkeypatch):
     assert rt._main(["p", "scan", str(path)]) == 0
     # The file form consumes its spec, so a retry cannot read a stale one.
     assert not path.exists()
+
+
+# ---------------------------------------------------------------------------
+# one computer, several workspace folders
+# ---------------------------------------------------------------------------
+
+
+def test_pack_writes_chunks_at_the_computer_root_when_pack_root_is_given(tmp_path):
+    """The walk root is one workspace's folder; the chunks are the machine's
+    scratch and stay under the computer's ``_internal``, which is the one
+    directory no workspace's scan walks."""
+    computer = tmp_path
+    work = tmp_path / "alpha-1111"
+    work.mkdir()
+    members = _members(work, {"a.txt": b"aaa"})
+    out = rt.pack(
+        {
+            "root": str(work),
+            "pack_root": str(computer),
+            "out_dir": "_internal/packs",
+            "max_bytes": 1024,
+            "members": members,
+        }
+    )
+    chunk = out["chunks"][0]
+    # Outside the walk root, so it cannot be named relative to it.
+    assert os.path.isabs(chunk["path"])
+    assert chunk["path"].startswith(str(computer / "_internal" / "packs") + os.sep)
+    assert not (work / "_internal").exists()
+    assert open(chunk["path"], "rb").read() == b"aaa"
+
+
+def test_pack_without_pack_root_still_names_chunks_relative_to_the_walk_root(tmp_path):
+    """A spec written before the split reads exactly as it did."""
+    members = _members(tmp_path, {"a.txt": b"aaa"})
+    chunk = _pack(tmp_path, members)["chunks"][0]
+    assert not os.path.isabs(chunk["path"])
+    assert chunk["path"].startswith("_internal/packs/op-")
+
+
+@pytest.mark.enable_socket
+def test_push_accepts_an_absolute_chunk_path_only_under_the_pack_directory(
+    tmp_path, bucket
+):
+    computer = tmp_path
+    work = tmp_path / "alpha-1111"
+    work.mkdir()
+    chunk = _write(computer, "_internal/packs/op-1/chunk-x", b"chunk")
+    outside = _write(computer, "beta-2222/secret.txt", b"nope")
+    items = [
+        {**_push_item(bucket, chunk, b"chunk", key="chunk"), "unlink": True},
+        _push_item(bucket, outside, b"nope", key="nope"),
+    ]
+    out = rt.push(
+        {"root": str(work), "pack_root": str(computer), "items": items, "timeout_s": 5}
+    )
+    results = _sans_ms(out["results"])
+    assert results[_sha(b"chunk")]["status"] == "ok"
+    # A path outside the pack directory is a workspace-relative name or nothing.
+    assert results[_sha(b"nope")] == {
+        "status": "failed",
+        "http": None,
+        "error": "path escapes root",
+    }
+    assert not os.path.exists(chunk)
+    assert os.path.exists(outside)
+
+
+def test_unlink_removes_a_chunk_outside_the_walk_root_and_nothing_else(tmp_path):
+    computer = tmp_path
+    work = tmp_path / "alpha-1111"
+    work.mkdir()
+    chunk = _write(computer, "_internal/packs/op-1/chunk-x", b"c")
+    sibling = _write(computer, "beta-2222/secret.txt", b"s")
+    out = rt.unlink(
+        {
+            "root": str(work),
+            "pack_root": str(computer),
+            "paths": [chunk, sibling, f"{computer}/../escape"],
+        }
+    )
+    assert out == {"removed": 1}
+    assert not os.path.exists(chunk) and os.path.exists(sibling)
+
+
+def test_a_scan_of_one_folder_never_sees_its_siblings(tmp_path):
+    computer = tmp_path
+    work = computer / "alpha-1111"
+    _write(work, "report.html", b"mine")
+    _write(computer, "beta-2222/secret.txt", b"theirs")
+    _write(computer, "_internal/packs/op-1/chunk-x", b"scratch")
+    out = _scan(work)
+    assert [e["path"] for e in out["entries"] if e["kind"] == "file"] == ["report.html"]
+
+
+def test_a_symlink_standing_where_an_excluded_directory_would_be_is_skipped(tmp_path):
+    """A restore places directories by path, so a symlink at an excluded path
+    is that directory as far as the manifest is concerned."""
+    (tmp_path / ".agents" / "skills").mkdir(parents=True)
+    (tmp_path / ".agents" / "skills" / ".staging").symlink_to(tmp_path)
+    (tmp_path / ".agents" / "skills" / ".trash-1").symlink_to(tmp_path)
+    (tmp_path / ".agents" / "skills" / "mine").symlink_to(tmp_path)
+    out = _scan(tmp_path)
+    assert [e["path"] for e in out["entries"] if e["kind"] == "symlink"] == [
+        ".agents/skills/mine"
+    ]

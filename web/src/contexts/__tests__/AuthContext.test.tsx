@@ -54,6 +54,12 @@ vi.mock('../../lib/authToken', () => ({
   clearAuthToken: () => mockClearAuthToken(),
 }));
 
+// The platform call a password change makes to sign connected apps out.
+const mockApiPost = vi.fn();
+vi.mock('@/api/client', () => ({
+  api: { post: (...args: unknown[]) => mockApiPost(...args) },
+}));
+
 // Spy on the module-level nav stores so we can assert sign-out resets them.
 const mockResetNavPanelExpansion = vi.fn();
 const mockResetStableNavOrder = vi.fn();
@@ -101,6 +107,7 @@ describe('AuthContext', () => {
     mockOnAuthStateChange.mockReturnValue({
       data: { subscription: { unsubscribe: vi.fn() } },
     });
+    mockApiPost.mockResolvedValue({ data: { revoked: 0 }, status: 200 });
   });
 
   describe('when no session exists', () => {
@@ -233,6 +240,31 @@ describe('AuthContext', () => {
     it('updatePassword forwards the new password', async () => {
       await auth.updatePassword('newpass123');
       expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'newpass123' });
+    });
+
+    it('updatePassword signs connected apps out once the password is changed', async () => {
+      await auth.updatePassword('newpass123');
+      expect(mockApiPost).toHaveBeenCalledWith('/api/auth/connected-apps/revoke-all');
+    });
+
+    it('a refused password change leaves connected apps alone', async () => {
+      const refused = { data: { user: null }, error: { message: 'Password is too weak' } };
+      mockUpdateUser.mockResolvedValueOnce(refused);
+      await expect(auth.updatePassword('weak')).resolves.toBe(refused);
+      expect(mockApiPost).not.toHaveBeenCalled();
+    });
+
+    it('the password change neither waits on nor fails with the sign-out', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const changed = { data: { user: null }, error: null };
+
+      mockApiPost.mockReturnValueOnce(new Promise(() => {}));
+      await expect(auth.updatePassword('newpass123')).resolves.toEqual(changed);
+
+      mockApiPost.mockRejectedValueOnce(new Error('Network Error'));
+      await expect(auth.updatePassword('newpass123')).resolves.toEqual(changed);
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      warn.mockRestore();
     });
   });
 

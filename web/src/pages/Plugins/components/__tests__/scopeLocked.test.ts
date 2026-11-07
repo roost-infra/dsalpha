@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { scopeLocked } from '../ScopeControl';
+import { scopeOff } from '../../utils/scopeOff';
 
 /**
  * The checklist adds a workspace deny-marker with one click and removes it
@@ -27,5 +28,16 @@ describe('scopeLocked', () => {
     // Absent and null both mean "no package", not "package is off".
     expect(scopeLocked({ enabled: true })).toBe(false);
     expect(scopeLocked({ enabled: true, plugin_enabled: null })).toBe(false);
+  });
+});
+
+describe('scopeOff', () => {
+  it('names the plugin over the row when both are off', () => {
+    // Switching the row on would leave it just as off, so the control must
+    // not point there.
+    expect(scopeOff({ enabled: false, plugin_enabled: false })).toBe('plugin');
+    expect(scopeOff({ enabled: true, plugin_enabled: false })).toBe('plugin');
+    expect(scopeOff({ enabled: false, plugin_enabled: null })).toBe('self');
+    expect(scopeOff({ enabled: true, plugin_enabled: true })).toBeNull();
   });
 });

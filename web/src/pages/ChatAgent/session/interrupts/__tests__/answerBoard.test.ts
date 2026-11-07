@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * The resume settler's fence, and the one board both halves of a resume roll
  * back. Restoring a refused resume's board is correct only on the thread that
@@ -7,10 +8,10 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createAnswerBoard, type AnswerBoardDeps } from '../answerBoard';
-import type { MessageRecord } from '../../types';
+import type { ChatMessage } from '@/types/chat';
 
 /** One bubble carrying a pause card and two approval cards from two interrupts. */
-function bubble(): MessageRecord {
+function bubble(): ChatMessage {
   return {
     id: 'a-1',
     role: 'assistant',
@@ -19,12 +20,12 @@ function bubble(): MessageRecord {
       'int-a#0': { status: 'approved', interruptId: 'int-a' },
       other: { status: 'approved', interruptId: 'int-b' },
     },
-  } as unknown as MessageRecord;
+  } as unknown as ChatMessage;
 }
 
 function makeDeps() {
-  let messages: MessageRecord[] = [bubble()];
-  const setMessages = vi.fn((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+  let messages: ChatMessage[] = [bubble()];
+  const setMessages = vi.fn((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
     messages = updater(messages);
   });
   const deps = {

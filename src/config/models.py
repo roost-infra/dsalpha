@@ -31,6 +31,15 @@ class BackgroundExecutionConfig(BaseModel):
     max_stored_messages_per_agent: int = Field(
         default=150000, description="Maximum events to buffer per workflow"
     )
+    max_stream_bytes_per_run: int = Field(
+        default=96 * 1024 * 1024,
+        description=(
+            "Maximum bytes one run's event stream may hold in Redis, counting "
+            "every copy a frame is kept as (a subagent's task stream keeps up "
+            "to three); a run past it finalizes error(transport_lost), as at "
+            "the event cap"
+        ),
+    )
     event_storage_backend: Literal["redis", "memory"] = Field(
         default="redis", description='Backend for event buffering: "redis" or "memory"'
     )
@@ -73,7 +82,7 @@ class BackgroundExecutionConfig(BaseModel):
         default=10.0, description="Timeout (seconds) for checkpoint state reads/writes"
     )
     admission_compaction_wait_timeout: float = Field(
-        default=180.0,
+        default=260.0,
         gt=0,
         description=(
             "Max seconds a new turn blocks at admission for an in-progress "
@@ -91,7 +100,7 @@ class BackgroundExecutionConfig(BaseModel):
         ),
     )
     compaction_timeout: float = Field(
-        default=180.0,
+        default=240.0,
         gt=0,
         description=(
             "Wall-clock budget (seconds) for a single compaction LLM call "
@@ -112,9 +121,6 @@ class BackgroundExecutionConfig(BaseModel):
     )
     max_workflow_retries: int = Field(
         default=3, description="Max transient-error retry count for workflow execution"
-    )
-    merged_chunk_max_bytes: int = Field(
-        default=16384, description="Max bytes for merged SSE event chunks before split"
     )
 
 
@@ -138,9 +144,6 @@ class RedisTTLConfig(BaseModel):
     )
     cancel_flag: int = Field(
         default=300, description="TTL for workflow cancel flag (5 minutes)"
-    )
-    steering: int = Field(
-        default=3600, description="TTL for steering message Redis keys (1 hour)"
     )
     market_watch: int = Field(default=21600, description="Market watch list TTL in seconds")
     memo_metadata_inflight: int = Field(
@@ -295,6 +298,19 @@ class OrderReconcileConfig(BaseModel):
     group_timeout_seconds: int = Field(default=120, ge=60)
 
 
+class McpDescriptionsConfig(BaseModel):
+    """The background service that has a model describe MCP servers.
+
+    ``user_servers`` covers the servers users add themselves, which run on
+    each user's own model; off, only shipped brokerages are described. With
+    ``enabled`` off nothing is queued and every row keeps its own text.
+    """
+
+    enabled: bool = Field(default=True)
+    user_servers: bool = Field(default=True)
+    interval_seconds: int = Field(default=20, ge=5)
+
+
 class FeatureFlagOverride(BaseModel):
     """Deployment override for a code-declared feature (src/config/features.py).
 
@@ -324,6 +340,35 @@ class MarketWatchConfig(BaseModel):
         default=25, ge=5, description="Throttle between injections per thread"
     )
     max_symbols: int = Field(default=10, ge=1, le=50, description="Watch list cap")
+    target_warning_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=720,
+        description="Minutes before a target lapses that the thread is told",
+    )
+
+
+class ClaudeCodeConfig(BaseModel):
+    """Claude Code on cloud computers (the runtime's own switch is the
+    ``claude_code_runtime`` feature). With ``sandbox_placement`` the CLI of a
+    turn on a cloud computer runs inside that computer's own sandbox, and only
+    on Medium computers or larger (``hosted.SANDBOX_MIN_TIER``)."""
+
+    hosted_api_key: bool = Field(
+        default=False,
+        description="Run Claude Code turns on cloud computers on the user's own Anthropic API key",
+    )
+    stored_custody: bool = Field(
+        default=False,
+        description="Run Claude Code turns on cloud computers on a setup token the user lets the server store",
+    )
+    sandbox_placement: bool = Field(
+        default=False,
+        description="Run a cloud computer's Claude Code CLI inside the computer's own sandbox, not in the worker",
+    )
+    hosted_turns_per_user: int = Field(
+        default=3, ge=1, description="Claude Code turns one user runs at once on cloud computers"
+    )
 
 
 class WorkflowOrchestrationConfig(BaseModel):
@@ -462,8 +507,6 @@ class InfrastructureConfig(BaseModel):
 
     # Application Settings
     debug: bool = Field(default=False, description="Debug mode flag")
-    ptc_recursion_limit: int = Field(default=2000, ge=1, le=10000, description="PTC agent recursion limit")
-    flash_recursion_limit: int = Field(default=500, ge=1, le=10000, description="Flash agent recursion limit")
     workflow_timeout: int = Field(default=21600, description="Workflow timeout in seconds")
     sse_keepalive_interval: float = Field(
         default=15.0, description="SSE keepalive interval in seconds"
@@ -476,8 +519,16 @@ class InfrastructureConfig(BaseModel):
     redis_warm_on_startup: bool = Field(
         default=True, description="Enable Redis cache warming on startup"
     )
+    brokerage_marks_warm_on_startup: bool = Field(
+        default=False, description="Fetch the built-in brokerages' logos on startup"
+    )
     langsmith_tracing: bool = Field(default=False, description="Enable LangSmith tracing")
+    langsmith_full_payloads: bool = Field(
+        default=False,
+        description="Trace middleware inputs and graph nodes' messages to LangSmith",
+    )
     market_watch: MarketWatchConfig = Field(default_factory=MarketWatchConfig)
+    claude_code: ClaudeCodeConfig = Field(default_factory=ClaudeCodeConfig)
 
     # User-facing product features (deployment overrides of the code catalog
     # in src/config/features.py). Distinct from the infra toggles above, which
@@ -521,6 +572,7 @@ class InfrastructureConfig(BaseModel):
         default_factory=WorkflowOrchestrationConfig
     )
 
+    mcp_descriptions: McpDescriptionsConfig = Field(default_factory=McpDescriptionsConfig)
     # Order reconciliation sweep
     order_reconcile: OrderReconcileConfig = Field(
         default_factory=OrderReconcileConfig

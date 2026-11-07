@@ -105,6 +105,67 @@ async def test_platform_fallback_when_byok_none_and_system():
 
 
 @pytest.mark.asyncio
+async def test_platform_fallback_without_a_provider_key_takes_the_lazy_path():
+    """An effort makes the platform client eager; a provider with no key
+    configured then gives no client, as a turn without an effort gets, so the
+    turn fails as a run rather than as a 500 before it starts."""
+    from src.llms.llm import MissingProviderKeyError
+    from src.server.services.llm.clients import resolve_model_client
+    from src.server.services.llm.user_models import ModelSource
+
+    with (
+        _patch_classify(ModelSource.SYSTEM),
+        patch(
+            f"{CLIENTS}.resolve_oauth_llm_client",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            f"{CLIENTS}.resolve_byok_llm_client",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "src.llms.llm.create_llm",
+            side_effect=MissingProviderKeyError("EXAMPLE_API_KEY environment variable is not set"),
+        ),
+    ):
+        result = await resolve_model_client(
+            "u", "m", is_byok=False, reasoning_effort="high", allow_platform_fallback=True,
+        )
+
+    assert result.client is None
+    assert result.credential_source == CredentialSource.NONE
+
+
+def test_a_provider_with_no_key_raises_the_missing_key_error(monkeypatch):
+    from src.llms.llm import LLM, MissingProviderKeyError
+
+    llm = LLM.__new__(LLM)
+    llm.api_key_override = None
+    llm.env_key = "EXAMPLE_PROVIDER_API_KEY"
+    llm.provider_info = {}
+    monkeypatch.delenv("EXAMPLE_PROVIDER_API_KEY", raising=False)
+
+    with pytest.raises(MissingProviderKeyError):
+        llm._resolve_api_key()
+
+
+def test_an_empty_user_key_never_takes_the_deployments(monkeypatch):
+    # A saved row with no key but the user's base URL: the deployment's key
+    # would go to the user's server.
+    from src.llms.llm import LLM
+
+    llm = LLM.__new__(LLM)
+    llm.api_key_override = ""
+    llm.env_key = "EXAMPLE_PROVIDER_API_KEY"
+    llm.provider_info = {"access_type": "api_key"}
+    monkeypatch.setenv("EXAMPLE_PROVIDER_API_KEY", "deployment-secret")
+
+    assert llm._resolve_api_key() == "EMPTY"
+
+
+@pytest.mark.asyncio
 async def test_no_fallback_when_disabled():
     from src.server.services.llm.clients import resolve_model_client
     from src.server.services.llm.user_models import ModelSource

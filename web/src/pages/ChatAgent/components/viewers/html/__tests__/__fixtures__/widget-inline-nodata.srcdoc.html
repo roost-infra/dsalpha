@@ -1,11 +1,11 @@
 <!DOCTYPE html><html><head>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com esm.sh; style-src 'unsafe-inline'; img-src data: blob:; font-src cdnjs.cloudflare.com cdn.jsdelivr.net; connect-src cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com esm.sh;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh; style-src 'unsafe-inline'; img-src data: blob:; font-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; connect-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh;">
 <style>
 :root {
   
 }
 *, *::before, *::after { box-sizing: border-box; }
-body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-text-primary); background: transparent; overflow: hidden; }
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-text-primary); background: transparent; overflow-x: auto; overflow-y: hidden; }
 
 body > :first-child {
   background: transparent !important;
@@ -15,16 +15,22 @@ body > :first-child {
   margin: 0 auto !important;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border-elevated); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; margin: 4px; }
+::-webkit-scrollbar-thumb { background-color: var(--color-border-elevated); background-clip: padding-box; border: 3px solid transparent; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-tertiary); }
 </style>
 <script>
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string')t=t.replace(/\bNaN\b/g,'null').replace(/(?<![A-Za-z_])-?Infinity\b/g,'null');
+    if(typeof t==='string'&&(t.indexOf('NaN')!==-1||t.indexOf('Infinity')!==-1)){
+      var inString=false;
+      t=t.replace(/\\[\s\S]|"|(?<!\w)(?:NaN|-?Infinity)\b/g,function(token){
+        if(token==='"'){inString=!inString;return token;}
+        return inString||token.charAt(0)==='\\'?token:'null';
+      });
+    }
     return _p.call(this,t,r);
   };
   var shown={},count=0,rendering=false;
@@ -81,6 +87,7 @@ window.sendPrompt = function(text) {
   function reportHeight() {
     if (!document.body) return;
     var h = document.body.scrollHeight;
+    if (h !== window.innerHeight) h += window.innerHeight - document.documentElement.clientHeight;
     if (h > 0 && Math.abs(h - lastH) > 2) {
       lastH = h;
       parent.postMessage({ type: 'widget:resize', height: h }, '*');
@@ -114,6 +121,7 @@ window.sendPrompt = function(text) {
           /:root\s*\{[^}]*\}/,
           ':root {\n  ' + e.data.css + '\n}'
         );
+        try { window.dispatchEvent(new Event('themechange')); } catch (err) {}
       }
     }
   });

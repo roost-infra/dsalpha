@@ -45,6 +45,7 @@ from ptc_agent.agent.middleware.direct_mcp import (
 )
 from ptc_agent.agent.middleware.tool.argument_parsing import parse_tool_args
 from ptc_agent.agent.middleware.tool.error_handling import format_tool_error
+from ptc_agent.agent.pending_calls import pending_calls
 
 # What the interrupt payload calls itself, and the artifact key a receipt
 # rides under. Both are read by the client.
@@ -121,6 +122,10 @@ class OrderLedger(Protocol):
         """
         ...
 
+    async def find(self, message_id: str, tool_call_id: str) -> str | None:
+        """The attempt already written for this call, or None. Never writes."""
+        ...
+
     async def consume(self, attempt_id: str) -> ExecutionGrant | Refusal:
         """Take the one execution, or say what state was found instead."""
         ...
@@ -137,10 +142,20 @@ class OrderLedger(Protocol):
         """
         ...
 
+    async def abandon(self, message_id: str, tool_call_id: str) -> None:
+        """Refuse this call's attempt if it is still proposed: the thread went
+        on without the call, so no answer to its card may place it."""
+        ...
+
 
 def _order_of(stamp: Mapping[str, Any] | None) -> dict[str, Any] | None:
     order = (stamp or {}).get("order")
     return order if isinstance(order, dict) else None
+
+
+def places_order(tool: BaseTool) -> bool:
+    """Whether the binder stamped ``tool`` as one that places an order."""
+    return _order_of(direct_tool_meta(tool)) is not None
 
 
 def _describe(tool_call: Mapping[str, Any], stamp: Mapping[str, Any]) -> str:
@@ -197,22 +212,27 @@ class OrderGovernanceMiddleware(AgentMiddleware):
         # Per-turn execution context, rebuilt by the node that proposes: which
         # attempt each call in flight belongs to. Never truth about whether a
         # call may run -- that answer is the guarded consume, on the row. A
-        # miss here refuses the call rather than running it unattributed.
+        # miss here is looked up on the ledger, and a call no gate recorded is
+        # refused rather than run unattributed.
         self._attempts: dict[str, str] = {}
 
     # -- proposal and verdict ------------------------------------------------
 
     def _order_calls(self, state: Any) -> tuple[AIMessage | None, list[dict[str, Any]]]:
+        """The last assistant message and its order calls still waiting on a result."""
         messages = (state or {}).get("messages") or []
-        last_ai = next(
-            (m for m in reversed(messages) if isinstance(m, AIMessage)), None
-        )
-        if last_ai is None or not last_ai.tool_calls:
-            return None, []
-        calls = [
-            call for call in last_ai.tool_calls if call.get("name") in self._stamps
-        ]
-        return last_ai, calls
+        at, pending = pending_calls(messages)
+        calls = [call for call in pending if call.get("name") in self._stamps]
+        return (messages[at], calls) if calls else (None, [])
+
+    async def abandon(self, message: AIMessage, calls: Sequence[Mapping[str, Any]]) -> None:
+        """Refuse the proposals of ``message``'s ``calls``, which a later run
+        cut off with their cards unanswered."""
+        if not message.id:
+            return
+        for call in calls:
+            if call.get("name") in self._stamps:
+                await self._ledger.abandon(message.id, call["id"])
 
     def _blocked(
         self,
@@ -259,18 +279,22 @@ class OrderGovernanceMiddleware(AgentMiddleware):
                 last_ai, calls, "arrived in a message with no id, so it was not sent"
             )
 
+        # Canonicalized here, before anything reads the args, because the tool
+        # gets them as ``ToolArgumentParsingMiddleware`` parses them and the
+        # relay hashes what it produced. Hashing the model's raw form instead
+        # would refuse the approved call at the gate for a provider that
+        # stringifies a structured argument, having already spent the attempt.
+        # The same parse also settles what the approval card shows and what the
+        # row stores, so all four agree on one form. Parsed into copies: the
+        # message keeps the args as the model sent them, since every later
+        # request carries it and its thinking was produced behind that form.
+        calls = [
+            {**call, "args": parse_tool_args(call.get("args") or {}, call["name"])}
+            for call in calls
+        ]
         proposals: dict[str, Proposed] = {}
         for call in calls:
             stamp = self._stamps[call["name"]]
-            # Canonicalized here, before anything reads the args, because
-            # ``ToolArgumentParsingMiddleware`` rewrites them in place later and
-            # the relay hashes what it produced. Hashing the model's raw form
-            # instead would refuse the approved call at the gate for a provider
-            # that stringifies a structured argument, having already spent the
-            # attempt. The same parse also settles what the approval card shows
-            # and what the row stores, so all four agree on one form. Idempotent,
-            # so the middleware running it again downstream changes nothing.
-            call["args"] = parse_tool_args(call.get("args") or {}, call["name"])
             proposed = await self._ledger.propose(
                 last_ai.id, call["id"], call["name"], stamp, call["args"]
             )
@@ -345,6 +369,29 @@ class OrderGovernanceMiddleware(AgentMiddleware):
 
     # -- execution -----------------------------------------------------------
 
+    async def _recorded_attempt(self, request: ToolCallRequest) -> str | None:
+        """The attempt an earlier run's gate wrote for this call.
+
+        A run that starts past the gate's node, a regenerate or a retry from
+        the checkpoint between the gate and the tools, never proposes, so the
+        context above is empty while the row it needs exists. The call's
+        message and id are the row's key.
+        """
+        tool_call_id = request.tool_call["id"]
+        messages = (request.state or {}).get("messages") or []
+        message_id = next(
+            (
+                m.id
+                for m in reversed(messages)
+                if isinstance(m, AIMessage)
+                and any(call.get("id") == tool_call_id for call in m.tool_calls)
+            ),
+            None,
+        )
+        if not message_id:
+            return None
+        return await self._ledger.find(message_id, tool_call_id)
+
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -368,7 +415,9 @@ class OrderGovernanceMiddleware(AgentMiddleware):
         if stamp is None:
             return await handler(request)
         tool_call_id = request.tool_call["id"]
-        attempt_id = self._attempts.get(tool_call_id)
+        attempt_id = self._attempts.get(
+            tool_call_id
+        ) or await self._recorded_attempt(request)
         if attempt_id is None:
             return self._blocked(
                 request.tool_call,

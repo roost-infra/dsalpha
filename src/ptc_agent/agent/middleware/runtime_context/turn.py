@@ -24,23 +24,39 @@ Which rules those are depends on who renders the reply. langalpha has a line of
 its own for the surfaces it draws itself; for any other surface the client that
 posted the turn sends its own text (``ChatRequest.surface_rules``) and that text
 is the paragraph, because the client is what has to display the answer.
+
+This module also owns the turn's end. The server stops a turn at its wall
+clock, and a stop is an error the user reads as nothing found, however much
+the agent had: the agent cannot see the clock, so it cannot plan around it.
+So when the end is near the agent gets one row asking for its answer, and in
+the last minutes its tools stop running, which leaves the next call an answer
+to give. The server's stop stays as the backstop for a call that never
+returns. A subagent outlives the turn that started it, so it runs on a clock
+of its own, set when its run starts. The row rides a hook this middleware
+already runs and the stop is a tool wrapper of its own
+(``TimeUpToolStopMiddleware``), so neither costs an extra step per round.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
+from langchain_core.messages import ToolMessage
+from langgraph.config import get_config
+from langgraph.types import Command
 
-from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
+from ptc_agent.agent.limits import REFUSAL_KEY
 from ptc_agent.agent.middleware.runtime_context import clock
 from ptc_agent.agent.middleware.runtime_context.durable import (
     DurableUpdate,
     build_update_message,
-    runtime_update_from_message,
+    last_stated,
+    rows_in_view,
 )
 from ptc_agent.agent.middleware.runtime_context.state import STATE_BASELINE, state_get
 from ptc_agent.agent.middleware.runtime_context.surface import Surface, parse_surface
@@ -51,6 +67,94 @@ logger = logging.getLogger(__name__)
 #: Row kind of the turn anchor. Rendered verbatim by ``update_row.md.j2``,
 #: which hardcodes the same string.
 TURN_ROW_KIND = "turn_opened"
+
+#: Row kind of the subagent-switch notice, which ``update_row.md.j2`` hardcodes
+#: the same way.
+SUBAGENTS_ROW_KIND = "subagents_switched"
+
+#: Row kind of the scratchpad notes reminder (``compaction/notes.py``), which
+#: ``update_row.md.j2`` hardcodes the same way.
+NOTES_DUE_ROW_KIND = "notes_due"
+
+#: Row kind of the scratchpad notes check-in (``compaction/notes.py``), which
+#: ``update_row.md.j2`` hardcodes the same way.
+NOTES_CHECK_IN_ROW_KIND = "notes_check_in"
+
+#: Row kind of the ask to bring the notes up to date before a summary that
+#: keeps no turn mid-turn (``compaction/notes.py``), which
+#: ``update_row.md.j2`` hardcodes the same way.
+REBUILD_NOTES_ROW_KIND = "rebuild_notes"
+
+#: Row kind of the last step's calls and results that such a summary carries
+#: (``compaction/carry.py``), which ``update_row.md.j2`` hardcodes the same
+#: way.
+LAST_STEP_ROW_KIND = "last_step"
+
+#: Row kind of the ask to answer before the turn's time runs out, which
+#: ``update_row.md.j2`` hardcodes the same way.
+TIME_UP_ROW_KIND = "turn_time_up"
+
+#: Row kind that takes back a time-up ask once a later run of the thread is on
+#: a new clock, which ``update_row.md.j2`` hardcodes the same way.
+TIME_UP_WITHDRAWN_ROW_KIND = "turn_time_up_withdrawn"
+
+#: Row kind of a live-price stamp (``middleware/market_watch.py``), which
+#: ``update_row.md.j2`` hardcodes the same way.
+MARKET_WATCH_ROW_KIND = "market_watch"
+
+#: Row kind of the user's cancel of wakeups the agent set
+#: (``middleware/wakeups.py``), which ``update_row.md.j2`` hardcodes the same
+#: way.
+WAKEUP_CANCELLED_ROW_KIND = "wakeup_cancelled"
+
+#: Rows that speak for no block, so a rebuild neither folds them in nor
+#: retires them, but a summary carries them: nobody states them again, the
+#: user's cancel of a wakeup holds whatever the blocks say, and a carried step
+#: holds results the work goes on from.
+NOTICE_ROW_KINDS = frozenset({WAKEUP_CANCELLED_ROW_KIND, LAST_STEP_ROW_KIND})
+
+#: Rows that are no change under the baseline: their writers state them again
+#: once a compaction takes them from view (the notes reminder before the next
+#: summary, the check-in after the next run of tool calls, the ask before a
+#: mid-turn rebuild at the next one, the time-up ask on the next call, the
+#: live prices on the next fetch), so a rebuild does not
+#: count them and a summary does not carry them. The withdrawal of a time-up ask answers only that ask, which a
+#: summary does not carry either, so it has nothing to answer once both are
+#: out of view.
+NON_CHANGE_ROW_KINDS = frozenset(
+    {
+        TURN_ROW_KIND,
+        SUBAGENTS_ROW_KIND,
+        NOTES_DUE_ROW_KIND,
+        NOTES_CHECK_IN_ROW_KIND,
+        REBUILD_NOTES_ROW_KIND,
+        TIME_UP_ROW_KIND,
+        TIME_UP_WITHDRAWN_ROW_KIND,
+        MARKET_WATCH_ROW_KIND,
+    }
+)
+
+#: The configurable key a run's wall-clock end rides under, in epoch seconds:
+#: the server's stop for a turn, ``arun_subagent_streaming``'s for a subagent.
+#: Absent for a run nothing times (a test, thread maintenance).
+TURN_DEADLINE_KEY = "turn_deadline"
+#: The run's whole wall clock in seconds, beside its end.
+TURN_TIME_LIMIT_KEY = "turn_time_limit"
+
+# How long before the end the agent is asked for its answer, and when its tools
+# stop. Tunable: late in a long turn one call of a slow model at a large
+# context has taken over six minutes, so the ask leaves room for two or three.
+# A clock under an hour scales both down, to its last third and sixth, so a run
+# timed in minutes still gets to work before it is asked to finish.
+TIME_UP_ASK_BEFORE = timedelta(minutes=20)
+TIME_UP_TOOLS_STOP_BEFORE = timedelta(minutes=10)
+
+TIME_UP_REFUSAL = (
+    "Not run: this turn is out of time. Answer the user now with what you have, "
+    "say what is left undone, and that they can reply to have you continue."
+)
+#: The ``refusal`` tag on a call the tool stop refused.
+TIME_UP_REFUSAL_TAG = "time_up"
 
 # The key a manual follow-up in an automation's thread states under when it
 # has no surface of its own: the handoff is a rule, and a rule needs a key so
@@ -68,6 +172,71 @@ TURN_SCHEMA_VERSION = 1
 # model can act on; only a real absence is worth a line. Tunable: the threshold
 # is a judgement call, not a measured constant.
 ELAPSED_MIN_GAP = timedelta(minutes=15)
+
+
+def _minutes(span: timedelta) -> str:
+    """``span`` to the nearest minute, never "0 minutes" for time that is left."""
+    n = max(round(span.total_seconds() / 60), 1)
+    return f"{n} minute" if n == 1 else f"{n} minutes"
+
+
+def _run_clock() -> tuple[datetime, timedelta, timedelta] | None:
+    """When this run's time is up, and how long before that the agent is
+    asked to finish and its tools stop; None when nothing times it."""
+    try:
+        configurable = get_config().get("configurable") or {}
+    except RuntimeError:  # outside a runnable context
+        return None
+    return run_clock(configurable)
+
+
+def run_clock(
+    configurable: Mapping[str, Any] | None,
+) -> tuple[datetime, timedelta, timedelta] | None:
+    """``_run_clock`` read off a config's ``configurable``, for a caller that
+    holds the config rather than running inside it."""
+    configurable = configurable or {}
+    end = configurable.get(TURN_DEADLINE_KEY)
+    if not isinstance(end, int | float):
+        return None
+    ask = TIME_UP_ASK_BEFORE
+    limit = configurable.get(TURN_TIME_LIMIT_KEY)
+    if isinstance(limit, int | float) and limit > 0:
+        ask = min(ask, timedelta(seconds=limit) / 3)
+    stop = min(TIME_UP_TOOLS_STOP_BEFORE, ask / 2)
+    return datetime.fromtimestamp(end, tz=UTC), ask, stop
+
+
+class TimeUpToolStopMiddleware(AgentMiddleware):
+    """Refuses every tool call once the run is inside its tool stop.
+
+    It goes outside every other middleware that wraps tool calls, because
+    whatever wraps it has already acted on the call by the time the refusal
+    comes back: the background interceptor has spawned the subagent a refused
+    ``Task`` asked for, the file-op middleware has streamed a refused ``Write``
+    as done, and the repeat guard has counted the call. Out here a refused call
+    reaches none of them. The ``refusal`` tag tells the harness's own refusal
+    from a tool that failed. A subagent's result capture alone goes further
+    out: it acts only on the result, and has to stream the refusal too.
+    """
+
+    # Async only, as ``SubagentSwitchMiddleware``'s is: the async agent never
+    # calls the sync hook.
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        clock = _run_clock()
+        if clock is None or clock[0] - datetime.now(tz=UTC) > clock[2]:
+            return await handler(request)
+        return ToolMessage(
+            content=TIME_UP_REFUSAL,
+            tool_call_id=request.tool_call.get("id"),
+            name=request.tool_call.get("name", ""),
+            status="error",
+            additional_kwargs={REFUSAL_KEY: TIME_UP_REFUSAL_TAG},
+        )
 
 
 class TurnContextMiddleware(AgentMiddleware):
@@ -89,9 +258,17 @@ class TurnContextMiddleware(AgentMiddleware):
             market unconditionally.
         platform: Surface this turn arrived on (web, slack, market_view, ...).
         origin: Who started the thread (agent, automation, system).
+        origin_agent: Which agent, for an ``agent`` origin.
         surface_rules: Delivery rules the posting client wrote for its own
             surface. They stand in for langalpha's built-in line, because the
             client that renders the reply is the authority on what it accepts.
+        inherits_rules: Whether the turn runs under the last rules stated
+            instead of its own, because nobody sent it: the harness reporting
+            finished background work into the thread.
+        disk_free_mb: Free space on the computer's shared disk, passed only
+            when it is low enough that the agent should work around it.
+        disk_known: Whether a current reading stands behind ``disk_free_mb``
+            being None, as opposed to no reading at all.
         is_subagent: Whether this stack belongs to a subagent.
     """
 
@@ -104,7 +281,11 @@ class TurnContextMiddleware(AgentMiddleware):
         last_turn_at: datetime | None = None,
         platform: str | None = None,
         origin: str | None = None,
+        origin_agent: str | None = None,
         surface_rules: str | None = None,
+        inherits_rules: bool = False,
+        disk_free_mb: int | None = None,
+        disk_known: bool = False,
         is_subagent: bool = False,
     ) -> None:
         super().__init__()
@@ -114,7 +295,11 @@ class TurnContextMiddleware(AgentMiddleware):
         self._last_turn_at = last_turn_at
         self._platform = platform
         self._origin = origin
+        self._origin_agent = origin_agent
         self._surface_rules = surface_rules
+        self._inherits_rules = inherits_rules
+        self._disk_free_mb = disk_free_mb
+        self._disk_known = disk_known
         self._is_subagent = is_subagent
         # Set once the turn-open hook has run on this instance; see
         # ``abefore_model``.
@@ -139,11 +324,15 @@ class TurnContextMiddleware(AgentMiddleware):
                 symbol=surface.symbol,
             )
             last = _last_rules_key(state)
-            if resumed:
+            if resumed or self._inherits_rules:
                 # An attempt-only continuation (a resumed interrupt, a retry)
                 # arrives without the surface of the turn it completes, so
                 # the rules it runs under are the last ones stated, whatever
-                # this request did or did not say.
+                # this request did or did not say. A notification is the same
+                # case: it reports into the conversation the work was started
+                # from, so a channel's rules stay in force rather than being
+                # taken back, and since nobody sent it, it is not the attended
+                # turn an automation's handoff waits for either.
                 key = last
             # An automation's thread can take a manual follow-up. The last
             # rules the model can read then say nobody is waiting, and a turn
@@ -201,11 +390,29 @@ class TurnContextMiddleware(AgentMiddleware):
             # the model was told.
             if key is not None:
                 provenance["rules_key"] = key
+            # The low-disk line is a present-tense instruction in a row nothing
+            # rewrites, so the first turn a reading shows it no longer holds
+            # takes it back. A turn without a reading records nothing, leaving
+            # the last word to the rows that had one. A subagent never carries
+            # the line.
+            disk_recovered = False
+            if not self._is_subagent:
+                if self._disk_free_mb is not None:
+                    provenance["disk_low"] = True
+                elif self._disk_known:
+                    provenance["disk_low"] = False
+                    disk_recovered = _last_disk_low(state)
             row = DurableUpdate(
                 kind=TURN_ROW_KIND,
                 schema_version=TURN_SCHEMA_VERSION,
                 text=self._render(
-                    now, surface, rules, zone, market, _last_turn_market(state)
+                    now,
+                    surface,
+                    rules,
+                    zone,
+                    market,
+                    _last_turn_market(state),
+                    disk_recovered=disk_recovered,
                 ),
                 provenance=provenance,
                 created_at=now,
@@ -234,13 +441,60 @@ class TurnContextMiddleware(AgentMiddleware):
         # exception, and every subagent run enters through ``abefore_agent``),
         # so a first model call on an instance that never opened a turn is that
         # resume: the row is written here, after the resumed tool's result.
+        # The resume is also a new run on a new clock, so the call reads the
+        # time-up rows against it as every later call does, rather than acting
+        # on an ask that ran out with the interrupted run.
         if self._opened:
-            return None
-        return await self.abefore_agent(state, runtime, resumed=True)
+            return self._time_up(state)
+        opened = await self.abefore_agent(state, runtime, resumed=True)
+        ending = self._time_up(state)
+        if opened is None or ending is None:
+            return opened or ending
+        return {"messages": [*opened["messages"], *ending["messages"]]}
 
     def before_model(self, state: Any, runtime: Any = None) -> dict[str, Any] | None:
         # Sync fallback: the async agent won't call this but the protocol requires it.
         return None
+
+    # -- the turn's end -------------------------------------------------------
+
+    def _time_up(self, state: Any) -> dict[str, Any] | None:
+        """One ``turn_time_up`` row once the end is near, and again only if a
+        compaction took it from view.
+
+        A row nothing rewrites outlives its clock: the next turn of the thread
+        runs on a new one, while the ask in view still says time is up and the
+        tools have stopped. So the first call of a run whose clock is not the
+        one the last ask in view was about takes the ask back, once.
+        """
+        clock = _run_clock()
+        if clock is None:
+            return None
+        deadline, ask_before, stop_before = clock
+        now = datetime.now(tz=UTC)
+        stamp = deadline.isoformat()
+        if deadline - now > ask_before:
+            return _withdrawn(state, stamp, now)
+        if last_stated(state, TIME_UP_ROW_KIND, "deadline") == stamp:
+            return None
+        left = _minutes(deadline - now)
+        # A long tool call can carry the run past the ask into the stop window,
+        # so the first row may land after the tools have already stopped.
+        if deadline - now <= stop_before:
+            text = f"It ends in {left}, and your tools have stopped running."
+        else:
+            text = (
+                f"It ends in {left}, and your tools stop running "
+                f"{_minutes(stop_before)} before that."
+            )
+        row = DurableUpdate(
+            kind=TIME_UP_ROW_KIND,
+            schema_version=TURN_SCHEMA_VERSION,
+            text=text,
+            provenance={"source": "harness", "deadline": stamp},
+            created_at=now,
+        )
+        return {"messages": [build_update_message(row)]}
 
     # -- rendering ----------------------------------------------------------
 
@@ -281,6 +535,8 @@ class TurnContextMiddleware(AgentMiddleware):
         zone: str,
         market: str | None,
         last_market: LastSession | None,
+        *,
+        disk_recovered: bool = False,
     ) -> str:
         from ptc_agent.agent.prompts import format_current_time
 
@@ -299,9 +555,11 @@ class TurnContextMiddleware(AgentMiddleware):
             "market": market,
             "surface": surface.name,
             "symbol": surface.symbol,
-            "origin": self._origin,
+            "started_by": started_by(self._origin, self._origin_agent),
             "is_subagent": self._is_subagent,
             "surface_rules": surface_rules,
+            "disk_free_mb": self._disk_free_mb,
+            "disk_recovered": disk_recovered,
         }
         return render_template("envelope/turn.md.j2", **fields)
 
@@ -346,6 +604,48 @@ class TurnContextMiddleware(AgentMiddleware):
         if self._last_turn_at is None or now - self._last_turn_at < ELAPSED_MIN_GAP:
             return None, 0
         return clock.elapsed_summary(market, self._last_turn_at, now)
+
+
+def _withdrawn(state: Any, stamp: str, now: datetime) -> dict[str, Any] | None:
+    """A ``turn_time_up_withdrawn`` row when the last time-up row in view was
+    about another clock and nothing has taken it back yet."""
+    last = next(
+        (
+            row
+            for row in reversed(rows_in_view(state))
+            if row.kind in (TIME_UP_ROW_KIND, TIME_UP_WITHDRAWN_ROW_KIND)
+        ),
+        None,
+    )
+    if (
+        last is None
+        or last.kind != TIME_UP_ROW_KIND
+        or last.provenance.get("deadline") == stamp
+    ):
+        return None
+    row = DurableUpdate(
+        kind=TIME_UP_WITHDRAWN_ROW_KIND,
+        schema_version=TURN_SCHEMA_VERSION,
+        text="",
+        provenance={"source": "harness", "deadline": stamp},
+        created_at=now,
+    )
+    return {"messages": [build_update_message(row)]}
+
+
+# -- the run line -----------------------------------------------------------
+
+#: Agents that start a turn for the user, as the run line names them.
+_FOR_THE_USER = {"chief_of_staff": "the Chief of Staff"}
+
+
+def started_by(origin: str | None, agent: str | None) -> str | None:
+    """Who the run line says started the thread: an agent that acts for the
+    user is named as doing so, since the analyst otherwise reads its hand-off
+    as the user's own words."""
+    if origin == "agent" and agent in _FOR_THE_USER:
+        return f"{_FOR_THE_USER[agent]}, on the user's behalf"
+    return origin
 
 
 # -- the delivery rules -----------------------------------------------------
@@ -441,14 +741,8 @@ def _last_turn_market(state: Any) -> LastSession | None:
     unknown, and the session line then falls back to comparing the clock at
     the two instants, which is what it did before rows carried a market.
     """
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return None
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
-    for message in reversed(list(messages)[cutoff:]):
-        update = runtime_update_from_message(message)
-        if update is None or update.kind != TURN_ROW_KIND:
+    for update in reversed(rows_in_view(state)):
+        if update.kind != TURN_ROW_KIND:
             continue
         zone = update.provenance.get("zone")
         if "market" in update.provenance:
@@ -460,21 +754,17 @@ def _last_turn_market(state: Any) -> LastSession | None:
 def _last_rules_key(state: Any) -> str | None:
     """The key of the last rules the model can still read, or None.
 
-    Only the last stated rules count, and only rows the compaction cutoff left
-    in place: a row that was summarized away is a row the model can no longer
-    read, so the rules have to be stated again. A row from a build that stamped
-    no ``rules_key`` never counts as having stated anything, which is what makes
-    the first turn after a deploy state its rules.
+    A row from a build that stamped no ``rules_key`` never counts as having
+    stated anything, which is what makes the first turn after a deploy state
+    its rules.
     """
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return None
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
-    for message in reversed(list(messages)[cutoff:]):
-        update = runtime_update_from_message(message)
-        if update is None or update.kind != TURN_ROW_KIND:
-            continue
-        if "rules_key" in update.provenance:
-            return update.provenance["rules_key"]
-    return None
+    return last_stated(state, TURN_ROW_KIND, "rules_key")
+
+
+def _last_disk_low(state: Any) -> bool:
+    """Whether the last row in view that stated the disk said it was low.
+
+    Rows behind the compaction cutoff do not count: a low-disk line the model
+    can no longer read needs no taking back.
+    """
+    return last_stated(state, TURN_ROW_KIND, "disk_low", False) is True

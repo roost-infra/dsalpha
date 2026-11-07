@@ -9,16 +9,18 @@ import type {
   UserMessage,
   NotificationMessage,
   NotificationVariant,
+  WakeupArrival,
 } from '@/types/chat';
+import type { ArtifactCommentsShown } from '@/types/api';
 import type { WidgetContextSnapshot } from '@/pages/Dashboard/widgets/framework/contextSnapshot';
 import type { ChartSelectionSnapshot } from '@/pages/MarketView/stores/chartSelectionStore';
 
 // Re-export types for consumers
 export type { ChatMessage, AssistantMessage, UserMessage, NotificationMessage, NotificationVariant };
 
-// Module-level sequence counter to avoid ID collisions when multiple
-// notifications are created within the same millisecond.
-let _notifSeq = 0;
+// Keeps ids made within the same millisecond apart: a message is updated by
+// id, so two sharing one are both updated.
+let _idSeq = 0;
 
 export interface AttachmentMeta {
   file: File;
@@ -26,19 +28,33 @@ export interface AttachmentMeta {
   type: string;
 }
 
+/**
+ * `turnIndex` is the backend turn the bubble belongs to, or undefined for one
+ * whose turn the transcript's count names (see projectTurns). Required, so
+ * every bubble the view creates decides its turn where it is made. `id` is a
+ * bubble already on screen that the message takes over.
+ */
 export function createUserMessage(
   message: string,
-  attachments: AttachmentMeta[] | null = null,
-  widgetSnapshots: WidgetContextSnapshot[] | null = null,
-  chartSelections: ChartSelectionSnapshot[] | null = null,
+  turnIndex: number | undefined,
+  { attachments, widgetSnapshots, chartSelections, artifactComments, id }: {
+    attachments?: AttachmentMeta[] | null;
+    widgetSnapshots?: WidgetContextSnapshot[] | null;
+    chartSelections?: ChartSelectionSnapshot[] | null;
+    artifactComments?: ArtifactCommentsShown | null;
+    id?: string;
+  } = {},
 ): UserMessage {
   const msg: UserMessage = {
-    id: `user-${Date.now()}`,
+    id: id ?? `user-${Date.now()}-${_idSeq++}`,
     role: 'user',
     content: message,
     contentType: 'text',
     timestamp: new Date(),
     isStreaming: false,
+    turnIndex,
+    // Every caller is a send from this view; history builds its own rows.
+    sentHere: true,
   };
   if (attachments && attachments.length > 0) {
     // AttachmentMeta is the upload-time shape (file, dataUrl, type).
@@ -52,11 +68,22 @@ export function createUserMessage(
   if (chartSelections && chartSelections.length > 0) {
     msg.chartSelections = chartSelections;
   }
+  if (artifactComments && artifactComments.comments.length > 0) {
+    msg.artifactComments = artifactComments;
+  }
   return msg;
 }
 
-export function createAssistantMessage(messageId: string | null = null): AssistantMessage {
-  const id = messageId || `assistant-${Date.now()}`;
+/** Whether a user message carried more than its text: an attachment, a chart
+ *  selection, a widget or file comments, which a send of its text alone
+ *  would drop. */
+export function carriesContext(message: UserMessage): boolean {
+  return !!(message.attachments?.length || message.chartSelections?.length || message.widgetSnapshots?.length
+    || message.artifactComments?.comments.length);
+}
+
+/** `turnIndex` as for createUserMessage. */
+export function createAssistantMessage(id: string, turnIndex: number | undefined): AssistantMessage {
   return {
     id,
     role: 'assistant',
@@ -68,6 +95,7 @@ export function createAssistantMessage(messageId: string | null = null): Assista
     reasoningProcesses: {},
     toolCallProcesses: {},
     todoListProcesses: {},
+    turnIndex,
   };
 }
 
@@ -108,11 +136,31 @@ export function createNotificationMessage(
   detail?: string,
 ): NotificationMessage {
   return {
-    id: `notification-${Date.now()}-${_notifSeq++}`,
+    id: `notification-${Date.now()}-${_idSeq++}`,
     role: 'notification',
     content: text,
     variant,
     timestamp: new Date(),
     detail,
+  };
+}
+
+/**
+ * The row a wakeup, or a price alert, draws in the transcript. The id is the
+ * caller's, so the same notice keeps one id across a live stream and every
+ * replay.
+ */
+export function createWakeupMessage(
+  id: string,
+  wakeup: WakeupArrival,
+  timestamp: Date,
+): NotificationMessage {
+  return {
+    id,
+    role: 'notification',
+    content: '',
+    variant: 'info',
+    timestamp,
+    wakeup,
   };
 }

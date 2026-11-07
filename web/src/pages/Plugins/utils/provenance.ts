@@ -11,8 +11,10 @@
 import type {
   BuiltinMcpServer,
   CatalogServer,
+  PluginInfo,
   SkillInfo,
 } from '@/pages/ChatAgent/utils/api';
+import { isBundled } from './pluginSurface';
 
 /**
  * The row tiers a package can own: the user MCP catalog, the skill list, and
@@ -49,4 +51,80 @@ export function isPluginSuppressed(row: PluginProvenancedRow): boolean {
  */
 export function isEffectivelyEnabled(row: PluginProvenancedRow): boolean {
   return !!row.enabled && !isPluginSuppressed(row);
+}
+
+/** The workspace a skill row belongs to: its own for a workspace's skill,
+ *  null for the account's and the platform's. */
+export function skillScopeId(skill: SkillInfo): string | null {
+  return skill.origin === 'workspace' ? (skill.workspace_id ?? null) : null;
+}
+
+/** One plugin's skills, under the plugin they came with. */
+export interface PluginSkillGroup {
+  name: string;
+  rows: SkillInfo[];
+  /** Ships with the app rather than installed by the user. */
+  builtIn: boolean;
+  /** Null when the plugin list has not answered, or does not hold it. */
+  plugin: PluginInfo | null;
+}
+
+export interface SkillSections {
+  /** Added by the user, for every workspace. */
+  own: SkillInfo[];
+  /** Added by the user to one workspace. */
+  workspace: SkillInfo[];
+  /** Installed plugins before the ones that ship with the app, the biggest
+   *  first within each, as the rail lists packages. */
+  plugins: PluginSkillGroup[];
+  /** Served by the platform with no package claiming it: an operator's own
+   *  skills root. Nothing in a stock build. */
+  builtIn: SkillInfo[];
+}
+
+const byName = (a: SkillInfo, b: SkillInfo) => a.name.localeCompare(b.name);
+
+/**
+ * Skills grouped by who put each one here. Every skill list groups the same
+ * way, so a skill sits under the same heading on the Plugins page and in a
+ * workspace's settings.
+ */
+export function skillSections(
+  skills: readonly SkillInfo[],
+  plugins: readonly PluginInfo[] = [],
+): SkillSections {
+  const own: SkillInfo[] = [];
+  const workspace: SkillInfo[] = [];
+  const builtIn: SkillInfo[] = [];
+  const byPlugin = new Map<string, SkillInfo[]>();
+  for (const skill of skills) {
+    const owner = skill.plugin_name;
+    if (skill.origin === 'workspace') workspace.push(skill);
+    else if (owner) byPlugin.set(owner, [...(byPlugin.get(owner) ?? []), skill]);
+    else if (skill.origin === 'user') own.push(skill);
+    else builtIn.push(skill);
+  }
+  const groups = [...byPlugin].map(([name, rows]): PluginSkillGroup => {
+    const plugin = plugins.find((p) => p.name === name) ?? null;
+    return {
+      name,
+      rows: rows.sort(byName),
+      builtIn: plugin ? isBundled(plugin) : rows.every((s) => s.origin === 'platform'),
+      plugin,
+    };
+  });
+  groups.sort(
+    (a, b) =>
+      Number(a.builtIn) - Number(b.builtIn) ||
+      b.rows.length - a.rows.length ||
+      a.name.localeCompare(b.name),
+  );
+  return {
+    own: own.sort(byName),
+    workspace: workspace.sort(
+      (a, b) => byName(a, b) || (a.workspace_id ?? '').localeCompare(b.workspace_id ?? ''),
+    ),
+    plugins: groups,
+    builtIn: builtIn.sort(byName),
+  };
 }

@@ -2,7 +2,7 @@
 
 Decouples thread creation from the message stream. The client gets the real
 thread id immediately in a plain 201, then the generated title arrives on the
-user lifecycle feed when the background flash call lands. The first message
+user lifecycle feed when the Background model's call lands. The first message
 then targets POST /threads/{id}/messages, where ensure_thread_exists finds the
 row and no-ops — identical to any follow-up turn. The legacy new-thread door
 (POST /threads/messages) stays for channels and older clients; rows from either
@@ -24,16 +24,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.config.settings import HOST_MODE
 from src.server.database.conversation import create_thread
-from src.server.database.workspace import (
-    get_or_create_flash_workspace,
-    get_workspace,
-)
+from src.server.services.turn_runtime import requested_workspace, turn_route
 from src.server.models.conversation import (
     ThreadCreateRequest,
     ThreadCreateResponse,
 )
 from src.server.services.thread_title import schedule_title_generation
-from src.server.utils.api import CurrentUserId, require_workspace_owner
+from src.server.dependencies.principal import RunPrincipal, assert_reaches
+from src.server.utils.thread_stamp import stamped_title
 
 from ._deps import SSE_HEADERS, logger, router
 
@@ -92,7 +90,7 @@ def _legacy_sse_response(
 
 @router.post("", status_code=201, response_model=ThreadCreateResponse)
 async def create_thread_endpoint(
-    request: ThreadCreateRequest, http_request: Request, x_user_id: CurrentUserId
+    request: ThreadCreateRequest, http_request: Request, principal: RunPrincipal
 ):
     """Create a thread and return it as a plain 201.
 
@@ -100,24 +98,13 @@ async def create_thread_endpoint(
     still gets the title persisted, and the durable truth is always readable
     via GET /threads/{id}.
     """
-    workspace_id = request.workspace_id
-    if request.agent_mode == "ptc" and not workspace_id:
-        raise HTTPException(
-            status_code=400,
-            detail="workspace_id is required for 'ptc' agent mode.",
-        )
-
-    if request.agent_mode == "flash" and not workspace_id:
-        workspace = await get_or_create_flash_workspace(x_user_id)
-        workspace_id = str(workspace["workspace_id"])
-    else:
-        workspace = await get_workspace(workspace_id)
-    require_workspace_owner(workspace, user_id=x_user_id)
+    x_user_id = principal.user_id
+    workspace = await requested_workspace(x_user_id, request.workspace_id)
 
     # Same credit gate the follow-up /messages call enforces — a quota-blocked
     # client must not mint durable rows + platform title calls through this
-    # door. byok is reported the same way the message path reports it, so both
-    # doors get the same verdict for the same user.
+    # door. byok and the surface are reported the same way the message path
+    # reports them, so both doors get the same verdict for the same user.
     if HOST_MODE != "oss":
         from src.server.database.api_keys import is_byok_active
         from src.server.database.oauth_tokens import has_any_oauth_token
@@ -126,16 +113,23 @@ async def create_thread_endpoint(
         is_byok, has_oauth = await asyncio.gather(
             is_byok_active(x_user_id), has_any_oauth_token(x_user_id)
         )
-        await enforce_credit_limit(x_user_id, byok=is_byok or has_oauth)
+        await enforce_credit_limit(
+            x_user_id, byok=is_byok or has_oauth, surface=request.platform
+        )
 
-    # Mirror the message path's flash auto-detect so msg_type can't disagree
-    # with the runs the thread will actually carry.
-    is_flash = request.agent_mode == "flash" or workspace.get("status") == "flash"
-    msg_type = "flash" if is_flash else "ptc"
+    # Decided where the message path decides it, so the thread is born in the
+    # workspace its runs will actually use.
+    route = turn_route(x_user_id, workspace)
+    await assert_reaches(principal, workspace_id=route.workspace_id)
+    await route.bind(x_user_id, workspace)
+    workspace_id = route.workspace_id
 
-    # Same stamp ensure_thread_exists would apply; also the CAS expectation
-    # the title generator swaps against.
-    stamped_title = request.first_query[:255]
+    # A title the caller named is the thread's own: nothing generates over it,
+    # since the first message may be no words of the user's at all. Else the
+    # same stamp ensure_thread_exists would apply, which is also the CAS
+    # expectation the title generator swaps against.
+    named_title = request.title
+    title_stamp = named_title if named_title is not None else stamped_title(request.first_query)
 
     thread_id = str(uuid4())
     try:
@@ -143,20 +137,22 @@ async def create_thread_endpoint(
             conversation_thread_id=thread_id,
             workspace_id=workspace_id,
             current_status="completed",
-            msg_type=msg_type,
             thread_index=None,
-            title=stamped_title,
+            title=title_stamp,
             platform=request.platform,
+            subagents_allowed=request.subagents_allowed,
+            reasoning_effort=request.reasoning_effort,
+            fast_mode=request.fast_mode,
         )
     except Exception as e:
         logger.exception(f"Error pre-creating thread: {e}")
         raise HTTPException(status_code=500, detail="Failed to create thread")
 
-    title_task = schedule_title_generation(
+    title_task = None if named_title is not None else schedule_title_generation(
         thread_id=thread_id,
         user_id=x_user_id,
         first_query=request.first_query,
-        expected_title=stamped_title,
+        expected_title=title_stamp,
         timezone=request.timezone,
     )
 
@@ -164,8 +160,11 @@ async def create_thread_endpoint(
         thread_id=thread_id,
         workspace_id=str(workspace_id),
         thread_index=row["thread_index"],
-        title=stamped_title,
-        msg_type=msg_type,
+        title=title_stamp,
+        msg_type=row["msg_type"],
+        subagents_allowed=row["subagents_allowed"],
+        reasoning_effort=row.get("reasoning_effort"),
+        fast_mode=row.get("fast_mode"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

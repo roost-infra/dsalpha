@@ -1,15 +1,22 @@
 import { useTranslation } from 'react-i18next';
-import { ListChecks, Search, X } from 'lucide-react';
-import { HeaderButton } from '@/components/mcp/McpPrimitives';
+import { ListChecks } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 /**
- * The tab-level filter row, shared by all three lists: one generous search
- * input, the state pills, and select-mode entry. The filter is client-side
- * and fans open every deck it matches into; a non-'all' state pill does the
- * same. Select flips the rows into checkbox mode with the BulkActionBar.
+ * The row under a list's header, shared by Plugins, Connectors and Skills:
+ * the state pills with their counts, and the way into select mode. The search
+ * is the page header's, so this row only narrows by state. A non-'all' pill
+ * unfolds every group it leaves rows in; Select turns the cells into
+ * checkboxes under the BulkActionBar.
  */
 
 export type StateFilter = 'all' | 'on' | 'off' | 'attention';
+
+export type StateCounts = Record<StateFilter, number>;
+
+/** Below this many rows a list is read whole, and pills or a Select over it
+ *  are furniture. */
+export const CONTROLS_MIN_ROWS = 6;
 
 /** The shared predicate behind the state pills. `attention` is the row's own
  *  definition of needing a human (broken OAuth, missing secret). */
@@ -30,122 +37,75 @@ export function matchesStateFilter(
   }
 }
 
-function FilterPill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className="px-2.5 py-1 text-xs rounded-full transition-colors whitespace-nowrap"
-      style={
-        active
-          ? {
-              color: 'var(--color-text-primary)',
-              backgroundColor: 'var(--color-bg-card)',
-              border: '1px solid var(--color-border-default)',
-            }
-          : {
-              color: 'var(--color-text-tertiary)',
-              border: '1px solid transparent',
-            }
-      }
-    >
-      {children}
-    </button>
-  );
-}
-
 export function ListControls({
-  filter,
-  onFilterChange,
+  counts,
   stateFilter,
   onStateFilterChange,
-  showAttention = false,
   selecting,
   onStartSelect,
-  selectDisabled = false,
+  shownCount,
+  allShownSelected,
+  onSelectShown,
 }: {
-  filter: string;
-  onFilterChange: (value: string) => void;
+  /** Per pill, over the rows the search leaves. */
+  counts: StateCounts;
   stateFilter: StateFilter;
   onStateFilterChange: (value: StateFilter) => void;
-  /** Offer the "Needs attention" pill (lists whose rows can break). */
-  showAttention?: boolean;
   selecting: boolean;
   onStartSelect: () => void;
-  selectDisabled?: boolean;
+  /** The rows on screen, which "Select all" chooses. */
+  shownCount: number;
+  allShownSelected: boolean;
+  onSelectShown: (on: boolean) => void;
 }) {
   const { t } = useTranslation();
+  // A search that left nothing has nothing to narrow or select; the empty
+  // state under it carries the way back.
+  if (counts.all === 0 && stateFilter === 'all' && !selecting) return null;
   const pills: { key: StateFilter; label: string }[] = [
     { key: 'all', label: t('plugins.stateFilter.all') },
     { key: 'on', label: t('plugins.stateFilter.on') },
     { key: 'off', label: t('plugins.stateFilter.off') },
-    ...(showAttention
-      ? [{ key: 'attention' as const, label: t('plugins.stateFilter.attention') }]
-      : []),
+    { key: 'attention', label: t('plugins.stateFilter.attention') },
   ];
+  // A pill that would show nothing is not offered, unless it is the one the
+  // list is narrowed to, which has to stay to be undone.
+  const shown = pills.filter((p) => p.key === 'all' || counts[p.key] > 0 || p.key === stateFilter);
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <div className="relative flex-1 min-w-[12rem]">
-        <Search
-          className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-          style={{ color: 'var(--color-text-tertiary)' }}
-        />
-        <input
-          role="searchbox"
-          value={filter}
-          onChange={(e) => onFilterChange(e.target.value)}
-          placeholder={t('plugins.filter.placeholder')}
-          aria-label={t('plugins.filter.placeholder')}
-          spellCheck={false}
-          className="text-sm pl-9 pr-8 py-2 rounded-md w-full"
-          style={{
-            color: 'var(--color-text-primary)',
-            backgroundColor: 'var(--color-bg-input)',
-            border: '1px solid var(--color-border-muted)',
-          }}
-        />
-        {filter && (
+    <div className="list-controls">
+      <div role="group" aria-label={t('plugins.stateFilter.label')} className="list-controls-pills">
+        {shown.map((pill) => (
           <button
-            type="button"
-            aria-label={t('plugins.filter.clear')}
-            onClick={() => onFilterChange('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-foreground/10"
-            style={{ color: 'var(--color-text-tertiary)' }}
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      <div className="flex items-center gap-0.5">
-        {pills.map((pill) => (
-          <FilterPill
             key={pill.key}
-            active={stateFilter === pill.key}
+            type="button"
+            aria-pressed={stateFilter === pill.key}
+            className={cn('surface-chip', stateFilter === pill.key && 'is-on')}
             onClick={() => onStateFilterChange(pill.key)}
           >
             {pill.label}
-          </FilterPill>
+            <span className="surface-count">{counts[pill.key]}</span>
+          </button>
         ))}
       </div>
-      {!selecting && (
-        <HeaderButton
-          variant="secondary"
-          icon={ListChecks}
-          onClick={onStartSelect}
-          disabled={selectDisabled}
-        >
-          {t('plugins.bulk.select')}
-        </HeaderButton>
-      )}
+      <div className="list-controls-side">
+        {selecting ? (
+          <button
+            type="button"
+            className="list-controls-btn"
+            disabled={shownCount === 0}
+            onClick={() => onSelectShown(!allShownSelected)}
+          >
+            {allShownSelected
+              ? t('plugins.bulk.selectNone')
+              : t('plugins.bulk.selectAll', { count: shownCount })}
+          </button>
+        ) : (
+          <button type="button" className="list-controls-btn" onClick={onStartSelect}>
+            <ListChecks className="h-3.5 w-3.5" aria-hidden />
+            {t('plugins.bulk.select')}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

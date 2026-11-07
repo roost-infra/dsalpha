@@ -8,10 +8,10 @@ import yaml
 from ptc_agent.agent.middleware.skills.registry import (
     SKILL_REGISTRY,
     get_command_to_skill_map,
-    get_sandbox_skill_names,
     get_skill,
     get_skill_registry,
     list_skills,
+    skills_outside_sandbox,
 )
 
 # New HTML-output skills under test.
@@ -26,41 +26,31 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 @pytest.mark.parametrize("name", NEW_SKILLS)
 def test_skill_registered(name):
-    """Both new skills are present in the registry as plain, tool-less PTC skills."""
+    """Both new skills are present in the registry as plain, tool-less skills."""
     assert name in SKILL_REGISTRY
     skill = SKILL_REGISTRY[name]
     assert skill.name == name
-    assert skill.tools == []
+    assert skill.tool_names == ()
     assert skill.command == EXPECTED_COMMANDS[name]
     assert skill.skill_md_path == f"skills/{name}/SKILL.md"
 
 
 @pytest.mark.parametrize("name", NEW_SKILLS)
-def test_exposure_is_ptc(name):
-    """Flash has no sandbox/filesystem, so these are PTC-only."""
-    assert SKILL_REGISTRY[name].exposure == "ptc"
-
-
-@pytest.mark.parametrize("name", NEW_SKILLS)
 def test_included_in_sandbox_sync_set(name):
-    """get_sandbox_skill_names() picks up the new PTC skills automatically."""
-    assert name in get_sandbox_skill_names()
+    """The sandbox sync picks up the new skills automatically."""
+    assert name not in skills_outside_sandbox()
 
 
 @pytest.mark.parametrize("name", NEW_SKILLS)
-def test_exposed_to_ptc_not_flash(name):
-    """Mode filtering: visible to PTC, hidden from Flash."""
-    assert name in get_skill_registry("ptc")
-    assert name not in get_skill_registry("flash")
-    assert get_skill(name, mode="ptc") is not None
-    assert get_skill(name, mode="flash") is None
+def test_enabled_in_registry(name):
+    assert name in get_skill_registry()
+    assert get_skill(name) is not None
 
 
 @pytest.mark.parametrize("name", NEW_SKILLS)
-def test_listed_for_ptc(name):
-    """Non-hidden skills appear in the PTC listing."""
-    ptc_names = {entry["name"] for entry in list_skills("ptc")}
-    assert name in ptc_names
+def test_listed(name):
+    """Non-hidden skills appear in the listing."""
+    assert name in {entry["name"] for entry in list_skills()}
 
 
 @pytest.mark.parametrize("name", NEW_SKILLS)
@@ -80,7 +70,7 @@ def test_skill_md_exists_and_frontmatter_parses(name, shipped_skill_md):
 
 def test_command_shortcuts():
     """html-report is invocable via the /html-report shortcut; ui-design has none."""
-    commands = get_command_to_skill_map("ptc")
+    commands = get_command_to_skill_map()
     assert commands.get("html-report") == "html-report"
     assert "ui-design" not in commands.values()
 

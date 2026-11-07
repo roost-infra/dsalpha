@@ -16,6 +16,14 @@ from collections import Counter
 import pytest
 import yaml
 
+from ptc_agent.agent.middleware.runtime_context import (
+    HARNESS_BLOCKS,
+    DurableUpdate,
+    render_update_row,
+)
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_update_kind,
+)
 from ptc_agent.agent.prompts import guidance_template_vars, init_loader
 from ptc_agent.agent.prompts.loader import PromptLoader
 
@@ -33,7 +41,7 @@ ENVELOPE_CASES: dict[str, dict] = {
         "market": "US",
         "surface": "market_view",
         "symbol": "AAPL",
-        "origin": "automation",
+        "started_by": "automation",
         "is_subagent": False,
         "surface_rules": "Surface market_view: ...",
     },
@@ -48,24 +56,7 @@ ENVELOPE_CASES: dict[str, dict] = {
         "handoff": False,
         "reset": False,
     },
-    "envelope/updates.md.j2": {
-        "updates": [
-            {
-                "kind": "market_watch",
-                "text": "AAPL 232.10 (+1.2%) as of 15:01 ET",
-                "provenance": "market_watch",
-                "created_at": "2026-09-08T19:01Z",
-                "schema_version": 1,
-            },
-            {
-                "kind": "agentmd_changed",
-                "text": "agent.md gained a Thread Index section.",
-                "provenance": "another thread in this workspace",
-                "created_at": "2026-09-08T14:02Z",
-                "schema_version": 1,
-            },
-        ]
-    },
+    "envelope/updates.md.j2": {"stamp": "AAPL 232.10 (+1.2%) as of 15:01 ET"},
     "envelope/update_row.md.j2": {
         "update": {
             "kind": "agent_md_changed",
@@ -82,7 +73,6 @@ ENVELOPE_CASES: dict[str, dict] = {
     "envelope/baseline_memory.md.j2": {
         "path": ".agents/user/memory/memory.md",
         "content": "- [Style](feedback_style.md) how they want reports written",
-        "readonly": False,
     },
     "envelope/baseline_identity.md.j2": {
         "name": "Alan",
@@ -96,6 +86,13 @@ ENVELOPE_CASES: dict[str, dict] = {
     },
     "envelope/baseline_skills.md.j2": {
         "content": "## Available Skills\n\n- **pdf**: read and write PDFs",
+    },
+    "envelope/baseline_activity.md.j2": {
+        "content": "Recent threads, this one aside:\n"
+        '- "NVDA earnings" in Semis: finished, 2026-10-04 (thread_id `t1`)',
+    },
+    "envelope/baseline_scratchpad.md.j2": {
+        "content": "/home/workspace/NVDA/.agents/scratchpad/a1b2c3d4/",
     },
 }
 
@@ -112,6 +109,8 @@ BASELINE_TEMPLATES = [
     "envelope/baseline_files.md.j2",
     "envelope/baseline_mcp_servers.md.j2",
     "envelope/baseline_skills.md.j2",
+    "envelope/baseline_activity.md.j2",
+    "envelope/baseline_scratchpad.md.j2",
 ]
 
 # Baseline fragments that must render their wrapper even with nothing to put in
@@ -181,6 +180,28 @@ def test_state_only_fragments_are_level_agnostic():
         )
 
 
+@pytest.mark.parametrize("allowed", [False, True])
+def test_the_subagent_switch_row_is_level_agnostic(allowed):
+    """The row persists and is replayed to whatever model runs next, so its
+    words cannot depend on the level the writing model ran at."""
+    update = {
+        "kind": "subagents_switched",
+        "text": "",
+        "provenance": {"source": "user", "allowed": allowed},
+        "created_at": "2026-09-08T14:02:00+00:00",
+        "schema_version": 1,
+    }
+    renders = {
+        init_loader().render(
+            "envelope/update_row.md.j2", **guidance_template_vars(level), update=update
+        )
+        for level in ("lean", "detailed")
+    }
+    assert len(renders) == 1
+    (text,) = renders
+    assert "subagents" in text
+
+
 class TestBaselineDeterminism:
     """These land in the cached per-thread prefix; a byte of wobble costs the
     whole remaining thread."""
@@ -227,19 +248,27 @@ class TestBaselineDeterminism:
         )
 
     def test_the_harness_blocks_keep_their_wrapper_tags(self):
-        """`<mcp-servers>` and `<skills>` are what a change row names by hand,
-        and what the tool guide points the model at."""
+        """Their tags are what a change row names by hand, and what the prompt
+        points the model at."""
         servers = _render("envelope/baseline_mcp_servers.md.j2", "detailed")
         assert "<mcp-servers>" in servers and "</mcp-servers>" in servers
-        assert "tools/docs/<server_name>/" in servers, "the import lead is gone"
+        assert ".agents/tools/docs/<server_name>/" in servers, "the import lead is gone"
         assert "get_quote" in servers
         skills = _render("envelope/baseline_skills.md.j2", "detailed")
         assert "<skills>" in skills and "</skills>" in skills
         assert "## Available Skills" in skills, "the manifest is stated verbatim"
+        activity = _render("envelope/baseline_activity.md.j2", "detailed")
+        assert "<activity>" in activity and "</activity>" in activity
+        assert "NVDA earnings" in activity
 
     @pytest.mark.parametrize(
         "template",
-        ["envelope/baseline_mcp_servers.md.j2", "envelope/baseline_skills.md.j2"],
+        [
+            "envelope/baseline_mcp_servers.md.j2",
+            "envelope/baseline_skills.md.j2",
+            "envelope/baseline_activity.md.j2",
+            "envelope/baseline_scratchpad.md.j2",
+        ],
     )
     def test_a_harness_block_with_nothing_in_it_renders_nothing(self, template):
         """Unlike a file, nobody was supposed to write these. An empty labelled
@@ -262,30 +291,6 @@ class TestBaselineDeterminism:
         )
         assert "<memory" in memory and "does not exist yet" not in memory
         assert "exists yet" in memory
-
-    def test_a_build_with_no_filesystem_is_not_told_to_write_memory(self):
-        """Flash reads the index but has no tool that could create the file."""
-        loader = init_loader()
-        absent = loader.render(
-            "envelope/baseline_memory.md.j2",
-            path=".agents/user/memory/memory.md",
-            content="",
-            readonly=True,
-        )
-        assert "exists yet" in absent and "create a typed detail file" not in absent
-        present = loader.render(
-            "envelope/baseline_memory.md.j2",
-            path=".agents/user/memory/memory.md",
-            content="- [Style](feedback_style.md) how they want reports written",
-            readonly=True,
-        )
-        assert "Read-only here" in present
-        writable = loader.render(
-            "envelope/baseline_memory.md.j2",
-            path=".agents/user/memory/memory.md",
-            content="- [Style](feedback_style.md) how they want reports written",
-        )
-        assert "Read-only" not in writable
 
 
 class TestMissingKwargsDropTheLine:
@@ -319,7 +324,7 @@ class TestMissingKwargsDropTheLine:
         assert loader.render("envelope/turn.md.j2", surface="web").strip() == (
             "Surface `web`"
         )
-        assert loader.render("envelope/turn.md.j2", origin="automation").strip() == (
+        assert loader.render("envelope/turn.md.j2", started_by="automation").strip() == (
             "Started by automation"
         )
 
@@ -354,61 +359,34 @@ class TestUpdates:
         rendered = _render("envelope/updates.md.j2", "detailed")
         assert "\nAAPL 232.10 (+1.2%) as of 15:01 ET\n" in rendered
 
-    def test_other_kinds_carry_their_provenance(self):
-        rendered = _render("envelope/updates.md.j2", "lean")
-        assert "agentmd_changed" in rendered
-        assert "another thread in this workspace" in rendered
-
-    def test_provenance_may_be_a_mapping(self):
-        """The writer side records provenance as a bag of fields; a caller that
-        hands over a bare label reads the same. Both have to land as text."""
-        rendered = init_loader().render(
-            "envelope/updates.md.j2",
-            updates=[
-                {
-                    "kind": "memory_changed",
-                    "text": "Two pointers added to the user memory index.",
-                    "provenance": {"source": "the workspace tier"},
-                    "created_at": "2026-09-08T14:02Z",
-                    "schema_version": 2,
-                }
-            ],
-        )
-        assert "the workspace tier" in rendered
-        assert "{" not in rendered, "a provenance mapping leaked its repr"
-
-    def test_schema_version_is_not_rendered(self):
-        """It is dispatch machinery for the envelope, not prompt surface."""
-        assert "schema_version" not in _render("envelope/updates.md.j2", "detailed")
-
 
 class TestHarnessRows:
-    """The two rows that report a harness block rather than a file."""
+    """The rows that report a harness block rather than a file.
 
-    @pytest.mark.parametrize(
-        ("kind", "subject", "block"),
-        [
-            ("mcp_servers_changed", "MCP server list", "<mcp-servers>"),
-            ("skills_changed", "skills manifest", "<skills>"),
-        ],
-    )
-    def test_the_row_names_its_subject_and_block(self, kind, subject, block):
-        rendered = init_loader().render(
-            "envelope/update_row.md.j2",
-            update={
-                "kind": kind,
-                "text": "--- a\n+++ b\n+a new server",
-                "provenance": {"source": "harness"},
-                "created_at": "2026-09-08T14:02:00+00:00",
-                "schema_version": 1,
-            },
+    Parametrized over the registry, so a block added there is held to the
+    same prose without a test of its own.
+    """
+
+    @pytest.mark.parametrize("kind", list(HARNESS_BLOCKS))
+    def test_the_row_names_its_subject_and_block(self, kind):
+        block = HARNESS_BLOCKS[kind]
+        rendered = render_update_row(
+            DurableUpdate(
+                kind=harness_update_kind(kind),
+                schema_version=1,
+                text="--- a\n+++ b\n+a new server",
+                provenance={"source": "harness"},
+            )
         )
-        assert f"The {subject} changed after the copy in {block} was frozen" in rendered
+        assert rendered.splitlines()[0] == (
+            f"The {block.subject} changed after the copy in {block.label} was frozen"
+        )
+        assert f"compares it with the frozen copy in {block.label}" in rendered
         assert "+a new server" in rendered
         # No writer to credit, and no file to send the model off to read.
         assert "last edit by" not in rendered
         assert "the file" not in rendered
-        assert f"**{kind}**" not in rendered, "the labelled fallback, not the prose"
+        assert "**" not in rendered, "the labelled fallback, not the prose"
 
 
 class TestTheRosterSplit:

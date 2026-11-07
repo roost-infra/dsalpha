@@ -37,6 +37,14 @@ def mock_ticker():
         yield stock
 
 
+@pytest.fixture
+def mock_search():
+    """Yahoo search, the news fallback; empty unless a test sets ``.news``."""
+    with patch("plugins.yfinance.yf_analysis_mcp_server.yf.Search") as mock_cls:
+        mock_cls.return_value.news = []
+        yield mock_cls
+
+
 def _df(data, columns=None, index=None):
     return pd.DataFrame(data, columns=columns, index=index)
 
@@ -274,12 +282,12 @@ class TestGetNews:
         assert_ok_envelope(result, symbol="AAPL", count=2)
         assert result["data"][0]["title"] == "Apple announces new product"
 
-    def test_empty(self, mock_ticker):
+    def test_empty(self, mock_ticker, mock_search):
         mock_ticker.get_news.return_value = []
         result = get_news("AAPL")
         assert_ok_envelope(result, count=0)
 
-    def test_none(self, mock_ticker):
+    def test_none(self, mock_ticker, mock_search):
         mock_ticker.get_news.return_value = None
         result = get_news("AAPL")
         assert_ok_envelope(result, count=0)
@@ -303,15 +311,77 @@ class TestGetNews:
         result = get_news("AAPL")
         assert result["data"][0]["score"] is None
 
-    def test_tab_parameter(self, mock_ticker):
+    def test_tab_parameter(self, mock_ticker, mock_search):
         mock_ticker.get_news.return_value = []
         get_news("AAPL", count=5, tab="press releases")
         mock_ticker.get_news.assert_called_once_with(count=5, tab="press releases")
 
-    def test_exception(self, mock_ticker):
+    def test_empty_primary_falls_back_to_search_in_the_same_shape(
+        self, mock_ticker, mock_search
+    ):
+        mock_ticker.get_news.return_value = []
+        mock_search.return_value.news = [
+            {
+                "uuid": "abc",
+                "title": "Headline",
+                "publisher": "Wire",
+                "link": "https://example.com/a",
+                "providerPublishTime": 1700000000,
+                "type": "STORY",
+                "relatedTickers": ["AAPL", "MSFT"],
+            }
+        ]
+        result = get_news("AAPL", count=5)
+        assert_ok_envelope(result, symbol="AAPL", count=1)
+        assert result["data"][0] == {
+            "id": "abc",
+            "relatedTickers": ["AAPL", "MSFT"],
+            "content": {
+                "title": "Headline",
+                "contentType": "STORY",
+                "pubDate": "2023-11-14T22:13:20+00:00",
+                "provider": {"displayName": "Wire"},
+                "canonicalUrl": {"url": "https://example.com/a"},
+            },
+        }
+
+    def test_press_releases_never_fall_back(self, mock_ticker, mock_search):
+        mock_ticker.get_news.return_value = []
+        result = get_news("AAPL", tab="press releases")
+        assert_ok_envelope(result, count=0)
+        mock_search.assert_not_called()
+
+    def test_a_failed_search_leaves_the_empty_result(self, mock_ticker, mock_search):
+        mock_ticker.get_news.return_value = []
+        mock_search.side_effect = Exception("down")
+        assert_ok_envelope(get_news("AAPL"), count=0)
+
+    def test_exception(self, mock_ticker, mock_search):
         mock_ticker.get_news.side_effect = Exception("API error")
         result = get_news("AAPL")
         assert_error(result, "upstream_error")
+
+    def test_raising_primary_falls_back_to_search(self, mock_ticker, mock_search):
+        mock_ticker.get_news.side_effect = Exception("withdrawn endpoint")
+        mock_search.return_value.news = [
+            {"uuid": "abc", "title": "Headline", "providerPublishTime": 1700000000}
+        ]
+        result = get_news("AAPL", count=5)
+        assert_ok_envelope(result, symbol="AAPL", count=1)
+        assert result["data"][0]["content"]["title"] == "Headline"
+
+    def test_press_releases_error_is_not_masked_by_search(
+        self, mock_ticker, mock_search
+    ):
+        mock_ticker.get_news.side_effect = Exception("withdrawn endpoint")
+        assert_error(get_news("AAPL", tab="press releases"), "upstream_error")
+        mock_search.assert_not_called()
+
+    def test_unknown_tab_error_is_not_masked_by_search(self, mock_ticker, mock_search):
+        mock_ticker.get_news.side_effect = ValueError("Invalid tab name")
+        mock_search.return_value.news = [{"uuid": "abc", "title": "General headline"}]
+        assert_error(get_news("AAPL", tab="press_releases"), "upstream_error")
+        mock_search.assert_not_called()
 
 
 # --- get_analyst_price_targets ---
@@ -509,3 +579,81 @@ class TestGetMajorHolders:
         )
         result = get_major_holders("AAPL")
         assert_error(result, "upstream_error")
+
+
+# --- estimate periods after a report ---
+
+
+class TestEstimatePeriods:
+    @staticmethod
+    def _stock(ends, reported="2026-09-30"):
+        stock = MagicMock()
+        stock._analysis._earnings_trend = {
+            None: {"trend": [{"period": p, "endDate": e} for p, e in ends.items()]}
+        }
+        stock.earnings_history = _df(
+            [[2.1]], columns=["epsActual"], index=pd.DatetimeIndex([reported])
+        )
+        stock.earnings_estimate = _df(
+            [[2.9, 1.85, 0.57], [2.15, 2.01, 0.07], [9.4, 7.46, 0.27], [10.6, 8.8, 0.2]],
+            columns=["avg", "yearAgoEps", "growth"],
+            index=pd.Index(["0q", "+1q", "0y", "+1y"], name="period"),
+        )
+        return stock
+
+    def test_trend_cached_as_a_list_by_older_yfinance(self, mock_ticker):
+        stock = self._stock({"0q": "2026-09-30", "+1q": "2027-03-31", "0y": "2027-09-30", "+1y": "2027-09-30"})
+        ends = stock._analysis._earnings_trend[None]["trend"]
+        stock._analysis._earnings_trend = ends
+        mock_ticker.configure_mock(**{k: getattr(stock, k) for k in ("_analysis", "earnings_history", "earnings_estimate")})
+        rows = {r["period"]: r for r in get_earnings_estimates("AAPL")["data"]}
+
+        assert rows["0q"]["year_ago_stale"] is True
+        assert "year_ago_stale" not in rows["+1q"]
+
+    def test_rolled_periods_lose_their_year_ago_figures(self, mock_ticker):
+        stock = self._stock(
+            {"0q": "2026-09-30", "+1q": "2027-03-31", "0y": "2027-09-30", "+1y": "2027-09-30"}
+        )
+        mock_ticker.configure_mock(**{k: getattr(stock, k) for k in ("_analysis", "earnings_history", "earnings_estimate")})
+        rows = {r["period"]: r for r in get_earnings_estimates("AAPL")["data"]}
+
+        assert rows["0q"]["period_end"] == "2026-09-30"
+        for period in ("0q", "0y", "+1y"):
+            assert rows[period]["year_ago_stale"] is True
+            assert rows[period]["yearagoeps"] is None and rows[period]["growth"] is None
+        assert rows["+1q"]["yearagoeps"] == 2.01
+        assert "year_ago_stale" not in rows["+1q"]
+
+    def test_calendar_year_company_keeps_its_fourth_quarter(self, mock_ticker):
+        stock = self._stock(
+            {"0q": "2026-09-30", "+1q": "2026-12-31", "0y": "2026-12-31", "+1y": "2027-12-31"},
+            reported="2026-06-30",
+        )
+        mock_ticker.configure_mock(**{k: getattr(stock, k) for k in ("_analysis", "earnings_history", "earnings_estimate")})
+        rows = get_earnings_estimates("0700.HK")["data"]
+
+        assert not any("year_ago_stale" in r for r in rows)
+
+
+class TestMajorHoldersKey:
+    def test_rows_are_keyed_breakdown(self, mock_ticker):
+        mock_ticker.major_holders = _df(
+            [[0.016], [7724.0]],
+            columns=["Value"],
+            index=pd.Index(["insidersPercentHeld", "institutionsCount"]),
+        )
+        data = get_major_holders("AAPL")["data"]
+        assert data[0] == {"breakdown": "insidersPercentHeld", "value": 0.016}
+
+
+class TestGradeDatesAreUtc:
+    def test_naive_grade_times_are_marked_utc(self, mock_ticker):
+        mock_ticker.upgrades_downgrades = _df(
+            [["JP Morgan", "Overweight"]],
+            columns=["Firm", "ToGrade"],
+            index=pd.DatetimeIndex(["2026-11-03 18:16:44"], name="GradeDate"),
+        )
+        result = get_upgrades_downgrades("AAPL")
+        assert result["timezone"] == "UTC"
+        assert result["data"][0]["gradedate"] == "2026-11-03 18:16:44"

@@ -1,10 +1,6 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from '@/components/ui/use-toast';
-import {
-  useBindPluginSecrets,
-  useUpgradePluginSseEntries,
-} from '@/hooks/usePlugins';
+import { useUpgradePluginSseEntries } from '@/hooks/usePlugins';
 import {
   formatApiErrorDetail,
   type PluginDiagnostic,
@@ -13,20 +9,18 @@ import {
 } from '@/pages/ChatAgent/utils/api';
 import { PluginDialog } from './PluginDialog';
 import { PluginReportStep } from './PluginReportStep';
-import { PluginBindingsStep } from './PluginBindingsStep';
 
 /**
- * The tail of every install-shaped response: the report, then the credentials
- * the package declared. Install and update return the same
- * `PluginInstallResponse`, so both mount this rather than each deciding for
- * itself how much of the response is worth showing — an update reaches the
- * sse-upgrade consent and the secret bindings because the response carries
- * them, not because a second surface was built to carry them too.
+ * The tail of every install-shaped response: the report. Install and update
+ * return the same `PluginInstallResponse`, so both show it through
+ * `usePluginOutcome` rather than each deciding for itself how much of the
+ * response is worth showing; an update reaches the sse-upgrade consent because
+ * the response carries it, not because a second surface was built to carry it.
+ *
+ * The keys a plugin declares are asked for before it installs, never after:
+ * its servers are checked with them first, and nothing installs until they
+ * pass.
  */
-
-type OutcomePhase =
-  | { kind: 'report'; result: PluginInstallResponse }
-  | { kind: 'bindings'; result: PluginInstallResponse; error: string | null };
 
 const unique = (values: string[]) => [...new Set(values)];
 
@@ -46,7 +40,7 @@ const diagnosticKey = (d: PluginDiagnostic) =>
  * replaces: components merge by key because the follow-up restates those,
  * the name lists union because each side saw only its own half, and the
  * counts sum because each counted what it created. Replacing `secrets_required`
- * would empty it outright and skip the bindings step.
+ * would drop what the first half reported.
  *
  * Diagnostics dedupe because an upgrade re-derives its plans from the stored
  * manifest, so a finding from install time comes back verbatim.
@@ -79,109 +73,143 @@ function mergeReport(
     dropped_files: unique([...base.dropped_files, ...followUp.dropped_files]),
     servers_created: base.servers_created + followUp.servers_created,
     skills_created: base.skills_created + followUp.skills_created,
+    subagents_created: (base.subagents_created ?? 0) + (followUp.subagents_created ?? 0),
   };
 }
 
-export function PluginOutcome({
-  response,
-  title,
-  onDone,
-}: {
+/** An install or update that went through, and the keys typed for it. */
+export interface PluginOutcomeOf {
   response: PluginInstallResponse;
+  /** The keys the user typed for this attempt, saved to Secrets with it. */
+  savedKeys: string[];
+}
+
+interface OutcomeActions {
+  onDone: () => void;
+  /** Given where the plugin is somewhere else to go (an install); absent on
+   *  an update, which was opened from the plugin itself. */
+  onOpenPlugin?: (name: string) => void;
+}
+
+export interface PluginOutcomeView {
+  /** An sse upgrade is in flight; leaving would drop its report. */
+  upgrading: boolean;
+  body: ReactNode;
+  footer: ReactNode;
+}
+
+/**
+ * The report for `outcome`, and the buttons under it, for whichever dialog
+ * shows it. Consenting to an sse upgrade rewrites the report in place, so the
+ * report on screen is held here, against the outcome it grew from: a new
+ * outcome starts from its own response.
+ */
+export function usePluginOutcome(outcome: PluginOutcomeOf, actions: OutcomeActions): PluginOutcomeView;
+export function usePluginOutcome(
+  outcome: PluginOutcomeOf | null,
+  actions: OutcomeActions,
+): PluginOutcomeView | null;
+export function usePluginOutcome(
+  outcome: PluginOutcomeOf | null,
+  { onDone, onOpenPlugin }: OutcomeActions,
+): PluginOutcomeView | null {
+  const { t } = useTranslation();
+  const upgradeSse = useUpgradePluginSseEntries();
+  const [upgraded, setUpgraded] = useState<{
+    of: PluginOutcomeOf;
+    result: PluginInstallResponse | null;
+    error: string | null;
+  } | null>(null);
+  if (!outcome) return null;
+  const mine = upgraded?.of === outcome ? upgraded : null;
+  const result = mine?.result ?? outcome.response;
+  const upgrading = upgradeSse.isPending;
+
+  async function upgrade(keys: string[]) {
+    if (!outcome) return;
+    setUpgraded({ of: outcome, result, error: null });
+    try {
+      const followUp = await upgradeSse.mutateAsync({ name: result.plugin.name, keys });
+      const next = { plugin: followUp.plugin, report: mergeReport(result.report, followUp.report) };
+      setUpgraded({ of: outcome, result: next, error: null });
+    } catch (err) {
+      setUpgraded({ of: outcome, result, error: formatApiErrorDetail(err) });
+    }
+  }
+
+  const primary = {
+    color: 'var(--color-btn-primary-text)',
+    backgroundColor: 'var(--color-btn-primary-bg)',
+  };
+  return {
+    upgrading,
+    body: (
+      <PluginReportStep
+        report={result.report}
+        plugin={result.plugin.name}
+        savedKeys={outcome.savedKeys}
+        onUpgradeSse={(keys) => void upgrade(keys)}
+        upgrading={upgrading}
+        upgradeError={mine?.error ?? null}
+        onLeave={onDone}
+      />
+    ),
+    // Where the plugin can be opened, opening it is the next thing to do, and
+    // Done steps back to a quiet second place. Both are held mid-upgrade:
+    // leaving unmounts the step that is going to report what landed.
+    footer: (
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onDone}
+          disabled={upgrading}
+          className={
+            onOpenPlugin
+              ? 'px-3 py-1.5 text-xs rounded-md transition-colors hover:bg-foreground/10 disabled:opacity-50'
+              : 'px-3 py-1.5 text-xs rounded-md disabled:opacity-50'
+          }
+          style={onOpenPlugin ? { color: 'var(--color-text-secondary)' } : primary}
+        >
+          {t('common.done')}
+        </button>
+        {onOpenPlugin && (
+          <button
+            type="button"
+            onClick={() => onOpenPlugin(result.plugin.name)}
+            disabled={upgrading}
+            className="px-3 py-1.5 text-xs rounded-md disabled:opacity-50"
+            style={primary}
+          >
+            {t('plugins.install.openPlugin')}
+          </button>
+        )}
+      </div>
+    ),
+  };
+}
+
+/** The report in a dialog of its own, for an install or update started
+ *  outside the install wizard. */
+export function PluginOutcome({
+  outcome,
+  title,
+  ...actions
+}: {
+  outcome: PluginOutcomeOf;
   /** Names the action that produced the report (installed / updated). */
   title: string;
-  onDone: () => void;
-}) {
+} & OutcomeActions) {
   const { t } = useTranslation();
-  // Seeded from the response and then owned here: consenting to an sse upgrade
-  // rewrites the report in place, so what is on screen outlives the mutation.
-  const [phase, setPhase] = useState<OutcomePhase>({
-    kind: 'report',
-    result: response,
-  });
-
-  const upgradeSse = useUpgradePluginSseEntries();
-  const bindSecrets = useBindPluginSecrets();
-
-  async function handleUpgradeSse(keys: string[]) {
-    if (phase.kind !== 'report') return;
-    try {
-      const followUp = await upgradeSse.mutateAsync({
-        name: phase.result.plugin.name,
-        keys,
-      });
-      setPhase({
-        kind: 'report',
-        result: {
-          plugin: followUp.plugin,
-          report: mergeReport(phase.result.report, followUp.report),
-        },
-      });
-    } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: t('plugins.install.sseUpgradeFailed'),
-        description: formatApiErrorDetail(err),
-      });
-    }
-  }
-
-  function continueFromReport() {
-    if (phase.kind !== 'report') return;
-    if (phase.result.report.secrets_required.length > 0) {
-      setPhase({ kind: 'bindings', result: phase.result, error: null });
-    } else {
-      onDone();
-    }
-  }
-
-  async function handleBind(secrets: Record<string, string>) {
-    if (phase.kind !== 'bindings') return;
-    try {
-      await bindSecrets.mutateAsync({ name: phase.result.plugin.name, secrets });
-      toast({
-        title: t('plugins.install.boundTitle'),
-        description: t('plugins.install.boundDesc', {
-          count: Object.keys(secrets).length,
-        }),
-      });
-      onDone();
-    } catch (err) {
-      setPhase({ ...phase, error: formatApiErrorDetail(err) });
-    }
-  }
-
+  const view = usePluginOutcome(outcome, actions);
   return (
     <PluginDialog
       title={title}
-      subtitle={
-        phase.kind === 'report'
-          ? t('plugins.install.stepReport')
-          : t('plugins.install.stepBindings')
-      }
-      onClose={onDone}
+      subtitle={t('plugins.install.stepReport')}
+      dismissable={!view.upgrading}
+      onClose={actions.onDone}
+      footer={view.footer}
     >
-      {phase.kind === 'report' ? (
-        <PluginReportStep
-          report={phase.result.report}
-          onUpgradeSse={handleUpgradeSse}
-          upgrading={upgradeSse.isPending}
-          onContinue={continueFromReport}
-          continueLabel={
-            phase.result.report.secrets_required.length > 0
-              ? t('plugins.install.continueToBindings')
-              : t('common.done')
-          }
-        />
-      ) : (
-        <PluginBindingsStep
-          required={phase.result.report.secrets_required}
-          onBind={handleBind}
-          binding={bindSecrets.isPending}
-          error={phase.error}
-          onSkip={onDone}
-        />
-      )}
+      {view.body}
     </PluginDialog>
   );
 }

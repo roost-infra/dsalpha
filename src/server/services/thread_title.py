@@ -1,4 +1,4 @@
-"""Thread title generation: one-shot flash LLM call on the first user query.
+"""Thread title generation: one-shot Background model call on the first user query.
 
 Companion to ``POST /api/v1/threads`` (thread pre-creation). Runs detached
 from the request that spawned it, never raises, and persists through a
@@ -13,11 +13,12 @@ import logging
 import re
 import secrets
 from datetime import datetime, timezone as dt_timezone
-from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
 from src.server.database.conversation import update_thread_title_cas
+from src.server.utils.thread_stamp import message_to_title
+from src.utils.timezone_utils import zone_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +34,10 @@ _TITLE_MAX_CHARS = 100
 
 def _current_time_context(tz_name: str | None) -> str:
     """User-local 'Weekday, YYYY-MM-DD HH:MM (tz)'; UTC on missing/bad tz."""
-    tz, label = dt_timezone.utc, "UTC"
-    if tz_name:
-        try:
-            tz, label = ZoneInfo(tz_name), tz_name
-        except Exception:
-            pass
-    return f"{datetime.now(tz).strftime('%A, %Y-%m-%d %H:%M')} ({label})"
+    tz = zone_or_none(tz_name)
+    if tz is None:
+        tz, tz_name = dt_timezone.utc, "UTC"
+    return f"{datetime.now(tz).strftime('%A, %Y-%m-%d %H:%M')} ({tz_name})"
 
 
 def _build_system_prompt(tz_name: str | None) -> str:
@@ -78,7 +76,7 @@ class ThreadTitleSchema(BaseModel):
 
 def _build_user_prompt(first_query: str) -> str:
     nonce = secrets.token_hex(8)
-    truncated = first_query[:_QUERY_PROMPT_CHARS]
+    truncated = message_to_title(first_query)[:_QUERY_PROMPT_CHARS]
     return (
         f"<first_message_{nonce} user_supplied=\"true\">\n"
         f"{truncated}\n"
@@ -100,10 +98,10 @@ async def generate_thread_title(
     thread_id: str,
     user_id: str,
     first_query: str,
-    expected_title: str,
+    expected_title: str | None,
     llm_service,
     timezone: str | None = None,
-) -> tuple[str, bool]:
+) -> tuple[str | None, bool]:
     """Generate + CAS-persist a title. Never raises (except CancelledError).
 
     ``timezone`` (IANA) localizes the current-time context injected into the
@@ -119,7 +117,7 @@ async def generate_thread_title(
                 system_prompt=_build_system_prompt(timezone),
                 user_prompt=_build_user_prompt(first_query),
                 response_schema=ThreadTitleSchema,
-                mode="flash",
+                slot="background",
             ),
             timeout=_LLM_TIMEOUT_S,
         )
@@ -205,7 +203,7 @@ def schedule_title_generation(
     thread_id: str,
     user_id: str,
     first_query: str,
-    expected_title: str,
+    expected_title: str | None,
     timezone: str | None = None,
 ) -> asyncio.Task | None:
     """Detach a title generation for *thread_id*; None when no LLM is wired.

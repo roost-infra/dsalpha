@@ -47,8 +47,8 @@ def test_no_user_id_closes_every_user_scoped_surface(workflows):
 
 
 def test_no_store_closes_the_store_routes_but_not_the_user_data_backend(workflows):
-    """The user-profile backend reads the application DB, not the LangGraph
-    store, so it is gated on identity alone."""
+    """The user-profile and automations backends read the application DB, not
+    the LangGraph store, so they are gated on identity alone."""
     workflows(True)
 
     gates = resolve_identity_gates(
@@ -110,3 +110,40 @@ def test_the_workflow_flag_closes_both_the_tool_and_the_filesystem(workflows):
     assert not gates.workflow
     assert not gates.workflow_fs
     assert not gates.workflow_tool
+
+
+@pytest.mark.parametrize(
+    ("asked", "user_id", "expected"),
+    [
+        (True, "user-1", True),
+        (True, None, False),
+        (True, "", False),
+        (False, "user-1", False),
+    ],
+)
+def test_channels_need_the_ask_and_a_user(workflows, asked, user_id, expected):
+    """The chat-app settings folder is asked for by a build whose deployment
+    has the channel gateway, and holds one user's settings."""
+    workflows(False)
+
+    gates = resolve_identity_gates(
+        store=None,
+        user_id=user_id,
+        workspace_id=None,
+        disable_subagents=False,
+        channels=asked,
+    )
+
+    assert gates.channels is expected
+
+
+def test_channels_are_off_unless_asked_for(workflows):
+    """The file mount builds its routes without asking, which keeps the
+    folder off it."""
+    workflows(False)
+
+    gates = resolve_identity_gates(
+        store=object(), user_id="user-1", workspace_id="ws-1", disable_subagents=False
+    )
+
+    assert gates.channels is False

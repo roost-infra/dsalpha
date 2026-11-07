@@ -16,6 +16,14 @@ and a backend emitting both reasoning families would collide on
 ``summary_index``. Scope is carried by a ContextVar the streaming overrides set
 while upstream's body runs; widening it to another provider later is one more
 read in ``_patched``.
+
+The same mechanism carries a rescue for the chatgpt.com Codex backend, which
+lives here because the hook takes one installer: for a response with parallel
+tool calls that backend sends each call's arguments only in
+``response.function_call_arguments.done``, which upstream ignores, so every
+call would reach its tool with ``{}``. It is scoped to ``ChatCodexOpenAI``'s
+own streams, where the scope's value is that stream's record of the calls still
+owed their arguments.
 """
 
 import contextvars
@@ -35,6 +43,14 @@ _in_dashscope_stream: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "in_dashscope_stream", default=False
 )
 
+# While a Codex stream is advanced, its function calls still owed their
+# arguments, by item id, each with the content and output indexes upstream gave
+# it; None outside one. One dict per stream, so no id is ever compared across
+# streams.
+_codex_pending_calls: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "codex_pending_calls", default=None
+)
+
 
 def _one_line(value) -> str | None:
     if value is None:
@@ -42,40 +58,43 @@ def _one_line(value) -> str | None:
     return str(value)[:_MAX_PROVIDER_TEXT].replace("\r", "\\r").replace("\n", "\\n")
 
 
-class ChatDashScope(ChatOpenAI):
-    """ChatOpenAI under a DashScope name, marking its own stream while it runs.
+class ScopedResponsesStream(ChatOpenAI):
+    """ChatOpenAI that sets a ContextVar while upstream advances its own stream.
 
-    DashScope accepts the standard Responses payload and replaying a prior
-    turn's reasoning item back to it round-trips, so nothing about the request
-    is overridden. The two overrides exist only to raise a flag while upstream's
-    body runs: the converter the bridge replaces is a module global taking no
-    provider argument, so this is the only handle it has for telling a Qwen
-    stream apart from any other Responses stream in the process.
+    The converter the bridge replaces is a module global taking no provider
+    argument, so this is the only handle it has for telling one client's stream
+    apart from any other Responses stream in the process. ``_stream_scope``
+    names the variable and the value it holds for one stream.
 
-    They hook ``_stream``/``_astream`` and not the ``*_responses`` pair those
-    dispatch to, which would read as the tighter choice and is in fact dead
-    code: ``ChatOpenAI._stream`` reaches the Responses body through ``super()``,
-    so an override of it on a subclass is never consulted. Nothing reports that,
-    the flag simply never rises, which is why a test drives a real stream and
-    asserts the converter sees the flag rather than calling the overrides here.
+    The overrides hook ``_stream``/``_astream`` and not the ``*_responses`` pair
+    those dispatch to, which would read as the tighter choice and is in fact
+    dead code: ``ChatOpenAI._stream`` reaches the Responses body through
+    ``super()``, so an override of it on a subclass is never consulted. Nothing
+    reports that, the scope simply never rises, which is why a test drives a
+    real stream and asserts the converter sees it rather than calling the
+    overrides here.
     """
 
+    def _stream_scope(self) -> tuple[contextvars.ContextVar, object]:
+        raise NotImplementedError
+
     def _stream(self, *args, **kwargs):
+        var, value = self._stream_scope()
         stream = iter(super()._stream(*args, **kwargs))
         try:
             while True:
                 # Set around the resume and never held across the ``yield``: a
-                # generator body runs in its caller's context, so a flag still
+                # generator body runs in its caller's context, so a scope still
                 # set at the yield would stay set for the caller, and the next
                 # plain OpenAI stream opened in that same context would be read
-                # as a Qwen one.
-                token = _in_dashscope_stream.set(True)
+                # as this client's.
+                token = var.set(value)
                 try:
                     chunk = next(stream)
                 except StopIteration:
                     return
                 finally:
-                    _in_dashscope_stream.reset(token)
+                    var.reset(token)
                 yield chunk
         finally:
             # Reached on an abandoned stream too, where it is what propagates
@@ -87,22 +106,36 @@ class ChatDashScope(ChatOpenAI):
                 close()
 
     async def _astream(self, *args, **kwargs):
+        var, value = self._stream_scope()
         stream = super()._astream(*args, **kwargs).__aiter__()
         try:
             while True:
                 # Same window as the sync twin above, and for the same reason.
-                token = _in_dashscope_stream.set(True)
+                token = var.set(value)
                 try:
                     chunk = await stream.__anext__()
                 except StopAsyncIteration:
                     return
                 finally:
-                    _in_dashscope_stream.reset(token)
+                    var.reset(token)
                 yield chunk
         finally:
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
                 await aclose()
+
+
+class ChatDashScope(ScopedResponsesStream):
+    """ChatOpenAI under a DashScope name, marking its own stream while it runs.
+
+    DashScope accepts the standard Responses payload and replaying a prior
+    turn's reasoning item back to it round-trips, so nothing about the request
+    is overridden; the scope is what lets the bridge rewrite reasoning for a
+    Qwen stream alone.
+    """
+
+    def _stream_scope(self):
+        return _in_dashscope_stream, True
 
 
 class ResponsesStreamFailedError(RuntimeError):
@@ -166,17 +199,22 @@ def _status_for_failure_code(code: str | None, message: str) -> int | None:
 
 
 def _install_responses_stream_bridge() -> None:
-    """Rescue the two event families langchain-openai's Responses converter drops.
+    """Rescue the event families langchain-openai's Responses converter drops.
 
     The hook is a module global taking no provider argument, so the wrapper is
-    process-wide and each half picks its own reach inside it: ``response.failed``
-    for every backend, the raw-reasoning rewrite only for a stream
-    ``ChatDashScope`` has marked. One installer wrapping it once, not two, since
-    a second would stack in import order and collide on the idempotence flag.
+    process-wide and each rescue picks its own reach inside it:
+    ``response.failed`` for every backend, the raw-reasoning rewrite for a
+    stream ``ChatDashScope`` has marked, and ``.done``-only tool-call arguments
+    for one ``ChatCodexOpenAI`` has marked. One installer wrapping it once, not
+    two, since a second would stack in import order and collide on the
+    idempotence flag.
     """
     try:
         import langchain_openai.chat_models.base as base
-        from openai.types.responses import ResponseReasoningSummaryTextDeltaEvent
+        from openai.types.responses import (
+            ResponseFunctionCallArgumentsDeltaEvent,
+            ResponseReasoningSummaryTextDeltaEvent,
+        )
 
         original_fn = base._convert_responses_chunk_to_generation_chunk
     except (ImportError, AttributeError):
@@ -195,6 +233,7 @@ def _install_responses_stream_bridge() -> None:
 
     _warned_unbridgeable = False
     _warned_off_scope = False
+    _warned_unreplayable = False
 
     def _as_summary_delta(chunk):
         """Rewrite a raw-reasoning delta as the summary event upstream understands.
@@ -270,6 +309,59 @@ def _install_responses_stream_bridge() -> None:
             "its own stream the way ChatDashScope does."
         )
 
+    def _track_codex_call(chunk, pending: dict, args, kwargs):
+        """Keep a Codex stream's record of the calls still owed their arguments.
+
+        Upstream builds a call's arguments from deltas plus whatever the item
+        carried when it was added, so a call that got either is never owed:
+        replaying its ``.done`` would double them, in the tool call and in the
+        item sent back next turn. An owed call's ``.done`` is replayed as the one
+        delta upstream reads, at the content and output indexes the call was
+        given when added, since upstream would otherwise number it by the latest
+        call and a ``.done`` arriving after a later call's ``added`` would land on
+        that one. The output index is the one upstream settled on for the
+        ``added``, not the ``.done``'s own: the API can report a later one on the
+        ``.done``, and langchain-openai 1.7 pins each item to its first. The
+        running indexes go back unchanged, as a real delta for that call would
+        leave them.
+        """
+        chunk_type = chunk.type
+        if chunk_type == "response.output_item.added":
+            result = original_fn(chunk, *args, **kwargs)
+            item = chunk.item
+            if getattr(item, "type", None) == "function_call" and not item.arguments:
+                pending[item.id] = (result[0], result[1])
+            return result
+        if chunk_type == "response.function_call_arguments.delta":
+            pending.pop(chunk.item_id, None)
+        elif chunk_type == "response.function_call_arguments.done":
+            owed = pending.pop(chunk.item_id, None)
+            if owed is not None and chunk.arguments and len(args) >= 3:
+                index, output_index = owed
+                try:
+                    delta = ResponseFunctionCallArgumentsDeltaEvent(
+                        type="response.function_call_arguments.delta",
+                        delta=chunk.arguments,
+                        item_id=chunk.item_id,
+                        output_index=output_index,
+                        sequence_number=chunk.sequence_number,
+                    )
+                except Exception as e:
+                    # The call then reaches its tool with ``{}``, as it did before
+                    # the rescue, rather than the stream dying on a frame we
+                    # cannot rebuild.
+                    nonlocal _warned_unreplayable
+                    if not _warned_unreplayable:
+                        _warned_unreplayable = True
+                        logger.warning("Could not replay a function call's arguments: %s", e)
+                else:
+                    current = args[:3]
+                    *_, generation = original_fn(
+                        delta, index, output_index, *args[2:], **kwargs
+                    )
+                    return (*current, generation)
+        return original_fn(chunk, *args, **kwargs)
+
     def _patched(chunk, *args, **kwargs):
         chunk_type = getattr(chunk, "type", None)
         if chunk_type == "response.reasoning_text.delta":
@@ -279,9 +371,14 @@ def _install_responses_stream_bridge() -> None:
                 _note_off_scope_reasoning()
         elif chunk_type == "response.failed":
             _raise_if_failed(chunk)
+        elif (pending := _codex_pending_calls.get()) is not None:
+            return _track_codex_call(chunk, pending, args, kwargs)
 
         return original_fn(chunk, *args, **kwargs)
 
     _patched._is_patched = True
     base._convert_responses_chunk_to_generation_chunk = _patched
-    logger.debug("Bridged the raw-reasoning and response.failed events upstream drops")
+    logger.debug(
+        "Bridged the raw-reasoning, response.failed and done-only argument events "
+        "upstream drops"
+    )

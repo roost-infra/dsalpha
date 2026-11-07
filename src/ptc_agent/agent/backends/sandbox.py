@@ -46,7 +46,19 @@ from deepagents.backends.protocol import (
 )
 
 from ptc_agent.agent.backends.results import EditTextResult
-from ptc_agent.core.sandbox import ExecutionResult, PTCSandbox
+from ptc_agent.core.paths import langalpha_config_dir, on_file_mount, resolve_agent_path
+from ptc_agent.core.sandbox import PTCSandbox
+from ptc_agent.core.sandbox.grep_render import GrepLine
+from ptc_agent.core.sandbox.jobs import (
+    Ended,
+    Failed,
+    JobOutcome,
+    JobRef,
+    JobSpec,
+    Running,
+    StoppedJob,
+)
+from ptc_agent.core.sandbox.livefs_mount import MountHandle, TranscriptReach
 from ptc_agent.core.sandbox.runtime import PreviewInfo
 
 logger = structlog.get_logger(__name__)
@@ -69,21 +81,28 @@ class SandboxBackend(SandboxBackendProtocol):
         *,
         virtual_mode: bool = True,
         operation_callback: OperationCallback | None = None,
+        preview_owner: str | None = None,
     ) -> None:
         """Create a new SandboxBackend.
 
         Args:
             sandbox: Initialized `PTCSandbox` instance.
-            root_dir: Root directory used when resolving virtual paths.
-                      Defaults to ``sandbox.config.filesystem.working_directory``.
+            root_dir: Computer root the store mounts hang off, and the base a
+                      relative path resolves against when it is passed
+                      explicitly. Defaults to
+                      ``sandbox.config.filesystem.working_directory``.
             virtual_mode: If True, treat non-absolute paths as relative to `root_dir`.
             operation_callback: Optional callback invoked on file operations (write, edit).
                                 Receives a dict with operation details for persistence/logging.
+            preview_owner: Workspace allowed to reuse preview ports started by
+                           this backend on a shared computer.
         """
         self.sandbox = sandbox
+        self._pinned_root = root_dir.rstrip("/") if root_dir else None
         self.root_dir = (root_dir or sandbox.config.filesystem.working_directory).rstrip("/")
         self.virtual_mode = virtual_mode
         self.operation_callback = operation_callback
+        self.preview_owner = preview_owner
         logger.debug("Initialized SandboxBackend", root_dir=self.root_dir, virtual_mode=self.virtual_mode)
 
     @property
@@ -91,24 +110,85 @@ class SandboxBackend(SandboxBackendProtocol):
         """Return a stable identifier for this backend instance."""
         return self.sandbox.sandbox_id or "unknown"
 
+    @property
+    def livefs(self) -> MountHandle | None:
+        """The file mount serving the sandbox, or None while none does."""
+        return self.sandbox.livefs
+
+    @property
+    def transcripts(self) -> TranscriptReach | None:
+        """Where this agent's transcripts reach its tools, or None while
+        nothing serves them."""
+        return self.sandbox.transcripts
+
+    async def settled_livefs(
+        self, workspace_id: str | None = None
+    ) -> MountHandle | None:
+        """The mount as a command in ``workspace_id`` finds it, or None when
+        it does not serve that folder: its links may still be going in when
+        the turn starts, and may not go in at all."""
+        mount = self.sandbox.livefs
+        if mount is None or not await mount.ready(workspace_id):
+            return None
+        return self.sandbox.livefs
+
+    async def config_folder(self) -> str | None:
+        """LangAlpha's config folder on the machine when the login's config
+        home is a custom one, which no fixed spelling names; None otherwise,
+        where ``LANGALPHA_CONFIG_SPELLINGS`` names it as ``.config/langalpha``.
+        Raises where the machine cannot say, so a command is never let past
+        the guard unread."""
+        config_home = await self.sandbox.login_config_home()
+        return langalpha_config_dir("", config_home) if config_home.startswith("/") else None
+
+    @property
+    def workspace_dir(self) -> str:
+        """The workspace root a relative agent path resolves against.
+
+        The turn's own folder, or the one this backend was pinned to. Read
+        rather than stored so a reconnect that moves the computer root reaches
+        it, and read by callers that need the folder a file belongs to rather
+        than the machine it sits on.
+        """
+        if self._pinned_root is not None:
+            return self._pinned_root
+        return self.sandbox.workspace().workspace
+
+    @property
+    def computer_root(self) -> str:
+        """The machine root the computer-tier subtrees resolve against.
+
+        Never the pin: the user memory and memo mounts are shared by every
+        workspace on the computer, so they keep their machine-root spelling
+        even for a backend pinned to one folder.
+        """
+        return self.sandbox.layout.root
+
     def _normalize_path(self, path: str) -> str:
-        """Normalize a path into an absolute sandbox path."""
+        """Normalize a path into an absolute sandbox path.
+
+        The sandbox decides the tier unless a caller pinned a root: one backend
+        serves a whole session, so a base fixed at construction would file every
+        turn's scratch on the machine root rather than in the workspace that
+        produced it, and a relative name that spells a computer subtree (the
+        store-backed user mounts) has to keep folding onto the root either way.
+        """
         if not self.virtual_mode:
             return path
 
-        if path in (None, "", ".", "/"):
-            return self.root_dir
+        if self._pinned_root is None:
+            return self.sandbox.normalize_path(path)
 
-        path = path.strip()
-
-        # Already absolute in sandbox (working directory or /tmp)
-        if path.startswith((self.root_dir, "/tmp")):
-            return path
-
-        if path.startswith("/"):
-            return f"{self.root_dir}{path}"
-
-        return f"{self.root_dir}/{path}"
+        # Same fold as the unpinned path, with the base named instead of
+        # resolved: a second implementation here is how a pinned backend
+        # once filed a store-backed user path inside the workspace folder,
+        # where no store route could see it.
+        return resolve_agent_path(
+            path,
+            workspace=self._pinned_root,
+            root=self.sandbox._work_dir,
+            allowed=self.sandbox.config.filesystem.allowed_directories,
+        )
 
     def _invoke_operation_callback(self, operation: str, file_path: str, **kwargs: Any) -> None:
         """Invoke the operation callback if configured."""
@@ -319,6 +399,18 @@ class SandboxBackend(SandboxBackendProtocol):
                 )
                 continue
 
+            if isinstance(item, GrepLine):
+                # The path is held apart, as it may hold a `:` itself.
+                rest = item[len(item.path) + 1 :] if item.named else str(item)
+                number, _, text = rest.partition(":")
+                if number.isdigit():
+                    matches.append(
+                        cast(GrepMatch, {"path": item.path, "line": int(number), "text": text})
+                    )
+                else:
+                    matches.append(cast(GrepMatch, {"path": item.path, "line": 0, "text": rest}))
+                continue
+
             if isinstance(item, str) and ":" in item:
                 parts = item.split(":", 2)
                 if len(parts) >= 3:
@@ -352,6 +444,7 @@ class SandboxBackend(SandboxBackendProtocol):
                 output_mode="content",
                 glob=glob,
                 show_line_numbers=True,
+                folder=self.workspace_dir,
             )
         except Exception as exc:
             logger.debug("agrep failed", pattern=pattern, error=str(exc))
@@ -363,7 +456,9 @@ class SandboxBackend(SandboxBackendProtocol):
         """Return files matching `pattern` under `path`."""
         normalized_path = self._normalize_path(path)
         try:
-            file_paths = await self.sandbox.aglob_files(pattern, normalized_path)
+            file_paths = await self.sandbox.aglob_files(
+                pattern, normalized_path, hide_history=True
+            )
         except Exception as exc:
             logger.debug("aglob failed", pattern=pattern, error=str(exc))
             return GlobResult(error=str(exc))
@@ -434,8 +529,8 @@ class SandboxBackend(SandboxBackendProtocol):
     # Langalpha-specific rich methods (not part of SandboxBackendProtocol).
     #
     # Tool factories call these directly to preserve PTCSandbox features the
-    # protocol's minimal surface doesn't expose (rich grep options, background
-    # bash, native Python code execution, path helpers, preview URL). Middleware
+    # protocol's minimal surface doesn't expose (rich grep options, Bash and
+    # code jobs, path helpers, preview URL). Middleware
     # only uses the protocol methods above. All rich methods are thin
     # passthroughs — this class is an adapter, not an interface redesign.
     # ---------------------------------------------------------------------
@@ -443,8 +538,13 @@ class SandboxBackend(SandboxBackendProtocol):
     # --- Path helpers (sync, pure delegation) ---
 
     def normalize_path(self, path: str) -> str:
-        """Convert a virtual/relative path to an absolute sandbox path."""
-        return self.sandbox.normalize_path(path)
+        """Convert a virtual/relative path to an absolute sandbox path.
+
+        Honors a pinned root like the file ops that resolve privately; the
+        text reads and writes go through here, and a pinned backend reading
+        from the ambient tier while it writes to its pin misses its own files.
+        """
+        return self._normalize_path(path)
 
     def virtualize_path(self, path: str) -> str:
         """Strip the working-directory prefix to produce an agent-visible path."""
@@ -465,6 +565,26 @@ class SandboxBackend(SandboxBackendProtocol):
     def sandbox_id(self) -> str | None:
         """Return the raw sandbox ID attribute (may be None if not yet initialized)."""
         return self.sandbox.sandbox_id
+
+    @property
+    def provider(self) -> str:
+        """The kind of sandbox this is (daytona, e2b, docker), fixed for its life."""
+        return self.sandbox.config.sandbox.provider
+
+    @property
+    def channel(self) -> str:
+        """How a call reaches the machine, as tool traces name it."""
+        return self.sandbox.channel
+
+    def channel_for(self, path: str) -> str:
+        """The channel a file call on ``path`` takes: ``fuse`` where the file
+        mount serves it, whose daemon answers from the server, else the
+        machine's own."""
+        if self.livefs is not None and on_file_mount(
+            self.normalize_path(path), self.sandbox.workspace()
+        ):
+            return "fuse"
+        return self.channel
 
     @property
     def skills_manifest(self) -> dict[str, Any] | None:
@@ -527,7 +647,8 @@ class SandboxBackend(SandboxBackendProtocol):
 
         Used by the Grep tool to preserve its full feature set. The
         protocol-surface `agrep` above is a thin adapter that only exposes
-        (pattern, path, glob) per the deepagents contract.
+        (pattern, path, glob) per the deepagents contract. rg runs from this
+        backend's folder, which the composite matches a filter from as well.
         """
         return await self.sandbox.agrep_content(
             pattern=pattern,
@@ -543,55 +664,72 @@ class SandboxBackend(SandboxBackendProtocol):
             multiline=multiline,
             head_limit=head_limit,
             offset=offset,
+            folder=self.workspace_dir,
         )
 
     async def aglob_paths(self, pattern: str, path: str = ".") -> list[str]:
         """Return glob matches as a flat list of paths (no dataclass wrapper)."""
-        return await self.sandbox.aglob_files(pattern, path)
+        return await self.sandbox.aglob_files(pattern, path, hide_history=True)
 
-    # --- Execution (bash + Python code) ---
+    # --- Detached jobs (Bash and ExecuteCode that can outlast their call) ---
 
-    async def aexecute_bash(
+    async def start_bash_job(
         self,
         command: str,
-        working_dir: str | None = None,
-        timeout: int = 60,
         *,
-        background: bool = False,
+        working_dir: str | None = None,
+        wait_s: float | None,
         thread_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Run a bash command with full PTCSandbox options (working_dir, background, thread_id).
-
-        Used by the Bash tool. Returns PTCSandbox's raw result dict.
-        """
-        return await self.sandbox.execute_bash_command(
-            command=command,
+        call_id: str | None = None,
+        allowed_servers: frozenset[str] | None = None,
+    ) -> JobOutcome:
+        """Start a bash command as a job; wait up to ``wait_s`` (None: until it ends)."""
+        return await self.sandbox.start_bash_job(
+            command,
             working_dir=working_dir,
-            timeout=timeout,
-            background=background,
+            wait_s=wait_s,
             thread_id=thread_id,
+            call_id=call_id,
+            allowed_servers=allowed_servers,
         )
 
-    async def astop_background_command(self, command_id: str) -> bool:
-        """Stop a previously started background bash command."""
-        return await self.sandbox.stop_background_command(command_id)
+    async def run_foreground(self, spec: JobSpec, timeout: int) -> Ended | Failed:
+        """Run a command whose job could not be set up in the foreground."""
+        return await self.sandbox.run_foreground(spec, timeout)
 
-    async def aget_background_command_status(self, command_id: str) -> dict[str, Any]:
-        """Return status + buffered output for a background bash command."""
-        return await self.sandbox.get_background_command_status(command_id)
-
-    async def aexecute_code(
+    async def start_code_job(
         self,
         code: str,
         *,
+        wait_s: float | None,
         thread_id: str | None = None,
-    ) -> ExecutionResult:
-        """Execute Python code in the sandbox (Jupyter-style).
+        call_id: str | None = None,
+        allowed_servers: frozenset[str] | None = None,
+    ) -> JobOutcome:
+        """Start Python code as a job; wait up to ``wait_s`` (None: until it ends)."""
+        return await self.sandbox.start_code_job(
+            code,
+            wait_s=wait_s,
+            thread_id=thread_id,
+            call_id=call_id,
+            allowed_servers=allowed_servers,
+        )
 
-        Distinct from `aexecute` (shell) — returns rich `ExecutionResult`
-        with stdout/charts/mcp_trace.
-        """
-        return await self.sandbox.execute(code, thread_id=thread_id)
+    async def continue_job(self, outcome: Running, wait_s: float | None) -> JobOutcome:
+        """Keep waiting on a job a start returned still running."""
+        return await self.sandbox.continue_job(outcome, wait_s)
+
+    async def read_ended_job(self, outcome: Running) -> JobOutcome:
+        """Read a job a stop found already ended; a failed read raises."""
+        return await self.sandbox.read_ended_job(outcome)
+
+    async def stop_job(self, ref: JobRef, *, discard: bool = False) -> bool:
+        """End a job's process group; True if it was running."""
+        return await self.sandbox.stop_job(ref, discard=discard)
+
+    async def stop_job_with_trace(self, outcome: Running) -> StoppedJob:
+        """End a job's process group and read its MCP trace in the same call."""
+        return await self.sandbox.stop_job_with_trace(outcome)
 
     # --- File transfer (single-file helpers used by ShowWidget) ---
 
@@ -611,9 +749,14 @@ class SandboxBackend(SandboxBackendProtocol):
         startup_timeout: float = 10.0,
     ) -> PreviewInfo:
         """Start a server command in the sandbox and return a signed preview URL."""
+        kwargs: dict[str, Any] = {
+            "expires_in": expires_in,
+            "startup_timeout": startup_timeout,
+        }
+        if self.preview_owner is not None:
+            kwargs["owner"] = self.preview_owner
         return await self.sandbox.start_and_get_preview_url(
-            command,
+            f"cd {shlex.quote(self.workspace_dir)} && {command}",
             port,
-            expires_in=expires_in,
-            startup_timeout=startup_timeout,
+            **kwargs,
         )

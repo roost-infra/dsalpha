@@ -19,26 +19,26 @@ re-enable toggles.
 """
 
 import asyncio
-import io
 import logging
 import re
-import zipfile
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel, Field
 
 from ptc_agent.agent.middleware.skills import (
     SKILL_REGISTRY,
-    SkillMode,
     build_effective_skill_registry,
     list_skills,
-    load_skill_content,
+    resolve_skill_dir,
 )
 from src.server.database.account_disables import list_account_disables
 from src.server.database.user_skills import (
+    MAX_SKILL_TOTAL_BYTES_PER_USER,
+    MAX_SKILLS_PER_USER,
+    SkillCapReached,
+    SkillTriggerTaken,
     delete_user_skill,
     get_user_skill,
     list_all_user_skills,
@@ -53,6 +53,14 @@ from src.server.database.user_skills import (
     upsert_user_skill,
 )
 from src.server.database.workspace import get_workspace as db_get_workspace
+from src.server.models.skill import (
+    SkillContentResponse,
+    SkillEnabledInput,
+    SkillInfo,
+    SkillLimitsResponse,
+    SkillMoveInput,
+    SkillsResponse,
+)
 from src.server.services import skill_archive_storage
 from src.server.services.features import (
     get_disabled_builtin_skills,
@@ -69,6 +77,12 @@ from src.server.services.user_skills import (
     valid_command,
     validate_skill_archive,
 )
+from src.server.services.user_skills.browse import (
+    DiskFolder,
+    SkillFolder,
+    ZipFolder,
+    skill_content_response,
+)
 from src.server.services.user_skills.commands import (
     effective_trigger,
     ensure_free_of_platform,
@@ -77,7 +91,11 @@ from src.server.services.user_skills.commands import (
 )
 from src.server.services.user_skills.limits import (
     MAX_SKILL_ARCHIVE_BYTES,
+    MAX_SKILL_FILES,
     MAX_SKILL_INLINE_BLOB_BYTES,
+    MAX_SKILL_MD_BYTES,
+    MAX_SKILL_SINGLE_FILE_BYTES,
+    MAX_SKILL_UNCOMPRESSED_BYTES,
 )
 from src.server.services.workspace_manager import WorkspaceManager
 from src.server.utils.api import (
@@ -103,52 +121,23 @@ def _validate_name_param(name: str) -> None:
         raise HTTPException(status_code=404, detail="Skill not found")
 
 
-class SkillInfo(BaseModel):
-    name: str
-    description: str
-    tool_count: int
-    tools: list[str] = Field(default_factory=list)
-    command: str | None = None
-    origin: Literal["platform", "user", "workspace"] = "platform"
-    enabled: bool = True
-    editable: bool = False
-    deletable: bool = False
-    confirmed: bool = True
-    plugin_id: str | None = None
-    # Display-only provenance: the owning plugin's name and its enable state
-    # (None on hand-made or detached rows). plugin_enabled=False explains a
-    # row the delivery predicate is suppressing.
-    plugin_name: str | None = None
-    plugin_enabled: bool | None = None
-    size_bytes: int = 0
-    updated_at: str | None = None
-    # Which tier switched an inherited skill off (workspace views only).
-    disabled_scope: Literal["user", "workspace"] | None = None
-    # Workspace row reusing (and thereby hiding) a user-tier name here.
-    shadows_inherited: bool = False
-    # The scope a workspace-tier row belongs to (None = user/platform tier).
-    workspace_id: str | None = None
-    # Workspaces where an all-workspaces skill is switched off (deny-list) —
-    # populated in the all-scopes view only, for the "active in" checklist.
-    disabled_workspace_ids: list[str] = Field(default_factory=list)
+def _refused(status: int, code: str, message: str, **params: object) -> HTTPException:
+    """A refusal a client explains in its own words: ``code`` says which one,
+    ``params`` fill its sentence, and ``message`` serves any client that does
+    not know the code."""
+    return HTTPException(
+        status_code=status, detail={"code": code, "message": message, **params}
+    )
 
 
-class SkillsResponse(BaseModel):
-    skills: list[SkillInfo]
-
-
-class SkillEnabledInput(BaseModel):
-    """PATCH body; both fields optional so one call can toggle, re-alias, or
-    both. ``command: null`` (sent explicitly) clears the alias back to the
-    name — ``model_fields_set`` is what tells that apart from absent."""
-
-    enabled: bool | None = None
-    command: str | None = None
-
-
-class SkillContentResponse(BaseModel):
-    name: str
-    content: str
+def _conflict(e: SkillTriggerTaken | SkillCapReached) -> HTTPException:
+    if isinstance(e, SkillTriggerTaken):
+        return _refused(409, e.code, str(e), **e.params)
+    if e.limit == "count":
+        return _refused(409, "skill_count_cap", str(e), max=MAX_SKILLS_PER_USER)
+    return _refused(
+        409, "skill_storage_cap", str(e), max=MAX_SKILL_TOTAL_BYTES_PER_USER
+    )
 
 
 def _validated_patch_fields(body: SkillEnabledInput) -> set[str]:
@@ -166,7 +155,8 @@ def _user_row_to_info(
     row: dict, *, editable: bool = True, deletable: bool = True
 ) -> SkillInfo:
     """``editable``/``deletable`` mean "through the surface returning this row"
-    — a user-tier skill listed in a workspace view is managed elsewhere."""
+    — a user-tier skill listed in a workspace view is managed elsewhere, and a
+    plugin's skill goes with its plugin."""
     return SkillInfo(
         name=row["name"],
         description=row["description"],
@@ -176,7 +166,7 @@ def _user_row_to_info(
         origin="workspace" if row.get("workspace_id") else "user",
         enabled=bool(row["enabled"]),
         editable=editable,
-        deletable=deletable,
+        deletable=deletable and not row["plugin_id"],
         confirmed=bool(row["confirmed"]),
         # Indexed, not .get(): every read joins these and every writer
         # subselects them, so an absent key means a new writer skipped the
@@ -250,8 +240,8 @@ def _builtin_info(
     return SkillInfo(
         name=skill.name,
         description=skill.description,
-        tool_count=len(skill.get_tool_names()),
-        tools=skill.get_tool_names(),
+        tool_count=len(skill.listed_tool_names()),
+        tools=skill.listed_tool_names(),
         command=overrides.get(skill.name) or skill.command,
         enabled=enabled,
         disabled_scope=disabled_scope,
@@ -264,14 +254,13 @@ async def _require_owned_workspace(workspace_id: str, user_id: str) -> None:
 
 async def _assemble_skills(
     user_id: str,
-    mode: SkillMode | None,
     include_disabled: bool,
     workspace_id: str | None,
 ) -> dict:
     """The merged listing for one scope: platform + user tier, plus — inside a
     workspace — that workspace's rows shadowing same-named user skills and its
     disables of inherited ones."""
-    platform = list_skills(mode=mode)
+    platform = list_skills()
     disabled_builtins = await get_disabled_builtin_skills(user_id)
     overrides = await get_skill_command_overrides(user_id)
     bundles = await _bundle_state(user_id)
@@ -351,9 +340,7 @@ async def _assemble_skills(
     return {"skills": skills}
 
 
-async def _assemble_all_scopes(
-    user_id: str, mode: SkillMode | None, include_disabled: bool
-) -> dict:
+async def _assemble_all_scopes(user_id: str, include_disabled: bool) -> dict:
     """Every scope at once — the Plugins page's scope-management inventory.
 
     No shadowing or workspace-disable filtering here: each row appears exactly
@@ -368,7 +355,7 @@ async def _assemble_all_scopes(
         disables_by_name.setdefault(d["name"], []).append(d["workspace_id"])
 
     skills: list[SkillInfo] = []
-    for entry in list_skills(mode=mode):
+    for entry in list_skills():
         user_dis = entry["name"] in disabled_builtins
         if user_dis and not include_disabled:
             continue
@@ -403,9 +390,6 @@ async def _assemble_all_scopes(
 @handle_api_exceptions("list skills", logger)
 async def get_skills(
     user_id: OptionalUserId,
-    mode: Optional[SkillMode] = Query(
-        None, description="Filter by agent mode: ptc or flash"
-    ),
     include_disabled: bool = Query(
         False,
         description="Include disabled entries (management view); the default "
@@ -433,7 +417,7 @@ async def get_skills(
                 status_code=400,
                 detail="all_scopes and workspace_id are mutually exclusive",
             )
-        return await _assemble_all_scopes(user_id, mode, include_disabled)
+        return await _assemble_all_scopes(user_id, include_disabled)
     if workspace_id is not None:
         if user_id is None:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -441,8 +425,33 @@ async def get_skills(
     if user_id is None:
         # No attribution here: the bundle a skill came from is only meaningful
         # next to the switch that turns it off, and this view has no account.
-        return {"skills": [_platform_info(s) for s in list_skills(mode=mode)]}
-    return await _assemble_skills(user_id, mode, include_disabled, workspace_id)
+        return {"skills": [_platform_info(s) for s in list_skills()]}
+    return await _assemble_skills(user_id, include_disabled, workspace_id)
+
+
+@router.get("/limits", response_model=SkillLimitsResponse)
+async def get_skill_limits() -> SkillLimitsResponse:
+    """What one skill upload may hold on this server.
+
+    Two size ceilings, because they weigh different bytes: the wire cap the
+    zip as sent, the stored cap the skill as kept, re-zipped once hidden
+    files and dependencies are set aside. Folding them into one refuses a zip
+    whose set-aside files are all that put it over. The stored cap is
+    deployment configuration: without object storage an archive is kept in
+    its database row, where the smaller inline cap applies.
+    """
+    return SkillLimitsResponse(
+        max_upload_bytes=MAX_SKILL_ARCHIVE_BYTES,
+        max_stored_bytes=(
+            None
+            if skill_archive_storage.is_configured()
+            else MAX_SKILL_INLINE_BLOB_BYTES
+        ),
+        max_files=MAX_SKILL_FILES,
+        max_file_bytes=MAX_SKILL_SINGLE_FILE_BYTES,
+        max_unpacked_bytes=MAX_SKILL_UNCOMPRESSED_BYTES,
+        max_skill_md_bytes=MAX_SKILL_MD_BYTES,
+    )
 
 
 async def _upload_skill_archive(
@@ -456,12 +465,23 @@ async def _upload_skill_archive(
     row's superseded object is deleted after commit (unless another
     same-content row still references it).
     """
-    raw = await read_capped(file, MAX_SKILL_ARCHIVE_BYTES)
+    try:
+        raw = await read_capped(file, MAX_SKILL_ARCHIVE_BYTES)
+    except HTTPException as e:
+        if e.status_code != 413:
+            raise
+        raise _refused(
+            413,
+            "upload_too_large",
+            str(e.detail),
+            size=file.size,
+            max=MAX_SKILL_ARCHIVE_BYTES,
+        ) from e
     try:
         # Unzip + re-zip + hash over as much as 8 MB: off the event loop.
-        validated = await asyncio.to_thread(validate_skill_archive, raw)
+        validated = await asyncio.to_thread(validate_skill_archive, raw, upload=True)
     except SkillValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise _refused(400, e.code, str(e), **e.params) from e
 
     # The name is itself a live trigger (effective_trigger falls back to it),
     # so it has to clear the platform tier the same way an alias does — a
@@ -470,8 +490,8 @@ async def _upload_skill_archive(
     # set_platform_alias; this is the same rule in the other order.
     try:
         await ensure_free_of_platform(user_id, validated.name)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    except SkillTriggerTaken as e:
+        raise _conflict(e) from e
     except SkillNamesUnavailable as e:
         # Not the upload's fault and not a name conflict: a directory skills
         # ship from would not list, so the reservation is short rather than
@@ -499,13 +519,14 @@ async def _upload_skill_archive(
             ) from exc
     else:
         if len(validated.canonical_zip) > MAX_SKILL_INLINE_BLOB_BYTES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Object storage is not configured on this deployment; "
-                    f"skill archives are limited to {MAX_SKILL_INLINE_BLOB_BYTES} "
-                    "bytes"
-                ),
+            raise _refused(
+                400,
+                "upload_too_large",
+                "Object storage is not configured on this deployment; "
+                f"skill archives are limited to {MAX_SKILL_INLINE_BLOB_BYTES} "
+                "bytes",
+                size=len(validated.canonical_zip),
+                max=MAX_SKILL_INLINE_BLOB_BYTES,
             )
         archive_blob = validated.canonical_zip
 
@@ -526,6 +547,9 @@ async def _upload_skill_archive(
             workspace_id=workspace_id,
             command=command_seed,
         )
+    except (SkillTriggerTaken, SkillCapReached) as e:
+        await drop_archive_if_unused(user_id, archive_key)
+        raise _conflict(e) from e
     except BaseException:
         await drop_archive_if_unused(user_id, archive_key)
         raise
@@ -663,14 +687,6 @@ async def patch_skill(
     return _builtin_info(skill, enabled=name not in disabled, overrides=overrides)
 
 
-class SkillMoveInput(BaseModel):
-    """Both scopes are explicit: names are only unique within one scope, so
-    the source disambiguates which row moves."""
-
-    from_workspace_id: str | None = None
-    to_workspace_id: str | None = None
-
-
 @router.post("/{name}/move", response_model=SkillInfo)
 @handle_api_exceptions("move skill", logger)
 async def move_skill(name: str, body: SkillMoveInput, user_id: CurrentUserId):
@@ -709,18 +725,34 @@ async def move_skill(name: str, body: SkillMoveInput, user_id: CurrentUserId):
     return _user_row_to_info(row)
 
 
+async def _refuse_plugin_owned(user_id: str, name: str) -> None:
+    owned = await get_user_skill(user_id, name)
+    if owned is not None and owned["plugin_id"]:
+        raise _refused(
+            409,
+            "skill_plugin_owned",
+            "This skill came with a plugin and goes with it: uninstall the "
+            "plugin, or switch the skill off",
+            plugin=owned["plugin_name"],
+        )
+
+
 @router.delete("/{name}", status_code=204)
 @handle_api_exceptions("delete skill", logger)
 async def delete_skill(name: str, user_id: CurrentUserId):
-    """Delete a user skill. Builtins can be disabled, not deleted."""
+    """Delete a user skill. Builtins can be disabled, not deleted, and a
+    plugin's skill goes with its plugin."""
     _validate_name_param(name)
     if name in reserved_skill_names():
         raise HTTPException(
             status_code=409,
             detail="Built-in skills can be disabled, not deleted",
         )
-    row = await delete_user_skill(user_id, name)
+    await _refuse_plugin_owned(user_id, name)
+    row = await delete_user_skill(user_id, name, hand_made=True)
     if row is None:
+        # A plugin may have taken the name since it was read.
+        await _refuse_plugin_owned(user_id, name)
         raise HTTPException(status_code=404, detail="Skill not found")
     await drop_archive_if_unused(user_id, row.get("archive_key"))
     return Response(status_code=204)
@@ -734,11 +766,28 @@ async def get_skill_content(
     workspace_id: Optional[str] = Query(
         None, description="Prefer this workspace's row over the user tier."
     ),
+    path: str = Query(
+        "SKILL.md",
+        max_length=512,
+        description="A file in the skill's folder, as listed in ``files``.",
+    ),
 ):
-    """The SKILL.md text, most specific tier first (workspace → user →
-    platform; reserved names keep the platform tier collision-free, so the
-    tier walk is belt-and-braces)."""
+    """One file of a skill, SKILL.md by default, with the list of every file
+    in its folder."""
     _validate_name_param(name)
+    folder = await _skill_folder(user_id, name, workspace_id)
+    response = await asyncio.to_thread(skill_content_response, folder, name, path)
+    if response is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return response
+
+
+async def _skill_folder(
+    user_id: str, name: str, workspace_id: str | None
+) -> SkillFolder:
+    """The folder a skill's page reads. Most specific tier first (workspace →
+    user → platform; reserved names keep the platform tier collision-free, so
+    the tier walk is belt-and-braces)."""
     row = None
     if workspace_id is not None:
         await _require_owned_workspace(workspace_id, user_id)
@@ -746,20 +795,15 @@ async def get_skill_content(
     if row is None:
         row = await get_user_skill(user_id, name)
     if row is not None:
-        data = await fetch_skill_archive(user_id, row)
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as zf:
-                content = zf.read(f"{name}/SKILL.md").decode("utf-8")
-        except (KeyError, zipfile.BadZipFile) as exc:
-            logger.exception(
-                "stored skill archive unreadable (user=%s name=%s)",
-                user_id,
-                name,
+        folder = ZipFolder(await fetch_skill_archive(user_id, row), name)
+        if "SKILL.md" not in folder.files:
+            logger.error(
+                "stored skill archive unreadable (user=%s name=%s)", user_id, name
             )
             raise HTTPException(
                 status_code=502, detail="Stored skill archive is unreadable"
-            ) from exc
-        return {"name": name, "content": content}
+            )
+        return folder
 
     # Platform tier: resolve through the effective registry so a hidden skill,
     # or one the account has disabled, is not readable here. Deliberately the
@@ -767,20 +811,23 @@ async def get_skill_content(
     # source for management, and a workspace deny-list scopes where a skill
     # runs, not whether its owner may look at it.
     registry = build_effective_skill_registry(
-        None, disabled_skills=await get_disabled_builtin_skills(user_id)
+        disabled_skills=await get_disabled_builtin_skills(user_id)
     )
     skill = registry.get(name)
-    if skill is None or skill.exposure == "hidden":
-        raise HTTPException(status_code=404, detail="Skill not found")
     # The configured drop-in root, not the field default: an operator who
     # overrode a shipped skill has to see their own copy here, or the page
     # shows one set of instructions while the agent runs another.
-    content = load_skill_content(
-        name, [str(d) for d in configured_skill_dirs()], registry=registry
+    root = (
+        resolve_skill_dir(
+            name, [str(d) for d in configured_skill_dirs()], registry=registry
+        )
+        if skill is not None and not skill.hidden
+        else None
     )
-    if content is None:
+    folder = await asyncio.to_thread(DiskFolder, root) if root is not None else None
+    if folder is None or "SKILL.md" not in folder.files:
         raise HTTPException(status_code=404, detail="Skill not found")
-    return {"name": name, "content": content}
+    return folder
 
 
 # ---------------------------------------------------------------------------
@@ -820,6 +867,19 @@ async def upload_workspace_skill(
     info = await _upload_skill_archive(user_id, file, workspace_id=workspace_id)
     WorkspaceManager.schedule_skill_reconcile(workspace_id, user_id, source="ws_upload")
     return info
+
+
+def _schedule_disable_reconcile(workspace_id: str, user_id: str) -> None:
+    """Converge the workspace's link view after a disable of an inherited skill.
+
+    The shared skill directory keeps the skill for the siblings, so the only
+    place this workspace's disable takes effect on disk is the link pass. The
+    delivery view no longer moves for it either, so nothing else on the next
+    turn would prune the link before the post-turn pass.
+    """
+    WorkspaceManager.schedule_skill_reconcile(
+        workspace_id, user_id, source="ws_disable"
+    )
 
 
 @workspace_router.patch("/{workspace_id}/skills/{name}", response_model=SkillInfo)
@@ -868,6 +928,7 @@ async def patch_workspace_skill(
         if not user_row["enabled"] and body.enabled:
             raise HTTPException(status_code=409, detail=_USER_LEVEL_DISABLED)
         await set_workspace_skill_disable(workspace_id, name, not body.enabled)
+        _schedule_disable_reconcile(workspace_id, user_id)
         info = _user_row_to_info(user_row, editable=False, deletable=False)
         if not user_row["enabled"]:
             info.disabled_scope = "user"
@@ -892,6 +953,7 @@ async def patch_workspace_skill(
         if bundle_on is False:
             raise HTTPException(status_code=409, detail=_BUNDLE_DISABLED)
     await set_workspace_skill_disable(workspace_id, name, not body.enabled)
+    _schedule_disable_reconcile(workspace_id, user_id)
     overrides = await get_skill_command_overrides(user_id)
     return _builtin_info(
         skill,

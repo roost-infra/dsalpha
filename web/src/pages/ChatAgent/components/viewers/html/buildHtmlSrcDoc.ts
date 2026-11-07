@@ -57,13 +57,18 @@ body > :first-child {
  * The widget is a separate document, so it inherits none of the app's chrome and
  * draws the platform's default scrollbar: a bright slab against a dark surface.
  * Applies to both variants — an inline widget with its own scrolling table shows
- * the same one. Matches `styles/tokens.css`; keep them in step.
+ * the same one. Matches `styles/tokens.css`; keep them in step. A widget with
+ * WebKit scrollbar rules of its own gets none of it: the two would merge rule by
+ * rule, and a 6px scrollbar less this 3px inset on each side paints no thumb at
+ * all. `scrollbar-width` and `scrollbar-color` cannot merge that way, so a
+ * widget that sets only those still gets it, and a browser without them shows it.
  */
 const SCROLLBARS = `
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--color-border-elevated); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-text-tertiary); }`;
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; margin: 4px; }
+::-webkit-scrollbar-thumb { background-color: var(--color-border-elevated); background-clip: padding-box; border: 3px solid transparent; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-tertiary); }`;
+const STYLES_OWN_SCROLLBAR = /-webkit-scrollbar/i;
 
 /**
  * Fullscreen caps at the chat column the widget was authored for and centres in
@@ -89,15 +94,48 @@ body > :first-child {
 }`;
 
 /**
+ * `rgba(r, g, b, a)` as the canvas serializes a translucent color, as
+ * `#rrggbbaa`; null for any other form.
+ */
+export function rgbaToHex(serialized: string): string | null {
+  const m = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(serialized);
+  if (!m) return null;
+  const byte = (n: number) => Math.min(255, Math.max(0, n)).toString(16).padStart(2, '0');
+  return `#${byte(+m[1])}${byte(+m[2])}${byte(+m[3])}${byte(Math.round(+m[4] * 255))}`;
+}
+
+/**
+ * A theme color as hex: `#rrggbb`, or `#rrggbbaa` when translucent. The tokens
+ * are written in whatever syntax suits the stylesheet (`hsl(var(--primary))`
+ * reads back as `hsl(28 63% 51%)`), but a document reads them to paint a
+ * canvas, and the report skills present them as hex. Code that derives a
+ * shade by parsing hex gets NaN from any other form, and the canvas paints a
+ * color it rejects black. The canvas's own parser does the conversion; with
+ * none (jsdom), or for a value that is not an sRGB color, it passes through.
+ */
+function hexColor(value: string, painter: CanvasRenderingContext2D | null): string {
+  if (!painter) return value;
+  painter.fillStyle = '#000000';
+  painter.fillStyle = value;
+  const read = painter.fillStyle;
+  painter.fillStyle = '#ffffff';
+  painter.fillStyle = value;
+  // Not a color: each assignment was refused and left its sentinel.
+  if (typeof read !== 'string' || read !== painter.fillStyle) return value;
+  return read.startsWith('#') ? read : (rgbaToHex(read) ?? value);
+}
+
+/**
  * `from` exists for the print path, which needs the light palette rather than
  * the one the document is currently wearing (see widgetPdf.ts). Every other
  * caller wants the live theme and passes nothing.
  */
 export function resolveThemeVars(from: Element = document.documentElement): string {
   const style = getComputedStyle(from);
+  const painter = document.createElement('canvas').getContext('2d');
   const vars = THEME_VARS.map((v) => {
     const val = style.getPropertyValue(v).trim();
-    return val ? `${v}: ${val};` : '';
+    return val ? `${v}: ${hexColor(val, painter)};` : '';
   })
     .filter(Boolean)
     .join('\n  ');
@@ -115,8 +153,8 @@ export function resolveThemeVars(from: Element = document.documentElement): stri
  * What each variant asks of the document, so the template carries no branches.
  *
  * A widget is authored for the chat column, so neither variant stretches to fill
- * a wider box and the inline one never scrolls at all. Fullscreen still caps at
- * that column width, but it no longer clips what overflows it. `html` here
+ * a wider box and the inline one never scrolls vertically. Fullscreen still caps
+ * at that column width, but it no longer clips what overflows it. `html` here
  * carries no overflow of its own, so the body's value propagates to the
  * viewport, and `overflow-x: hidden` there put a widget wider than the cap out
  * of reach entirely rather than merely making it untidy. A widget that does not
@@ -126,8 +164,12 @@ export function resolveThemeVars(from: Element = document.documentElement): stri
 const VARIANTS: Record<HtmlSrcDocVariant, { bodyOverflow: string; layout: string }> = {
   'widget-inline': {
     // Seamless in the chat flow: the host sizes the iframe from the widget's
-    // own reported height, so the document never scrolls itself.
-    bodyOverflow: 'overflow: hidden;',
+    // own reported height, so the document never scrolls down. It can scroll
+    // across: a widget wider than the column would otherwise be out of reach, and
+    // the height it reports counts what that scrollbar takes from the viewport,
+    // unless it is sized in vh and already fills the frame: each report would grow
+    // the frame, and the widget with it, without end.
+    bodyOverflow: 'overflow-x: auto; overflow-y: hidden;',
     layout: SEAMLESS_OVERRIDE,
   },
   'widget-fullscreen': {
@@ -147,6 +189,11 @@ export function buildHtmlSrcDoc(
 
   // Injected before any widget code runs:
   // 1. Patch JSON.parse to handle NaN/Infinity from Python's json.dumps (not valid JSON).
+  //    Quoted strings are left untouched: a flat token scan with a per-parse
+  //    inString flag, so there is no repetition for the regexp engine to
+  //    backtrack over and a very long string cannot exhaust its stack. Text
+  //    with neither spelling skips the scan: the patch is global to the iframe,
+  //    so every other parse (chart libraries included) would pay for it.
   // 2. Catch uncaught errors and unhandled rejections, display an inline error overlay.
   // 3. Route link clicks to window.open(..., 'noopener'): a plain <a href>
   //    navigates the IFRAME itself, rendering the target inside the sandbox
@@ -155,7 +202,13 @@ export function buildHtmlSrcDoc(
 (function(){
   var _p=JSON.parse;
   JSON.parse=function(t,r){
-    if(typeof t==='string')t=t.replace(/\\bNaN\\b/g,'null').replace(/(?<![A-Za-z_])-?Infinity\\b/g,'null');
+    if(typeof t==='string'&&(t.indexOf('NaN')!==-1||t.indexOf('Infinity')!==-1)){
+      var inString=false;
+      t=t.replace(/\\\\[\\s\\S]|"|(?<!\\w)(?:NaN|-?Infinity)\\b/g,function(token){
+        if(token==='"'){inString=!inString;return token;}
+        return inString||token.charAt(0)==='\\\\'?token:'null';
+      });
+    }
     return _p.call(this,t,r);
   };
   var shown={},count=0,rendering=false;
@@ -203,15 +256,22 @@ export function buildHtmlSrcDoc(
 })();
 </script>\n`;
 
+  // A `widget:themeUpdate` push swaps the :root block, then fires `themechange`
+  // on the window, so a widget can repaint what it drew from the variables (a
+  // canvas keeps the colors it was painted with). The first theme fires
+  // nothing: it is the inline :root block below, parsed before any widget
+  // script runs, and the template never applies it later, so there is nothing
+  // a listener could miss. A frame that needs another theme after load (the
+  // fullscreen dialog, the print copy) gets it as a push, which does fire.
   return `<!DOCTYPE html><html><head>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com esm.sh; style-src 'unsafe-inline'; img-src data: blob:; font-src cdnjs.cloudflare.com cdn.jsdelivr.net; connect-src cdnjs.cloudflare.com cdn.jsdelivr.net unpkg.com esm.sh;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh; style-src 'unsafe-inline'; img-src data: blob:; font-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; connect-src https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://esm.sh;">
 <style>
 :root {
   ${themeCSS}
 }
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: var(--color-text-primary); background: transparent; ${VARIANTS[variant].bodyOverflow} }
-${VARIANTS[variant].layout}\n${SCROLLBARS}
+${VARIANTS[variant].layout}\n${STYLES_OWN_SCROLLBAR.test(html) ? '' : SCROLLBARS}
 </style>
 ${earlyScripts}${dataScript}<script>
 window.sendPrompt = function(text) {
@@ -223,6 +283,7 @@ window.sendPrompt = function(text) {
   function reportHeight() {
     if (!document.body) return;
     var h = document.body.scrollHeight;
+    if (h !== window.innerHeight) h += window.innerHeight - document.documentElement.clientHeight;
     if (h > 0 && Math.abs(h - lastH) > 2) {
       lastH = h;
       parent.postMessage({ type: 'widget:resize', height: h }, '*');
@@ -256,6 +317,7 @@ window.sendPrompt = function(text) {
           /:root\\s*\\{[^}]*\\}/,
           ':root {\\n  ' + e.data.css + '\\n}'
         );
+        try { window.dispatchEvent(new Event('themechange')); } catch (err) {}
       }
     }
   });

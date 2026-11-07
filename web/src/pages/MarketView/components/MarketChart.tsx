@@ -1,26 +1,28 @@
-import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useImperativeHandle, useCallback, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { createChart, ColorType, CrosshairMode, PriceScaleMode, LineType, LineStyle } from 'lightweight-charts';
-import type { IChartApi, LogicalRange, MouseEventParams } from 'lightweight-charts';
+import { createChart, createTextWatermark, ColorType, CrosshairMode, PriceScaleMode, LineType, LineStyle, AreaSeries, BaselineSeries, CandlestickSeries, HistogramSeries, LineSeries } from 'lightweight-charts';
+import type { AreaData, IChartApi, ISeriesApi, ITextWatermarkPluginApi, LogicalRange, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import html2canvas from 'html2canvas';
 import './MarketChart.css';
 import { fetchStockData } from '../utils/api';
 import {
-  centerLatestBarView,
+  defaultBarsView,
+  type DefaultBarsView,
   computeInitialLoadRange,
   dedupeMergeByTime,
   rangeBeforeOldest,
 } from '../utils/chartDataLoaders';
-import { applyQuoteToDailyBar, deriveMarketSession, foldMinuteBar, formatPrice, useCurrencyDisplay, useLiveBars } from '@/lib/bars';
-import { timezoneForSymbol } from '@/lib/bars/exchanges';
+import { applyQuoteToDailyBar, chartPriceFormat, deriveMarketSession, foldMinuteBar, useCurrencyDisplay, useLiveBars } from '@/lib/bars';
+import { isIndexFamilySpelling, timezoneForSymbol } from '@/lib/bars/exchanges';
 import { RANGE_PRESETS, rangeStartChartSec } from '@/lib/bars/rangePresets';
 import type { RangePreset } from '@/lib/bars/rangePresets';
-import { chartSecToDateStr, dateStrInTz } from '@/lib/utils';
+import { chartSecToDateStr, cn, dateStrInTz } from '@/lib/utils';
 import VenueClock from './VenueClock';
 import { useQuote } from '@/lib/quotes';
 import { calculateMA, calculateRSI, updateRSIIncremental } from '../utils/chartHelpers';
 import type { RSIState, OHLCDataPoint } from '../utils/chartHelpers';
-import { calculateATR, calculateBollinger, calculateMACD, projectRiskLevels, type Bar, type LinePoint } from '../utils/indicators';
+import { calculateATR, calculateBollinger, calculateMACD, projectRiskLevels } from '../utils/indicators';
+import type { Bar, LinePoint } from '../utils/indicators';
 import { computeChan } from '../utils/chan';
 import { ChanPrimitive, DEFAULT_CHAN_LAYERS } from '../utils/chanPrimitive';
 import type { ChanLayers } from '../utils/chanPrimitive';
@@ -33,7 +35,6 @@ import {
   BOLL_CONFIG, BOLL_COLORS, DEFAULT_BOLL_ENABLED,
   MACD_CONFIG, MACD_COLORS, DEFAULT_MACD_ENABLED,
   ATR_PERIODS, ATR_COLORS, DEFAULT_ATR_ENABLED, ATR_STOP_MULTIPLE, R_MULTIPLES,
-  computePaneAxisVisibility,
   INTERVAL_SECONDS, WS_FOLD_INTERVALS,
   OVERLAY_COLORS, OVERLAY_LABELS,
   EXTENDED_HOURS_INTERVALS, getExtendedHoursType, computeExtendedHoursRegions,
@@ -42,8 +43,11 @@ import {
 } from '../utils/chartConstants';
 import type { ChartDataPoint as ChartConstDataPoint } from '../utils/chartConstants';
 import { ExtendedHoursBgPrimitive } from '../utils/extendedHoursBg';
+import { PaneLabelPrimitive } from '../utils/paneLabelPrimitive';
+import { selectToolbarTier, type ToolbarTier } from '../utils/toolbarTiers';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Loader } from '@/components/ui/loader';
+import { TextShimmer } from '@/components/ui/text-shimmer';
 import { CrosshairTooltipLayer, type CrosshairTooltipState } from './CrosshairTooltip';
 import { createValueStore, type ValueStore } from '@/lib/valueStore';
 import TradingViewWidget from './TradingViewWidget';
@@ -58,24 +62,14 @@ import { SelectionPrimitive, type CommittedSelection } from '../utils/selectionP
 import { SelectionCommentOverlay } from './SelectionCommentOverlay';
 import { snapToNearestBar, toUnixSeconds } from '../utils/annotationGeometry';
 import { downsampleBars } from '../utils/downsampleBars';
-import { SlidersHorizontal, Settings2, Maximize2, Minimize2, ChevronDown, Plus, Minus, RotateCcw, Menu, X, SquareDashedMousePointer, Ruler } from 'lucide-react';
+import { clampToPricePane, isOnPricePane, pricePaneHeight } from '../utils/paneBounds';
+import { SlidersHorizontal, Settings2, Maximize2, Minimize2, ChevronDown, Plus, Minus, RotateCcw, Menu, X, SquareDashedMousePointer, Ruler, Waypoints } from 'lucide-react';
 
 import { loadPref, savePref } from '../utils/prefs';
-import type { SnapshotData } from '@/types/market';
+import type { Freshness, SnapshotData } from '@/types/market';
 import type { BarData } from '../hooks/useMarketDataWS';
-import { Waypoints } from 'lucide-react';
 import { useOnClickOutside } from '@/hooks/useOnClickOutside';
 import { useIsMobile } from '@/hooks/useIsMobile';
-
-/** 缠论分层开关的展示顺序与 i18n key。顺序即重要性：笔是骨架，中枢是最常看的，
- *  分型/买卖点是可选增强。 */
-const CHAN_LAYER_ITEMS: Array<{ key: keyof ChanLayers; labelKey: string }> = [
-  { key: 'strokes', labelKey: 'marketView.chart.chan.strokes' },
-  { key: 'segments', labelKey: 'marketView.chart.chan.segments' },
-  { key: 'zhongshu', labelKey: 'marketView.chart.chan.zhongshu' },
-  { key: 'fractals', labelKey: 'marketView.chart.chan.fractals' },
-  { key: 'points', labelKey: 'marketView.chart.chan.points' },
-];
 
 interface ChartDataBar {
   time: number;
@@ -103,6 +97,9 @@ interface MarketChartProps {
   onStockMeta?: (meta: unknown) => void;
   /** Venue market phase (`pre|open|post|closed`) from the bars responses; null until known. */
   onMarketPhase?: (phase: string | null) => void;
+  /** Measured freshness of the chart's own bars — which provider filled them
+   *  and how far behind they are. Travels with `onMarketPhase`; null until known. */
+  onChartFreshness?: (freshness: Freshness | null) => void;
   quoteData: Record<string, unknown> | null;
   earningsData: unknown;
   overlayData: Record<string, unknown> | null;
@@ -111,6 +108,41 @@ interface MarketChartProps {
   wsStatus: string;
   marketStatus?: Record<string, unknown> | null;
   snapshot: SnapshotData | null;
+  /**
+   * Show the range/point selection tools. They write to a store only the
+   * MarketView page reads, so any other host would arm a hand-off nothing
+   * receives; a host opts in rather than out.
+   */
+  selectionTools?: boolean;
+  /**
+   * How the chart frames the latest bars after a load: `centered` keeps the
+   * MarketView page's look (last bar mid-chart, room to the right) while the
+   * chart is wide enough for that, and packs the bars with a modest gutter
+   * below `NARROW_CENTERED_VIEW_PX`; `fill` packs them flush for a narrow
+   * host such as a side panel. Policy in `defaultBarsView`.
+   */
+  defaultView?: DefaultBarsView;
+  /** Offer the Light / Advanced (TradingView) switch. Off forces the light chart. */
+  modeSwitcher?: boolean;
+  /**
+   * Rendered first in the toolbar row, before the intervals: a host's ticker
+   * legend. Inline content, laid on one line. The slot is the one flex item
+   * in the row that gives: it takes what the controls leave and ellipsizes
+   * past that, so the lead never pushes the controls over each other.
+   */
+  toolbarLead?: React.ReactNode;
+  /**
+   * When the lead's intrinsic width can have changed. The toolbar re-measures
+   * its slots (a forced layout) whenever this changes; without it, on every
+   * new `toolbarLead` node, which a live quote produces on every tick. A
+   * host whose lead width follows its content's shape (`legendLeadShapeKey`)
+   * passes that.
+   */
+  toolbarLeadKey?: string;
+  /** Rendered last in the toolbar row, after the chart's tools: a host's own actions. */
+  toolbarTrail?: React.ReactNode;
+  /** A second thin row under the toolbar, above the panes: a host's actions and figures. */
+  toolbarSubrow?: React.ReactNode;
 }
 
 export interface MarketChartHandle {
@@ -137,14 +169,17 @@ const MIN_DRAG_PX = 4;
  */
 const PRICE_LINE_RESET = { priceLineColor: '', title: '' } as const;
 
-/**
- * Container widths (px, descending) at which the toolbar sheds actions into the
- * overflow menu. `toolbarLevel` is the count of breakpoints the width is below:
- * 0 = widest (all inline) … 4 = narrowest. Driven by a ResizeObserver.
- */
-const TOOLBAR_WIDTH_BREAKPOINTS = [1180, 880, 710, 560] as const;
+/** Chan layer toggles in display order: strokes are the skeleton, pivots the
+ *  usual read, fractals and buy/sell marks optional detail. */
+const CHAN_LAYER_ITEMS: Array<{ key: keyof ChanLayers; labelKey: string }> = [
+  { key: 'strokes', labelKey: 'marketView.chart.chan.strokes' },
+  { key: 'segments', labelKey: 'marketView.chart.chan.segments' },
+  { key: 'zhongshu', labelKey: 'marketView.chart.chan.zhongshu' },
+  { key: 'fractals', labelKey: 'marketView.chart.chan.fractals' },
+  { key: 'points', labelKey: 'marketView.chart.chan.points' },
+];
 
-const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>(({
+const MarketChart = React.memo(function MarketChart({
   symbol,
   interval = '1day',
   workspaceId,
@@ -152,6 +187,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   onCapture: _onCapture,
   onStockMeta,
   onMarketPhase,
+  onChartFreshness,
   quoteData,
   earningsData,
   overlayData,
@@ -160,7 +196,15 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   wsStatus: _wsStatus,
   marketStatus,
   snapshot,
-}, ref) => {
+  selectionTools = false,
+  defaultView = 'centered',
+  modeSwitcher = true,
+  toolbarLead,
+  toolbarLeadKey,
+  toolbarTrail,
+  toolbarSubrow,
+  ref,
+}: MarketChartProps & { ref?: React.Ref<MarketChartHandle> }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const ct = getChartTheme(theme as 'dark' | 'light');
@@ -168,44 +212,41 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const supports4hInterval = marketStatus == null || providers.some(p => p !== 'yfinance');
   const rootRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const rsiChartContainerRef = useRef<HTMLDivElement>(null);
-  const macdChartContainerRef = useRef<HTMLDivElement>(null);
-  const atrChartContainerRef = useRef<HTMLDivElement>(null);
   const lightWrapperRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const rsiChartRef = useRef<IChartApi | null>(null);
+  const watermarkRef = useRef<ITextWatermarkPluginApi<Time> | null>(null);
+  const rsiLabelRef = useRef<PaneLabelPrimitive | null>(null);
   // TODO: type properly — lightweight-charts series types are complex generics
   const candlestickSeriesRef = useRef<any>(null);
-  const rsiSeriesRef = useRef<any>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<'Area'> | null>(null);
   const volumeSeriesRef = useRef<any>(null);
   const maSeriesRefs = useRef<Record<number, any>>({});
-  // 布林带三条线（主图叠加）。创建时机与 MA 同批，数据在下发时按开关计算。
-  const bollSeriesRefs = useRef<{ upper?: any; middle?: any; lower?: any }>({});
-  // MACD 独立实例（v4.2.3 没有多面板 API，只能像 RSI 那样另起一个 chart）
-  const macdChartRef = useRef<IChartApi | null>(null);
-  const macdSeriesRefs = useRef<{ macd?: any; signal?: any; histogram?: any }>({});
-  // applyMacdData 在图表创建 effect 之后才声明（它是 useCallback），effect 里直接
-  // 引用会踩 TDZ。用 ref 转交，effect 只读 ref.current。
-  const applyMacdDataRef = useRef<((data: ChartDataBar[]) => void) | null>(null);
-  // ATR 独立面板（第三个 chart 实例）
-  const atrChartRef = useRef<IChartApi | null>(null);
-  const atrSeriesRef = useRef<any>(null);
-  const applyAtrDataRef = useRef<((data: ChartDataBar[]) => void) | null>(null);
-  // 三个下方面板"谁画时间轴"的当前结果 [RSI, MACD, ATR]。图表创建 effect 只在挂载时
-  // 跑一次，读不到之后变化的 state，所以走 ref；规则本身是 computePaneAxisVisibility。
-  const axisVisRef = useRef<[boolean, boolean, boolean]>([true, false, false]);
   const baselineSeriesRef = useRef<any>(null);
   const extHoursBgRef = useRef<ExtendedHoursBgPrimitive | null>(null);
   const selectionPrimitiveRef = useRef<SelectionPrimitive | null>(null);
+  // Chan geometry is a series primitive, drawn the way the selection layer is.
   const chanPrimitiveRef = useRef<ChanPrimitive | null>(null);
-  // 分层开关的 ref 镜像：updateSeriesData 是 useCallback，闭包里的 state 会过期，
-  // 所以它读 ref。
+  // Callbacks that outlive a render (updateSeriesData) read the toggles here.
   const chanLayersRef = useRef<ChanLayers>(DEFAULT_CHAN_LAYERS);
-  // 最近一次喂给图表的K线。开关打开时要能立刻按当前数据重算几何，
-  // 不能等下一次滚动加载。
+  // Last bars handed to the chart: a layer switched on must paint from them
+  // immediately rather than wait for the next load.
   const lastBarsRef = useRef<Array<{ time: number; high: number; low: number }>>([]);
+  // BOLL overlays the price pane; MACD and ATR each own a pane (created on toggle).
+  const bollSeriesRefs = useRef<{ upper?: any; middle?: any; lower?: any }>({});
+  const macdSeriesRefs = useRef<{ macd?: any; signal?: any; histogram?: any }>({});
+  const atrSeriesRef = useRef<any>(null);
+  const macdLabelRef = useRef<PaneLabelPrimitive | null>(null);
+  const atrLabelRef = useRef<PaneLabelPrimitive | null>(null);
+  const extCloseLineRef = useRef<any>(null);
+  // Signature of the last-applied session presentation (priceMark + close-line
+  // price) — makes applySessionPresentation idempotent across its call sites.
+  const appliedSessionRef = useRef<string | null>(null);
+  // Server market phase mirrored into a ref so the imperative data paths
+  // (WS ticks, updateSeriesData) read the freshest phase between renders.
+  const marketPhaseRef = useRef<string | null>(null);
+  const snapshotRef = useRef(snapshot);
 
-  /** 按当前分层开关与最近一次K线，重算并下发缠论几何。 */
+  /** Repaint the Chan geometry from the bars the chart currently holds. */
   const applyChanGeometry = useCallback(() => {
     const prim = chanPrimitiveRef.current;
     if (!prim) return;
@@ -214,19 +255,10 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     prim.setGeometry(want ? computeChan(lastBarsRef.current) : null);
   }, []);
 
-  const extCloseLineRef = useRef<any>(null);
-  // Signature of the last-applied session presentation (priceMark + close-line
-  // price) — makes applySessionPresentation idempotent across its call sites.
-  const appliedSessionRef = useRef<string | null>(null);
-  // Server market phase mirrored into a ref so the imperative data paths
-  // (WS ticks, updateSeriesData) read the freshest phase between renders.
-  const marketPhaseRef = useRef<string | null>(null);
-  const quoteDataRef = useRef(quoteData);
-  const snapshotRef = useRef(snapshot);
-
   const [loading, setLoading] = useState<boolean>(true);
   const [scrollLoading, setScrollLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  // A server message shows as sent; a fallback of ours is a catalog key so it follows the language.
+  const [error, setError] = useState<{ text: string } | { kind: 'intraday' | 'notFound' | 'load' } | null>(null);
   const [_lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null);
   const [rsiValue, setRsiValue] = useState<string | null>(null);
 
@@ -254,18 +286,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // reads so the light chart stays fully live on mobile, while the raw
   // `chartMode` (and its toggle/pref) is preserved for the desktop switcher.
   const isMobile = useIsMobile();
-  const effectiveChartMode = isMobile ? 'custom' : chartMode;
+  const showModeSwitch = !isMobile && modeSwitcher;
+  const effectiveChartMode = showModeSwitch ? chartMode : 'custom';
 
   // Chart feature toggles (persisted)
   const [priceScaleMode, setPriceScaleMode] = useState<number>(() => loadPref('priceScaleMode', PriceScaleMode.Normal));
   const [magnetMode, setMagnetMode] = useState<boolean>(() => loadPref('magnetMode', false));
   const [showBaseline, setShowBaseline] = useState<boolean>(false);
-  // 缠论：默认只开「笔 + 中枢」。分型在真实行情里太密（全开会糊成一片），
-  // 买卖点需要使用者有判断力，两者都默认关、各自可开。
-  const [chanLayers, setChanLayers] = useState<ChanLayers>(() => ({
-    ...DEFAULT_CHAN_LAYERS,
-    ...(loadPref('chanLayers', DEFAULT_CHAN_LAYERS) as Partial<ChanLayers>),
-  }));
   const [annotationsVisible, setAnnotationsVisible] = useState<boolean>(() => loadPref('annotationsVisible', false));
   // User chart-selection tool: drag a region or click a price level to ask the agent.
   const [selectMode, setSelectMode] = useState<'off' | 'region' | 'price_level'>('off');
@@ -275,13 +302,17 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   const [overlayVisibility, setOverlayVisibility] = useState<OverlayVisibility>(
     () => loadPref('overlayVisibility', { earnings: false, grades: false, priceTargets: false }),
   );
-  // 布林带（主图叠加：上/中/下轨 + 通道填充）
+  // Chan layers: strokes + pivots on by default. Fractals are too dense on real
+  // data, and buy/sell marks need the reader's own judgement, so both start off.
+  const [chanLayers, setChanLayers] = useState<ChanLayers>(() => ({
+    ...DEFAULT_CHAN_LAYERS,
+    ...(loadPref('chanLayers', DEFAULT_CHAN_LAYERS) as Partial<ChanLayers>),
+  }));
+  // BOLL overlays price; MACD and ATR are separate panes (all persisted).
   const [bollEnabled, setBollEnabled] = useState<boolean>(() => loadPref('bollEnabled', DEFAULT_BOLL_ENABLED));
-  // MACD（独立面板：DIF/DEA 双线 + 柱状能量）
   const [macdEnabled, setMacdEnabled] = useState<boolean>(() => loadPref('macdEnabled', DEFAULT_MACD_ENABLED));
-  // 面板左上角读数。null 表示预热未完成或已关闭。
+  // Pane caption readouts; null while warm-up is incomplete or the pane is off.
   const [macdValues, setMacdValues] = useState<{ dif: number; dea: number; hist: number } | null>(null);
-  // ATR（独立面板）：波动率刻度 + 以 1×ATR 为 1R 的止损/目标读数。
   const [atrEnabled, setAtrEnabled] = useState<boolean>(() => loadPref('atrEnabled', DEFAULT_ATR_ENABLED));
   const [atrPeriod, setAtrPeriod] = useState<number>(() => loadPref('atrPeriod', ATR_PERIODS[0]));
   const [atrValues, setAtrValues] = useState<{ atr: number; lastClose: number; r: number } | null>(null);
@@ -290,21 +321,56 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // Toolbar collapse tier by container width. As space shrinks the toolbar
   // sacrifices items in priority order (least → most important): indicator
   // values (1) → scale/view tools (2) → indicators + tools dropdowns (3) →
-  // mode switch into the menu + Clear icon-only (4, phone widths). The interval
-  // selector, Clear and the selection tools always stay inline. Hidden
-  // actionable items move into the overflow menu.
-  const [toolbarLevel, setToolbarLevel] = useState<0 | 1 | 2 | 3 | 4>(0);
+  // mode switch into the menu + Clear icon-only (4, phone widths) → the
+  // primary intervals into their dropdown (5). Clear and the selection tools
+  // always stay inline. Hidden actionable items move into the overflow menu.
+  // A host's lead and trail take room the tiers were sized without, so the
+  // width they see is the container minus those slots. Slots are measured by
+  // scrollWidth: the row clips the lead when it is short of room, and the
+  // tier has to see what the lead asks for rather than what it got, or a
+  // clipped lead reads as spare room and the tier loosens into it.
+  const [toolbarLevel, setToolbarLevel] = useState<ToolbarTier>(0);
+  const toolbarSlotsRef = useRef<{ lead: HTMLDivElement | null; trail: HTMLDivElement | null }>({ lead: null, trail: null });
+  const toolbarObserverRef = useRef<ResizeObserver | null>(null);
+  const measureToolbar = useCallback(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const { lead, trail } = toolbarSlotsRef.current;
+    const w = el.clientWidth - (lead?.scrollWidth ?? 0) - (trail?.scrollWidth ?? 0);
+    setToolbarLevel((cur) => selectToolbarTier(w, cur));
+  }, []);
+  // A slot arrives with the host's content, which may be after the chart has
+  // mounted, so the observer follows the slot element rather than the mount.
+  const slotRef = useCallback((key: 'lead' | 'trail') => (node: HTMLDivElement | null) => {
+    const prev = toolbarSlotsRef.current[key];
+    if (prev && prev !== node) toolbarObserverRef.current?.unobserve(prev);
+    toolbarSlotsRef.current[key] = node;
+    if (node) toolbarObserverRef.current?.observe(node);
+  }, []);
+  const toolbarLeadRef = useMemo(() => slotRef('lead'), [slotRef]);
+  const toolbarTrailRef = useMemo(() => slotRef('trail'), [slotRef]);
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      const w = entry.contentRect.width;
-      const below = TOOLBAR_WIDTH_BREAKPOINTS.findIndex((min) => w >= min);
-      setToolbarLevel((below === -1 ? TOOLBAR_WIDTH_BREAKPOINTS.length : below) as 0 | 1 | 2 | 3 | 4);
-    });
+    const ro = new ResizeObserver(measureToolbar);
+    toolbarObserverRef.current = ro;
     ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+    const { lead, trail } = toolbarSlotsRef.current;
+    if (lead) ro.observe(lead);
+    if (trail) ro.observe(trail);
+    return () => {
+      ro.disconnect();
+      toolbarObserverRef.current = null;
+    };
+  }, [measureToolbar]);
+  // The observer reports a slot's box, and a lead that already fills its line
+  // keeps the same box when its content grows (an after-hours pair appears,
+  // the status text changes) or when the slot is removed. Its scrollWidth is
+  // what the tier reads, so a change to what fills the slots re-measures
+  // before paint. A host that keys the lead's shape narrows that to the
+  // changes that can move its width.
+  const leadShape = toolbarLeadKey ?? toolbarLead;
+  useLayoutEffect(() => { measureToolbar(); }, [measureToolbar, leadShape, toolbarTrail]);
   // Close the overflow menu if the chart widens enough to unmount it.
   useEffect(() => { if (toolbarLevel < 2) setViewOpen(false); }, [toolbarLevel]);
 
@@ -324,8 +390,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   useOnClickOutside(indicatorsDropdownRef, () => setIndicatorsOpen(false), indicatorsOpen);
   useOnClickOutside(toolsDropdownRef, () => setToolsOpen(false), toolsOpen);
   useOnClickOutside(intervalsDropdownRef, () => setIntervalsOpen(false), intervalsOpen);
-  useOnClickOutside(chanDropdownRef, () => setChanOpen(false), chanOpen);
   useOnClickOutside(viewDropdownRef, () => setViewOpen(false), viewOpen);
+  useOnClickOutside(chanDropdownRef, () => setChanOpen(false), chanOpen);
 
   // Crosshair tooltip state — external store, not useState: the crosshair
   // fires per raw mousemove, and a setState here re-renders this entire
@@ -344,6 +410,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
   // Track current interval for use inside stable callbacks (avoids stale closures)
   const intervalRef = useRef(interval);
+  const defaultViewRef = useRef(defaultView);
 
   // Keep refs synced with state
   useEffect(() => { enabledMaPeriodsRef.current = enabledMaPeriods; }, [enabledMaPeriods]);
@@ -353,7 +420,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   useEffect(() => { atrEnabledRef.current = atrEnabled; }, [atrEnabled]);
   useEffect(() => { atrPeriodRef.current = atrPeriod; }, [atrPeriod]);
   useEffect(() => { intervalRef.current = interval; }, [interval]);
-  useEffect(() => { quoteDataRef.current = quoteData; }, [quoteData]);
+  useEffect(() => { defaultViewRef.current = defaultView; }, [defaultView]);
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
   const symbolRef = useRef(symbol);
   useEffect(() => { symbolRef.current = symbol; }, [symbol]);
@@ -378,7 +445,6 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // RSI incremental-update refs
   const rsiSmoothingRef = useRef<RSIState | null>(null);          // Wilder state { avgGain, avgLoss, lastClose, period }
   const prevBarSmoothingRef = useRef<RSIState | null>(null);       // State *before* current bar (for same-bar re-updates)
-  const pendingRsiDataRef = useRef<Array<{ time: number; value: number }> | null>(null);         // Buffered rsiData when series isn't ready
   const rsiDataMapRef = useRef<Map<number, number>>(new Map());        // time->rsiValue for O(1) crosshair lookup
 
   // Track when the last WS live tick was applied (for REST polling fallback)
@@ -448,7 +514,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     selectionPrimitiveRef.current?.setTheme(theme === 'dark' ? 'dark' : 'light');
   }, [theme]);
 
-  // 缠论 primitive：主题与分层开关都是命令式更新（同 selection 的做法）
+  // Chan layers are imperative too: theme and toggles go straight to the primitive.
   useEffect(() => {
     chanPrimitiveRef.current?.setTheme(theme === 'dark' ? 'dark' : 'light');
   }, [theme]);
@@ -457,7 +523,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     chanLayersRef.current = chanLayers;
     chanPrimitiveRef.current?.setLayers(chanLayers);
     savePref('chanLayers', chanLayers);
-    // 打开任一层时立刻按现有数据出图，否则要等下一次 K 线更新才出现
+    // A layer switched on must paint from the bars already in the chart.
     applyChanGeometry();
   }, [chanLayers, applyChanGeometry]);
 
@@ -597,11 +663,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       timeEnd: new Date(endSec * 1000).toISOString(),
       priceLow: Math.min(priceLow, priceHigh),
       priceHigh: Math.max(priceLow, priceHigh),
+      // The axis's own places, so the bounds print as the chart showed them.
+      decimals: priceFormatRef.current.decimals,
       bars: selBars,
       barsTruncated: truncated,
       croppedImage,
     });
-  }, [selectionSymbol, annotationInterval, captureSelectionCrop]);
+  }, [selectionSymbol, annotationInterval, captureSelectionCrop, priceFormatRef]);
 
   const handleSelectPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const mode = selectModeRef.current;
@@ -609,10 +677,17 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const container = chartContainerRef.current;
     const prim = selectionPrimitiveRef.current;
     if (!container || !prim) return;
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     const rect = container.getBoundingClientRect();
     const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const rawY = e.clientY - rect.top;
+    // The RSI pane shares this container; a gesture there is not a price, and
+    // with no pane measured there is no price to read. Either tool starts on
+    // the price pane, so a selection's bounds are points the user chose.
+    const paneH = pricePaneHeight(chartRef.current);
+    if (paneH <= 0) return;
+    if (!isOnPricePane(rawY, paneH)) return;
+    const y = clampToPricePane(rawY, paneH);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* unsupported */ }
     selectDragRef.current = { startX: x, startY: y };
     prim.setDraft(
       mode === 'price_level'
@@ -628,8 +703,10 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const prim = selectionPrimitiveRef.current;
     if (!container || !prim) return;
     const rect = container.getBoundingClientRect();
+    const paneH = pricePaneHeight(chartRef.current);
+    if (paneH <= 0) return;
     const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const y = clampToPricePane(e.clientY - rect.top, paneH);
     prim.setDraft(
       selectModeRef.current === 'price_level'
         ? { type: 'price_level', x1: 0, y1: y, x2: rect.width, y2: y }
@@ -645,10 +722,11 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const mode = selectModeRef.current;
     const container = chartContainerRef.current;
     const series = candlestickSeriesRef.current;
-    if (container && series) {
+    const paneH = pricePaneHeight(chartRef.current);
+    if (container && series && paneH > 0) {
       const rect = container.getBoundingClientRect();
       const endX = e.clientX - rect.left;
-      const endY = e.clientY - rect.top;
+      const endY = clampToPricePane(e.clientY - rect.top, paneH);
       try {
         if (mode === 'price_level') {
           const price = series.coordinateToPrice(endY);
@@ -658,6 +736,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               timeframe: annotationInterval,
               selectionType: 'price_level',
               priceLow: price, priceHigh: price,
+              decimals: priceFormatRef.current.decimals,
               bars: [], barsTruncated: false,
             });
           }
@@ -672,7 +751,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       }
     }
     // Tool stays armed so the user can keep drawing; Esc / the tool button disarms.
-  }, [commitRegionSelection, selectionSymbol, annotationInterval]);
+  }, [commitRegionSelection, selectionSymbol, annotationInterval, priceFormatRef]);
 
   const handleSelectPointerCancel = useCallback(() => {
     // Pointer sequence aborted (touch interrupted, capture stolen) before a
@@ -943,7 +1022,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         if (prevBarSmoothingRef.current) {
           const { value, state } = updateRSIIncremental(prevBarSmoothingRef.current, barClose);
           rsiSmoothingRef.current = state;
-          rsiSeriesRef.current.update({ time: barTime, value });
+          rsiSeriesRef.current.update({ time: barTime as UTCTimestamp, value });
           rsiDataMapRef.current.set(barTime, value);
           setRsiValue(value.toFixed(0));
         }
@@ -952,7 +1031,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         prevBarSmoothingRef.current = rsiSmoothingRef.current;
         const { value, state } = updateRSIIncremental(rsiSmoothingRef.current, barClose);
         rsiSmoothingRef.current = state;
-        rsiSeriesRef.current.update({ time: barTime, value });
+        rsiSeriesRef.current.update({ time: barTime as UTCTimestamp, value });
         rsiDataMapRef.current.set(barTime, value);
         setRsiValue(value.toFixed(0));
       }
@@ -979,7 +1058,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // is preserved. Deliberately does NOT touch lastLiveTickTimeRef, so the 60s
   // REST poll still runs as the authoritative correction (MA/RSI + drift).
   const { quote: dayQuote } = useQuote(symbol, {
-    isIndex: (symbol ?? '').startsWith('^'),
+    isIndex: isIndexFamilySpelling(symbol),
     enabled: interval === '1day' && effectiveChartMode === 'custom',
   });
   useEffect(() => {
@@ -1061,28 +1140,12 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     },
     captureChartAsDataUrl: async () => {
-      // Capture main chart (+ RSI if visible) using native takeScreenshot.
-      // html2canvas can't read lightweight-charts canvas pixels, so we
-      // stitch the native screenshots together on an offscreen canvas.
+      // html2canvas can't read lightweight-charts canvas pixels; the native
+      // screenshot covers every pane (price + RSI) in one image.
       try {
-        const mainCanvas = chartRef.current?.takeScreenshot();
-        const rsiCanvas = rsiChartRef.current?.takeScreenshot();
-        if (!mainCanvas) return null;
-
-        const mainW = mainCanvas.width, mainH = mainCanvas.height;
-        const rsiW = rsiCanvas?.width || 0, rsiH = rsiCanvas?.height || 0;
-        const totalH = mainH + (rsiCanvas ? rsiH : 0);
-
-        const offscreen = document.createElement('canvas');
-        offscreen.width = Math.max(mainW, rsiW);
-        offscreen.height = totalH;
-        const ctx = offscreen.getContext('2d')!;
-        ctx.fillStyle = ct.bg;
-        ctx.fillRect(0, 0, offscreen.width, offscreen.height);
-        ctx.drawImage(mainCanvas, 0, 0);
-        if (rsiCanvas) ctx.drawImage(rsiCanvas, 0, mainH);
-
-        return offscreen.toDataURL('image/jpeg', 0.85);
+        const canvas = chartRef.current?.takeScreenshot();
+        if (!canvas) return null;
+        return canvas.toDataURL('image/jpeg', 0.85);
       } catch (err) {
         console.error('Chart capture failed:', err);
         return null;
@@ -1146,13 +1209,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     if (data.length > 0) applySessionPresentation(data[data.length - 1].time);
   }, [chartDataForHooks, dayQuote, marketPhase, interval, symbol, effectiveChartMode, applySessionPresentation]);
 
-  // --- Update series data helper (used by both initial load and scroll load) ---
-
   /**
-   * LinePoint[] -> lightweight-charts line data.
-   * The indicator layer uses `value: null` for warm-up, but a line series rejects
-   * null; the supported way to express "no data here" is a whitespace point that
-   * carries only `time`.
+   * LinePoint[] -> line data. The indicator layer reports warm-up as `null` and
+   * a line series rejects null, so those points become whitespace (time only).
    */
   const toLineData = useCallback((points: LinePoint[]) => {
     return points.map((p) =>
@@ -1160,9 +1219,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     );
   }, []);
 
-  /**
-   * 最后一个非空值。预热区是 null，直接取末位会拿到 null。
-   */
+  /** Last non-null value: the warm-up tail is null, so taking the last can lie. */
   const lastNonNull = (points: LinePoint[]): number | null => {
     for (let i = points.length - 1; i >= 0; i--) {
       if (points[i].value !== null) return points[i].value;
@@ -1171,8 +1228,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   };
 
   /**
-   * 把 MACD 三个系列下发到独立面板。面板是延迟创建的（等 DOM），所以在
-   * updateSeriesData 与面板创建两处都会调用，走同一个函数避免两套逻辑漂移。
+   * Feed the MACD pane. Called from updateSeriesData and from the pane effect:
+   * a pane enabled later has missed every update sent while it did not exist.
    */
   const applyMacdData = useCallback((data: ChartDataBar[]) => {
     const refs = macdSeriesRefs.current;
@@ -1194,7 +1251,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     );
     refs.macd?.setData(toLineData(m.macd));
     refs.signal?.setData(toLineData(m.signal));
-    // 柱状图按正负着色，用当前主题的上/下色。
+    // The histogram colour is baked into each point, so a theme change re-sends it.
     const ct = ctRef.current;
     refs.histogram?.setData(
       m.histogram
@@ -1216,9 +1273,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   }, [toLineData]);
 
   /**
-   * ATR 面板：一条线 + 以 1×ATR 为 1R 的风险读数。
-   * R 位的价格由 projectRiskLevels 算出（纯函数、已单测），这里只做展示。
-   * 用最后收盘价当"若此刻入场"的入场价——这是规划工具，不是建仓建议。
+   * Feed the ATR pane and its readout. Stop/targets come from `projectRiskLevels`
+   * (pure, unit-tested); the last close stands in for the entry so the readout
+   * is a planning reference, not a position call.
    */
   const applyAtrData = useCallback((data: ChartDataBar[]) => {
     if (!atrSeriesRef.current) return;
@@ -1238,21 +1295,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       setAtrValues(null);
       return;
     }
-    // 1R 止损距离 = ATR_STOP_MULTIPLE × ATR（多头：入场下方）
+    // 1R = ATR_STOP_MULTIPLE x ATR below the last close.
     const stop = close - ATR_STOP_MULTIPLE * atrLast;
     const proj = projectRiskLevels(close, stop, R_MULTIPLES);
     setAtrValues({ atr: atrLast, lastClose: close, r: proj ? proj.risk : atrLast });
   }, [toLineData]);
 
-  // 把 applyMacdData / applyAtrData 交给图表创建 effect（它们在 effect 之后声明，
-  // 见 applyMacdDataRef / applyAtrDataRef）。
-  useEffect(() => {
-    applyMacdDataRef.current = applyMacdData;
-  }, [applyMacdData]);
-  useEffect(() => {
-    applyAtrDataRef.current = applyAtrData;
-  }, [applyAtrData]);
-
+  // --- Update series data helper (used by both initial load and scroll load) ---
   const updateSeriesData = useCallback((data: ChartDataBar[]) => {
     const ct = ctRef.current;
     const applyExt = isUSEquity(symbolRef.current) && EXTENDED_HOURS_INTERVALS.has(intervalRef.current);
@@ -1309,9 +1358,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     });
     setMaValues(newMaValues);
 
-    // 布林带（主图叠加）。关着就清空。
-    // 注意：LinePoint 的预热区是 value:null，而 lightweight-charts 的 line series
-    // 不接受 null —— 必须转成仅含 time 的 whitespace 点，否则 setData 直接抛错。
+    // BOLL overlay: computed only while enabled, cleared otherwise.
     const bollSeries = bollSeriesRefs.current;
     if (bollEnabledRef.current) {
       const bb = calculateBollinger(data as unknown as Bar[], BOLL_CONFIG.period, BOLL_CONFIG.stdDev);
@@ -1324,14 +1371,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       bollSeries.lower?.setData([]);
     }
 
-    // MACD（独立面板）。系列可能还没建好（100ms 延迟创建），没建好就跳过，
-    // 等面板创建时用 applyMacdData 补一次。
-    if (macdEnabledRef.current) {
-      applyMacdData(data);
-    }
-    if (atrEnabledRef.current) {
-      applyAtrData(data);
-    }
+    // MACD/ATR panes: skip cleanly when the series does not exist (pane off).
+    if (macdEnabledRef.current) applyMacdData(data);
+    if (atrEnabledRef.current) applyAtrData(data);
 
     // RSI — compute and store smoothing state for incremental updates
     const currentRsiPeriod = rsiPeriodRef.current;
@@ -1344,22 +1386,14 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     for (const pt of rsiData) map.set(pt.time, pt.value);
     rsiDataMapRef.current = map;
 
-    if (rsiData.length > 0) {
-      const lastRsi = rsiData[rsiData.length - 1]?.value;
-      if (lastRsi != null) setRsiValue(lastRsi.toFixed(0));
+    // Too few bars for the period clears the line rather than leaving the
+    // previous period's under the new caption.
+    const lastRsi = rsiData[rsiData.length - 1]?.value;
+    setRsiValue(lastRsi != null ? lastRsi.toFixed(0) : null);
+    rsiSeriesRef.current?.setData(rsiData as AreaData<Time>[]);
 
-      if (rsiSeriesRef.current) {
-        // Series ready — apply immediately
-        rsiSeriesRef.current.setData(rsiData);
-        pendingRsiDataRef.current = null;
-      } else {
-        // Series not ready yet (mount race) — stash for flush after creation
-        pendingRsiDataRef.current = rsiData;
-      }
-    }
-
-    // 缠论几何：跟着当前可见K线重算。只在开启时才算是刻意的——分析是纯 CPU、
-    // 每次滚动加载都会跑，关着就不该付这份开销。
+    // Chan geometry follows the currently loaded bars. Pure CPU, so it is only
+    // computed while at least one layer is on.
     lastBarsRef.current = data.map((d) => ({ time: d.time, high: d.high, low: d.low }));
     applyChanGeometry();
 
@@ -1372,12 +1406,16 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   // storage (allDataRef) and the WS tick clock (lastLiveTickTimeRef, written by
   // the fold effect above). Runs only in the custom (Light) chart mode. See
   // useLiveBars for the reconcile/skip invariants. `seedMeta` seeds the
-  // watermark + currency from the initial loader's metadata.
-  const { seedMeta } = useLiveBars(symbol, interval, {
+  // watermark + currency from the initial loader's metadata. A series rebuilt
+  // server-side re-runs that loader (`historyEpoch`), never a splice.
+  const [historyEpoch, setHistoryEpoch] = useState(0);
+  const { seedMeta, loadFailed } = useLiveBars(symbol, interval, {
     enabled: effectiveChartMode === 'custom',
     dataRef: allDataRef,
     lastWsTickRef: lastLiveTickTimeRef,
     onMeta: onCurrencyMeta,
+    onFreshness: onChartFreshness,
+    onRebuilt: () => setHistoryEpoch((n) => n + 1),
     onPhase: (phase) => {
       // Ref first: the imperative data paths must read the fresh phase
       // before React commits the state update.
@@ -1478,19 +1516,12 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       layout: {
         background: { type: ColorType.Solid, color: t0.bg },
         textColor: t0.text,
+        panes: { enableResize: true, separatorColor: t0.grid, separatorHoverColor: t0.grid },
       },
       autoSize: true,
       grid: {
         vertLines: { color: t0.grid },
         horzLines: { color: t0.grid },
-      },
-      watermark: {
-        visible: true,
-        text: symbol,
-        fontSize: 48,
-        color: t0.watermark,
-        horzAlign: 'center',
-        vertAlign: 'center',
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: {
@@ -1508,10 +1539,16 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         horzTouchDrag: true,
         vertTouchDrag: false,
       },
-    } as any);
+    });
     chartRef.current = chart;
 
-    candlestickSeriesRef.current = chart.addCandlestickSeries({
+    watermarkRef.current = createTextWatermark(chart.panes()[0], {
+      horzAlign: 'center',
+      vertAlign: 'center',
+      lines: [{ text: symbolRef.current, color: t0.watermark, fontSize: 48 }],
+    });
+
+    candlestickSeriesRef.current = chart.addSeries(CandlestickSeries, {
       upColor: t0.upColor,
       downColor: t0.downColor,
       borderVisible: false,
@@ -1521,12 +1558,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       // series so the volume histogram keeps its `type: 'volume'` format; the
       // formatter reads the ref so the currency follows `displayCurrency`
       // without re-creating the series.
-      priceFormat: {
-        type: 'custom',
-        minMove: 0.01,
-        formatter: (price: number) =>
-          formatPrice(price, priceFormatRef.current.code, priceFormatRef.current.decimals),
-      },
+      priceFormat: chartPriceFormat(priceFormatRef),
     });
 
     // Extended-hours background shading primitive
@@ -1538,14 +1570,15 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     candlestickSeriesRef.current.attachPrimitive(selectionPrimitiveRef.current);
     selectionPrimitiveRef.current.setTheme(theme === 'dark' ? 'dark' : 'light');
 
-    // 缠论画线（K线包含 → 分型 → 笔 → 中枢 → 买卖点）
+    // Chan draw layers (inclusion -> fractal -> stroke -> pivot -> mark), on the
+    // candles so they share the price scale and pan/zoom with them.
     chanPrimitiveRef.current = new ChanPrimitive();
     candlestickSeriesRef.current.attachPrimitive(chanPrimitiveRef.current);
     chanPrimitiveRef.current.setTheme(theme === 'dark' ? 'dark' : 'light');
     chanPrimitiveRef.current.setLayers(chanLayersRef.current);
 
     // Volume histogram series
-    volumeSeriesRef.current = chart.addHistogramSeries({
+    volumeSeriesRef.current = chart.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -1555,7 +1588,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
     // All MA line series (curved)
     MA_CONFIGS.forEach(({ period, color }) => {
-      maSeriesRefs.current[period] = chart.addLineSeries({
+      maSeriesRefs.current[period] = chart.addSeries(LineSeries, {
         color,
         lineWidth: 1.5 as any,
         lineType: LineType.Curved,
@@ -1565,10 +1598,11 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     });
 
-    // 布林带三条线（主图叠加）。中轨用实线，上下轨略细。
-    // 与 MA 同批创建，数据在 updateSeriesData 里按开关下发；关着时 setData([])。
+    // Bollinger Bands: three overlays on the price pane, created with the MAs
+    // and fed only while enabled (setData([]) when off). The middle band is
+    // drawn heavier than the envelope.
     const bollLine = (color: string, width: number) =>
-      chart.addLineSeries({
+      chart.addSeries(LineSeries, {
         color,
         lineWidth: width as any,
         lineType: LineType.Curved,
@@ -1583,9 +1617,36 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       lower: bollLine(BOLL_COLORS.lower, 1),
     };
 
+    // RSI lives in a second pane of the same chart, so it shares the time
+    // scale (no range sync, no bar-offset arithmetic) and the screenshot.
+    // Pane heights are stretch factors: the default pane weighs 2, so 0.5
+    // gives RSI a fifth of the chart. The pane is user-resizable.
+    const rsiSeries = chart.addSeries(AreaSeries, {
+      lineColor: t0.rsiLine,
+      topColor: t0.rsiTop,
+      bottomColor: t0.rsiBottom,
+      lineWidth: 2,
+      lastValueVisible: true,
+      priceLineVisible: false,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 },
+    }, 1);
+    rsiSeries.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+    rsiSeriesRef.current = rsiSeries;
+    const rsiPane = chart.panes()[1];
+    rsiPane.setStretchFactor(0.5);
+    const rsiLabel = new PaneLabelPrimitive(
+      `RSI (${rsiPeriodRef.current})`,
+      t0.text,
+      `12px ${getComputedStyle(chartContainerRef.current).fontFamily || 'sans-serif'}`,
+    );
+    rsiPane.attachPrimitive(rsiLabel);
+    rsiLabelRef.current = rsiLabel;
+
     // Subscribe to crosshair move for tooltip
     chart.subscribeCrosshairMove((param: MouseEventParams) => {
-      if (!param.time || !param.point) {
+      // `point` is pane-local, so a crosshair over the RSI pane would place
+      // the OHLC tooltip at the wrong height; the tooltip is a price-pane thing.
+      if (!param.time || !param.point || (param.paneIndex ?? 0) !== 0) {
         if (tooltipStore.get().visible) tooltipStore.set({ visible: false, x: 0, y: 0, data: null });
         return;
       }
@@ -1627,81 +1688,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       });
     });
 
-    // RSI chart (deferred so DOM is ready)
-    const rsiTimeout = setTimeout(() => {
-      if (!rsiChartContainerRef.current || rsiChartRef.current) return;
-      const t0 = getChartTheme(theme);
-      const rsiChart = createChart(rsiChartContainerRef.current, {
-        layout: {
-          background: { type: ColorType.Solid, color: t0.bg },
-          textColor: t0.text,
-        },
-        autoSize: true,
-        grid: {
-          vertLines: { color: t0.grid },
-          horzLines: { color: t0.grid },
-        },
-        rightPriceScale: {
-          borderColor: t0.grid,
-          visible: true,
-          scaleMargins: { top: 0.1, bottom: 0.1 },
-        },
-        timeScale: {
-          borderColor: t0.grid,
-          timeVisible: true,
-          secondsVisible: false,
-          // 只有最下面的可见面板画时间轴，见 computePaneAxisVisibility
-          visible: axisVisRef.current[0],
-        },
-        handleScroll: {
-          mouseWheel: false,
-          pressedMouseMove: false,
-          horzTouchDrag: false,
-          vertTouchDrag: false,
-        },
-        handleScale: {
-          mouseWheel: false,
-          pinch: false,
-          axisPressedMouseMove: false,
-          axisDoubleClickReset: false,
-        },
-      } as any);
-      rsiChartRef.current = rsiChart;
-      // RSI as area series with gradient
-      rsiSeriesRef.current = rsiChart.addAreaSeries({
-        lineColor: t0.rsiLine,
-        topColor: t0.rsiTop,
-        bottomColor: t0.rsiBottom,
-        lineWidth: 2,
-        priceFormat: { type: 'price', precision: 0, minMove: 1 },
-      });
-
-      // Flush any RSI data that was computed before the series was ready (Bug 1 fix)
-      if (pendingRsiDataRef.current) {
-        rsiSeriesRef.current.setData(pendingRsiDataRef.current);
-        pendingRsiDataRef.current = null;
-        rsiChart.timeScale().fitContent();
-      }
-
-      // One-directional logical-range sync: main chart drives RSI chart.
-      // RSI data starts `period` bars later than main data, so logical
-      // index 0 on RSI = index `period` on main. Subtract the offset
-      // when forwarding the range.
-      // RSI chart has all scroll/scale interactions disabled.
-      const mainTs = chart.timeScale();
-      const rsiTs = rsiChart.timeScale();
-      mainTs.subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return;
-        const offset = rsiPeriodRef.current;
-        try {
-          rsiTs.setVisibleLogicalRange({ from: range.from - offset, to: range.to - offset });
-        } catch { /* RSI data may not cover the range yet */ }
-      });
-    }, 100);
 
     return () => {
-      clearTimeout(rsiTimeout);
-
       // Unsubscribe scroll-load listener
       if (rangeUnsubRef.current) {
         rangeUnsubRef.current();
@@ -1717,245 +1705,171 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       baselineSeriesRef.current = null;
       Object.keys(maSeriesRefs.current).forEach(k => { maSeriesRefs.current[Number(k)] = null; });
       rsiSeriesRef.current = null;
+      rsiLabelRef.current = null;
+      watermarkRef.current = null;
+      chanPrimitiveRef.current = null;
+      bollSeriesRefs.current = {};
+      macdSeriesRefs.current = {};
+      atrSeriesRef.current = null;
+      macdLabelRef.current = null;
+      atrLabelRef.current = null;
 
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
       }
-      if (rsiChartRef.current) {
-        rsiChartRef.current.remove();
-        rsiChartRef.current = null;
-      }
-      // MACD/ATR 面板的拆除归独立的 pane effect（它们可以随开关反复创建）
     };
     // priceFormatRef is a stable ref (from useCurrencyDisplay) — listed so
     // exhaustive-deps sees the formatter's read; its identity never changes, so
     // this stays a mount-only chart-creation effect.
   }, [priceFormatRef]); // Mount only
 
-  /**
-   * MACD / ATR 独立面板：按开关创建与拆除。
-   *
-   * 为什么不放在上面的图表创建 effect 里：那个 effect 是 mount-only，它的 100ms
-   * timer 在挂载时就跑过了 —— 如果面板当时是关的，容器还不存在，timer 直接
-   * early-return，之后用户再打开开关就**永远没人去建这个面板**。所以面板创建必须是
-   * 自己的 effect，依赖开关本身。
-   *
-   * 也不能图省事把上面那个 effect 的依赖改成 [macdEnabled]：它的 cleanup 会
-   * remove() 主图，等于每次开关面板都重建蜡烛图并丢失滚动位置。
-   *
-   * 时间轴可见性：这里用 axisVisRef 的当前值建图，随后紧跟的 timeScale effect
-   * 会按本轮真实的 [showRsiAxis, showMacdAxis, showAtrAxis] 纠正一次，所以
-   * 创建时的取值只要是"不闪错"的默认即可。
-   */
+  // --- Effect: MACD / ATR panes ---
+  // Created on toggle rather than at mount: a pane that is off must not exist,
+  // since an empty one still takes height and paints an axis. Removing a pane's
+  // last series removes the pane, so a flip rebuilds both in stacked order
+  // (RSI -> MACD -> ATR) and re-sends the cached data to the fresh series.
   useEffect(() => {
-    if (!macdEnabled && !atrEnabled) return;
-    // 依赖主图实例做区间同步。主图创建 effect 声明在本 effect 之前（同一次 commit
-    // 里按声明顺序执行），所以此刻它已经建好了；直接返回只为让这个前提显式。
-    if (!chartRef.current) return;
-    // MACD chart (deferred so DOM is ready). Separate instance because
-    // lightweight-charts 4.x has no multi-pane API.
-    //
-    // Alignment note: unlike RSI — whose data genuinely starts `rsiPeriod` bars
-    // later, forcing an index offset in the range sync — MACD is emitted full-length
-    // with whitespace points during warm-up, so its logical indices match the main
-    // chart 1:1. That keeps its range offset at exactly 0 and avoids the arithmetic
-    // the RSI sync has to do.
-    const macdTimeout = setTimeout(() => {
-      if (!macdChartContainerRef.current || macdChartRef.current) return;
-      const t1 = getChartTheme(theme);
-      const macdChart = createChart(macdChartContainerRef.current, {
-        layout: {
-          background: { type: ColorType.Solid, color: t1.bg },
-          textColor: t1.text,
-        },
-        autoSize: true,
-        grid: {
-          vertLines: { color: t1.grid },
-          horzLines: { color: t1.grid },
-        },
-        rightPriceScale: {
-          borderColor: t1.grid,
-          visible: true,
-          scaleMargins: { top: 0.15, bottom: 0.15 },
-        },
-        timeScale: {
-          borderColor: t1.grid,
-          timeVisible: true,
-          secondsVisible: false,
-          visible: axisVisRef.current[1],
-        },
-        handleScroll: {
-          mouseWheel: false,
-          pressedMouseMove: false,
-          horzTouchDrag: false,
-          vertTouchDrag: false,
-        },
-        handleScale: {
-          mouseWheel: false,
-          pinch: false,
-          axisPressedMouseMove: false,
-          axisDoubleClickReset: false,
-        },
-      } as any);
+    const chart = chartRef.current;
+    if (!chart) return;
 
-      macdSeriesRefs.current = {
-        macd: macdChart.addLineSeries({
-          color: MACD_COLORS.macd,
-          lineWidth: 1.5 as any,
-          title: '',
-          lastValueVisible: false,
-          priceLineVisible: false,
-        }),
-        signal: macdChart.addLineSeries({
-          color: MACD_COLORS.signal,
-          lineWidth: 1.5 as any,
-          title: '',
-          lastValueVisible: false,
-          priceLineVisible: false,
-        }),
-        histogram: macdChart.addHistogramSeries({
-          title: '',
-          lastValueVisible: false,
-          priceLineVisible: false,
-        } as any),
-      };
-      macdChartRef.current = macdChart;
-
-      // 主图驱动 MACD：偏移恒为 0（见上面的对齐说明）。
-      const mainTs2 = chartRef.current!.timeScale();
-      const macdTs = macdChart.timeScale();
-      mainTs2.subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return;
-        try {
-          macdTs.setVisibleLogicalRange({ from: range.from, to: range.to });
-        } catch { /* MACD 数据可能还没覆盖该区间 */ }
-      });
-
-      // 反方向也要补上：面板创建之前主图已经确立了可见区间，
-      // 若只订阅后续变化，MACD 会停在"全部数据自适应"的状态直到用户再次缩放。
-      const current = mainTs2.getVisibleLogicalRange();
-      if (current) {
-        try {
-          macdTs.setVisibleLogicalRange({ from: current.from, to: current.to });
-        } catch { /* 同上 */ }
+    const dropPaneSeries = (series: any[], label: PaneLabelPrimitive | null) => {
+      const first = series.find(Boolean);
+      let pane: any = null;
+      if (first) {
+        try { pane = first.getPane(); } catch { pane = null; }
       }
+      const paneIndex: number | null = pane ? pane.paneIndex() : null;
+      if (pane && label) {
+        try { pane.detachPrimitive(label); } catch { /* pane already gone */ }
+      }
+      for (const s of series) {
+        if (!s) continue;
+        try { chart.removeSeries(s); } catch { /* already gone with the chart */ }
+      }
+      // Belt and braces: if the library preserved the empty pane, drop it, or
+      // the next pane would stack below a blank strip.
+      if (paneIndex !== null) {
+        const left = chart.panes()[paneIndex];
+        if (left && left.getSeries().length === 0) {
+          try { chart.removePane(paneIndex); } catch { /* already gone */ }
+        }
+      }
+    };
 
-      // 面板创建时补一次数据（此前 applyMacdData 因系列未就绪而跳过）。
-      applyMacdDataRef.current?.(allDataRef.current);
-    }, 100);
-    // ATR chart (deferred so DOM is ready). 第三个独立实例，理由同 MACD：
-    // 4.x 无多面板 API。ATR 同样是全长度 + 预热 whitespace 下发，
-    // 逻辑下标与主图 1:1，所以同步偏移恒为 0。
-    const atrTimeout = setTimeout(() => {
-      if (!atrChartContainerRef.current || atrChartRef.current) return;
-      const t2 = getChartTheme(theme);
-      const atrChart = createChart(atrChartContainerRef.current, {
-        layout: {
-          background: { type: ColorType.Solid, color: t2.bg },
-          textColor: t2.text,
-        },
-        autoSize: true,
-        grid: {
-          vertLines: { color: t2.grid },
-          horzLines: { color: t2.grid },
-        },
-        rightPriceScale: {
-          borderColor: t2.grid,
-          visible: true,
-          scaleMargins: { top: 0.15, bottom: 0.15 },
-        },
-        timeScale: {
-          borderColor: t2.grid,
-          timeVisible: true,
-          secondsVisible: false,
-          visible: axisVisRef.current[2],
-        },
-        handleScroll: {
-          mouseWheel: false,
-          pressedMouseMove: false,
-          horzTouchDrag: false,
-          vertTouchDrag: false,
-        },
-        handleScale: {
-          mouseWheel: false,
-          pinch: false,
-          axisPressedMouseMove: false,
-          axisDoubleClickReset: false,
-        },
+    dropPaneSeries(
+      [macdSeriesRefs.current.histogram, macdSeriesRefs.current.signal, macdSeriesRefs.current.macd],
+      macdLabelRef.current,
+    );
+    macdSeriesRefs.current = {};
+    macdLabelRef.current = null;
+    dropPaneSeries([atrSeriesRef.current], atrLabelRef.current);
+    atrSeriesRef.current = null;
+    atrLabelRef.current = null;
+    setMacdValues(null);
+    setAtrValues(null);
+
+    const font = `12px ${getComputedStyle(chartContainerRef.current!).fontFamily || 'sans-serif'}`;
+    const addPane = () => {
+      const pane = chart.addPane();
+      pane.setPreserveEmptyPane(false);
+      pane.setStretchFactor(0.5);
+      return pane;
+    };
+
+    if (macdEnabled) {
+      const pane = addPane();
+      const macd = pane.addSeries(LineSeries, {
+        color: MACD_COLORS.macd,
+        lineWidth: 1.5 as any,
+        title: '',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      const signal = pane.addSeries(LineSeries, {
+        color: MACD_COLORS.signal,
+        lineWidth: 1.5 as any,
+        title: '',
+        lastValueVisible: false,
+        priceLineVisible: false,
+      });
+      const histogram = pane.addSeries(HistogramSeries, {
+        title: '',
+        lastValueVisible: false,
+        priceLineVisible: false,
       } as any);
+      macdSeriesRefs.current = { macd, signal, histogram };
+      macd.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+      const label = new PaneLabelPrimitive('', ctRef.current.text, font);
+      pane.attachPrimitive(label);
+      macdLabelRef.current = label;
+      applyMacdData(allDataRef.current);
+    }
 
-      atrSeriesRef.current = atrChart.addLineSeries({
+    if (atrEnabled) {
+      const pane = addPane();
+      const atr = pane.addSeries(LineSeries, {
         color: ATR_COLORS.line,
         lineWidth: 1.5 as any,
         title: '',
         lastValueVisible: true,
         priceLineVisible: false,
       });
-      atrChartRef.current = atrChart;
+      atr.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } });
+      atrSeriesRef.current = atr;
+      const label = new PaneLabelPrimitive('', ctRef.current.text, font);
+      pane.attachPrimitive(label);
+      atrLabelRef.current = label;
+      applyAtrData(allDataRef.current);
+    }
+  }, [macdEnabled, atrEnabled, applyMacdData, applyAtrData]);
 
-      const mainTs3 = chartRef.current!.timeScale();
-      const atrTs = atrChart.timeScale();
-      mainTs3.subscribeVisibleLogicalRangeChange((range) => {
-        if (!range) return;
-        try {
-          atrTs.setVisibleLogicalRange({ from: range.from, to: range.to });
-        } catch { /* ATR 数据可能还没覆盖该区间 */ }
-      });
-      // 面板创建前主图可能已确立可见区间，补一次（同 MACD）。
-      const currentAtr = mainTs3.getVisibleLogicalRange();
-      if (currentAtr) {
-        try {
-          atrTs.setVisibleLogicalRange({ from: currentAtr.from, to: currentAtr.to });
-        } catch { /* 同上 */ }
-      }
+  // Pane captions read like the RSI one: name, parameters, current values.
+  let macdCaption = `MACD (${MACD_CONFIG.fast},${MACD_CONFIG.slow},${MACD_CONFIG.signal}): \u2014`;
+  if (macdValues) {
+    macdCaption = `MACD (${MACD_CONFIG.fast},${MACD_CONFIG.slow},${MACD_CONFIG.signal}): `
+      + `DIF ${macdValues.dif.toFixed(2)}  DEA ${macdValues.dea.toFixed(2)}  MACD ${macdValues.hist.toFixed(2)}`;
+  }
+  let atrCaption = `ATR (${atrPeriod}): \u2014`;
+  if (atrValues) {
+    const v = atrValues;
+    const levels = R_MULTIPLES.map((m) => `  ${m}R ${(v.lastClose + m * v.r).toFixed(2)}`).join('');
+    const stop = v.lastClose - ATR_STOP_MULTIPLE * v.atr;
+    atrCaption = `ATR (${atrPeriod}): ${v.atr.toFixed(3)}  1R=${v.r.toFixed(3)}${levels}  止损 ${stop.toFixed(2)}`;
+  }
+  useEffect(() => {
+    macdLabelRef.current?.setText(macdCaption);
+  }, [macdCaption, macdEnabled]);
+  useEffect(() => {
+    atrLabelRef.current?.setText(atrCaption);
+  }, [atrCaption, atrEnabled]);
 
-      applyAtrDataRef.current?.(allDataRef.current);
-    }, 100);
-
-    return () => {
-      clearTimeout(macdTimeout);
-      clearTimeout(atrTimeout);
-      if (macdChartRef.current) {
-        macdChartRef.current.remove();
-        macdChartRef.current = null;
-      }
-      macdSeriesRefs.current = {};
-      if (atrChartRef.current) {
-        atrChartRef.current.remove();
-        atrChartRef.current = null;
-      }
-      atrSeriesRef.current = null;
-    };
-  }, [macdEnabled, atrEnabled, theme, ct]);
+  // The price step is fixed when applied, and the served decimals land after
+  // the series exists (first protocol header, symbol change).
+  useEffect(() => {
+    candlestickSeriesRef.current?.applyOptions({ priceFormat: chartPriceFormat(priceFormatRef) });
+  }, [displayCurrency.decimals, priceFormatRef]);
 
   // --- Effect: Update watermark when symbol changes ---
   useEffect(() => {
-    if (chartRef.current) {
-      chartRef.current.applyOptions({
-        watermark: {
-          visible: true,
-          text: symbol,
-          fontSize: 48,
-          color: ct.watermark,
-          horzAlign: 'center',
-          vertAlign: 'center',
-        },
-      });
-    }
+    watermarkRef.current?.applyOptions({
+      lines: [{ text: symbol, color: ct.watermark, fontSize: 48 }],
+    });
   }, [symbol, ct.watermark]);
 
   // --- Effect: Re-apply theme colors when theme changes ---
   useEffect(() => {
     const chart = chartRef.current;
-    const rsiChart = rsiChartRef.current;
     if (chart) {
       chart.applyOptions({
-        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
+        layout: {
+          background: { type: ColorType.Solid, color: ct.bg },
+          textColor: ct.text,
+          panes: { separatorColor: ct.grid, separatorHoverColor: ct.grid },
+        },
         grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
         rightPriceScale: { borderColor: ct.grid },
         timeScale: { borderColor: ct.grid },
-        watermark: { color: ct.watermark },
       });
       if (candlestickSeriesRef.current) {
         candlestickSeriesRef.current.applyOptions({
@@ -1989,44 +1903,32 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         extHoursBgRef.current.setColors({ pre: ct.extBgPre, post: ct.extBgPost });
       }
     }
-    if (rsiChart) {
-      rsiChart.applyOptions({
-        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
-        grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
-        rightPriceScale: { borderColor: ct.grid },
-        timeScale: { borderColor: ct.grid },
+    if (rsiSeriesRef.current) {
+      rsiSeriesRef.current.applyOptions({
+        lineColor: ct.rsiLine, topColor: ct.rsiTop, bottomColor: ct.rsiBottom,
       });
-      if (rsiSeriesRef.current) {
-        rsiSeriesRef.current.applyOptions({
-          lineColor: ct.rsiLine, topColor: ct.rsiTop, bottomColor: ct.rsiBottom,
-        });
-      }
     }
-    // MACD 面板与主图是两个独立实例，背景/网格/价格轴都要单独重刷。
-    // 柱状图的颜色已写进每个数据点（setData 时按当时主题着色），所以主题变化
-    // 必须重下数据，否则旧的绿/红柱会留在新主题上。
-    const macdChart = macdChartRef.current;
-    if (macdChart) {
-      macdChart.applyOptions({
-        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
-        grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
-        rightPriceScale: { borderColor: ct.grid },
-        timeScale: { borderColor: ct.grid },
-      });
-      applyMacdDataRef.current?.(allDataRef.current);
+    rsiLabelRef.current?.setColor(ct.text);
+    // MACD/ATR live in their own panes: line colours update in place, but the
+    // histogram colour is baked into each data point, so re-send the data.
+    if (macdSeriesRefs.current.macd) {
+      macdSeriesRefs.current.macd.applyOptions({ color: MACD_COLORS.macd });
+      macdSeriesRefs.current.signal?.applyOptions({ color: MACD_COLORS.signal });
+      applyMacdData(allDataRef.current);
     }
-    // ATR 面板同理：独立实例，背景/网格/轴色与柱色都要单独重刷。
-    const atrChart = atrChartRef.current;
-    if (atrChart) {
-      atrChart.applyOptions({
-        layout: { background: { type: ColorType.Solid, color: ct.bg }, textColor: ct.text },
-        grid: { vertLines: { color: ct.grid }, horzLines: { color: ct.grid } },
-        rightPriceScale: { borderColor: ct.grid },
-        timeScale: { borderColor: ct.grid },
-      });
-      applyAtrDataRef.current?.(allDataRef.current);
+    if (atrSeriesRef.current) {
+      atrSeriesRef.current.applyOptions({ color: ATR_COLORS.line });
+      applyAtrData(allDataRef.current);
     }
-  }, [ct]);
+    macdLabelRef.current?.setColor(ct.text);
+    atrLabelRef.current?.setColor(ct.text);
+  }, [ct, applyMacdData, applyAtrData]);
+
+  // --- Effect: RSI pane caption follows the period and the latest value ---
+  const rsiCaption = `RSI (${rsiPeriod}): ${rsiValue ?? '\u2014'}`;
+  useEffect(() => {
+    rsiLabelRef.current?.setText(rsiCaption);
+  }, [rsiCaption]);
 
   // --- Effect: Price scale mode ---
   useEffect(() => {
@@ -2067,7 +1969,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       const basePrice: number = prevClose || (allDataRef.current.length > 0 ? allDataRef.current[0].open : 0);
 
       if (!baselineSeriesRef.current) {
-        baselineSeriesRef.current = chart.addBaselineSeries({
+        baselineSeriesRef.current = chart.addSeries(BaselineSeries, {
           baseValue: { type: 'price', price: basePrice },
           topLineColor: ct.baselineUp,
           topFillColor1: ct.baselineUpFill1,
@@ -2155,8 +2057,6 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         const s = maSeriesRefs.current[period];
         if (s) s.setData([]);
       });
-      // 布林带与 MACD 也必须一起清空 —— 否则切换标的/周期时旧曲线的痕迹会留在
-      // 新标的上（和 MA/RSI 同样的残留问题）。
       bollSeriesRefs.current.upper?.setData([]);
       bollSeriesRefs.current.middle?.setData([]);
       bollSeriesRefs.current.lower?.setData([]);
@@ -2166,20 +2066,19 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       setMacdValues(null);
       atrSeriesRef.current?.setData([]);
       setAtrValues(null);
+      // Chan geometry is derived from the bars, so it goes with them.
+      lastBarsRef.current = [];
+      chanPrimitiveRef.current?.setGeometry(null);
       setChartDataForHooks([]);
       // Reset RSI incremental state on symbol/interval change
       rsiSmoothingRef.current = null;
       prevBarSmoothingRef.current = null;
-      pendingRsiDataRef.current = null;
       rsiDataMapRef.current = new Map();
       setRsiValue(null);
     };
 
     // Immediately clear stale data so the price scale resets for the new symbol
     clearChartSeries();
-    if (chartRef.current) {
-      chartRef.current.applyOptions({ watermark: { text: symbol } });
-    }
     const loadData = async () => {
       setLoading(true);
       setError(null);
@@ -2223,7 +2122,8 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
 
           // Subscribe to visible range changes for scroll-based loading (debounced)
           if (chartRef.current) {
-            const unsubscribe = chartRef.current.timeScale().subscribeVisibleLogicalRangeChange((range: LogicalRange | null) => {
+            const timeScale = chartRef.current.timeScale();
+            const onRange = (range: LogicalRange | null) => {
               if (rangeChangeTimerRef.current) clearTimeout(rangeChangeTimerRef.current);
               rangeChangeTimerRef.current = setTimeout(() => {
                 if (!range) return;
@@ -2232,8 +2132,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                   handleScrollLoadMore();
                 }
               }, RANGE_CHANGE_DEBOUNCE_MS);
-            }) as unknown as (() => void);
-            rangeUnsubRef.current = unsubscribe;
+            };
+            timeScale.subscribeVisibleLogicalRangeChange(onRange);
+            rangeUnsubRef.current = () => timeScale.unsubscribeVisibleLogicalRangeChange(onRange);
           }
 
           // --- Stage 2: background backfill ---
@@ -2272,11 +2173,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
             onIntervalChange?.('1hour');
             return;
           }
+          // No bars, from an error or an empty answer: a reload a rebuild
+          // asked for is sent again on the next poll tick.
+          loadFailed();
           clearChartSeries();
-          const fallbackMsg = interval !== '1day'
-            ? 'Intraday data not available — market may be closed. Try the 1D interval.'
-            : 'Stock data not found';
-          setError(result?.error || fallbackMsg);
+          setError(result?.error
+            ? { text: result.error }
+            : { kind: interval !== '1day' ? 'intraday' : 'notFound' });
           if (typeof onStockMeta === 'function') onStockMeta(null);
         }
       } catch (err: unknown) {
@@ -2288,7 +2191,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         }
         console.error('Failed to load stock data:', err);
         clearChartSeries();
-        setError(err instanceof Error ? err.message : 'Failed to load data');
+        setError(err instanceof Error ? { text: err.message } : { kind: 'load' });
       } finally {
         if (!abortController.signal.aborted) {
           setLoading(false);
@@ -2302,7 +2205,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       abortController.abort();
       stage2AbortRef.current?.abort();
     };
-  }, [symbol, interval, onStockMeta, updateSeriesData, handleScrollLoadMore, seedMeta]);
+  }, [symbol, interval, historyEpoch, onStockMeta, updateSeriesData, handleScrollLoadMore, seedMeta, loadFailed]);
 
   // --- Effect 3: TimeScale options per interval ---
   useEffect(() => {
@@ -2310,15 +2213,15 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const showSeconds = interval === '1min';
     const opts = { timeVisible: isIntraday, secondsVisible: showSeconds };
     if (chartRef.current) chartRef.current.applyOptions({ timeScale: opts });
-    if (rsiChartRef.current) rsiChartRef.current.applyOptions({ timeScale: opts });
   }, [interval]);
 
-  // --- Effect 4: Re-run updateSeriesData when MA/RSI config changes ---
+  // --- Effect 4: Re-run updateSeriesData when an indicator config changes ---
   useEffect(() => {
     if (allDataRef.current.length > 0) {
       updateSeriesData(allDataRef.current);
     }
-  }, [enabledMaPeriods, rsiPeriod, updateSeriesData]);
+    // A toggle must repaint from the bars in hand, not wait for the next tick.
+  }, [enabledMaPeriods, rsiPeriod, bollEnabled, macdEnabled, atrEnabled, atrPeriod, updateSeriesData]);
 
   // --- Default view: auto-fit barSpacing + latest bar centered ---
   const applyDefaultView = useCallback(() => {
@@ -2329,7 +2232,9 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
     const dataLen = allDataRef.current.length;
     if (dataLen === 0) { ts.scrollToRealTime(); return; }
     const chartWidth = chartRef.current.options().width || chartContainerRef.current?.clientWidth || 800;
-    ts.setVisibleLogicalRange(centerLatestBarView({ chartWidth, barSpacing: target, dataLen }));
+    ts.setVisibleLogicalRange(defaultBarsView({
+      defaultView: defaultViewRef.current, chartWidth, barSpacing: target, dataLen,
+    }));
   }, []);
 
   // Fit the visible window to a bottom-bar range preset: from the preset's
@@ -2410,23 +2315,21 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
   }, []);
 
   const isTV = effectiveChartMode === 'tradingview';
+  const intervalsCollapsed = toolbarLevel >= 5;
 
-  // 时间轴归属：主图不参与（它始终显示自己的轴），只算三个下方面板。
-  // 顺序必须与 JSX 里的堆叠顺序一致：RSI → MACD → ATR。
-  const [showRsiAxis, showMacdAxis, showAtrAxis] = computePaneAxisVisibility([
-    { has: true, visible: true },
-    { has: macdEnabled, visible: macdEnabled },
-    { has: atrEnabled, visible: atrEnabled },
-  ]);
-
-  // 面板开关会改变"谁在最下面"，所以时间轴可见性要跟着重刷。
-  // 创建时的初值用同一个规则算，这里只管后续变化。
-  useEffect(() => {
-    axisVisRef.current = [showRsiAxis, showMacdAxis, showAtrAxis];
-    rsiChartRef.current?.applyOptions({ timeScale: { visible: showRsiAxis } });
-    macdChartRef.current?.applyOptions({ timeScale: { visible: showMacdAxis } });
-    atrChartRef.current?.applyOptions({ timeScale: { visible: showAtrAxis } });
-  }, [showRsiAxis, showMacdAxis, showAtrAxis]);
+  // One pick path for the inline buttons and the collapsed dropdown, so the
+  // 4H guard cannot hold in one layout and not the other.
+  const isIntervalDisabled = (key: string) => key === '4hour' && !supports4hInterval;
+  const pickInterval = (key: string) => {
+    if (isIntervalDisabled(key)) {
+      setDisabledTooltip(t('marketView.chart.fourHourNeedsProvider'));
+      if (disabledTooltipTimer.current) clearTimeout(disabledTooltipTimer.current);
+      disabledTooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 2000);
+      return;
+    }
+    setActiveRange(null); pendingRangeRef.current = null;
+    onIntervalChange?.(key); setIntervalsOpen(false); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false);
+  };
 
   // --- Toolbar render helpers (shared between wide & compact layouts) ---
 
@@ -2518,7 +2421,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         </div>
       </div>
       <div className="dropdown-section">
-        <span className="indicator-toggles-label">Overlay</span>
+        <span className="indicator-toggles-label">{t('marketView.chart.overlay')}</span>
         <div className="indicator-toggles">
           {Object.entries(OVERLAY_LABELS).map(([key, label]) => (
             <button
@@ -2542,7 +2445,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         type="button"
         className={`chart-tool-btn${priceScaleMode === PriceScaleMode.Percentage ? ' chart-tool-btn-active' : ''}`}
         onClick={() => handleTogglePriceScale(PriceScaleMode.Percentage)}
-        title="Percentage Scale"
+        title={t('marketView.chart.toolPercentScale')}
       >
         %
       </button>
@@ -2550,7 +2453,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         type="button"
         className={`chart-tool-btn${magnetMode ? ' chart-tool-btn-active' : ''}`}
         onClick={() => setMagnetMode((v) => !v)}
-        title="Magnet Mode"
+        title={t('marketView.chart.toolMagnet')}
       >
         M
       </button>
@@ -2558,7 +2461,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         type="button"
         className={`chart-tool-btn${showBaseline ? ' chart-tool-btn-active' : ''}`}
         onClick={() => setShowBaseline((v) => !v)}
-        title="Baseline vs Previous Close"
+        title={t('marketView.chart.toolBaseline')}
       >
         B
       </button>
@@ -2566,7 +2469,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         type="button"
         className={`chart-tool-btn${annotationsVisible ? ' chart-tool-btn-active' : ''}`}
         onClick={handleToggleAnnotations}
-        title="Toggle Annotations"
+        title={t('marketView.chart.toolAnnotations')}
       >
         T
       </button>
@@ -2607,14 +2510,14 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         className={`interval-btn${!isTV ? ' interval-btn-active' : ''}`}
         onClick={() => { setChartMode('custom'); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false); }}
       >
-        Light
+        {t('marketView.chart.light')}
       </button>
       <button
         type="button"
         className={`interval-btn${isTV ? ' interval-btn-active' : ''}`}
         onClick={() => { setChartMode('tradingview'); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false); }}
       >
-        Advanced
+        {t('marketView.chart.advanced')}
       </button>
     </div>
   );
@@ -2625,44 +2528,47 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
         type="button"
         className={`chart-tool-btn${priceScaleMode === PriceScaleMode.Logarithmic ? ' chart-tool-btn-active' : ''}`}
         onClick={() => handleTogglePriceScale(PriceScaleMode.Logarithmic)}
-        title="Log Scale"
+        title={t('marketView.chart.toolLogScale')}
       >
-        Log
+        {t('marketView.chart.log')}
       </button>
-      <button type="button" className="chart-tool-btn" onClick={handleZoomIn} title="Zoom In"><Plus size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleZoomOut} title="Zoom Out"><Minus size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleAutoNormalize} title="Auto Fit"><Maximize2 size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleFitAll} title="Fit All Data"><Minimize2 size={14} /></button>
-      <button type="button" className="chart-tool-btn" onClick={handleScrollToRealTime} title="Scroll to Latest"><RotateCcw size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleZoomIn} title={t('marketView.chart.toolZoomIn')}><Plus size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleZoomOut} title={t('marketView.chart.toolZoomOut')}><Minus size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleAutoNormalize} title={t('marketView.chart.toolAutoFit')}><Maximize2 size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleFitAll} title={t('marketView.chart.toolFitAll')}><Minimize2 size={14} /></button>
+      <button type="button" className="chart-tool-btn" onClick={handleScrollToRealTime} title={t('marketView.chart.toolScrollLatest')}><RotateCcw size={14} /></button>
     </>
   );
 
   return (
     <div
-      className={`market-chart-container${toolbarLevel >= 1 ? ' chart--c1' : ''}${toolbarLevel >= 2 ? ' chart--c2' : ''}${toolbarLevel >= 3 ? ' chart--c3' : ''}${toolbarLevel >= 4 ? ' chart--c4' : ''}`}
+      className={cn(
+        'market-chart-container',
+        toolbarLevel >= 1 && 'chart--c1',
+        toolbarLevel >= 2 && 'chart--c2',
+        toolbarLevel >= 3 && 'chart--c3',
+        toolbarLevel >= 4 && 'chart--c4',
+        toolbarLevel >= 5 && 'chart--c5',
+        !!toolbarLead && 'chart--with-lead',
+      )}
       ref={rootRef}
     >
       {/* ---- Toolbar: intervals, indicator dropdown, values, tools dropdown, mode switcher ---- */}
       <div className="chart-tools">
+        {/* The lead is a sibling of the two groups, not inside the left one,
+            so the row wraps on the groups' own widths and the lead takes
+            whatever is left, down to nothing; see `.chart-toolbar-lead`. */}
+        {toolbarLead && <div className="chart-toolbar-lead" ref={toolbarLeadRef}>{toolbarLead}</div>}
         <div className="chart-tools-left">
-          <div className="interval-selector">
-            {INTERVALS.filter(({ key }) => PRIMARY_INTERVAL_KEYS.has(key)).map(({ key, label }) => {
-              const isDisabled = key === '4hour' && !supports4hInterval;
+          <div className="interval-selector interval-selector--intervals">
+            {!intervalsCollapsed && INTERVALS.filter(({ key }) => PRIMARY_INTERVAL_KEYS.has(key)).map(({ key, label }) => {
+              const isDisabled = isIntervalDisabled(key);
               return (
               <div key={key} style={{ position: 'relative', display: 'inline-flex' }}>
                 <button
                   type="button"
                   className={`interval-btn${interval === key ? ' interval-btn-active' : ''}${isDisabled ? ' interval-btn-disabled' : ''}`}
-                  onClick={() => {
-                    if (isDisabled) {
-                      setDisabledTooltip('4H data requires FMP or Ginlix Data provider');
-                      if (disabledTooltipTimer.current) clearTimeout(disabledTooltipTimer.current);
-                      disabledTooltipTimer.current = setTimeout(() => setDisabledTooltip(null), 2000);
-                      return;
-                    }
-                    setActiveRange(null); pendingRangeRef.current = null;
-                    onIntervalChange?.(key); setIntervalsOpen(false); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false);
-                  }}
+                  onClick={() => pickInterval(key)}
                 >
                   {label}
                 </button>
@@ -2672,30 +2578,38 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               </div>
               );
             })}
-            {/* "More" dropdown for secondary intervals */}
+            {/* "More" dropdown for secondary intervals; at the tightest tier
+                it is the whole picker and reads the current interval. */}
             <div className="toolbar-dropdown" ref={intervalsDropdownRef} style={{ display: 'inline-flex' }}>
               <button
                 type="button"
-                className={`interval-btn${(!PRIMARY_INTERVAL_KEYS.has(interval) || intervalsOpen) ? ' interval-btn-active' : ''}`}
+                className={`interval-btn${(intervalsCollapsed || !PRIMARY_INTERVAL_KEYS.has(interval) || intervalsOpen) ? ' interval-btn-active' : ''}`}
                 onClick={() => { setIntervalsOpen((v) => !v); setIndicatorsOpen(false); setToolsOpen(false); setViewOpen(false); }}
               >
-                {!PRIMARY_INTERVAL_KEYS.has(interval)
+                {intervalsCollapsed || !PRIMARY_INTERVAL_KEYS.has(interval)
                   ? INTERVALS.find(({ key }) => key === interval)?.label
-                  : 'More'}
+                  : t('marketView.chart.more')}
                 <ChevronDown size={10} style={{ marginLeft: 2, opacity: 0.6 }} />
               </button>
               {intervalsOpen && (
                 <div className="toolbar-dropdown-panel interval-dropdown-panel">
-                  {INTERVALS.filter(({ key }) => !PRIMARY_INTERVAL_KEYS.has(key)).map(({ key, label }) => (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`interval-dropdown-item${interval === key ? ' interval-dropdown-item-active' : ''}`}
-                      onClick={() => { setActiveRange(null); pendingRangeRef.current = null; onIntervalChange?.(key); setIntervalsOpen(false); setIndicatorsOpen(false); setToolsOpen(false); }}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                  {INTERVALS.filter(({ key }) => intervalsCollapsed || !PRIMARY_INTERVAL_KEYS.has(key)).map(({ key, label }) => {
+                    const isDisabled = isIntervalDisabled(key);
+                    return (
+                    <div key={key} style={{ position: 'relative', display: 'flex' }}>
+                      <button
+                        type="button"
+                        className={`interval-dropdown-item${interval === key ? ' interval-dropdown-item-active' : ''}${isDisabled ? ' interval-btn-disabled' : ''}`}
+                        onClick={() => pickInterval(key)}
+                      >
+                        {label}
+                      </button>
+                      {isDisabled && disabledTooltip && (
+                        <div className="interval-disabled-tooltip">{disabledTooltip}</div>
+                      )}
+                    </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2708,7 +2622,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                   type="button"
                   className={`chart-tool-btn${indicatorsOpen ? ' chart-tool-btn-active' : ''}`}
                   onClick={() => { setIndicatorsOpen((v) => !v); setToolsOpen(false); setViewOpen(false); setChanOpen(false); }}
-                  title="Indicators"
+                  title={t('marketView.chart.indicators')}
                 >
                   <SlidersHorizontal size={14} />
                 </button>
@@ -2728,7 +2642,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                 ))}
                 <span className="indicator-item">
                   <span className="indicator-color" style={{ backgroundColor: 'var(--color-accent-primary)' }} />
-                  RSI ({rsiPeriod}): {rsiValue ?? '\u2014'}
+                  {rsiCaption}
                 </span>
               </div>
             </>
@@ -2755,10 +2669,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               {/* Selection tools — first-class, both layouts. Primary entry
                   point for the chart → agent hand-off, so not buried in a
                   dropdown. Only meaningful on the Light chart (custom mode). */}
-              <div className="chart-tool-buttons">
-                {renderSelectionButtons()}
-              </div>
-              {/* 缠论 dropdown — 分层开关。默认只开笔+中枢，分型/买卖点各自可开。 */}
+              {selectionTools && (
+                <div className="chart-tool-buttons">
+                  {renderSelectionButtons()}
+                </div>
+              )}
+              {/* Chan layers — the four draw groups, each its own checkbox.
+                  Kept beside the selection tools: both draw on the candles. */}
               <div className="toolbar-dropdown toolbar-item--chan" ref={chanDropdownRef}>
                 <button
                   type="button"
@@ -2792,7 +2709,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                   type="button"
                   className={`chart-tool-btn${toolsOpen ? ' chart-tool-btn-active' : ''}`}
                   onClick={() => { setToolsOpen((v) => !v); setIndicatorsOpen(false); setViewOpen(false); setChanOpen(false); }}
-                  title="Chart Tools"
+                  title={t('marketView.chart.chartTools')}
                 >
                   <Settings2 size={14} />
                 </button>
@@ -2817,13 +2734,13 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                     type="button"
                     className={`chart-tool-btn${viewOpen ? ' chart-tool-btn-active' : ''}`}
                     onClick={() => { setViewOpen((v) => !v); setIndicatorsOpen(false); setToolsOpen(false); }}
-                    title="Chart Settings"
+                    title={t('marketView.chart.chartSettings')}
                   >
                     <Menu size={14} />
                   </button>
                   {viewOpen && (
                     <div className="toolbar-dropdown-panel toolbar-dropdown-panel--right compact-menu-panel">
-                      {toolbarLevel >= 4 && !isMobile && (
+                      {toolbarLevel >= 4 && showModeSwitch && (
                         <>
                           {/* Mode section */}
                           <div className="compact-menu-section-label">{t('marketView.chart.modeLabel')}</div>
@@ -2834,11 +2751,11 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                       {toolbarLevel >= 3 && (
                         <>
                           {/* Indicators section */}
-                          <div className="compact-menu-section-label">Indicators</div>
+                          <div className="compact-menu-section-label">{t('marketView.chart.indicators')}</div>
                           {renderIndicatorsContent()}
                           {/* Tools section */}
                           <div className="compact-menu-divider" />
-                          <div className="compact-menu-section-label">Tools</div>
+                          <div className="compact-menu-section-label">{t('marketView.chart.tools')}</div>
                           <div className="dropdown-tool-grid">
                             {renderToolsContent()}
                           </div>
@@ -2846,7 +2763,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
                         </>
                       )}
                       {/* View section */}
-                      <div className="compact-menu-section-label">View</div>
+                      <div className="compact-menu-section-label">{t('marketView.chart.view')}</div>
                       <div className="dropdown-tool-grid compact-menu-view-grid">
                         {renderViewButtons()}
                       </div>
@@ -2860,7 +2777,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               Light chart. On desktop, Light (custom) mode tucks it into the
               overflow menu at tier 4 to save room; Advanced (TV) mode keeps it
               inline so the required TV attribution is never hidden. */}
-          {!isMobile && (
+          {showModeSwitch && (
             <div className={`chart-mode-switcher${!isTV ? ' toolbar-item--mode' : ''}`}>
               {/* TV embed-terms attribution. Sibling of the pill so the pill's
                   own background stays symmetric. Only shown when Advanced is
@@ -2870,8 +2787,10 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               {renderModeButtons()}
             </div>
           )}
+          {toolbarTrail && <div className="chart-toolbar-trail" ref={toolbarTrailRef}>{toolbarTrail}</div>}
         </div>
       </div>
+      {toolbarSubrow && <div className="chart-subrow">{toolbarSubrow}</div>}
 
       {/* ---- Charts area: shared flex container for both modes ---- */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -2885,7 +2804,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
             className="charts-container chart-wheel-capture"
             onWheel={(e) => e.stopPropagation()}
             role="region"
-            aria-label="K-line chart"
+            aria-label={t('marketView.chart.chartAria')}
           >
             <div
               ref={chartContainerRef}
@@ -2894,7 +2813,7 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               <CrosshairTooltipLayer
                 store={tooltipStore}
                 containerRef={chartContainerRef}
-                currency={displayCurrency.code}
+                currency={displayCurrency.code ?? undefined}
                 decimals={displayCurrency.decimals}
               />
               {effectiveChartMode === 'custom' && (
@@ -2939,59 +2858,31 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
               )}
               {scrollLoading && (
                 <div className="chart-scroll-loading">
-                  <Loader size={16} label="Loading history" style={{ color: 'var(--color-text-secondary)' }} />
+                  <Loader size={16} label={t('marketView.chart.loadingHistory')} style={{ color: 'var(--color-text-secondary)' }} />
                 </div>
               )}
             </div>
-            <div className="rsi-container">
-              <div className="rsi-label">RSI ({rsiPeriod}): {rsiValue ?? '\u2014'}</div>
-              <div className="rsi-chart-wrapper" ref={rsiChartContainerRef}></div>
-            </div>
-            {macdEnabled && (
-              <div className="macd-container">
-                <div className="rsi-label">
-                  MACD ({MACD_CONFIG.fast},{MACD_CONFIG.slow},{MACD_CONFIG.signal}):
-                  {' '}
-                  {macdValues
-                    ? `DIF ${macdValues.dif.toFixed(2)}  DEA ${macdValues.dea.toFixed(2)}  MACD ${macdValues.hist.toFixed(2)}`
-                    : '\u2014'}
-                </div>
-                <div className="rsi-chart-wrapper" ref={macdChartContainerRef}></div>
-              </div>
-            )}
-            {atrEnabled && (
-              <div className="macd-container">
-                <div className="rsi-label">
-                  ATR ({atrPeriod}): {atrValues ? atrValues.atr.toFixed(3) : '\u2014'}
-                  {atrValues && (
-                    <>
-                      {'  '}1R={atrValues.r.toFixed(3)}
-                      {'  '}
-                      {/* 以最后收盘为"若此刻入场"的参考位，按 R 倍数给出止损/目标 */}
-                      {R_MULTIPLES.map((m) => (
-                        <span key={m}>
-                          {m}R {(atrValues.lastClose + m * atrValues.r).toFixed(2)}
-                          {m < R_MULTIPLES[R_MULTIPLES.length - 1] ? '  ' : ''}
-                        </span>
-                      ))}
-                      {'  止损 '}
-                      {(atrValues.lastClose - ATR_STOP_MULTIPLE * atrValues.atr).toFixed(2)}
-                    </>
-                  )}
-                </div>
-                <div className="rsi-chart-wrapper" ref={atrChartContainerRef}></div>
-              </div>
-            )}
           </div>
           {loading && (
             <div className="chart-loading">
-              <div className="chart-loading-shimmer">Fetching real-time market data…</div>
+              <TextShimmer
+                as="div"
+                className="font-medium [--base-color:var(--Labels-Secondary)] [--base-gradient-color:var(--color-text-primary)]"
+                duration={1.5}
+              >
+                {t('marketView.chart.loadingData')}
+              </TextShimmer>
             </div>
           )}
           {error && (
             <div className="chart-error">
-              <div className="chart-error-title">Data Loading Failed</div>
-              <div>{error}</div>
+              <div className="chart-error-title">{t('marketView.chart.errorTitle')}</div>
+              <div>
+                {'text' in error ? error.text
+                  : error.kind === 'intraday' ? t('marketView.chart.errorIntraday')
+                  : error.kind === 'notFound' ? t('marketView.chart.errorNotFound')
+                  : t('marketView.chart.errorLoad')}
+              </div>
             </div>
           )}
 
@@ -3022,8 +2913,6 @@ const MarketChart = React.memo(forwardRef<MarketChartHandle, MarketChartProps>((
       </div>
     </div>
   );
-}));
-
-MarketChart.displayName = 'MarketChart';
+});
 
 export default MarketChart;

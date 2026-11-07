@@ -40,8 +40,11 @@ Rules:
 - **Timestamps** are exchange-local strings `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM:SS"`,
   self-described by the envelope `timezone`.
 - **Prices are major units** of `currency` (pence/GBX converted to pounds, etc.).
-- **Symbols** go through `src.market_protocol.symbology` at the boundary; the echoed
+- **Symbols** go through `market_protocol.symbology` at the boundary; the echoed
   `symbol` is the canonical display spelling, regardless of what the caller passed.
+  `price_data` echoes the spelling that asks for the instrument again
+  (`to_request_spelling`: `AAPL`, `0700.HK`, `^GSPC`): its `symbol` is sent back to
+  fetch more bars, and a bare `SPX` there names the stock listing.
 - **Interval vocab**: `1min|5min|15min|30min|1hour|4hour|1day|1week|1month`.
   Provider-native spellings (`1m`, `1wk`, `daily`, ...) are accepted as input aliases
   and normalized; native-only granularities a provider supports may pass through but
@@ -49,6 +52,26 @@ Rules:
 - Vendor-native record payloads (FMP fundamentals/macro) may stay raw inside `data`,
   but the envelope around them is standard and the docstring names the key leaf
   fields and says the field names are vendor-native.
+- **A read a page or row cap cut short says so**: `truncated: true` beside `data`
+  (`make_response(truncated=...)`), absent on a complete read. A cut read keeps
+  the end its reader wants and the docstring names the end lost: price and rate
+  history keeps the newest rows, a calendar keeps the start of its window and
+  loses the latest dates. Reads that walk several pages or calls (ginlix-data
+  cursors, FMP's 90-day and 4,000-row windows) walk from the kept end so the cap
+  always falls on the other, and drop a row identical to one already read. A
+  vendor refusal part-way through such a walk fails the read: `truncated` means
+  only a size cap.
+- **Bars missing inside the window say so**: `incomplete: true` beside `data`
+  (`make_response(incomplete=...)`) when the source reports sessions missing
+  within the window it was asked for (a CN refetch that failed), absent
+  otherwise. It is not a cap and names no end.
+- **A failed source a fallback stood in for says so**: `fallback_from: "<source>"`
+  beside `source` when the read's first source failed (an error, not an empty
+  answer) and the next one answered, absent otherwise. If the next source has no
+  rows, the read is `upstream_error`: an empty success would read as "nothing
+  to report". If it fails too, its error stands, its detail naming the first
+  failure. Today this is the CN branch of the fundamentals tools and of the
+  daily stock bars (`tushare`, then FMP).
 
 ## Error envelope
 
@@ -105,7 +128,7 @@ Three sections, in order, moderate length (target ≤800 characters total):
 <0-2 lines: hard constraints — symbol formats, interval vocab, limits.>
 
 Args:
-    symbol: Ticker — US "AAPL", HK "0700.HK", A-share "600519.SS".
+    symbol: Ticker — US "AAPL", HK "0700.HK", A-share "600519.SH".
     interval: One of 1min|5min|15min|30min|1hour|4hour|1day.
 
 Returns:
@@ -153,3 +176,22 @@ test with a diff against the locked text. Rules of engagement:
   The pin test itself is read-only by design (it can never self-heal); the
   script is the lock's only writer. Commit the regenerated lock together with
   the docstring change so the diff shows both sides.
+
+## Exported tool list
+
+`mcp_servers/contract/market_data.tools.json` holds the `tools/list` of the four
+market-data servers (`price_data`, `fundamentals`, `macro`, `options`): each
+server's name and every tool's name, description, input schema and output
+schema, exactly as the SDK sends them. A deployment that serves these servers
+over HTTP from another implementation publishes this file as its tool list, so
+skills, prompts and generated wrappers see the same surface on either path.
+That implementation still has to return the envelope and row fields described
+above.
+
+`tests/unit/mcp_servers/test_market_data_tool_export.py` fails when the file no
+longer matches the servers. After an intentional tool change, regenerate it and
+commit it with the change:
+
+```bash
+uv run python scripts/utils/export_market_data_tools.py
+```

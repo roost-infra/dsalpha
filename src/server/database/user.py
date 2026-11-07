@@ -14,21 +14,31 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from src.llms.preferences import MOVED_MODEL_KEYS, TuningError
+from src.server.database.oauth_tokens import CLAUDE_CODE_PROVIDER
 from src.server.database.pool import get_db_connection
+from src.server.database.user_lock import lock_user_profile
+from src.server.models.profile_vocabulary import structured_preferences
 from src.server.utils.db import UpdateQueryBuilder
 
 logger = logging.getLogger(__name__)
+
+def _has_oauth(alias: str = "users") -> str:
+    return (
+        f"EXISTS (SELECT 1 FROM user_oauth_tokens WHERE user_oauth_tokens.user_id = {alias}.user_id"
+        f" AND user_oauth_tokens.provider <> '{CLAUDE_CODE_PROVIDER}') AS has_oauth_token"
+    )
+
 
 # Computed columns appended to user SELECT queries for gate logic.
 def _gate_cols(alias: str = "users") -> str:
     """Return the has_api_key + has_oauth_token EXISTS subqueries for a given table alias."""
     return (
         f"EXISTS (SELECT 1 FROM user_api_keys WHERE user_api_keys.user_id = {alias}.user_id) AS has_api_key,\n"
-        f"                    EXISTS (SELECT 1 FROM user_oauth_tokens WHERE user_oauth_tokens.user_id = {alias}.user_id) AS has_oauth_token"
+        f"                    {_has_oauth(alias)}"
     )
 
 _HAS_API_KEY = "EXISTS (SELECT 1 FROM user_api_keys WHERE user_api_keys.user_id = users.user_id) AS has_api_key"
-_HAS_OAUTH = "EXISTS (SELECT 1 FROM user_oauth_tokens WHERE user_oauth_tokens.user_id = users.user_id) AS has_oauth_token"
+_HAS_OAUTH = _has_oauth()
 
 
 # ==================== User Operations ====================
@@ -367,6 +377,15 @@ async def upsert_user(
 
 _USER_PREFS_TTL = 86400  # 24h — freshness via explicit invalidation
 
+# Cached-shape version, as for the profile below. A migration that rewrites
+# these rows in raw SQL, as 072 renamed the Background slot's keys, passes no
+# application write path, so it bumps this to retire every row cached before.
+_USER_PREFS_SHAPE = 2
+
+
+def _user_prefs_cache_key(user_id: str) -> str:
+    return f"user_prefs:v{_USER_PREFS_SHAPE}:{user_id}"
+
 
 async def get_user_preferences(user_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -385,7 +404,7 @@ async def get_user_preferences(user_id: str) -> Optional[Dict[str, Any]]:
     import json as _json
     from src.utils.cache.redis_cache import get_cache_client
 
-    cache_key = f"user_prefs:{user_id}"
+    cache_key = _user_prefs_cache_key(user_id)
     cache = get_cache_client()
     if cache.enabled and cache.client:
         try:
@@ -430,7 +449,7 @@ async def invalidate_user_prefs_cache(user_id: str) -> None:
     cache = get_cache_client()
     if cache.enabled and cache.client:
         try:
-            await cache.client.delete(f"user_prefs:{user_id}")
+            await cache.client.delete(_user_prefs_cache_key(user_id))
         except Exception:
             pass
 
@@ -545,6 +564,7 @@ async def upsert_user_preferences(
     other_preference: Optional[Dict[str, Any]] = None,
     model_preference: Optional[Dict[str, Any]] = None,
     replace: bool = False,
+    conn=None,
 ) -> Dict[str, Any]:
     """Create or update a user's preferences, merging each column that is passed.
 
@@ -593,14 +613,31 @@ async def upsert_user_preferences(
         RETURNING {_PREF_RETURNING}
     """
 
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(
                 sql, [str(uuid4()), user_id, *insert_params, *set_params]
             )
             result = await cur.fetchone()
             logger.info(f"[user_db] upsert_user_preferences user_id={user_id} replace={replace}")
             return dict(result)
+
+
+async def lock_user_preferences(user_id: str, *, conn) -> Optional[Dict[str, Any]]:
+    """Take the profile lock in the caller's transaction and read the row under it.
+
+    For a write that acts on the value it replaces: the cached read can be
+    stale, and a read before the lock can be overtaken by another write.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await lock_user_profile(cur, user_id)
+        await cur.execute(
+            f"SELECT {_PREF_RETURNING} FROM user_preferences WHERE user_id = %s",
+            (user_id,),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
 
 
 async def delete_user_preferences(user_id: str) -> bool:
@@ -613,8 +650,9 @@ async def delete_user_preferences(user_id: str) -> bool:
     Returns:
         True if a row was deleted, False if no preferences existed
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(
                 "DELETE FROM user_preferences WHERE user_id = %s",
                 (user_id,),
@@ -689,3 +727,90 @@ async def get_user_with_preferences(user_id: str) -> Optional[Dict[str, Any]]:
                 }
 
             return {'user': user, 'preferences': preferences}
+
+
+# ==================== Profile for the prompt ====================
+#
+# Here rather than beside the prompt that reads it: every writer of these
+# rows drops the cache, the profile files' saves among them, and those are
+# imported by the agent package the prompt lives in.
+
+_USER_PROFILE_TTL = 86400  # 24h, kept fresh by explicit invalidation
+
+# Cached-shape version, part of the key so a bump retires every entry the
+# previous shape wrote. Bump it whenever the dict below changes keys: a
+# migration can move preference data in raw SQL, under no application write
+# path, and nothing invalidates a profile cached before it ran.
+_USER_PROFILE_SHAPE = 2
+
+
+def _user_profile_cache_key(user_id: str) -> str:
+    return f"user_profile_prompt:v{_USER_PROFILE_SHAPE}:{user_id}"
+
+
+async def get_user_profile_for_prompt(user_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch user profile for system prompt injection, cached in Redis for up to ``_USER_PROFILE_TTL`` seconds.
+
+    Explicitly invalidated by ``invalidate_user_profile_cache`` on profile/preferences updates.
+    Returns None on DB error; callers silently omit the profile block.
+    """
+    import json as _json
+
+    cache_key = _user_profile_cache_key(user_id)
+    try:
+        from src.utils.cache.redis_cache import get_cache_client
+
+        cache = get_cache_client()
+        if cache.enabled and cache.client:
+            try:
+                cached = await cache.client.get(cache_key)
+                if cached is not None:
+                    return _json.loads(cached) if cached != b"null" else None
+            except Exception:
+                pass
+    except Exception:
+        cache = None
+
+    profile = None
+    try:
+        result = await get_user_with_preferences(user_id)
+        if result:
+            user = result.get("user", {})
+            preferences = result.get("preferences", {}) or {}
+            profile = {
+                "name": user.get("name"),
+                "timezone": user.get("timezone"),
+                "locale": user.get("locale"),
+                "agent_preference": preferences.get("agent_preference"),
+                # Only the structured keys: the free-text ones written before
+                # them stay in the profile file, where the agent reads them
+                # when it needs them, rather than in every turn's prompt.
+                "investment_profile": structured_preferences(preferences),
+            }
+    except Exception as e:
+        logger.warning(f"Failed to fetch user profile for {user_id}: {e}")
+        return None
+
+    if cache and cache.enabled and cache.client:
+        try:
+            await cache.client.set(
+                cache_key,
+                _json.dumps(profile) if profile else b"null",
+                ex=_USER_PROFILE_TTL,
+            )
+        except Exception:
+            pass
+
+    return profile
+
+
+async def invalidate_user_profile_cache(user_id: str) -> None:
+    """Delete the cached ``get_user_profile_for_prompt`` result."""
+    try:
+        from src.utils.cache.redis_cache import get_cache_client
+
+        cache = get_cache_client()
+        if cache.enabled and cache.client:
+            await cache.client.delete(_user_profile_cache_key(user_id))
+    except Exception:
+        pass

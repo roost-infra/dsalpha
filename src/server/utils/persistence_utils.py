@@ -9,7 +9,7 @@ and cancellation points.
 
 import logging
 import time
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -96,31 +96,6 @@ def get_tool_usage_from_handler(
         )
 
     return tool_usage
-
-
-def get_sse_events_from_handler(
-    metadata: Dict[str, Any],
-    context: str,
-    thread_id: str
-) -> Optional[List[Dict[str, Any]]]:
-    """Extract merged SSE events from handler if available."""
-    try:
-        handler = metadata.get("handler")
-        if handler and hasattr(handler, "get_sse_events"):
-            events = handler.get_sse_events()
-            if events:
-                logger.debug(
-                    f"[WorkflowPersistence] Captured SSE events at {context}: "
-                    f"thread_id={thread_id} events={len(events)}"
-                )
-            return events
-    except Exception as e:
-        logger.warning(
-            f"[WorkflowPersistence] Failed to get SSE events at {context} "
-            f"thread_id={thread_id}: {e}"
-        )
-
-    return None
 
 
 def calculate_execution_time(metadata: Dict[str, Any]) -> Optional[float]:

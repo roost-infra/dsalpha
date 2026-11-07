@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Mock } from 'vitest';
+import { reloadHeld } from '@/lib/reloadHolds';
 
 vi.mock('@/api/client', () => {
   const mockGet = vi.fn().mockResolvedValue({ data: {} });
@@ -45,6 +46,8 @@ vi.mock('@/lib/authToken', async (importActual) => ({
 import { api } from '@/api/client';
 import {
   getWorkspaces,
+  getHomeWorkspace,
+  createThreadWithTitle,
   createWorkspace,
   deleteWorkspace,
   getWorkspace,
@@ -52,12 +55,13 @@ import {
   deleteThread,
   sendHitlResponse,
   sendChatMessageStream,
+  replayThreadHistory,
   fetchMarketWatch,
   streamWorkspaceEvents,
   watchThread,
   reconnectToWorkflowStream,
   getReportBackStatus,
-  getDispatchLiveness,
+  getHandoffLiveness,
   // Re-exported by the API boundary from ../reportBackSignal — importing them here
   // pins that the boundary surface exposes the decoded signal.
   decodeReportBackSignal,
@@ -100,6 +104,62 @@ describe('ChatAgent API utilities', () => {
         params: { limit: 10, offset: 5, sort_by: 'name' },
       });
     });
+
+    it('asks for Home only when the caller includes it', async () => {
+      mockGet.mockResolvedValue({ data: {} });
+
+      await getWorkspaces(20, 0, 'custom', true);
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/workspaces', {
+        params: { limit: 20, offset: 0, sort_by: 'custom', include_home: true },
+      });
+    });
+  });
+
+  describe('getHomeWorkspace', () => {
+    const refusal = (status: number) => Object.assign(new Error(`status ${status}`), { response: { status } });
+
+    it("posts to Home's endpoint and returns the row", async () => {
+      const home = { workspace_id: 'home-1', is_home: true, status: 'unbound' };
+      mockPost.mockResolvedValue({ data: home });
+
+      const result = await getHomeWorkspace();
+      expect(mockPost).toHaveBeenCalledTimes(1);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/workspaces/home');
+      expect(result).toEqual(home);
+    });
+
+    it.each([404, 500])('passes a %i refusal through, with no second endpoint to ask', async (status) => {
+      mockPost.mockRejectedValueOnce(refusal(status));
+
+      await expect(getHomeWorkspace()).rejects.toThrow(`status ${status}`);
+      expect(mockPost).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('createThreadWithTitle', () => {
+    it('names the workspace and no agent mode', async () => {
+      mockPost.mockResolvedValue({ data: { thread_id: 't-1' } });
+
+      await createThreadWithTitle({ workspaceId: 'ws-1', firstQuery: 'hi' });
+      const [url, body] = mockPost.mock.calls[0];
+      expect(url).toBe('/api/v1/threads');
+      expect(body).toEqual({ first_query: 'hi', workspace_id: 'ws-1' });
+    });
+
+    it('sends the title a caller names, beside an empty first query', async () => {
+      mockPost.mockResolvedValue({ data: { thread_id: 't-1' } });
+
+      await createThreadWithTitle({ workspaceId: 'ws-1', firstQuery: '', title: 'Getting started' });
+      const [, body] = mockPost.mock.calls[0];
+      expect(body).toEqual({ first_query: '', title: 'Getting started', workspace_id: 'ws-1' });
+    });
+
+    it("stores the thread's own effort and fast mode only when picked", async () => {
+      mockPost.mockResolvedValue({ data: { thread_id: 't-1' } });
+
+      await createThreadWithTitle({ workspaceId: 'ws-1', firstQuery: 'hi', reasoningEffort: 'high', fastMode: false });
+      expect(mockPost.mock.calls[0][1]).toMatchObject({ reasoning_effort: 'high', fast_mode: false });
+    });
   });
 
   describe('createWorkspace', () => {
@@ -128,6 +188,16 @@ describe('ChatAgent API utilities', () => {
 
       await deleteWorkspace('  ws-123  ');
       expect(mockDelete).toHaveBeenCalledWith('/api/v1/workspaces/ws-123');
+    });
+
+    it('asks for the folder to go only when told to', async () => {
+      mockDelete.mockResolvedValue({});
+
+      await deleteWorkspace('ws-123', { deleteFiles: true });
+      expect(mockDelete).toHaveBeenLastCalledWith('/api/v1/workspaces/ws-123', { params: { delete_files: true } });
+
+      await deleteWorkspace('ws-123', { deleteFiles: false });
+      expect(mockDelete).toHaveBeenLastCalledWith('/api/v1/workspaces/ws-123');
     });
   });
 
@@ -197,39 +267,22 @@ describe('ChatAgent API utilities', () => {
       global.fetch = originalFetch;
     });
 
-    it('includes agent_mode in request body defaulting to ptc', async () => {
-      await sendHitlResponse('ws-1', 't-1', { int1: { decisions: [{ type: 'approve' }] } }, () => {});
+    it('names the workspace and no agent mode in the request body', async () => {
+      await sendHitlResponse({ int1: { decisions: [{ type: 'approve' }] } }, 'ws-1', 't-1', { onEvent: () => {} });
 
       const fetchMock = global.fetch as Mock;
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [, opts] = fetchMock.mock.calls[0];
       const body = JSON.parse(opts.body);
-      expect(body.agent_mode).toBe('ptc');
-    });
-
-    it('passes custom agentMode', async () => {
-      await sendHitlResponse(
-        'ws-1', 't-1',
-        { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'flash',
-      );
-
-      const fetchMock = global.fetch as Mock;
-      const [, opts] = fetchMock.mock.calls[0];
-      const body = JSON.parse(opts.body);
-      expect(body.agent_mode).toBe('flash');
+      expect(body.workspace_id).toBe('ws-1');
+      expect(body).not.toHaveProperty('agent_mode');
     });
 
     it('includes model options when provided', async () => {
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        { model: 'gpt-4o', reasoningEffort: 'high', fastMode: true },
+        'ws-1', 't-1',
+        { onEvent: () => {}, llmModel: 'gpt-4o', reasoningEffort: 'high', fastMode: true },
       );
 
       const fetchMock = global.fetch as Mock;
@@ -240,12 +293,16 @@ describe('ChatAgent API utilities', () => {
       expect(body.fast_mode).toBe(true);
     });
 
-    it('invokes onRunIdResolved with the run_id from Content-Location BEFORE reading the body', async () => {
-      // Track ordering: did onRunIdResolved fire before any reader.read() call?
+    it('names the run from Content-Location with the first frame, not the headers or a keepalive', async () => {
+      // The server beats through setup, so its headers precede admission and the
+      // run they name may never start.
+      const encoder = new TextEncoder();
+      const chunks = [':keepalive\n\n', 'event: metadata\ndata: {"run_id": "abc-123"}\n\n'];
       const callOrder: string[] = [];
       const readMock = vi.fn().mockImplementation(() => {
-        callOrder.push('body-read');
-        return Promise.resolve({ done: true, value: undefined });
+        const next = chunks.shift();
+        callOrder.push(next ? `read:${next.slice(0, 6)}` : 'read:end');
+        return Promise.resolve(next ? { done: false, value: encoder.encode(next) } : { done: true, value: undefined });
       });
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -261,23 +318,78 @@ describe('ChatAgent API utilities', () => {
       const onRunIdResolved = vi.fn().mockImplementation((rid: string) => {
         callOrder.push(`run-id:${rid}`);
       });
+      const onEvent = vi.fn().mockImplementation(() => {
+        callOrder.push('event');
+      });
 
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'ptc',
-        onRunIdResolved,
+        'ws-1', 't-1',
+        { onEvent, onRunIdResolved },
       );
 
       expect(onRunIdResolved).toHaveBeenCalledTimes(1);
-      // Now also carries the server-assigned thread_id parsed from the same
+      // Carries the server-assigned thread_id parsed from the same
       // Content-Location path, so an early stop can hard-cancel the run.
       expect(onRunIdResolved).toHaveBeenCalledWith('abc-123', 't-1');
-      // The run_id MUST be latched before any body byte is read.
-      expect(callOrder[0]).toBe('run-id:abc-123');
+      expect(callOrder).toEqual(['read::keepa', 'read:event:', 'run-id:abc-123', 'event', 'read:end']);
+    });
+
+    it.each([
+      ['a hold, which comes ahead of the run row', 'turn_held', false],
+      ['a cold start, which comes after it', 'workspace_status', true],
+    ])('names the run or not on %s', async (_case, event, named) => {
+      const encoder = new TextEncoder();
+      const chunks = [`id: 0\nevent: ${event}\ndata: {"status": "x"}\n\n`];
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          'Content-Location': '/api/v1/threads/t-1/messages/stream?run_id=abc-123',
+        }),
+        body: {
+          getReader: () => ({
+            read: () => {
+              const next = chunks.shift();
+              return Promise.resolve(next ? { done: false, value: encoder.encode(next) } : { done: true, value: undefined });
+            },
+          }),
+        },
+      });
+
+      const onRunIdResolved = vi.fn();
+      await sendHitlResponse({ int1: { decisions: [{ type: 'approve' }] } }, 'ws-1', 't-1', { onEvent: () => {}, onRunIdResolved });
+
+      expect(onRunIdResolved).toHaveBeenCalledTimes(named ? 1 : 0);
+    });
+
+    it('holds the stale-build reload through setup frames until the run speaks', async () => {
+      const encoder = new TextEncoder();
+      const chunks = [
+        ':keepalive\n\n',
+        'id: 0\nevent: turn_held\ndata: {"status": "held"}\n\n',
+        'id: 1\nevent: metadata\ndata: {"run_id": "abc-123"}\n\n',
+      ];
+      const heldAtEachRead: boolean[] = [];
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        body: {
+          getReader: () => ({
+            read: () => {
+              heldAtEachRead.push(reloadHeld());
+              const next = chunks.shift();
+              return Promise.resolve(next ? { done: false, value: encoder.encode(next) } : { done: true, value: undefined });
+            },
+          }),
+        },
+      });
+
+      await sendHitlResponse({ int1: { decisions: [{ type: 'approve' }] } }, 'ws-1', 't-1', { onEvent: () => {} });
+
+      expect(heldAtEachRead).toEqual([true, true, true, false]);
+      expect(reloadHeld()).toBe(false);
     });
 
     it('does NOT invoke onRunIdResolved when Content-Location lacks run_id', async () => {
@@ -292,13 +404,9 @@ describe('ChatAgent API utilities', () => {
 
       const onRunIdResolved = vi.fn();
       await sendHitlResponse(
-        'ws-1', 't-1',
         { int1: { decisions: [{ type: 'approve' }] } },
-        () => {},
-        false,
-        {},
-        'ptc',
-        onRunIdResolved,
+        'ws-1', 't-1',
+        { onEvent: () => {}, onRunIdResolved },
       );
       expect(onRunIdResolved).not.toHaveBeenCalled();
     });
@@ -337,22 +445,33 @@ describe('ChatAgent API utilities', () => {
 
     const ctrl = () => new AbortController().signal;
 
-    it('parses a status event and passes status + sandbox_state', async () => {
+    it('parses a status event and passes status + sandbox_state + computer_id', async () => {
       mockSSEResponse([
-        'event: status\ndata: {"workspace_id":"ws-1","status":"starting","sandbox_state":"archived"}\n\n',
+        'event: status\ndata: {"workspace_id":"ws-1","computer_id":"comp-1","status":"starting","sandbox_state":"archived"}\n\n',
       ]);
       const onStatus = vi.fn();
       await streamWorkspaceEvents('ws-1', onStatus, ctrl());
-      expect(onStatus).toHaveBeenCalledWith('starting', 'archived');
+      expect(onStatus).toHaveBeenCalledWith('starting', 'archived', 'comp-1');
     });
 
     it('omits sandbox_state when the payload has none', async () => {
       mockSSEResponse([
-        'event: status\ndata: {"workspace_id":"ws-1","status":"running"}\n\n',
+        'event: status\ndata: {"workspace_id":"ws-1","computer_id":"comp-1","status":"running"}\n\n',
       ]);
       const onStatus = vi.fn();
       await streamWorkspaceEvents('ws-1', onStatus, ctrl());
-      expect(onStatus).toHaveBeenCalledWith('running', undefined);
+      expect(onStatus).toHaveBeenCalledWith('running', undefined, 'comp-1');
+    });
+
+    it('passes computer_id as undefined when the workspace has no machine', async () => {
+      // Home before its first start frames computer_id: null rather than
+      // dropping the key.
+      mockSSEResponse([
+        'event: status\ndata: {"workspace_id":"ws-1","computer_id":null,"status":"running"}\n\n',
+      ]);
+      const onStatus = vi.fn();
+      await streamWorkspaceEvents('ws-1', onStatus, ctrl());
+      expect(onStatus).toHaveBeenCalledWith('running', undefined, undefined);
     });
 
     it('handles an event split across read() chunks', async () => {
@@ -363,7 +482,7 @@ describe('ChatAgent API utilities', () => {
       ]);
       const onStatus = vi.fn();
       await streamWorkspaceEvents('ws-1', onStatus, ctrl());
-      expect(onStatus).toHaveBeenCalledWith('starting', undefined);
+      expect(onStatus).toHaveBeenCalledWith('starting', undefined, undefined);
     });
 
     it('stops on a timeout event without emitting further statuses', async () => {
@@ -375,7 +494,7 @@ describe('ChatAgent API utilities', () => {
       const onStatus = vi.fn();
       await streamWorkspaceEvents('ws-1', onStatus, ctrl());
       expect(onStatus).toHaveBeenCalledTimes(1);
-      expect(onStatus).toHaveBeenCalledWith('starting', undefined);
+      expect(onStatus).toHaveBeenCalledWith('starting', undefined, undefined);
     });
 
     it('skips a malformed payload but keeps consuming the stream', async () => {
@@ -386,7 +505,7 @@ describe('ChatAgent API utilities', () => {
       const onStatus = vi.fn();
       await streamWorkspaceEvents('ws-1', onStatus, ctrl());
       expect(onStatus).toHaveBeenCalledTimes(1);
-      expect(onStatus).toHaveBeenCalledWith('running', undefined);
+      expect(onStatus).toHaveBeenCalledWith('running', undefined, undefined);
     });
 
     it('returns without emitting when the response is not ok', async () => {
@@ -457,13 +576,13 @@ describe('ChatAgent API utilities', () => {
     /** Run watchThread and resolve with the payload it reports (one-shot). */
     function runWatch(): Promise<{ run_id?: string | null } | undefined> {
       return new Promise((resolve) => {
-        watchThread('flash-1', resolve);
+        watchThread('th-home', resolve);
       });
     }
 
     it('parses the run_id from a wake delivered as a single frame', async () => {
       mockWatchResponse([
-        'event: workflow_started\ndata: {"thread_id":"flash-1","run_id":"rb-1"}\n\n',
+        'event: workflow_started\ndata: {"thread_id":"th-home","run_id":"rb-1"}\n\n',
       ]);
       expect(await runWatch()).toEqual({ run_id: 'rb-1', needs_input: null, cleared: false });
     });
@@ -473,7 +592,7 @@ describe('ChatAgent API utilities', () => {
       // first sight of the event name parsed partial JSON and lost the run_id,
       // forcing a /status fallback that a fast report-back has already torn down.
       mockWatchResponse([
-        'event: workflow_started\ndata: {"thread_id":"flash-1","ru',
+        'event: workflow_started\ndata: {"thread_id":"th-home","ru',
         'n_id":"rb-1"}\n\n',
       ]);
       expect(await runWatch()).toEqual({ run_id: 'rb-1', needs_input: null, cleared: false });
@@ -498,7 +617,7 @@ describe('ChatAgent API utilities', () => {
       // newline (SSE spec). The old single-line regex captured only the first
       // line, truncating the JSON and forcing a /status fallback.
       mockWatchResponse([
-        'event: workflow_started\ndata: {"thread_id":"flash-1",\ndata: "run_id":"rb-7"}\n\n',
+        'event: workflow_started\ndata: {"thread_id":"th-home",\ndata: "run_id":"rb-7"}\n\n',
       ]);
       expect(await runWatch()).toEqual({ run_id: 'rb-7', needs_input: null, cleared: false });
     });
@@ -508,14 +627,14 @@ describe('ChatAgent API utilities', () => {
       // report-back status slice; it must route to onSnapshot — never be
       // mistaken for a wake — and wakes after it must still deliver.
       mockWatchResponse([
-        'event: watch_snapshot\ndata: {"thread_id":"flash-1","pending_report_back":true,"report_back_run_id":"rb-s","active_tasks":["t1"]}\n\n',
+        'event: watch_snapshot\ndata: {"thread_id":"th-home","pending_report_back":true,"report_back_run_id":"rb-s","active_tasks":["t1"]}\n\n',
         'event: workflow_started\ndata: {"run_id":"rb-1"}\n\n',
       ]);
       const snapshots: unknown[] = [];
       const payloads: Array<{ run_id?: string | null } | undefined> = [];
       await new Promise<void>((resolve) => {
         watchThread(
-          'flash-1',
+          'th-home',
           (p) => { payloads.push(p); },
           resolve,
           undefined,
@@ -523,15 +642,15 @@ describe('ChatAgent API utilities', () => {
         );
       });
       expect(snapshots).toEqual([
-        { thread_id: 'flash-1', pending_report_back: true, report_back_run_id: 'rb-s', active_tasks: ['t1'] },
+        { thread_id: 'th-home', pending_report_back: true, report_back_run_id: 'rb-s', active_tasks: ['t1'] },
       ]);
       expect(payloads).toEqual([{ run_id: 'rb-1', needs_input: null, cleared: false }]);
     });
 
     it('keeps reading and delivers EVERY wake on one persistent connection (no cancel mid-stream)', async () => {
-      // A flash thread can dispatch N PTCs whose report-backs arrive as separate
-      // runs. The watch must forward every wake on a single connection — the old
-      // one-shot behavior (cancel + return after wake #1) dropped wake #2+, so
+      // A Chief of Staff thread can dispatch N PTCs whose report-backs arrive as
+      // separate runs. The watch must forward every wake on a single connection:
+      // the old one-shot behavior (cancel + return after wake #1) dropped wake #2+, so
       // only the first report-back streamed and the rest needed a page refresh.
       const { reader } = mockWatchResponse([
         'event: workflow_started\ndata: {"run_id":"rb-1"}\n\n',
@@ -541,7 +660,7 @@ describe('ChatAgent API utilities', () => {
       const onResubscribed = vi.fn();
       await new Promise<void>((resolve) => {
         // onClosed (3rd arg) fires when the backend ends the stream — resolve then.
-        watchThread('flash-1', (p) => { payloads.push(p); }, resolve, onResubscribed);
+        watchThread('th-home', (p) => { payloads.push(p); }, resolve, onResubscribed);
       });
       expect(payloads).toEqual([
         { run_id: 'rb-1', needs_input: null, cleared: false },
@@ -558,7 +677,7 @@ describe('ChatAgent API utilities', () => {
       mockWatchResponse(['event: workflow_started\ndata: {"run_id":"rb-1"}\n\n']);
       const onClosed = vi.fn();
       await new Promise<void>((resolve) => {
-        watchThread('flash-1', () => {}, () => { onClosed(); resolve(); });
+        watchThread('th-home', () => {}, () => { onClosed(); resolve(); });
       });
       expect(onClosed).toHaveBeenCalledTimes(1);
     });
@@ -587,7 +706,7 @@ describe('ChatAgent API utilities', () => {
 
       const onResubscribed = vi.fn();
       const payload = await new Promise<{ run_id?: string | null } | undefined>((resolve) => {
-        watchThread('flash-1', resolve, undefined, onResubscribed);
+        watchThread('th-home', resolve, undefined, onResubscribed);
       });
 
       // Rotated against the token that request actually carried, not whatever
@@ -614,7 +733,7 @@ describe('ChatAgent API utilities', () => {
         authMocks.refreshAccessToken.mockResolvedValue('U');
 
         const closed = new Promise<void>((resolve) => {
-          watchThread('flash-1', () => {}, () => resolve());
+          watchThread('th-home', () => {}, () => resolve());
         });
         await vi.advanceTimersByTimeAsync(30_000);
         await closed;
@@ -637,7 +756,7 @@ describe('ChatAgent API utilities', () => {
 
       const onClosed = vi.fn();
       await new Promise<void>((resolve) => {
-        watchThread('flash-1', () => {}, () => { onClosed(); resolve(); });
+        watchThread('th-home', () => {}, () => { onClosed(); resolve(); });
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -653,7 +772,7 @@ describe('ChatAgent API utilities', () => {
       authMocks.refreshAccessToken.mockResolvedValue('still-refused');
 
       await new Promise<void>((resolve) => {
-        watchThread('flash-1', () => {}, resolve);
+        watchThread('th-home', () => {}, resolve);
       });
 
       expect(authMocks.refreshAccessToken).toHaveBeenCalledTimes(1);
@@ -675,7 +794,7 @@ describe('ChatAgent API utilities', () => {
       }) as unknown as typeof fetch;
 
       const onClosed = vi.fn();
-      const { abort } = watchThread('flash-1', () => {}, onClosed);
+      const { abort } = watchThread('th-home', () => {}, onClosed);
       // Simulate fetch: aborting the signal rejects the in-flight read() with
       // an AbortError, which is exactly how the watch loop unwinds on teardown.
       abort.signal.addEventListener('abort', () =>
@@ -717,7 +836,7 @@ describe('ChatAgent API utilities', () => {
         const payloads: Array<{ run_id?: string | null } | undefined> = [];
         const done = new Promise<void>((resolve) => {
           watchThread(
-            'flash-1',
+            'th-home',
             (p) => { payloads.push(p); },
             () => { onClosed(); resolve(); },
             onResubscribed,
@@ -745,7 +864,7 @@ describe('ChatAgent API utilities', () => {
       const onResubscribed = vi.fn();
       const onClosed = vi.fn();
       await new Promise<void>((resolve) => {
-        watchThread('flash-1', () => {}, () => { onClosed(); resolve(); }, onResubscribed);
+        watchThread('th-home', () => {}, () => { onClosed(); resolve(); }, onResubscribed);
       });
       expect(onResubscribed).not.toHaveBeenCalled();
       expect(onClosed).toHaveBeenCalledTimes(1);
@@ -792,7 +911,7 @@ describe('ChatAgent API utilities', () => {
           'Market watch mode is on for this message. If the central tickers are not yet registered, register them with watch_market.',
       };
       await sendChatMessageStream(
-        'hi', 'ws-1', 't-1', [], false, () => {}, [skillItem], 'ptc',
+        'hi', 'ws-1', 't-1', { onEvent: () => {}, additionalContext: [skillItem] },
       );
 
       const body = bodyOfLastSend();
@@ -804,9 +923,36 @@ describe('ChatAgent API utilities', () => {
       expect(item!.instruction).toBe(skillItem.instruction);
     });
 
+    // The workspace names where the turn runs; no agent mode rides along.
+    it('names the workspace and no agent mode', async () => {
+      await sendChatMessageStream('hi', 'ws-1', 't-1', { onEvent: () => {} });
+
+      const body = bodyOfLastSend();
+      expect(body.workspace_id).toBe('ws-1');
+      expect(body).not.toHaveProperty('agent_mode');
+    });
+
+    // A send of file comments names them by id, with where the person reads;
+    // the server claims them under the request key, so a retransmit carries
+    // the same ids.
+    it('carries file comment ids and where the person reads, and none when the send has none', async () => {
+      await sendChatMessageStream('', 'ws-1', 't-1', {
+        onEvent: () => {}, artifactComments: { ids: ['c-2', 'c-1'], reading: 'file' }, requestKey: 'rk-1',
+      });
+      const body = bodyOfLastSend();
+      expect(body.artifact_comment_ids).toEqual(['c-2', 'c-1']);
+      expect(body.reading).toBe('file');
+      expect(body.request_key).toBe('rk-1');
+
+      (global.fetch as Mock).mockClear();
+      await sendChatMessageStream('hi', 'ws-1', 't-1', { onEvent: () => {}, artifactComments: { ids: [], reading: 'chat' } });
+      expect(bodyOfLastSend()).not.toHaveProperty('artifact_comment_ids');
+      expect(bodyOfLastSend()).not.toHaveProperty('reading');
+    });
+
     // Watch OFF: no skills item, no market_watch key.
     it('sends no market-watch skill and no market_watch flag when off', async () => {
-      await sendChatMessageStream('hi', 'ws-1', 't-1', [], false, () => {});
+      await sendChatMessageStream('hi', 'ws-1', 't-1', { onEvent: () => {} });
 
       const body = bodyOfLastSend();
       expect(body.market_watch).toBeUndefined();
@@ -910,21 +1056,48 @@ describe('ChatAgent API utilities', () => {
     });
   });
 
-  describe('getDispatchLiveness', () => {
-    it('resolves to [] for an empty id list WITHOUT issuing a request', async () => {
-      const res = await getDispatchLiveness([]);
-      expect(res).toEqual([]);
+  describe('getHandoffLiveness', () => {
+    it('asks for threads, runs and steers in one request, leaving out an empty kind', async () => {
+      mockGet.mockResolvedValueOnce({
+        data: { liveness: [{ thread_id: 't-1' }], runs: [{ run_id: 'r-1' }], steers: [{ steer_id: 's-1' }] },
+      });
+      const res = await getHandoffLiveness({ threads: ['t-1'], runs: ['r-1'], steers: ['s-1'] });
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/threads/dispatches/liveness', { params: { ids: 't-1', runs: 'r-1', steers: 's-1' } });
+      expect(res).toEqual({ liveness: [{ thread_id: 't-1' }], runs: [{ run_id: 'r-1' }], steers: [{ steer_id: 's-1' }] });
+
+      mockGet.mockResolvedValueOnce({ data: { liveness: [] } });
+      // A server from before runs and steers answers without the keys.
+      expect(await getHandoffLiveness({ threads: [], runs: ['r-1'], steers: [] })).toEqual({ liveness: [], runs: [], steers: [] });
+      expect(mockGet).toHaveBeenLastCalledWith('/api/v1/threads/dispatches/liveness', { params: { runs: 'r-1' } });
+    });
+
+    it('makes no request when nothing is asked', async () => {
+      expect(await getHandoffLiveness({ threads: [], runs: [], steers: [] })).toEqual({ liveness: [], runs: [], steers: [] });
       expect(mockGet).not.toHaveBeenCalled();
     });
 
-    it('resolves to [] when the response body omits `liveness`, joining ids comma-separated', async () => {
-      // Null-safe extraction: a body without the `liveness` key must not throw.
+    it('reads more thread ids than the route takes in batches it does', async () => {
+      const ids = Array.from({ length: 150 }, (_, i) => `t-${i}`);
+      mockGet.mockImplementation((_url: string, { params }: { params: { ids: string } }) =>
+        Promise.resolve({ data: { liveness: params.ids.split(',').map((thread_id) => ({ thread_id })) } }));
+      const res = await getHandoffLiveness({ threads: ids, runs: [], steers: [] });
+      expect(mockGet.mock.calls.map(([, { params }]) => params.ids.split(',').length)).toEqual([100, 50]);
+      expect(res.liveness.map((row) => row.thread_id)).toEqual(ids);
+    });
+
+    it('answers with no rows when the body omits them', async () => {
       mockGet.mockResolvedValueOnce({ data: {} });
-      const res = await getDispatchLiveness(['t-1', 't-2']);
-      expect(res).toEqual([]);
-      expect(mockGet).toHaveBeenCalledWith('/api/v1/threads/dispatches/liveness', {
-        params: { ids: 't-1,t-2' },
-      });
+      expect(await getHandoffLiveness({ threads: ['t-1', 't-2'], runs: [], steers: [] })).toEqual({ liveness: [], runs: [], steers: [] });
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/threads/dispatches/liveness', { params: { ids: 't-1,t-2' } });
+    });
+
+    it('batches each kind to what the route takes', async () => {
+      const runs = Array.from({ length: 120 }, (_, i) => `r-${i}`);
+      mockGet.mockImplementation((_url: string, { params }: { params: { ids?: string; runs?: string } }) =>
+        Promise.resolve({ data: { liveness: [], runs: (params.runs ?? '').split(',').filter(Boolean).map((run_id) => ({ run_id })) } }));
+      const res = await getHandoffLiveness({ threads: ['t-1'], runs, steers: [] });
+      expect(mockGet.mock.calls.map(([, { params }]) => [params.ids, params.runs?.split(',').length])).toEqual([['t-1', 100], [undefined, 20]]);
+      expect(res.runs.map((row) => row.run_id)).toEqual(runs);
     });
   });
 
@@ -1002,8 +1175,8 @@ describe('sendChatMessageStream — per-turn tuning is explicit', () => {
 
   const send = async (effort: string | null, fast: boolean | null) => {
     await sendChatMessageStream(
-      'hi', 'ws-1', 't-1', [], false, () => {}, null, 'ptc',
-      'en-US', 'America/New_York', null, null, 'gpt-5.5', effort, fast,
+      'hi', 'ws-1', 't-1',
+      { onEvent: () => {}, llmModel: 'gpt-5.5', reasoningEffort: effort, fastMode: fast },
     );
     const [, opts] = (global.fetch as Mock).mock.calls[0];
     return JSON.parse(opts.body) as Record<string, unknown>;
@@ -1021,5 +1194,171 @@ describe('sendChatMessageStream — per-turn tuning is explicit', () => {
     const body = await send(null, null);
     expect(body.fast_mode).toBeUndefined();
     expect(body.reasoning_effort).toBeUndefined();
+  });
+});
+
+// A send names the thread's subagents setting only when the composer hands it
+// one: the backend stores a named value on the thread, and an omitted key
+// leaves the row as it is, which is what an unread row needs.
+describe('sendChatMessageStream: the subagents setting', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+        }),
+      },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const send = async (threadId: string | null, settings?: { subagentsAllowed?: boolean }) => {
+    await sendChatMessageStream(
+      'hi', 'ws-1', threadId, { onEvent: () => {}, threadSettings: settings },
+    );
+    const [url, opts] = (global.fetch as Mock).mock.calls[0];
+    return { url: url as string, body: JSON.parse(opts.body) as Record<string, unknown> };
+  };
+
+  it('sends an explicit false', async () => {
+    expect((await send('t-1', { subagentsAllowed: false })).body).toMatchObject({ subagents_allowed: false });
+  });
+
+  it('sends it on the send that creates the thread', async () => {
+    const { url, body } = await send(null, { subagentsAllowed: true });
+    expect(url).toMatch(/\/threads\/messages$/);
+    expect(body).toMatchObject({ subagents_allowed: true });
+  });
+
+  it('omits it when the composer names no value', async () => {
+    expect('subagents_allowed' in (await send('t-1', {})).body).toBe(false);
+    (global.fetch as Mock).mockClear();
+    expect('subagents_allowed' in (await send('t-1')).body).toBe(false);
+  });
+});
+
+// A send into a turn the view shows running may only steer it: with none
+// running the server refuses it as `not_running` rather than opening a turn
+// on a connection that reads only the acceptance.
+describe('sendChatMessageStream: steer_only', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+        }),
+      },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const send = async (steerOnly?: boolean) => {
+    await sendChatMessageStream(
+      'hi', 'ws-1', 't-1', { onEvent: () => {}, requestKey: 'rk-1', ...(steerOnly === undefined ? {} : { steerOnly }) },
+    );
+    const [, opts] = (global.fetch as Mock).mock.calls[0];
+    return JSON.parse(opts.body) as Record<string, unknown>;
+  };
+
+  it('sends steer_only with the request key on a steer', async () => {
+    expect(await send(true)).toMatchObject({ steer_only: true, request_key: 'rk-1' });
+  });
+
+  it('omits it on a plain send', async () => {
+    expect('steer_only' in (await send())).toBe(false);
+    (global.fetch as Mock).mockClear();
+    expect('steer_only' in (await send(false))).toBe(false);
+  });
+});
+
+// A paged replay names its page in the query string, and an unpaged one sends
+// none, which the backend reads as the whole thread. The signal is what lets a
+// reload or thread switch drop an older page still on its way.
+describe('replayThreadHistory: the page request', () => {
+  let originalFetch: typeof global.fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body: {
+        getReader: () => ({
+          read: vi.fn().mockResolvedValue({ done: true, value: undefined }),
+        }),
+      },
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const requested = () => {
+    const [url, opts] = (global.fetch as Mock).mock.calls[0];
+    return { url: new URL(url as string), opts: opts as RequestInit };
+  };
+
+  it('asks for the whole thread when no page is named', async () => {
+    await replayThreadHistory('t-1');
+    const { url } = requested();
+    expect(url.pathname).toBe('/api/v1/threads/t-1/messages/replay');
+    expect(url.search).toBe('');
+  });
+
+  it('asks for the newest N turns with limit alone', async () => {
+    await replayThreadHistory('t-1', () => {}, { limit: 20 });
+    const { url } = requested();
+    expect(url.searchParams.get('limit')).toBe('20');
+    expect(url.searchParams.has('before_turn')).toBe(false);
+  });
+
+  it('asks for the page before a turn with limit and before_turn', async () => {
+    await replayThreadHistory('t-1', () => {}, { limit: 20, beforeTurn: 75 });
+    const { url } = requested();
+    expect(url.searchParams.get('limit')).toBe('20');
+    expect(url.searchParams.get('before_turn')).toBe('75');
+  });
+
+  it('sends before_turn 0 rather than dropping it as falsy', async () => {
+    await replayThreadHistory('t-1', () => {}, { beforeTurn: 0 });
+    const { url } = requested();
+    expect(url.searchParams.get('before_turn')).toBe('0');
+    expect(url.searchParams.has('limit')).toBe(false);
+  });
+
+  it('passes the abort signal through to the fetch', async () => {
+    const controller = new AbortController();
+    await replayThreadHistory('t-1', () => {}, { limit: 20, beforeTurn: 40, signal: controller.signal });
+    expect(requested().opts.signal).toBe(controller.signal);
+  });
+
+  it('reports an abort as aborted rather than throwing', async () => {
+    const abort = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+    global.fetch = vi.fn().mockRejectedValue(abort) as unknown as typeof fetch;
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      replayThreadHistory('t-1', () => {}, { limit: 20, beforeTurn: 40, signal: controller.signal }),
+    ).resolves.toMatchObject({ aborted: true, disconnected: false });
   });
 });

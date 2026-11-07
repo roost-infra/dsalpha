@@ -9,11 +9,13 @@ Encryption is transparent to callers — functions accept and return plaintext s
 """
 
 import logging
-from typing import Any, Dict, Optional
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, Optional
 
 from psycopg.rows import dict_row
 
 from src.server.database.pool import get_db_connection
+from src.server.database.sql_fences import advisory_key
 from src.server.database.encryption import get_encryption_key as _get_encryption_key
 
 logger = logging.getLogger(__name__)
@@ -50,14 +52,26 @@ async def get_user_api_keys(user_id: str) -> Dict[str, Any]:
             return {"byok_enabled": byok_enabled, "keys": keys, "base_urls": base_urls}
 
 
-async def set_byok_enabled(user_id: str, enabled: bool) -> bool:
+@asynccontextmanager
+async def key_writes(user_id: str) -> AsyncIterator[Any]:
+    """One transaction for a request's key writes: pass the connection it
+    yields as ``conn``. A save that replaces one region's key with another's
+    must not leave both stored when a later write fails, and the user's saves
+    take turns, so two saving different regions at once cannot each miss the
+    other's new row and commit both."""
+    async with get_db_connection() as conn, conn.transaction():
+        await conn.execute("SELECT pg_advisory_xact_lock(%s)", (advisory_key("API_KEYS", user_id),))
+        yield conn
+
+
+async def set_byok_enabled(user_id: str, enabled: bool, conn=None) -> bool:
     """
     Set the global BYOK toggle on the users table.
 
     Returns:
         The new byok_enabled value.
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "UPDATE users SET byok_enabled = %s, updated_at = NOW() WHERE user_id = %s RETURNING byok_enabled",
@@ -69,13 +83,13 @@ async def set_byok_enabled(user_id: str, enabled: bool) -> bool:
 
 
 async def upsert_api_key(
-    user_id: str, provider: str, api_key: str, base_url: str | None = None
+    user_id: str, provider: str, api_key: str, base_url: str | None = None, conn=None
 ) -> None:
     """
     Insert or update a single provider key (encrypted) and optional base_url.
     """
     enc_key = _get_encryption_key()
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 """
@@ -91,11 +105,11 @@ async def upsert_api_key(
             logger.info(f"[api_keys_db] upsert_key user_id={user_id} provider={provider}")
 
 
-async def delete_api_key(user_id: str, provider: str) -> None:
+async def delete_api_key(user_id: str, provider: str, conn=None) -> None:
     """
     Remove one provider key.
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "DELETE FROM user_api_keys WHERE user_id = %s AND provider = %s",
@@ -118,6 +132,37 @@ async def get_key_for_provider(user_id: str, provider: str) -> Optional[str]:
             )
             row = await cur.fetchone()
             return row["api_key"] if row else None
+
+
+async def get_key_with_base_url(user_id: str, provider: str) -> dict | None:
+    """The decrypted key for ``provider`` with its ``base_url``, read from one
+    row, or None, as with the user's own keys turned off: a caller that checks
+    where the key may be sent then sends the key it checked, never one saved
+    for another endpoint in between."""
+    enc_key = _get_encryption_key()
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT pgp_sym_decrypt(k.api_key, %s) AS api_key, k.base_url FROM user_api_keys k "
+                "JOIN users u ON u.user_id = k.user_id "
+                "WHERE k.user_id = %s AND k.provider = %s AND u.byok_enabled",
+                (enc_key, user_id, provider),
+            )
+            return await cur.fetchone()
+
+
+async def saved_key(user_id: str, provider: str, conn=None) -> dict | None:
+    """The saved key for ``provider`` without its secret (its ``base_url``), or
+    None when none is saved or the user turned their own keys off; read
+    without decrypting it."""
+    async with get_db_connection(conn) as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT k.base_url FROM user_api_keys k JOIN users u ON u.user_id = k.user_id "
+                "WHERE k.user_id = %s AND k.provider = %s AND u.byok_enabled",
+                (user_id, provider),
+            )
+            return await cur.fetchone()
 
 
 _BYOK_ACTIVE_TTL = 86400  # 24h — freshness via explicit invalidation
@@ -179,9 +224,9 @@ async def invalidate_byok_cache(user_id: str) -> None:
             pass
 
 
-async def update_base_url(user_id: str, provider: str, base_url: str | None) -> None:
+async def update_base_url(user_id: str, provider: str, base_url: str | None, conn=None) -> None:
     """Update base_url on an existing API key row (no-op if row doesn't exist)."""
-    async with get_db_connection() as conn:
+    async with get_db_connection(conn) as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "UPDATE user_api_keys SET base_url = %s, updated_at = NOW() "

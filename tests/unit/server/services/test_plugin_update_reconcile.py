@@ -9,16 +9,20 @@ plaintext credential, a deleted skill).
 
 from __future__ import annotations
 
-import io
 import json
-import zipfile
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from src.server.models.plugin import InstallReport
 from src.server.services.plugins import validate_package
-from src.server.services.plugins.update import _update_servers, _update_skills
+from src.server.services.plugins.extension import materialize_binds
+from src.server.services.plugins.update import (
+    _preserve_vault_refs,
+    _update_servers,
+    _update_skills,
+)
+from tests.unit.server.mcp_builders import zip_package
 
 USER = "test-user-123"
 PLUGIN_ID = "22222222-2222-2222-2222-222222222222"
@@ -27,14 +31,17 @@ CANONICAL_PLUGIN_SCHEMA = (
 )
 CANONICAL_MCP_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json"
 SECRET = "sk-live-abcdef0123456789"
+INSTALLED_AT = "2026-01-01T00:00:00+00:00"
 
 
-def _zip(members: dict[str, bytes]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        for name, data in members.items():
-            zf.writestr(name, data)
-    return buf.getvalue()
+class _Passed:
+    """Every server passed its check; these tests are about the reconcile."""
+
+    def approves(self, server) -> bool:
+        return True
+
+
+_PASSED = _Passed()
 
 
 def _package(*, mcp: dict | None = None, skills: dict[str, str] | None = None):
@@ -51,7 +58,7 @@ def _package(*, mcp: dict | None = None, skills: dict[str, str] | None = None):
         ).encode()
     for directory, skill_md in (skills or {}).items():
         members[f"skills/{directory}/SKILL.md"] = skill_md.encode()
-    return validate_package(_zip(members))
+    return validate_package(zip_package(members))
 
 
 @pytest.mark.asyncio
@@ -100,7 +107,10 @@ async def test_update_vaults_a_newly_introduced_credential():
             "src.server.services.plugins.update.apply_catalog_edit", new=edit
         ),
     ):
-        await _update_servers(USER, PLUGIN_ID, package, report)
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
 
     # The secret was created with the real value...
     create_secret.assert_awaited_once()
@@ -148,7 +158,9 @@ async def test_a_skill_renamed_without_moving_its_directory_keeps_the_row():
             "src.server.services.plugins.update.delete_user_skill", new=delete
         ),
     ):
-        await _update_skills(USER, PLUGIN_ID, package, report)
+        await _update_skills(
+            USER, PLUGIN_ID, package, report, installed_at=INSTALLED_AT
+        )
 
     delete.assert_not_awaited()
     result = next(c for c in report.components if c.kind == "skill")
@@ -196,7 +208,10 @@ async def test_a_repointed_entry_does_not_inherit_the_old_endpoints_secret():
             "src.server.services.plugins.update.apply_catalog_edit", new=edit
         ),
     ):
-        await _update_servers(USER, PLUGIN_ID, package, report)
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
 
     written = edit.await_args.args[2]
     assert "${vault:VENDOR_KEY}" not in json.dumps(written)
@@ -235,7 +250,10 @@ async def test_a_customize_mid_update_is_never_overwritten():
             "src.server.services.plugins.update.apply_catalog_edit", new=edit
         ),
     ):
-        await _update_servers(USER, PLUGIN_ID, package, report)
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
 
     edit.assert_not_awaited()
     assert any(c.status == "detached" for c in report.components)
@@ -289,7 +307,10 @@ async def _reconcile_stdio(existing: dict, edit: AsyncMock) -> InstallReport:
             "src.server.services.plugins.update.apply_catalog_edit", new=edit
         ),
     ):
-        await _update_servers(USER, PLUGIN_ID, package, report)
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
     return report
 
 
@@ -322,3 +343,212 @@ async def test_a_row_that_drifted_is_still_rewritten():
     assert edit.await_args.args[2]["args"] == ["thing@1.0.0"]
     result = next(c for c in report.components if c.kind == "mcp")
     assert result.status == "updated"
+
+
+@pytest.mark.asyncio
+async def test_a_row_under_a_since_reserved_name_still_updates():
+    """The update arm writes under the row's own name, so a row installed
+    before that name was reserved has to pass. Refusing it left delete and
+    reinstall, which takes the OAuth connection, tool schemas, per-workspace
+    switches and plugin ownership with the row."""
+    package = _package(mcp={"class": _STDIO_ENTRY["svc"]})
+    existing = {**_SETTLED_ROW, "name": "class", "args": ["thing@0.9.0"]}
+    edit = AsyncMock(return_value={"name": "class"})
+    report = InstallReport()
+    with (
+        patch(
+            "src.server.services.plugins.update.list_plugin_server_names",
+            new=AsyncMock(
+                return_value=[{"name": "class", "plugin_server_key": "class"}]
+            ),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_catalog_server",
+            new=AsyncMock(return_value=existing),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_user_secret_names",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.server.services.plugins.update.apply_catalog_edit", new=edit
+        ),
+    ):
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
+
+    edit.assert_awaited_once()
+    assert edit.await_args.args[1] == "class"
+    result = next(c for c in report.components if c.kind == "mcp")
+    assert (result.status, result.name) == ("updated", "class")
+
+
+def _bound_package(header: str | dict | None, *, prefix: str | None = None):
+    """A v2 package whose remote entry gets its Authorization from a bind
+    (``header=None``) or ships one in the portable document."""
+    entry: dict = {"type": "streamable-http", "url": "https://example.com/mcp"}
+    if header is not None:
+        entry["headers"] = {"Authorization": header}
+    bind = {"server": "svc", "header": "Authorization"}
+    if prefix is not None:
+        bind["prefix"] = prefix
+    return validate_package(zip_package({
+        "plugin.json": json.dumps({
+            "$schema": CANONICAL_PLUGIN_SCHEMA,
+            "name": "demo",
+            "version": "2.0.0",
+            "extensions": {"ai.langalpha": {"secrets": [
+                {"name": "SVC_KEY", "label": "Key", "bind": [bind]}
+            ]}} if header is None else {},
+        }).encode(),
+        "mcp.json": json.dumps({
+            "$schema": CANONICAL_MCP_SCHEMA, "mcpServers": {"svc": entry},
+        }).encode(),
+    }))
+
+
+async def _written_authorization(package, stored: str, granted: set[str]) -> str:
+    materialize_binds(package.extension, package.entry_plans, granted)
+    existing = {
+        "name": "svc",
+        "transport": "http",
+        "url": "https://example.com/mcp",
+        "env": {},
+        "headers": {"Authorization": stored},
+        "plugin_id": PLUGIN_ID,
+    }
+    edit = AsyncMock(return_value={"name": "svc"})
+    with (
+        patch(
+            "src.server.services.plugins.update.list_plugin_server_names",
+            new=AsyncMock(
+                return_value=[{"name": "svc", "plugin_server_key": "svc"}]
+            ),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_catalog_server",
+            new=AsyncMock(return_value=existing),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_user_secret_names",
+            new=AsyncMock(return_value=["SVC_KEY", "OLD_KEY"]),
+        ),
+        patch(
+            "src.server.services.plugins.update.create_user_secret",
+            new=AsyncMock(),
+        ),
+        patch(
+            "src.server.services.plugins.update.apply_catalog_edit", new=edit
+        ),
+    ):
+        await _update_servers(
+            USER, PLUGIN_ID, package, InstallReport(),
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
+    return edit.await_args.args[2]["headers"]["Authorization"]
+
+
+@pytest.mark.asyncio
+async def test_a_prefix_added_in_an_update_reaches_the_row():
+    """v1 bound the bare key and the vendor answered 401; v2's bind adds the
+    ``Bearer `` it wanted. Keeping the row's reference because it IS one
+    would pin v1's wiring on every installed copy forever."""
+    package = _bound_package(None, prefix="Bearer ")
+    written = await _written_authorization(
+        package, "${vault:SVC_KEY}", {"SVC_KEY"}
+    )
+    assert written == "Bearer ${vault:SVC_KEY}"
+
+
+@pytest.mark.asyncio
+async def test_a_prefixed_reference_still_wins_over_a_literal():
+    package = _bound_package("Bearer placeholder-token")
+    written = await _written_authorization(
+        package, "Bearer ${vault:SVC_KEY}", set()
+    )
+    assert written == "Bearer ${vault:SVC_KEY}"
+
+
+@pytest.mark.asyncio
+async def test_a_reference_to_another_secret_does_not_replace_a_working_one():
+    """The row's key was extracted from v1's literal; v2 binds a name the user
+    has never filled. The working credential stays until they do."""
+    package = _bound_package(None)
+    written = await _written_authorization(
+        package, "${vault:OLD_KEY}", {"SVC_KEY"}
+    )
+    assert written == "${vault:OLD_KEY}"
+
+
+def test_a_command_servers_kept_env_reference_does_not_break_the_update():
+    """The env section is read before the headers, and a key it kept used to
+    leave the next section reading a set where the config was."""
+    row = {
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "data-mcp@1"],
+        "env": {"API_KEY": "${vault:API_KEY}"},
+    }
+    incoming = {**row, "env": {"API_KEY": "placeholder"}}
+    assert _preserve_vault_refs(incoming, row) == []
+    assert incoming["env"] == {"API_KEY": "${vault:API_KEY}"}
+
+
+def test_a_command_servers_argument_reference_is_kept_like_a_header():
+    """Args are compared with their refs masked, so an update that only names
+    another key in one is not a move, and the row's working key stays."""
+    row = {
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "data-mcp@1", "--token=${vault:OLD_KEY}"],
+    }
+    incoming = {**row, "args": ["-y", "data-mcp@1", "--token=${vault:NEW_KEY}"]}
+    assert _preserve_vault_refs(incoming, row) == []
+    assert incoming["args"] == row["args"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("created_at", "status"),
+    [
+        # A row of the user's that was there first: install's ``exists``,
+        # which keeps the version unsettled.
+        ("2025-12-31T23:59:59+00:00", "exists"),
+        # The plugin's own row, customized since: the user's choice, settled.
+        ("2026-01-02T00:00:00+00:00", "detached"),
+    ],
+)
+async def test_a_name_taken_outside_the_plugin_reads_as_install_would_read_it(
+    created_at: str, status: str
+):
+    package = _package(mcp={
+        "api": {"type": "streamable-http", "url": "https://x.example/mcp"}
+    })
+    report = InstallReport()
+    with (
+        patch(
+            "src.server.services.plugins.update.list_plugin_server_names",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_catalog_server",
+            new=AsyncMock(return_value={
+                "name": "api", "transport": "http",
+                "url": "https://x.example/mcp", "headers": {}, "env": {},
+                "plugin_id": None, "created_at": created_at,
+            }),
+        ),
+        patch(
+            "src.server.services.plugins.update.get_user_secret_names",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        await _update_servers(
+            USER, PLUGIN_ID, package, report,
+            checked=_PASSED, installed_at=INSTALLED_AT,
+        )
+
+    assert [(c.key, c.status) for c in report.components] == [("api", status)]
+    assert report.landed_whole is (status == "detached")

@@ -11,19 +11,19 @@ class TestGetInputModalities:
         return ModelConfig()
 
     def test_anthropic_model_supports_text_image_pdf(self, model_config):
-        result = model_config.get_input_modalities("claude-sonnet-4-6")
+        result = model_config.get_input_modalities("claude-sonnet-5-5")
         assert "text" in result
         assert "image" in result
         assert "pdf" in result
 
     def test_openai_model_supports_text_image_pdf(self, model_config):
-        result = model_config.get_input_modalities("gpt-5.6-luna")
+        result = model_config.get_input_modalities("gpt-6-luna")
         assert "text" in result
         assert "image" in result
         assert "pdf" in result
 
     def test_gemini_supports_video(self, model_config):
-        result = model_config.get_input_modalities("gemini-3.1-pro")
+        result = model_config.get_input_modalities("gemini-4-argon")
         assert "video" in result
         assert "image" in result
         assert "pdf" in result
@@ -43,18 +43,18 @@ class TestGetInputModalities:
         assert "image" in result
 
     def test_moonshot_supports_image_not_pdf(self, model_config):
-        result = model_config.get_input_modalities("kimi-k3")
+        result = model_config.get_input_modalities("kimi-k3.1-pro")
         assert "image" in result
         assert "pdf" not in result
 
     def test_oauth_variant_inherits_modalities(self, model_config):
         """OAuth models should have explicit modalities, not fall back to default."""
-        result = model_config.get_input_modalities("claude-opus-4-8-oauth")
+        result = model_config.get_input_modalities("claude-opus-5-5-oauth")
         assert "image" in result
         assert "pdf" in result
 
     def test_codex_oauth_variant(self, model_config):
-        result = model_config.get_input_modalities("gpt-5.6-sol-oauth")
+        result = model_config.get_input_modalities("gpt-6.1-sol-oauth")
         assert "image" in result
         assert "pdf" in result
 
@@ -72,7 +72,7 @@ class TestGetInputModalities:
 
     def test_module_level_convenience_function(self):
         """Module-level get_input_modalities() should work the same."""
-        result = get_input_modalities("claude-sonnet-4-6")
+        result = get_input_modalities("claude-sonnet-5-5")
         assert "image" in result
         assert "pdf" in result
 
@@ -87,6 +87,6 @@ class TestGetInputModalities:
 
     def test_custom_modalities_none_falls_through(self):
         """When custom_modalities is None, falls back to models.json lookup."""
-        result = get_input_modalities("claude-sonnet-4-6", custom_modalities=None)
+        result = get_input_modalities("claude-sonnet-5-5", custom_modalities=None)
         assert "image" in result
         assert "pdf" in result

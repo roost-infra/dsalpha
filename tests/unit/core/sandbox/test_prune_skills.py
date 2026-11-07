@@ -2,14 +2,18 @@
 
 _prune_remote_skills never removes user-installed skills, removes stale
 platform ones, and preserves everything when the lock is unavailable or has no
-entry for a directory. _upload_skills' clean-slate rm answers to the same
-signal: a lock it could not read means it does not know what it is deleting.
+entry for a directory. _upload_skills' staged swap answers to the same
+signal: a lock it could not read means it does not know what it is replacing.
 """
 
 from __future__ import annotations
 
+import ast
+import io
 import json
 import os
+import shlex
+import tarfile
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -109,7 +113,7 @@ class TestPruneRemoteSkills:
 
         # Platform set does NOT include "my-custom-skill"
         await sandbox._prune_remote_skills(
-            SANDBOX_BASE, local_skill_names=set(), existing_lock=lock
+            local_skill_names=set(), existing_lock=lock
         )
 
         # rm -rf should NOT have been called
@@ -144,7 +148,7 @@ class TestPruneRemoteSkills:
         }
 
         await sandbox._prune_remote_skills(
-            SANDBOX_BASE, local_skill_names=set(), existing_lock=lock
+            local_skill_names=set(), existing_lock=lock
         )
 
         # rm -rf SHOULD have been called for the stale platform skill
@@ -180,7 +184,7 @@ class TestPruneRemoteSkills:
         }
 
         await sandbox._prune_remote_skills(
-            SANDBOX_BASE, local_skill_names=set(), existing_lock=lock
+            local_skill_names=set(), existing_lock=lock
         )
 
         # Unknown origin -> preserved; rm -rf should NOT be called
@@ -212,7 +216,7 @@ class TestPruneRemoteSkills:
         )
 
         await sandbox._prune_remote_skills(
-            SANDBOX_BASE, local_skill_names=set(), existing_lock=None
+            local_skill_names=set(), existing_lock=None
         )
 
         # No lock -> everything preserved
@@ -247,7 +251,6 @@ class TestPruneRemoteSkills:
 
         # "current-skill" is still in the local platform set
         await sandbox._prune_remote_skills(
-            SANDBOX_BASE,
             local_skill_names={"current-skill"},
             existing_lock=lock,
         )
@@ -279,7 +282,7 @@ class TestUploadOwnershipGuard:
 
     async def _upload(self, sandbox, tmpdir, *, existing_lock):
         return await sandbox._upload_skills(
-            [(tmpdir, SANDBOX_BASE)],
+            [tmpdir],
             manifest={"files": {"x": "y"}, "skills": {}},
             existing_lock=existing_lock,
         )
@@ -290,6 +293,15 @@ class TestUploadOwnershipGuard:
             for c in mock_runtime.exec.call_args_list
             if c[0] and ("rm -rf" in c[0][0] or "mkdir -p" in c[0][0])
         ]
+
+    def _archived_files(self, mock_runtime) -> list[str]:
+        """The sandbox paths of the files in the one archive uploaded."""
+        (call,) = [
+            c for c in mock_runtime.upload_file.call_args_list
+            if c.args[1].endswith(".tar.gz")
+        ]
+        with tarfile.open(fileobj=io.BytesIO(call[0][0]), mode="r:gz") as tar:
+            return ["/" + m.name for m in tar.getmembers() if m.isfile()]
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
@@ -313,6 +325,7 @@ class TestUploadOwnershipGuard:
 
         assert collisions == {"some-skill"}
         assert self._writes(mock_runtime) == []
+        mock_runtime.upload_file.assert_not_called()
         mock_runtime.upload_files.assert_not_called()
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
@@ -333,15 +346,37 @@ class TestUploadOwnershipGuard:
             _, collisions = await self._upload(sandbox, tmpdir, existing_lock=None)
 
         assert collisions == set()
-        assert any("some-skill" in w for w in self._writes(mock_runtime))
+        # The whole tier goes up as one archive, never a request per file.
+        mock_runtime.upload_files.assert_not_called()
+        assert [p.rsplit("/", 2)[-2:] for p in self._archived_files(mock_runtime)] == [
+            ["some-skill", "SKILL.md"]
+        ]
+
+    def _script_args(self, mock_runtime) -> list[dict]:
+        """The decoded ARGS of every skill-sync script exec, in call order."""
+        out = []
+        uploads = {c.args[1]: c.args[0] for c in mock_runtime.upload_file.call_args_list}
+        for c in mock_runtime.exec.call_args_list:
+            argv = shlex.split(c.args[0])
+            if argv[:2] != ["python3", "-I"]:
+                continue
+            script = ast.parse(uploads[argv[2]])
+            args = next(
+                node.value for node in script.body
+                if isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "ARGS" for t in node.targets)
+            )
+            out.append(json.loads(ast.literal_eval(args.args[0])))
+        return out
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio
-    async def test_lock_read_succeeded_keeps_the_clean_slate(
+    async def test_lock_read_succeeded_swaps_in_a_staged_copy(
         self, mock_create_provider, mock_provider, mock_runtime
     ):
-        """A readable lock proves ownership, so the dir is cleared before the
-        rewrite even though it is already on disk."""
+        """A readable lock proves ownership, so the dir is replaced even though
+        it is already on disk: staged beside it and swapped in, never cleared
+        first."""
         from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
 
         mock_create_provider.return_value = mock_provider
@@ -357,8 +392,40 @@ class TestUploadOwnershipGuard:
             _, collisions = await self._upload(sandbox, tmpdir, existing_lock=lock)
 
         assert collisions == set()
-        rm = [w for w in self._writes(mock_runtime) if "rm -rf" in w]
-        assert len(rm) == 1 and "some-skill" in rm[0]
+        assert not [w for w in self._writes(mock_runtime) if "rm -rf" in w]
+        (install,) = self._script_args(mock_runtime)
+        assert install["mode"] == "install"
+        assert install["base"] == SANDBOX_BASE
+        assert install["names"] == ["some-skill"]
+        assert install["staging"].startswith(f"{SANDBOX_BASE}/.staging/sync-")
+        assert self._archived_files(mock_runtime) == [
+            f"{install['staging']}/some-skill/SKILL.md"
+        ]
+
+    @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
+    @pytest.mark.asyncio
+    async def test_skills_land_under_the_computers_own_root(
+        self, mock_create_provider, mock_provider, mock_runtime
+    ):
+        """A computer whose root is not the default gets its skills under that
+        root: the default is a folder its user may not be able to create."""
+        from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
+
+        root = "/home/someone/langalpha"
+        mock_create_provider.return_value = mock_provider
+        sandbox = PTCSandbox(
+            config=_make_config(filesystem=FilesystemConfig(working_directory=root))
+        )
+        sandbox.runtime = mock_runtime
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _local_skill_tree(tmpdir, "some-skill")
+            await self._upload(sandbox, tmpdir, existing_lock=None)
+
+        (install,) = self._script_args(mock_runtime)
+        assert install["base"] == f"{root}/.agents/skills"
+        assert install["staging"].startswith(f"{root}/.agents/skills/.staging/")
+        assert all(p.startswith(f"{root}/") for p in self._archived_files(mock_runtime))
 
     @patch("ptc_agent.core.sandbox.ptc_sandbox.create_provider")
     @pytest.mark.asyncio

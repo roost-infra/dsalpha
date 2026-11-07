@@ -8,16 +8,20 @@ chunk does to the manifest, and how a restore or a read addresses a member.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import random
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ptc_agent.core.paths import SandboxLayout
+from ptc_agent.core.sandbox import wsfiles_transfer_runtime as rt
 from src.server.services.persistence import backup, blobs, resolve, restore
 from src.server.services.persistence.resolve import resolve_file_bytes
-from src.server.services.persistence.transfer import PACK_CUTOFF, ScanEntry, ScanResult
+from src.server.services.persistence.transfer import PACK_CUTOFF, PACK_MAX_BYTES, ScanEntry, ScanResult
 from src.server.database.workspace_file import micros_to_datetime
 
 
@@ -49,6 +53,13 @@ USER = "user-packs"
 NS = 1_700_000_000_123_456_000
 CLOCK = datetime(2026, 9, 3, 12, 0, 0, tzinfo=timezone.utc)
 
+ROOT = "/workspace"
+DIR_NAME = "packs-ab12"
+LAYOUT = SandboxLayout.for_root(ROOT).for_workspace(DIR_NAME)
+# Chunks are the machine's scratch, so every op that addresses one is rooted
+# at the computer instead of at the folder its members came from.
+MACHINE_LAYOUT = SandboxLayout.for_root(ROOT).for_workspace()
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -68,7 +79,7 @@ def _scan(*entries):
 
 def _sandbox(provider="daytona"):
     sb = MagicMock()
-    sb.working_dir = "/workspace"
+    sb.working_dir = ROOT
     sb.config.sandbox.provider = provider
     sb.adownload_file_bytes = AsyncMock(return_value=A + B)
     return sb
@@ -93,16 +104,21 @@ def _packed_meta(path, data, chunk=CHUNK, offset=0, mode="0644"):
 
 @pytest.fixture
 def db():
-    def _ok(sandbox, items):
+    def _ok(sandbox, items, *, layout=None):
         return {i["sha256"]: {"status": "ok"} for i in items}
 
+    _upsert = AsyncMock(side_effect=lambda ws, rows, conn=None: len(rows))
     with (
         patch.object(backup, "manifest_clock", new=AsyncMock(return_value=CLOCK)),
         patch.object(backup, "get_file_metadata_for_sync", new=AsyncMock(return_value={})) as meta,
         patch.object(backup, "files_restore_incomplete", new=AsyncMock(return_value=False)),
         patch.object(backup, "delete_removed_files", new=AsyncMock(return_value=0)),
         patch.object(backup, "get_workspace_total_size", new=AsyncMock(return_value=0)),
-        patch.object(backup, "bulk_upsert_files", new=AsyncMock(side_effect=lambda ws, rows, conn=None: len(rows))) as upsert,
+        # The inline path writes its own batches from blobs; both names are
+        # the same seam, so a test asserts on the rows, not on which module
+        # carried them.
+        patch.object(backup, "bulk_upsert_files", new=_upsert) as upsert,
+        patch.object(blobs, "bulk_upsert_files", new=_upsert),
         patch.object(backup, "bulk_update_file_stamps", new=AsyncMock()),
         patch.object(backup, "is_storage_enabled", return_value=True),
         patch.object(backup, "workspace_owner", new=AsyncMock(return_value=USER)),
@@ -117,7 +133,11 @@ def db():
 
 
 def _rows(db):
-    return {r["file_path"]: r for r in db["upsert"].await_args.args[1]}
+    return {
+        r["file_path"]: r
+        for call in db["upsert"].await_args_list
+        for r in call.args[1]
+    }
 
 
 # --- sync ---------------------------------------------------------------------
@@ -125,7 +145,7 @@ def _rows(db):
 
 @pytest.mark.asyncio
 async def test_files_at_or_below_the_cutoff_pack_and_larger_ones_go_per_object(db):
-    result = await backup.sync_to_db(WS, _sandbox())
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
 
     db["pack"].assert_awaited_once()
     members = db["pack"].await_args.args[1]
@@ -141,29 +161,29 @@ async def test_files_at_or_below_the_cutoff_pack_and_larger_ones_go_per_object(d
     assert rows["big.bin"]["blob_sha256"] == _sha(BIG) and rows["big.bin"]["pack_sha256"] is None
     registered = {sha for c in db["register"].await_args_list for sha, _ in c.args[1]}
     assert registered == {CHUNK, _sha(BIG)}
-    assert result["synced"] == 3 and result["errors"] == 0
+    assert result.synced == 3 and result.errors == 0
 
 
 @pytest.mark.asyncio
 async def test_an_unchanged_pack_set_is_a_skip_without_the_pack_op(db):
     db["scan"].return_value = _scan(_entry("a.txt", A), _entry("b.txt", B))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
-    result = await backup.sync_to_db(WS, _sandbox())
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     db["pack"].assert_not_awaited()
     db["push"].assert_not_awaited()
-    assert result["skipped"] == 2 and result["synced"] == 0
+    assert result.skipped == 2 and result.synced == 0
 
 
 @pytest.mark.asyncio
 async def test_a_moved_stamp_on_an_unchanged_member_refreshes_the_row_without_bytes(db):
     db["scan"].return_value = _scan(_entry("a.txt", A, mode=0o600), _entry("b.txt", B))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
-    result = await backup.sync_to_db(WS, _sandbox())
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     db["pack"].assert_not_awaited()
     rows = _rows(db)
     assert set(rows) == {"a.txt"}
     assert rows["a.txt"]["permissions"] == "0600" and rows["a.txt"]["pack_sha256"] == CHUNK
-    assert result["skipped"] == 2
+    assert result.skipped == 2
 
 
 @pytest.mark.asyncio
@@ -173,10 +193,10 @@ async def test_a_moved_stamp_is_left_unrecorded_while_pruning_is_withheld(db):
     backup.files_restore_incomplete.return_value = True
     db["scan"].return_value = _scan(_entry("a.txt", A, mode=0o600), _entry("b.txt", B))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
-    result = await backup.sync_to_db(WS, _sandbox())
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     db["pack"].assert_not_awaited()
     db["upsert"].assert_not_awaited()
-    assert result["skipped"] == 2
+    assert result.skipped == 2
 
 
 @pytest.mark.asyncio
@@ -185,7 +205,7 @@ async def test_one_changed_member_rewrites_the_whole_set(db):
     db["scan"].return_value = _scan(_entry("a.txt", a2), _entry("b.txt", B))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
     db["pack"].return_value = {"chunks": [_chunk([("a.txt", a2), ("b.txt", B)])], "changed": []}
-    await backup.sync_to_db(WS, _sandbox())
+    await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     assert [m["path"] for m in db["pack"].await_args.args[1]] == ["a.txt", "b.txt"]
     rows = _rows(db)
     assert rows["a.txt"]["pack_sha256"] == rows["b.txt"]["pack_sha256"] == _sha(a2 + B)
@@ -197,7 +217,7 @@ async def test_a_member_that_left_rewrites_the_set(db):
     db["scan"].return_value = _scan(_entry("a.txt", A))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
     db["pack"].return_value = {"chunks": [_chunk([("a.txt", A)])], "changed": []}
-    await backup.sync_to_db(WS, _sandbox())
+    await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     assert [m["path"] for m in db["pack"].await_args.args[1]] == ["a.txt"]
     assert _rows(db)["a.txt"]["pack_sha256"] == _sha(A)
 
@@ -209,10 +229,10 @@ async def test_a_member_absent_while_pruning_is_withheld_does_not_rewrite_the_se
     backup.files_restore_incomplete.return_value = True
     db["scan"].return_value = _scan(_entry("a.txt", A))
     db["meta"].return_value = {"a.txt": _packed_meta("a.txt", A), "b.txt": _packed_meta("b.txt", B, offset=3)}
-    result = await backup.sync_to_db(WS, _sandbox())
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     db["pack"].assert_not_awaited()
     db["push"].assert_not_awaited()
-    assert result["skipped"] == 1 and result["synced"] == 0 and result["deleted"] == 0
+    assert result.skipped == 1 and result.synced == 0 and result.deleted == 0
 
 
 @pytest.mark.asyncio
@@ -223,7 +243,7 @@ async def test_a_per_object_row_below_the_cutoff_joins_the_pack(db):
         "a.txt": {**_packed_meta("a.txt", A), "pack_sha256": None, "pack_offset": None, "blob_sha256": _sha(A)},
         "b.txt": {**_packed_meta("b.txt", B), "pack_sha256": None, "pack_offset": None, "blob_sha256": _sha(B)},
     }
-    await backup.sync_to_db(WS, _sandbox())
+    await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
     db["pack"].assert_awaited_once()
     rows = _rows(db)
     assert rows["a.txt"]["pack_sha256"] == CHUNK and rows["a.txt"]["blob_sha256"] is None
@@ -232,21 +252,147 @@ async def test_a_per_object_row_below_the_cutoff_joins_the_pack(db):
 @pytest.mark.asyncio
 async def test_a_chunk_the_store_rejected_withholds_its_members_rows(db):
     db["scan"].return_value = _scan(_entry("a.txt", A), _entry("b.txt", B), _entry("big.bin", BIG))
-    db["push"].side_effect = lambda sb, items: {
+    db["push"].side_effect = lambda sb, items, layout=None: {
         i["sha256"]: {"status": "failed" if i["sha256"] == CHUNK else "ok"} for i in items
     }
-    result = await backup.sync_to_db(WS, _sandbox())
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        result = await backup.sync_to_db(WS, sb, layout=LAYOUT)
     rows = _rows(db)
     assert set(rows) == {"big.bin"}
-    assert result["errors"] == 2 and result["synced"] == 1
+    assert result.errors == 2 and result.synced == 1
+    assert {(f.path, f.reason) for f in result.unsaved} == {("a.txt", "failed"), ("b.txt", "failed")}
+    # Only a stored chunk leaves with its push; the next run needs the room.
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
+async def test_a_pack_set_larger_than_one_run_is_packed_and_pushed_a_run_at_a_time(db):
+    """Staged whole, a backup needed free disk for every small file at once, so
+    a nearly full sandbox could never back up. Each run is pushed, and so off
+    the disk, before the next one is packed."""
+    files = {f"f{i}.txt": bytes([97 + i]) * 3 for i in range(5)}
+    db["scan"].return_value = _scan(*(_entry(p, d) for p, d in files.items()))
+    order = []
+
+    def _pack(sandbox, members, *, layout=None, release=None):
+        order.append(("pack", [m["path"] for m in members], release))
+        run = [(m["path"], files[m["path"]]) for m in members]
+        return {"chunks": [_chunk(run[i : i + 2]) for i in range(0, len(run), 2)], "changed": []}
+
+    def _push(sandbox, items, *, layout=None):
+        order.append(("push", len(items)))
+        return {i["sha256"]: {"status": "ok"} for i in items}
+
+    db["pack"].side_effect = _pack
+    db["push"].side_effect = _push
+    with patch.object(blobs, "PACK_MAX_BYTES", 6), patch.object(blobs, "PACK_STAGE_MAX_BYTES", 12):
+        result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
+    first_run = [
+        f"_internal/packs/chunk-{_sha(files['f0.txt'] + files['f1.txt'])}",
+        f"_internal/packs/chunk-{_sha(files['f2.txt'] + files['f3.txt'])}",
+    ]
+    # The second run's pack is the one that makes sure the first run is gone.
+    assert order == [
+        ("pack", ["f0.txt", "f1.txt", "f2.txt", "f3.txt"], []),
+        ("push", 2),
+        ("pack", ["f4.txt"], first_run),
+        ("push", 1),
+    ]
+    rows = _rows(db)
+    assert rows["f3.txt"]["pack_sha256"] == _sha(files["f2.txt"] + files["f3.txt"])
+    assert rows["f3.txt"]["pack_offset"] == 3
+    assert rows["f4.txt"]["pack_sha256"] == _sha(files["f4.txt"])
+    assert result.synced == 5 and result.errors == 0
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_push_raises_removes_its_chunks(db):
+    """No later run's pack will release them, so they would hold the room the
+    next backup needs until the age sweep."""
+    def registered(user, digests):
+        if CHUNK in digests:
+            raise RuntimeError("registry down")
+        return set()
+
+    db["registered"].side_effect = registered
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        with pytest.raises(RuntimeError, match="registry down"):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
+async def test_a_pack_that_raises_before_releasing_removes_the_last_runs_chunks(db):
+    """Any of the first run's chunks a quiet removal missed would otherwise
+    wait for the age sweep, since no later pack releases them."""
+    files = {f"f{i}.txt": bytes([97 + i]) * 3 for i in range(3)}
+    db["scan"].return_value = _scan(*(_entry(p, d) for p, d in files.items()))
+
+    def _pack(sandbox, members, *, layout=None, release=None):
+        if release:
+            raise RuntimeError("sandbox exec failed")
+        run = [(m["path"], files[m["path"]]) for m in members]
+        return {"chunks": [_chunk(run[i : i + 2]) for i in range(0, len(run), 2)], "changed": []}
+
+    db["pack"].side_effect = _pack
+    sb = _sandbox()
+    with (
+        patch.object(blobs, "PACK_MAX_BYTES", 6),
+        patch.object(blobs, "PACK_STAGE_MAX_BYTES", 6),
+        patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=0)) as unlink,
+    ):
+        with pytest.raises(RuntimeError, match="sandbox exec failed"):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    first_run = [f"_internal/packs/chunk-{_sha(files['f0.txt'] + files['f1.txt'])}"]
+    unlink.assert_awaited_once_with(sb, first_run, layout=MACHINE_LAYOUT)
+
+
+@pytest.mark.asyncio
+async def test_a_run_cancelled_mid_push_removes_its_chunks(db):
+    """A manual backup runs in its request, so a client dropping cancels it."""
+    def push(sandbox, items, *, layout=None):
+        if any(i["sha256"] == CHUNK for i in items):
+            raise asyncio.CancelledError
+        return {i["sha256"]: {"status": "ok"} for i in items}
+
+    db["push"].side_effect = push
+    sb = _sandbox()
+    with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
+        with pytest.raises(asyncio.CancelledError):
+            await backup.sync_to_db(WS, sb, layout=LAYOUT)
+    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT)
+
+
+def test_runs_pack_into_the_chunks_one_pass_over_the_whole_set_writes(tmp_path):
+    """An unchanged chunk dedups against the registry only while the runs cut
+    exactly where the pack op closes a chunk. Zero-length members included."""
+    rng = random.Random(7)
+    files = {f"d{i % 3}/f{i:03d}": rng.randbytes(rng.randint(0, 40)) for i in range(60)}
+    for rel, data in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_bytes(data)
+    entries = [_entry(p, d) for p, d in files.items()]
+
+    def pack(run):
+        members = [{"path": e.path, "sha256": e.sha256, "size": e.size} for e in run]
+        spec = {"root": str(tmp_path), "out_dir": "_internal/packs", "max_bytes": 100, "members": members}
+        return [c["sha256"] for c in rt.pack(spec)["chunks"]]
+
+    with patch.object(blobs, "PACK_MAX_BYTES", 100), patch.object(blobs, "PACK_STAGE_MAX_BYTES", 300):
+        runs = [pack(run) for run in blobs._pack_runs(entries)]
+    assert len(runs) > 1 and all(len(chunks) <= 3 for chunks in runs)
+    assert [sha for chunks in runs for sha in chunks] == pack(entries)
 
 
 @pytest.mark.asyncio
 async def test_members_that_changed_during_packing_count_as_errors(db):
     db["scan"].return_value = _scan(_entry("a.txt", A), _entry("b.txt", B))
     db["pack"].return_value = {"chunks": [_chunk([("a.txt", A)])], "changed": ["b.txt"]}
-    result = await backup.sync_to_db(WS, _sandbox())
-    assert set(_rows(db)) == {"a.txt"} and result["errors"] == 1
+    result = await backup.sync_to_db(WS, _sandbox(), layout=LAYOUT)
+    assert set(_rows(db)) == {"a.txt"} and result.errors == 1
+    assert [(f.path, f.reason) for f in result.unsaved] == [("b.txt", "changed")]
 
 
 @pytest.mark.asyncio
@@ -255,7 +401,7 @@ async def test_storage_off_never_packs(db):
     sb = _sandbox()
     sb.adownload_file_bytes = AsyncMock(return_value=A)
     with patch.object(backup, "is_storage_enabled", return_value=False):
-        await backup.sync_to_db(WS, sb)
+        await backup.sync_to_db(WS, sb, layout=LAYOUT)
     db["pack"].assert_not_awaited()
     rows = _rows(db)
     assert rows["a.txt"]["content_text"] == "aaa" and rows["a.txt"]["pack_sha256"] is None
@@ -274,7 +420,12 @@ def _row(path, data, *, pack=None, offset=None, blob=None, perms="0644"):
 
 
 @asynccontextmanager
-async def _no_lock(_workspace_id):
+async def _no_lock(_workspace_id, *, conn=None):
+    yield conn
+
+
+@asynccontextmanager
+async def _no_hold(_workspace_id, *, wait_s):
     yield None
 
 
@@ -291,6 +442,7 @@ def restore_db():
         patch.object(restore, "get_signed_url", side_effect=lambda key, exp: f"https://get/{key}") as sign,
         patch.object(restore, "pull_direct", new=AsyncMock(return_value={})) as pull,
         patch.object(restore, "workspace_sync_lock", _no_lock),
+        patch.object(restore, "hold_workspace_skill_sync", _no_hold),
     ):
         yield {"rows": rows, "flag": flag, "sign": sign, "pull": pull}
 
@@ -305,14 +457,14 @@ def _restore_sandbox(provider="daytona"):
 @pytest.mark.asyncio
 async def test_restore_pulls_a_pack_as_one_item_with_its_members(restore_db):
     restore_db["pull"].return_value = {"a.txt": {"status": "ok"}, "b.txt": {"status": "ok"}, "big.bin": {"status": "ok"}}
-    result = await restore.restore_to_sandbox(WS, _restore_sandbox())
+    result = await restore.restore_to_sandbox(WS, _restore_sandbox(), layout=LAYOUT)
     items = restore_db["pull"].await_args.args[1]
     packs = [i for i in items if i.get("kind") == "pack"]
     assert len(packs) == 1 and len(items) == 2
     pack = packs[0]
-    assert pack["sha256"] == CHUNK and pack["url"] == f"https://get/blobs/{USER}/{CHUNK}" and pack["size"] == 8
+    assert pack["sha256"] == CHUNK and pack["url"] == f"https://get/blobs/{USER}/{CHUNK}" and pack["size"] == PACK_MAX_BYTES
     by_path = {m["path"]: m for m in pack["members"]}
-    assert by_path["a.txt"] == {"path": "a.txt", "offset": 0, "size": 3, "sha256": _sha(A), "mode": 0o600, "mtime_ns": (NS // 1000) * 1000}
+    assert by_path["a.txt"] == {"path": "a.txt", "offset": 0, "size": 3, "sha256": _sha(A), "mode": 0o600, "mtime_ns": (NS // 1000) * 1000, "keep_existing": False}
     assert by_path["b.txt"]["offset"] == 3
     assert restore_db["sign"].call_count == 2  # one per chunk, one per object
     assert result == {"restored": 3, "errors": 0}
@@ -320,7 +472,7 @@ async def test_restore_pulls_a_pack_as_one_item_with_its_members(restore_db):
     assert [c.args for c in restore_db["flag"].await_args_list] == [(WS, True), (WS, False)]
 
 
-RELAY_CHUNK = f"/workspace/.wsfiles-relay-{CHUNK}"
+RELAY_CHUNK = f"{LAYOUT.workspace}/.wsfiles-relay-{CHUNK}"
 
 
 def _pack_calls(pull):
@@ -342,20 +494,21 @@ async def test_restore_relays_an_unreachable_pack_as_one_upload(restore_db):
         patch.object(restore, "fetch_blob", new=fetch),
         patch.object(resolve, "fetch_blob", new=fetch),
     ):
-        result = await restore.restore_to_sandbox(WS, sb)
+        result = await restore.restore_to_sandbox(WS, sb, layout=LAYOUT)
     assert sorted(c.args[1] for c in fetch.await_args_list) == sorted([CHUNK, _sha(BIG)])
     uploads = {c.args[0]: c.args[1] for c in sb.aupload_file_bytes.await_args_list if not c.args[0].endswith(".file_sync_marker")}
     (staged,) = [p for p in uploads if p != RELAY_CHUNK]
-    assert staged.startswith("/workspace/.wsfiles-relay-") and uploads[staged] == BIG
+    assert staged.startswith(f"{LAYOUT.workspace}/.wsfiles-relay-")
+    assert uploads[staged] == BIG
     assert uploads[RELAY_CHUNK] == A + B
     (items,) = _pack_calls(restore_db["pull"])
     big = restore._pull_item(_row("big.bin", BIG, blob=_sha(BIG)), url=None)
-    big.update({"file": staged.removeprefix("/workspace/"), "sha256": _sha(BIG)})
+    big.update({"file": staged.removeprefix(f"{LAYOUT.workspace}/"), "sha256": _sha(BIG)})
     assert items == [big, {
         "kind": "pack", "file": f".wsfiles-relay-{CHUNK}", "sha256": CHUNK, "size": 8,
         "members": [
-            {"path": "a.txt", "offset": 0, "size": 3, "sha256": _sha(A), "mode": 0o600, "mtime_ns": (NS // 1000) * 1000},
-            {"path": "b.txt", "offset": 3, "size": 5, "sha256": _sha(B), "mode": 0o644, "mtime_ns": (NS // 1000) * 1000},
+            {"path": "a.txt", "offset": 0, "size": 3, "sha256": _sha(A), "mode": 0o600, "mtime_ns": (NS // 1000) * 1000, "keep_existing": False},
+            {"path": "b.txt", "offset": 3, "size": 5, "sha256": _sha(B), "mode": 0o644, "mtime_ns": (NS // 1000) * 1000, "keep_existing": False},
         ],
     }]
     assert result == {"restored": 3, "errors": 0}
@@ -372,13 +525,14 @@ async def test_relay_mode_never_uploads_members_one_by_one(restore_db):
         patch.object(resolve, "fetch_blob", new=fetch),
         patch.object(resolve, "fetch_blob_range", new=AsyncMock()) as ranged,
     ):
-        result = await restore.restore_to_sandbox(WS, sb)
+        result = await restore.restore_to_sandbox(WS, sb, layout=LAYOUT)
     restore_db["sign"].assert_not_called()
     ranged.assert_not_awaited()
     assert fetch.await_count == 2
     uploads = {c.args[0] for c in sb.aupload_file_bytes.await_args_list}
-    assert RELAY_CHUNK in uploads and "/workspace/.file_sync_marker" in uploads
-    assert "/workspace/big.bin" not in uploads and len(uploads) == 3
+    assert RELAY_CHUNK in uploads
+    assert f"{LAYOUT.workspace}/.file_sync_marker" in uploads
+    assert f"{LAYOUT.workspace}/big.bin" not in uploads and len(uploads) == 3
     assert result == {"restored": 3, "errors": 0}
 
 
@@ -388,7 +542,7 @@ async def test_relay_mode_counts_a_member_the_runtime_rejects(restore_db):
     restore_db["pull"].return_value = {"a.txt": {"status": "mismatch", "error": "got sha256=x"}, "b.txt": {"status": "ok"}}
     sb = _restore_sandbox("docker")
     with patch.object(restore, "fetch_blob", new=AsyncMock(return_value=A + B)):
-        result = await restore.restore_to_sandbox(WS, sb)
+        result = await restore.restore_to_sandbox(WS, sb, layout=LAYOUT)
     assert result == {"restored": 1, "errors": 1}
     # Raised up front and never cleared: the sandbox is a partial mirror.
     assert [c.args for c in restore_db["flag"].await_args_list] == [(WS, True)]
@@ -400,7 +554,7 @@ async def test_relay_mode_fails_every_member_when_the_chunk_upload_fails(restore
     sb = _restore_sandbox("docker")
     sb.aupload_file_bytes = AsyncMock(return_value=False)
     with patch.object(restore, "fetch_blob", new=AsyncMock(return_value=A + B)):
-        result = await restore.restore_to_sandbox(WS, sb)
+        result = await restore.restore_to_sandbox(WS, sb, layout=LAYOUT)
     restore_db["pull"].assert_not_awaited()
     assert result == {"restored": 0, "errors": 2}
 
@@ -430,7 +584,7 @@ async def test_a_chunk_the_sandbox_could_not_upload_is_relayed_out_of_the_sandbo
     the runtime has to keep a chunk whose push failed. Deleting it on every push
     left the fallback downloading a file that was no longer there."""
     db["scan"].return_value = _scan(_entry("a.txt", A), _entry("b.txt", B), _entry("big.bin", BIG))
-    db["push"].side_effect = lambda sb, items: {
+    db["push"].side_effect = lambda sb, items, layout=None: {
         i["sha256"]: {"status": "unreachable" if i["sha256"] == CHUNK else "ok"} for i in items
     }
     sb = _sandbox()
@@ -438,14 +592,15 @@ async def test_a_chunk_the_sandbox_could_not_upload_is_relayed_out_of_the_sandbo
         patch.object(blobs, "store_blob", new=AsyncMock()) as store,
         patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink,
     ):
-        result = await backup.sync_to_db(WS, sb)
+        result = await backup.sync_to_db(WS, sb, layout=LAYOUT)
     chunk_path = f"_internal/packs/chunk-{CHUNK}"
-    sb.adownload_file_bytes.assert_awaited_once_with(f"/workspace/{chunk_path}")
+    # At the computer root, not inside the folder whose files it holds.
+    sb.adownload_file_bytes.assert_awaited_once_with(f"{ROOT}/{chunk_path}")
     store.assert_awaited_once_with(USER, CHUNK, A + B)
     # What the runtime kept, the server removes once it has the bytes.
-    unlink.assert_awaited_once_with(sb, [chunk_path])
+    unlink.assert_awaited_once_with(sb, [chunk_path], layout=MACHINE_LAYOUT)
     assert _rows(db)["a.txt"]["pack_sha256"] == CHUNK
-    assert result["errors"] == 0
+    assert result.errors == 0
 
 
 @pytest.mark.asyncio
@@ -457,10 +612,10 @@ async def test_relay_rejects_bytes_whose_length_disagrees_with_the_scan(db):
     sb = _sandbox("docker")
     sb.adownload_file_bytes = AsyncMock(return_value=BIG + b"!")
     with patch.object(blobs, "store_blob", new=AsyncMock()) as store:
-        result = await backup.sync_to_db(WS, sb)
+        result = await backup.sync_to_db(WS, sb, layout=LAYOUT)
     store.assert_not_awaited()
     db["upsert"].assert_not_awaited()
-    assert result["errors"] == 1
+    assert result.errors == 1
 
 
 @pytest.mark.asyncio
@@ -470,9 +625,11 @@ async def test_a_chunk_the_registry_already_holds_is_removed_without_a_push(db):
     db["registered"].return_value = {CHUNK}
     sb = _sandbox()
     with patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink:
-        await backup.sync_to_db(WS, sb)
+        await backup.sync_to_db(WS, sb, layout=LAYOUT)
     db["push"].assert_not_awaited()
-    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"])
+    unlink.assert_awaited_once_with(
+        sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT
+    )
     assert _rows(db)["a.txt"]["pack_sha256"] == CHUNK
 
 
@@ -486,8 +643,10 @@ async def test_relayed_chunks_are_removed_from_the_sandbox(db):
         patch.object(blobs, "store_blob", new=AsyncMock()) as store,
         patch.object(blobs, "unlink_direct", new=AsyncMock(return_value=1)) as unlink,
     ):
-        await backup.sync_to_db(WS, sb)
+        await backup.sync_to_db(WS, sb, layout=LAYOUT)
     db["push"].assert_not_awaited()
     store.assert_awaited_once_with(USER, CHUNK, A + B)
-    unlink.assert_awaited_once_with(sb, [f"_internal/packs/chunk-{CHUNK}"])
+    unlink.assert_awaited_once_with(
+        sb, [f"_internal/packs/chunk-{CHUNK}"], layout=MACHINE_LAYOUT
+    )
     assert _rows(db)["a.txt"]["pack_sha256"] == CHUNK

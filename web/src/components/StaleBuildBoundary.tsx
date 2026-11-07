@@ -35,11 +35,11 @@ function StaleBuildFallback({ variant }: { variant: 'app' | 'pane' }) {
       ref={ref}
       tabIndex={-1}
       className={cn(
-        'flex flex-col items-center justify-center gap-4 px-6 text-center outline-none',
+        'flex flex-col items-center justify-center gap-4 px-6 text-center outline-hidden',
         // Not h-screen: 100vh sits behind mobile Safari's toolbar, which is
         // where the Reload button would land — and it is the only way out of
         // this screen. App.css makes the same swap for .app-layout.
-        variant === 'app' ? 'h-[100dvh]' : 'h-full',
+        variant === 'app' ? 'h-dvh' : 'h-full',
       )}
       style={{ color: 'var(--color-text-secondary)' }}
     >
@@ -76,13 +76,13 @@ interface State {
 }
 
 export class StaleBuildBoundary extends React.Component<Props, State> {
-  state: State = { caught: false, error: null, stale: false };
+  override state: State = { caught: false, error: null, stale: false };
 
   static getDerivedStateFromError(error: unknown): State {
     return { caught: true, error, stale: isStaleBuildError(error) };
   }
 
-  componentDidCatch(error: unknown): void {
+  override componentDidCatch(error: unknown): void {
     // Reached only on the stale branch. componentDidCatch runs in the commit
     // phase, and the rethrow below happens during render, so for an ordinary
     // error this never commits and never logs — React reports that one itself.
@@ -97,7 +97,7 @@ export class StaleBuildBoundary extends React.Component<Props, State> {
     if (isStaleBuildError(error)) reportStaleBuild('chunk', { silent: true });
   }
 
-  render(): React.ReactNode {
+  override render(): React.ReactNode {
     const { caught, error, stale } = this.state;
 
     if (caught && !stale) {

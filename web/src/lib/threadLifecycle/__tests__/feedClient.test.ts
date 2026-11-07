@@ -3,7 +3,7 @@
  * (stop → start) must leave EXACTLY one loop connected, and a dying loop must
  * never abort or release the live loop's connection.
  */
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { MutationObserver, QueryClient, QueryObserver } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const transport = vi.hoisted(() => ({
@@ -23,6 +23,7 @@ import {
   resetThreadLifecycle,
 } from '../store';
 import { CACHE_ONLY_META, queryKeys } from '@/lib/queryKeys';
+import { threadFieldMutationKey } from '@/lib/threadFieldMutations';
 import {
   getNavThreadsSnapshot,
   resetSharedWorkspaceThreads,
@@ -229,6 +230,20 @@ describe('threadLifecycleFeed — thread_archived', () => {
     });
   });
 
+  it.each(['thread_archived', 'thread_deleted', 'thread_unarchived'])(
+    'reads comments and destinations again on %s, which no artifact event says',
+    async (type) => {
+      const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+      startThreadLifecycleFeed(queryClient);
+      await flush();
+      invalidate.mockClear();
+      conns[0].emit({ event: 'thread_lifecycle', type, thread_id: 't-x', workspace_id: 'w1' });
+      await flush(400);
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.artifacts.allDestinations });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.artifacts.allQueued });
+    },
+  );
+
   it('drops the row from cached lists and the Show-more store, sparing the archived view', async () => {
     // Cross-tab archive: the invalidate only reaches enabled observers, so the
     // event must remove the row from the caches + the nav store directly —
@@ -350,6 +365,240 @@ describe('threadLifecycleFeed — thread_pinned', () => {
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: queryKeys.threads.byWorkspace('w1'),
     });
+  });
+});
+
+describe('threadLifecycleFeed — thread_subagents', () => {
+  it('rereads an open thread whose switch moved, and skips one that already agrees', async () => {
+    // t3 followed the default, so a value of its own is a move whatever the default.
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+
+    queryClient.setQueryData(queryKeys.threads.detail('t1'), { thread_id: 't1', subagents_allowed: true });
+    queryClient.setQueryData(queryKeys.threads.detail('t2'), { thread_id: 't2', subagents_allowed: false });
+    queryClient.setQueryData(queryKeys.threads.detail('t3'), { thread_id: 't3', subagents_allowed: null });
+
+    invalidate.mockClear();
+    for (const thread_id of ['t1', 't2', 't3']) {
+      conns[0].emit({
+        event: 'thread_lifecycle',
+        type: 'thread_subagents',
+        thread_id,
+        workspace_id: 'w1',
+        subagents_allowed: false,
+      });
+    }
+    await flush(400);
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t1') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t2') });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t3') });
+  });
+
+  it("only marks the row stale while this tab's own flip on it is saving, whose settle reads it", async () => {
+    const getThread = vi.fn().mockResolvedValue({ thread_id: 't1', subagents_allowed: true });
+    const key = queryKeys.threads.detail('t1');
+    const observer = new QueryObserver(queryClient, { queryKey: key, queryFn: getThread, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    getThread.mockClear();
+
+    const flip = new MutationObserver(queryClient, {
+      mutationKey: threadFieldMutationKey('t1', 'subagents_allowed'),
+      mutationFn: () => new Promise(() => {}),
+    });
+    void flip.mutate();
+    conns[0].emit({
+      event: 'thread_lifecycle',
+      type: 'thread_subagents',
+      thread_id: 't1',
+      workspace_id: 'w1',
+      subagents_allowed: false,
+    });
+    await flush(400);
+
+    expect(getThread).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    unsubscribe();
+  });
+
+  it("only marks the row stale while this tab's model pick on it is saving too", async () => {
+    // A read now would land over the pick and flicker the model back.
+    const getThread = vi.fn().mockResolvedValue({ thread_id: 't1', llm_model: 'model-a', subagents_allowed: true });
+    const key = queryKeys.threads.detail('t1');
+    const observer = new QueryObserver(queryClient, { queryKey: key, queryFn: getThread, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    getThread.mockClear();
+
+    const pick = new MutationObserver(queryClient, {
+      mutationKey: threadFieldMutationKey('t1', 'llm_model'),
+      mutationFn: () => new Promise(() => {}),
+    });
+    void pick.mutate();
+    conns[0].emit({
+      event: 'thread_lifecycle',
+      type: 'thread_subagents',
+      thread_id: 't1',
+      workspace_id: 'w1',
+      subagents_allowed: false,
+    });
+    await flush(400);
+
+    expect(getThread).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    unsubscribe();
+  });
+
+  it('asks again when a flip back arrives while the read of the first is still out', async () => {
+    // The second event matches the cached row, which the read in flight is
+    // about to replace with the first event's value.
+    const getThread = vi.fn().mockResolvedValue({ thread_id: 't1', subagents_allowed: false });
+    const key = queryKeys.threads.detail('t1');
+    const observer = new QueryObserver(queryClient, { queryKey: key, queryFn: getThread, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    getThread.mockClear();
+
+    let answerOn!: (row: unknown) => void;
+    let answerOff!: (row: unknown) => void;
+    getThread
+      .mockReturnValueOnce(new Promise((resolve) => { answerOn = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { answerOff = resolve; }));
+    const emit = (subagents_allowed: boolean) => conns[0].emit({
+      event: 'thread_lifecycle',
+      type: 'thread_subagents',
+      thread_id: 't1',
+      workspace_id: 'w1',
+      subagents_allowed,
+    });
+
+    emit(true);
+    await flush();
+    expect(getThread).toHaveBeenCalledTimes(1);
+    emit(false);
+    await flush();
+    answerOn({ thread_id: 't1', subagents_allowed: true });
+    await flush();
+    answerOff?.({ thread_id: 't1', subagents_allowed: false });
+    await flush(400);
+
+    expect(getThread).toHaveBeenCalledTimes(2);
+    expect(queryClient.getQueryData<{ subagents_allowed: boolean }>(key)?.subagents_allowed).toBe(false);
+    unsubscribe();
+  });
+
+  it('reads an open thread whose first read failed, which no switch shows until one lands', async () => {
+    const getThread = vi.fn().mockRejectedValueOnce(new Error('offline'));
+    const key = queryKeys.threads.detail('t1');
+    const observer = new QueryObserver(queryClient, { queryKey: key, queryFn: getThread, retry: false });
+    const unsubscribe = observer.subscribe(() => {});
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    expect(queryClient.getQueryState(key)?.status).toBe('error');
+
+    getThread.mockResolvedValue({ thread_id: 't1', subagents_allowed: false });
+    conns[0].emit({
+      event: 'thread_lifecycle',
+      type: 'thread_subagents',
+      thread_id: 't1',
+      workspace_id: 'w1',
+      subagents_allowed: false,
+    });
+    await flush(400);
+
+    expect(queryClient.getQueryData<{ subagents_allowed: boolean }>(key)?.subagents_allowed).toBe(false);
+    unsubscribe();
+  });
+
+  it('rereads a thread that went back to following the default', async () => {
+    // A row from a server that predates the field counts as following it too.
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+
+    queryClient.setQueryData(queryKeys.threads.detail('t1'), { thread_id: 't1', subagents_allowed: true });
+    queryClient.setQueryData(queryKeys.threads.detail('t2'), { thread_id: 't2', subagents_allowed: null });
+    queryClient.setQueryData(queryKeys.threads.detail('t3'), { thread_id: 't3' });
+
+    invalidate.mockClear();
+    for (const thread_id of ['t1', 't2', 't3']) {
+      conns[0].emit({
+        event: 'thread_lifecycle',
+        type: 'thread_subagents',
+        thread_id,
+        workspace_id: 'w1',
+        subagents_allowed: null,
+      });
+    }
+    await flush(400);
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t1') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t2') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t3') });
+  });
+});
+
+describe('threadLifecycleFeed — thread_tuning', () => {
+  it('rereads an open thread whose effort or fast mode moved, and skips one that already agrees', async () => {
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+
+    queryClient.setQueryData(queryKeys.threads.detail('t1'), { thread_id: 't1', reasoning_effort: 'low', fast_mode: null });
+    queryClient.setQueryData(queryKeys.threads.detail('t2'), { thread_id: 't2', reasoning_effort: 'high', fast_mode: null });
+    // From a server that predates the fields: absent follows Settings, as null does.
+    queryClient.setQueryData(queryKeys.threads.detail('t3'), { thread_id: 't3' });
+
+    invalidate.mockClear();
+    for (const thread_id of ['t1', 't2', 't3']) {
+      conns[0].emit({
+        event: 'thread_lifecycle',
+        type: 'thread_tuning',
+        thread_id,
+        workspace_id: 'w1',
+        reasoning_effort: thread_id === 't3' ? null : 'high',
+        fast_mode: null,
+      });
+    }
+    await flush(400);
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t1') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t2') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.detail('t3') });
+  });
+
+  it("only marks the row stale while this tab's own pick on it is saving", async () => {
+    const getThread = vi.fn().mockResolvedValue({ thread_id: 't1', reasoning_effort: 'low' });
+    const key = queryKeys.threads.detail('t1');
+    const observer = new QueryObserver(queryClient, { queryKey: key, queryFn: getThread, staleTime: Infinity });
+    const unsubscribe = observer.subscribe(() => {});
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    getThread.mockClear();
+
+    const pick = new MutationObserver(queryClient, {
+      mutationKey: threadFieldMutationKey('t1', 'reasoning_effort'),
+      mutationFn: () => new Promise(() => {}),
+    });
+    void pick.mutate();
+    conns[0].emit({
+      event: 'thread_lifecycle',
+      type: 'thread_tuning',
+      thread_id: 't1',
+      workspace_id: 'w1',
+      reasoning_effort: 'high',
+      fast_mode: true,
+    });
+    await flush(400);
+
+    expect(getThread).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+    unsubscribe();
   });
 });
 
@@ -490,6 +739,45 @@ describe('threadLifecycleFeed — cache-only list refetch', () => {
 });
 
 describe('threadLifecycleFeed — snapshot invalidation', () => {
+  it('a reconnect reads open artifacts again, their events having no replay', async () => {
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    const commentsKey = queryKeys.artifacts.comments('a1');
+    const queuedKey = queryKeys.artifacts.queued('t1');
+    const statusKey = queryKeys.artifacts.status('a1');
+    const sharedKey = queryKeys.shareLinks.shared('w1');
+    for (const key of [commentsKey, queuedKey, statusKey, sharedKey]) queryClient.setQueryData(key, []);
+
+    conns[0].emit({ event: 'snapshot', as_of_seq: 1, oldest_included_unseen_seq: 0, live: [], unseen: [] });
+    await flush(400);
+
+    expect(queryClient.getQueryState(commentsKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queuedKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(sharedKey)?.isInvalidated).toBe(true);
+    // It reads the computer, so only a view that needs it asks.
+    expect(queryClient.getQueryState(statusKey)?.isInvalidated).toBe(false);
+  });
+
+  it.each([
+    ['names no thread, as Mark all read does', undefined, true],
+    ['names a thread, whose deck alone reads again', 't1', false],
+  ])('a comment change that %s', async (_rule, threadId, every) => {
+    startThreadLifecycleFeed(queryClient);
+    await flush();
+    const named = queryKeys.artifacts.queued('t1');
+    const other = queryKeys.artifacts.queued('t2');
+    for (const key of [named, other]) queryClient.setQueryData(key, []);
+
+    conns[0].emit({
+      event: 'thread_lifecycle', type: 'artifact_comment', artifact_id: 'a1', workspace_id: 'w1', path: 'r.html',
+      thread_id: threadId, comment_ids: ['c1'],
+    });
+    await flush();
+
+    expect(queryClient.getQueryState(named)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(other)?.isInvalidated).toBe(every);
+  });
+
   it('a snapshot scopes its invalidate to the workspaces it touches', async () => {
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
     startThreadLifecycleFeed(queryClient);

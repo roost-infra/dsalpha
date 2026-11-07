@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act, screen } from '@testing-library/react';
 import { createRef } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ChatInput, { type ChatInputHandle } from '../chat-input';
 import { ChatInputRegistry, ContextBus } from '@/lib/contextBus';
@@ -21,6 +21,7 @@ vi.mock('@/hooks/usePreferences', () => ({
 
 vi.mock('../use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
+  toast: vi.fn(),
 }));
 
 const SNAP_A: WidgetContextSnapshot = {

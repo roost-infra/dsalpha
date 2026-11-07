@@ -7,6 +7,9 @@ import type {
   OrderStatus,
   OrderSummary,
 } from './orders';
+import type { ArtifactCommentsShown, ReportSource, ThreadOrigin } from './api';
+import type { MarketTargetNotice } from '@/pages/ChatAgent/session/wakeupEvents';
+import type { WakeNotice } from './wakeups';
 
 /**
  * `error_type` on a task's terminal frame when the credit gate stopped it,
@@ -46,13 +49,21 @@ export interface BaseSSEEvent {
 
 /**
  * First event of every workflow stream. Announces the authoritative
- * ``run_id`` for this turn so the client can latch reconnect/demotion
- * logic onto it. Mirrors the langgraph_sdk SSE ``metadata`` payload.
+ * ``run_id`` for this turn so the client can latch reconnect logic onto
+ * it. Mirrors the langgraph_sdk SSE ``metadata`` payload.
  */
 export interface MetadataEvent extends BaseSSEEvent {
   event: 'metadata';
   run_id: string;
   thread_id: string;
+  /** The turn admission gave the run, the value replay names it by. Absent
+   *  from a backend that predates it, where the view counts the turn itself. */
+  turn_index?: number;
+  // A wake turn's frame also names what woke it, as the turn's query row
+  // keeps it, for the opener row a live attach draws, since no query row
+  // comes with the stream: `wakeup` with its notices, or `market_target` for
+  // a price target set before wakeups. Untrusted, and read only through
+  // `wakeTurnOpener`, so not typed here.
 }
 
 export interface ReasoningSignalEvent extends BaseSSEEvent {
@@ -198,7 +209,7 @@ export interface ErrorEvent extends BaseSSEEvent {
   /** Legacy single-field message; newer backends send ``error``/``message``. */
   content?: string;
   error_type?: string;
-  /** Enriched fields from ``streaming_handler.format_error_event``. */
+  /** Enriched fields from ``stream_errors.error_event_data``. */
   error?: string;
   message?: string;
   error_kind?: 'upstream' | 'internal';
@@ -243,12 +254,85 @@ export interface ModelFallbackEvent extends BaseSSEEvent {
   attempts_on_from?: number;
 }
 
+/** A steer the run took in: the user's, or an agent's sent into the turn. */
+export interface DeliveredSteer {
+  content: string;
+  /** Epoch seconds. */
+  timestamp?: number;
+  /** The surface it was sent from, as on a turn's query. */
+  platform?: string;
+  /** The key its send went out under; absent on older checkpoints. */
+  request_key?: string;
+  /** The agent that sent it (the Chief of Staff, Flash); absent when the user did. */
+  origin?: ThreadOrigin;
+  /** On a steer that sent file comments, what the chat shows for it. */
+  artifact_comments?: ArtifactCommentsShown;
+  report_source?: never;
+  market_alert?: never;
+  wakeup?: never;
+}
+
+/** A finished task's or analyst's report the run took in, which carries no
+ *  words of the user's. A share drops `report_source`, which leaves an empty
+ *  steer that draws nothing. */
+export interface DeliveredReport {
+  content: '';
+  /** Epoch seconds. */
+  timestamp?: number;
+  report_source: ReportSource;
+  market_alert?: never;
+  wakeup?: never;
+}
+
+/** A price alert on one of the thread's targets that the run took in: one
+ *  notice, as a wake turn's metadata lists them, and no words of the user's. */
+export interface DeliveredMarketAlert {
+  content: '';
+  /** Epoch seconds. */
+  timestamp?: number;
+  market_alert: MarketTargetNotice;
+  report_source?: never;
+  wakeup?: never;
+}
+
+/** A wakeup's notice that the run took in: one per entry, after the reports
+ *  and alerts and ahead of the user's steers. */
+export interface DeliveredWakeup {
+  content: '';
+  /** Epoch seconds. */
+  timestamp?: number;
+  wakeup: WakeNotice;
+  report_source?: never;
+  market_alert?: never;
+}
+
+/** One entry of a delivery. The server lists its reports, alerts and
+ *  wakeups ahead of the user's steers, the order the model reads them. */
+export type SteeringDeliveredEntry = DeliveredSteer | DeliveredReport | DeliveredMarketAlert | DeliveredWakeup;
+
+export function isDeliveredReport(entry: SteeringDeliveredEntry): entry is DeliveredReport {
+  return entry.report_source !== undefined;
+}
+
+/** A wakeup's notice, or a price target's from before wakeups. */
+export type DeliveredNotice = DeliveredMarketAlert | DeliveredWakeup;
+
+/** A notice the run took in, which moved its wakeup on the server and draws
+ *  its row under the notice's own id. */
+export function isDeliveredNotice(entry: SteeringDeliveredEntry): entry is DeliveredNotice {
+  return entry.market_alert !== undefined || entry.wakeup !== undefined;
+}
+
+/** A steer, the user's or an agent's, as against a report or a notice: the
+ *  only entry that claims a steer this view queued, and the only one that
+ *  spends the boundary an acceptance set. */
+export function isDeliveredSteer(entry: SteeringDeliveredEntry): entry is DeliveredSteer {
+  return !isDeliveredReport(entry) && !isDeliveredNotice(entry);
+}
+
 export interface SteeringDeliveredEvent extends BaseSSEEvent {
   event: 'steering_delivered';
-  messages: Array<{
-    content: string;
-    timestamp?: number;
-  }>;
+  messages: SteeringDeliveredEntry[];
 }
 
 export interface TaskSteeringAcceptedEvent extends BaseSSEEvent {
@@ -328,6 +412,9 @@ export interface OrderOutcome {
   decision_message?: string | null;
   executed_at?: string | null;
   completed_at?: string | null;
+  /** The ledger's stamp for an order a vendor listing stopped carrying; see
+   *  `vendorNamedEnd`. Absent on a receipt frozen before it was sent. */
+  unlisted_at?: string | null;
 }
 
 /**

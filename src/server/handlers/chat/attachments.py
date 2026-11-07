@@ -2,24 +2,25 @@
 
 Every file the user attached takes one of three routes, decided by what this
 turn's model accepts: a native content block, a sandbox path the agent opens
-with Python, or a note saying the file exists and cannot be read. Which routes
-are available is the difference between the two flavors, so they get a call
-each rather than one function with a mode flag: PTC has a sandbox to upload to
-and can name a path per file, Flash has neither and can only say what arrived.
+with Python, or a note saying the file exists and cannot be read.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from src.llms.llm import get_input_modalities
+from ptc_agent.core.project_context import ProjectContext
+
+from src.llms.llm import get_image_types, get_input_modalities, image_route
 from src.server.models.chat import ChatRequest
 from src.server.utils.multimodal_context import (
     build_file_reminder,
     build_unsupported_reminder,
     filter_multimodal_by_capability,
+    find_unreadable_images,
     inject_multimodal_context,
     parse_multimodal_contexts,
+    pdf_page_counts,
     upload_to_sandbox,
 )
 
@@ -43,12 +44,15 @@ async def attach_request_files(
     session: Any | None,
     effective_model: str | None,
     config: Any,
+    *,
+    project: ProjectContext | None = None,
 ) -> list[dict]:
     """Upload the turn's attachments and describe them to the PTC agent.
 
     All attachments are uploaded to sandbox (when available) so the agent always
-    has file access. Model-supported modalities also get native content blocks
-    merged into the user message.
+    has file access. Images the model accepts also go in as native content
+    blocks; a PDF it accepts goes in as a note with its page count once it is
+    saved, and inline only when it is not.
     """
     multimodal_contexts = parse_multimodal_contexts(request.additional_context)
     if not multimodal_contexts or request.hitl_response:
@@ -57,15 +61,26 @@ async def attach_request_files(
     # 1. Upload ALL files to sandbox
     file_paths: list = []
     if session and session.sandbox:
-        file_paths = await upload_to_sandbox(multimodal_contexts, session.sandbox)
+        file_paths = await upload_to_sandbox(
+            multimodal_contexts, session.sandbox, project=project
+        )
         logger.info(
             f"[PTC_CHAT] Uploaded {len(multimodal_contexts)} attachment(s) to sandbox"
         )
 
-    # 2. Filter by model capability for native content blocks
+    # 2. Filter by model capability for native content blocks. An image the
+    # turn's route can't be given takes the file-only route on every model.
     modalities = _modalities(effective_model, config)
+    client = getattr(config, "llm_client", None)
+    route = image_route(
+        getattr(client, "metadata", None) or {"manifest_model": effective_model}
+    )
     supported, unsupported, file_only = filter_multimodal_by_capability(
-        multimodal_contexts, modalities
+        multimodal_contexts,
+        modalities,
+        unreadable=await find_unreadable_images(
+            multimodal_contexts, get_image_types(route)
+        ),
     )
 
     # 3. Inject supported as native content blocks (merged into user message)
@@ -76,7 +91,10 @@ async def attach_request_files(
             if ctx in supported
         ] if file_paths else None
         messages = inject_multimodal_context(
-            messages, supported, file_paths=supported_paths
+            messages,
+            supported,
+            file_paths=supported_paths,
+            pdf_pages=await pdf_page_counts(supported),
         )
         logger.info(
             f"[PTC_CHAT] Multimodal context injected: "
@@ -121,58 +139,3 @@ async def attach_request_files(
 
     return messages
 
-
-def attach_flash_request_files(
-    messages: list[dict],
-    request: ChatRequest,
-    effective_model: str | None,
-    config: Any,
-) -> list[dict]:
-    """Describe the turn's attachments to the Flash agent.
-
-    Supported items are injected as native content blocks; unsupported ones get
-    a text note naming only the type, because with no sandbox there is no path
-    to hand over and nothing for the agent to do with a file it cannot read.
-    """
-    multimodal_contexts = parse_multimodal_contexts(request.additional_context)
-    if not multimodal_contexts:
-        return messages
-
-    modalities = _modalities(effective_model, config)
-    supported, unsupported, file_only = filter_multimodal_by_capability(
-        multimodal_contexts, modalities
-    )
-    if file_only:
-        logger.warning(
-            f"[FLASH_CHAT] {len(file_only)} file-only attachment(s) "
-            f"ignored (Flash mode has no sandbox)"
-        )
-    if supported:
-        messages = inject_multimodal_context(messages, supported)
-        logger.info(
-            f"[FLASH_CHAT] Multimodal context injected: "
-            f"{len(supported)} supported attachment(s)"
-        )
-    if unsupported:
-        types = list(
-            set(
-                "PDF"
-                if (c.data if hasattr(c, "data") else "").startswith(
-                    "data:application/pdf"
-                )
-                else "image"
-                for c in unsupported
-            )
-        )
-        _append_to_last_user_message(
-            messages,
-            build_unsupported_reminder(
-                [f"The user attached {', '.join(types)} file(s)."]
-            ),
-        )
-        logger.info(
-            f"[FLASH_CHAT] {len(unsupported)} unsupported attachment(s) "
-            f"noted for {effective_model}"
-        )
-
-    return messages

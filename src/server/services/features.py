@@ -8,6 +8,9 @@ invalidate that cache. Plan-gated features resolve against the platform
 access tier (Redis-cached, fetched only when a plan-gated feature exists).
 """
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -26,6 +29,8 @@ from src.server.database.user import (
     upsert_user_preferences,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class FeatureState(BaseModel):
     """Resolved state of one cataloged feature, shaped for the API.
@@ -42,6 +47,8 @@ class FeatureState(BaseModel):
     gate: Literal["none", "opt_in", "opt_out", "plan"]
     min_tier: int | None = None
     user_override: bool | None = None
+    #: Where the user turns it on, when not in Experiments (``FeatureSpec.home``).
+    home: Literal["model_access"] | None = None
 
 
 class UnknownFeatureError(KeyError):
@@ -50,6 +57,11 @@ class UnknownFeatureError(KeyError):
 
 class FeatureNotOverridableError(PermissionError):
     """The feature's gate does not accept per-user overrides."""
+
+
+class FeatureOffFailed(RuntimeError):
+    """What has to end before the feature is off for the user did not, so
+    the override was not saved."""
 
 
 async def _get_overrides(user_id: str) -> dict[str, Any]:
@@ -78,8 +90,12 @@ async def effective_flags_for_user(
     """Resolved feature map for one user; ``overrides`` skips the prefs read
     when the caller already holds the user's ``feature_overrides``."""
     if overrides is None:
-        overrides = await _get_overrides(user_id)
-    return effective_flags(overrides, access_tier=await _access_tier(user_id))
+        overrides, access_tier = await asyncio.gather(
+            _get_overrides(user_id), _access_tier(user_id)
+        )
+    else:
+        access_tier = await _access_tier(user_id)
+    return effective_flags(overrides, access_tier=access_tier)
 
 
 async def user_feature_enabled(user_id: str, key: str) -> bool:
@@ -94,8 +110,10 @@ async def list_user_features(user_id: str) -> list[FeatureState]:
     catalog contract is that the kill switch hides every surface, and a listed
     entry would render a Settings toggle that can never turn on.
     """
-    overrides = await _get_overrides(user_id)
-    resolved = await effective_flags_for_user(user_id, overrides)
+    overrides, access_tier = await asyncio.gather(
+        _get_overrides(user_id), _access_tier(user_id)
+    )
+    resolved = effective_flags(overrides, access_tier=access_tier)
     features = []
     for key, spec in FEATURES.items():
         flag = system_flag(key)
@@ -112,6 +130,7 @@ async def list_user_features(user_id: str) -> list[FeatureState]:
                 enabled=resolved[key],
                 gate=flag.gate.value,
                 min_tier=flag.min_tier,
+                home=spec.home,
                 user_override=(
                     override
                     if user_controllable and isinstance(override, bool)
@@ -229,8 +248,63 @@ async def set_feature_override(
     else:
         overrides[key] = enabled
 
+    before = _FEATURE_BEFORE_OFF_HOOKS.get(key, ())
+    if before and not (await effective_flags_for_user(user_id, overrides)).get(key, False):
+        try:
+            for hook in before:
+                await hook(user_id)
+        except Exception as exc:
+            logger.warning(
+                "[Features] off hook for %s failed before save user_id=%s",
+                key,
+                user_id,
+                exc_info=True,
+            )
+            raise FeatureOffFailed(key) from exc
+
     await upsert_user_preferences(
         user_id, other_preference={"feature_overrides": overrides or None}
     )
     await invalidate_user_prefs_cache(user_id)
-    return await list_user_features(user_id)
+    states = await list_user_features(user_id)
+    if not any(s.enabled for s in states if s.key == key):
+        await _run_feature_off_hooks(user_id, key)
+    return states
+
+
+# Per feature, what ends the work a user's setting no longer allows once it
+# resolves off: a feature whose open work would otherwise outlive the
+# setting registers here at startup, as an outbox executor registers its
+# hook type.
+_FEATURE_OFF_HOOKS: dict[str, list[Callable[[str], Awaitable[None]]]] = {}
+# Those whose work nothing later could tell apart from work the setting
+# allows, so the override is saved only once they finish.
+_FEATURE_BEFORE_OFF_HOOKS: dict[str, list[Callable[[str], Awaitable[None]]]] = {}
+
+
+def register_feature_off_hook(
+    key: str, hook: Callable[[str], Awaitable[None]], *, before_save: bool = False
+) -> None:
+    """Run ``hook(user_id)`` each time a user's override leaves ``key`` off:
+    once it is saved, best effort, or with ``before_save`` before it is,
+    where a failure saves no override (``FeatureOffFailed``). Idempotent for
+    the same function."""
+    registry = _FEATURE_BEFORE_OFF_HOOKS if before_save else _FEATURE_OFF_HOOKS
+    hooks = registry.setdefault(key, [])
+    if hook not in hooks:
+        hooks.append(hook)
+
+
+async def _run_feature_off_hooks(user_id: str, key: str) -> None:
+    """Best effort once the override is saved: a feature reads its setting
+    again where its work runs, and ends there what a failure here leaves."""
+    for hook in _FEATURE_OFF_HOOKS.get(key, ()):
+        try:
+            await hook(user_id)
+        except Exception:
+            logger.warning(
+                "[Features] off hook for %s failed user_id=%s",
+                key,
+                user_id,
+                exc_info=True,
+            )

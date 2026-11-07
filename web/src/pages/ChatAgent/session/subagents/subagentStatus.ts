@@ -167,6 +167,12 @@ export interface SidebarAgentRow {
   status: SubagentDisplayStatus;
 }
 
+/** What a row is called: a subagent by its task's description when it has one. */
+export function sidebarAgentRowLabel(row: SidebarAgentRow): string {
+  const description = row.description.trim();
+  return !row.isMainAgent && description ? description : row.name;
+}
+
 export function toSidebarAgentRow(agent: {
   id: string;
   name: string;

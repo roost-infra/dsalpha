@@ -1,10 +1,14 @@
+import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { act, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { renderWithProviders } from '@/test/utils';
+import { ApiError } from '@/api/client';
 import { LoopbackRequiredError } from '@/pages/ChatAgent/utils/api';
 import type {
   CatalogServer,
+  McpPendingStart,
+  PendingSignIn,
   StartMcpOauthOptions,
 } from '@/pages/ChatAgent/utils/api';
 import type { DesktopBridge } from '@/lib/desktop';
@@ -76,18 +80,31 @@ vi.mock('@/lib/desktop', () => ({
   beginMcpOAuth: async () => undefined,
 }));
 
+let tradingLevel: string | undefined;
+vi.mock('@/hooks/useTradingPermission', () => ({
+  useTradingPermission: () => ({
+    data: tradingLevel ? { level: tradingLevel, agreement_version: 1 } : undefined,
+  }),
+}));
+
 const toggleBrokerage = vi.fn(async () => ({}));
 let shipped: Brokerage[] = [];
+// False is the registry not having answered: in flight, or asked and failed.
+let registryAnswered = true;
 let catalogServers: CatalogServer[] = [];
 const deleteServer = vi.fn(async () => ({}));
 vi.mock('@/hooks/useMcpServers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useMcpServers')>();
   return {
     ...actual,
-    useBrokerages: () => ({ data: shipped, isLoading: false, error: null }),
+    useBrokerages: () => ({
+      data: registryAnswered ? shipped : undefined,
+      isLoading: false,
+      error: null,
+    }),
     useToggleBrokerage: () => ({ mutateAsync: toggleBrokerage }),
     useMcpCatalog: () => ({
-      data: { servers: catalogServers, workspace_servers: [], max_servers: 50 },
+      data: { servers: catalogServers, max_servers: 50 },
       isLoading: false,
       error: null,
     }),
@@ -98,17 +115,19 @@ vi.mock('@/hooks/useMcpServers', async (importOriginal) => {
 
 vi.mock('../hooks/useWorkspaceOptions', () => ({
   useWorkspaceOptions: () => ({ workspaces: [], nameById: new Map() }),
+  useHomeOption: () => undefined,
 }));
 
 // The connect lifecycle runs for real: the question a vendor's terms raise is
 // the hook's, not this tab's, and a stub in its place would test the strip
-// while leaving the gate itself unexercised. Only the call that leaves the
-// browser is replaced.
+// while leaving the gate itself unexercised. Only the calls that leave the
+// browser are replaced: the reconnect of a saved row, and the sign-in that
+// saves a broker with no row yet.
 //
 // `stillWanted` is the one thing the hook cannot answer for itself: the real
 // module arms the shell's listener before either of its round trips and keeps
 // the flow id, so it is the only place that can both ask whether the connect is
-// still wanted and give back what it armed. The stub answers the same way it
+// still wanted and give back what it armed. The stubs answer the same way it
 // does -- the URL, or null for a caller that took the connect back while those
 // round trips were in flight.
 const answerStart = (stillWanted?: () => boolean) =>
@@ -116,9 +135,26 @@ const answerStart = (stillWanted?: () => boolean) =>
     ? null
     : { authorize_url: 'https://vendor.test/authorize', state: 'st-1' };
 
+/** The pending start's answer, which also names the row the callback saves.
+ *  Every pending sign-in on this tab is a brokerage's. */
+const answerPending = (
+  request: PendingSignIn,
+  stillWanted?: () => boolean,
+): McpPendingStart | null => {
+  const started = answerStart(stillWanted);
+  if (!started || request.kind !== 'brokerage') return null;
+  return { ...started, kind: 'brokerage', server: request.name };
+};
+
+type PendingOptions = Omit<StartMcpOauthOptions, 'expectedUrl'>;
+
 const startConnect = vi.fn(
   async (_name: string, _returnTo?: string, options?: StartMcpOauthOptions) =>
     answerStart(options?.stillWanted),
+);
+const startPending = vi.fn(
+  async (request: PendingSignIn, _returnTo?: string, options?: PendingOptions) =>
+    answerPending(request, options?.stillWanted),
 );
 vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/pages/ChatAgent/utils/api')>();
@@ -126,8 +162,36 @@ vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
     ...actual,
     startMcpOauth: (name: string, returnTo?: string, options?: StartMcpOauthOptions) =>
       startConnect(name, returnTo, options),
+    startPendingMcpOauth: (
+      request: PendingSignIn,
+      returnTo?: string,
+      options?: PendingOptions,
+    ) => startPending(request, returnTo, options),
   };
 });
+
+// Watched rather than rendered: no Toaster is mounted here, and what the tab
+// decides is which toast to raise -- a failure, or the offer of a sign-in.
+const toastSpy = vi.fn();
+vi.mock('@/components/ui/use-toast', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/ui/use-toast')>();
+  return {
+    ...actual,
+    toast: (props: Parameters<typeof actual.toast>[0]) => {
+      toastSpy(props);
+      return actual.toast(props);
+    },
+  };
+});
+
+/** A refusal shaped the way the API client rejects one. */
+function apiError(status: number, detail: unknown) {
+  return new ApiError(
+    `Request failed with status code ${status}`,
+    status >= 500 ? 'ERR_BAD_RESPONSE' : 'ERR_BAD_REQUEST',
+    { status, statusText: '', data: { detail }, headers: {} },
+  );
+}
 
 /**
  * Let every queued microtask and zero-delay timer run, so an assertion that
@@ -142,7 +206,12 @@ const realLocation = window.location;
 const assign = vi.fn();
 Object.defineProperty(window, 'location', {
   configurable: true,
-  value: { href: 'http://localhost/plugins', origin: 'http://localhost', assign },
+  value: {
+    href: 'http://localhost/plugins',
+    origin: 'http://localhost',
+    pathname: '/plugins',
+    assign,
+  },
 });
 afterAll(() => {
   Object.defineProperty(window, 'location', { configurable: true, value: realLocation });
@@ -150,23 +219,55 @@ afterAll(() => {
 
 beforeEach(() => {
   shell = undefined;
+  tradingLevel = undefined;
   shipped = [RH, IBKR];
+  registryAnswered = true;
   catalogServers = [];
   toggleBrokerage.mockClear();
   startConnect.mockClear();
+  startPending.mockClear();
+  toastSpy.mockClear();
   deleteServer.mockClear();
   assign.mockClear();
-  // `markConnectStarted` writes the real store, and the marker outlives a test.
+  // A connect writes the real store, and its record outlives a test.
   sessionStorage.clear();
 });
 
-/** What the connect left behind for the return path to act on. */
-const pendingMarkers = () =>
-  JSON.parse(sessionStorage.getItem('mcp:connect-started') ?? '[]');
+/** The connects that left this page, as a return without an answer reads them. */
+const pendingMarkers = () => {
+  const records: Array<{ server: string; from: string; left: boolean }> = JSON.parse(
+    sessionStorage.getItem('mcp:connect-started') ?? '[]',
+  );
+  return records.filter((r) => r.left).map(({ server, from }) => ({ server, from }));
+};
 
+/** The page going, which is when a connect that left is marked: the stubbed
+ *  `assign` navigates nowhere, so the test says when it would have. */
+const leave = () => window.dispatchEvent(new Event('pagehide'));
+
+/** The tab as the app shell mounts it, with the one dialog that asks a
+ *  connect's question. */
 async function renderTab() {
   const { Brokerages } = await import('../components/Brokerages');
-  return renderWithProviders(<Brokerages />);
+  const { ConnectConsent } = await import('../components/ConnectConsent');
+  return renderWithProviders(
+    <>
+      <Brokerages />
+      <ConnectConsent />
+    </>,
+  );
+}
+
+/** Open a cell's ⋯ menu and choose one of its items by name. */
+async function chooseFromMenu(cellLabel: string, item: string) {
+  fireEvent.pointerDown(screen.getByLabelText(`Actions for ${cellLabel}`), {
+    button: 0,
+    ctrlKey: false,
+  });
+  const items = await screen.findAllByRole('menuitem');
+  const found = items.find((el) => el.textContent?.startsWith(item));
+  if (!found) throw new Error(`No menu item "${item}" in ${items.map((el) => el.textContent)}`);
+  fireEvent.click(found);
 }
 
 /** The consent dialog, when a connect has raised its question first. */
@@ -209,93 +310,158 @@ describe('the brokerages tab', () => {
     catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url })];
     await renderTab();
 
-    // One toggle and one kebab, both belonging to the broker that exists.
-    expect(screen.getAllByRole('switch')).toHaveLength(1);
+    // One menu, belonging to the broker that exists; the offer has nothing to
+    // switch or remove yet.
     expect(
       screen.getByLabelText('Actions for Interactive Brokers'),
     ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Actions for Robinhood')).toBeNull();
+    expect(screen.queryByRole('switch')).toBeNull();
   });
 
   describe('connecting', () => {
-    it('creates the row enabled and goes straight on to the vendor', async () => {
+    // Nothing exists for a broker the user has not added, and nothing is
+    // written for it here: the sign-in carries the request that creates the
+    // row, and the callback saves it once the vendor has answered. A switch
+    // flipped on the way past is a row enabled, and inherited by every
+    // workspace, for a connect that may never finish.
+    it('starts the sign-in that creates a broker with no row, and switches nothing on', async () => {
+      await renderTab();
+      connectThrough('ibkr');
+
+      // The vendor's terms travel as the one flag the start actually needs, and
+      // the return lands back on this tab rather than the MCP one. The grant is
+      // the dialog's answer, which for a broker nobody has answered for is the
+      // vendor's default.
+      await waitFor(() =>
+        expect(startPending).toHaveBeenCalledWith(
+          { kind: 'brokerage', name: 'ibkr' },
+          '/plugins?tab=brokerages',
+          {
+            vendorRefusesHostedCallback: false,
+            stillWanted: expect.any(Function),
+            grantedCapabilities: IBKR_DEFAULT,
+          },
+        ),
+      );
+      expect(startConnect).not.toHaveBeenCalled();
+      expect(toggleBrokerage).not.toHaveBeenCalled();
+    });
+
+    // The row is the user's now, and a reconnect is a reconnect of it: its own
+    // address goes along as the gate the backend checks, and whether the row is
+    // switched on is the callback's to settle once the vendor has answered.
+    it('reconnects a broker that has a row through it, without switching it on here', async () => {
+      catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url, enabled: false })];
       await renderTab();
       connectThrough('ibkr');
 
       await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true }),
+        expect(startConnect).toHaveBeenCalledWith('ibkr', '/plugins?tab=brokerages', {
+          vendorRefusesHostedCallback: false,
+          expectedUrl: IBKR.url,
+          stillWanted: expect.any(Function),
+          grantedCapabilities: IBKR_DEFAULT,
+        }),
       );
-      // The vendor's terms travel as the one flag the start actually needs, and
-      // the return lands back on this tab rather than the MCP one. Both are
-      // read off the row's own URL, so the thing that decides whether this flow
-      // needs the desktop shell is settled where the address is known. The
-      // address travels too: the row this offer is about to create carries the
-      // registry's, which is the one thing on this tab the user does not pick.
-      expect(startConnect).toHaveBeenCalledWith('ibkr', '/plugins?tab=brokerages', {
-        vendorRefusesHostedCallback: false,
-        expectedUrl: IBKR.url,
-        stillWanted: expect.any(Function),
-        grantedCapabilities: IBKR_DEFAULT,
-      });
+      expect(startPending).not.toHaveBeenCalled();
+      expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
     // `bindMcpOAuth` answers false for a flow that timed out, was cancelled, or
     // went down with the shell, not only for one a second connect took over.
-    // Reading every such refusal as "another connect owns this row" left a
-    // brokerage switched on, and inherited by every workspace, with no
-    // connection behind it and no consent screen ever opened.
-    it('stands a row it just brought up back down when the flow never launched', async () => {
+    // With nothing written before the vendor, a flow that never launched has
+    // nothing to put back: the user is told why, and that is all.
+    it('leaves nothing behind when the sign-in never launched', async () => {
       shell = {
         beginMcpOAuth: async () => ({
           redirectUri: 'http://127.0.0.1:8790/mcp/callback',
           flowId: 'flow-1',
         }),
       };
-      startConnect.mockRejectedValueOnce(new LoopbackRequiredError('not-bound'));
+      startPending.mockRejectedValueOnce(new LoopbackRequiredError('not-bound'));
       await renderTab();
       connectThrough('ibkr');
 
       await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true }),
+        expect(toastSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            variant: 'destructive',
+            title: 'Could not start the connection',
+            description:
+              'Another connection was started before this one finished. Try connecting again.',
+          }),
+        ),
       );
+      expect(toggleBrokerage).not.toHaveBeenCalled();
+      expect(assign).not.toHaveBeenCalled();
+      expect(pendingMarkers()).toEqual([]);
+    });
+
+    // The return path reads the marker under the name the callback reports,
+    // which is the one the start answered with, and on the page it left from.
+    it('marks the connect under the name the sign-in will report', async () => {
+      await renderTab();
+      connectThrough('ibkr');
+
+      await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+      // Not before the page actually goes: a navigation can still be refused.
+      expect(pendingMarkers()).toEqual([]);
+      leave();
+      expect(pendingMarkers()).toEqual([{ server: 'ibkr', from: '/plugins' }]);
+    });
+
+    // The toast is the one place the shell's hand-off is said, and it said the
+    // server's id ("ibkr") where every other line on the surface names the
+    // broker.
+    it('names the broker when the desktop app takes the sign-in to the browser', async () => {
+      shell = {
+        beginMcpOAuth: async () => ({
+          redirectUri: 'http://127.0.0.1:8790/mcp/callback',
+          flowId: 'flow-1',
+        }),
+      };
+      await renderTab();
+      connectThrough('ibkr');
+      await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
       await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: false }),
+        expect(toastSpy).toHaveBeenCalledWith({
+          title: 'Sign-in opened in your browser',
+          description: 'Finish signing in to "Interactive Brokers" there. Nothing is saved until you do.',
+        }),
       );
     });
 
-    it('enables a row the user had switched off, since an inert grant is revoked', async () => {
-      catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url, enabled: false })];
+    // In the desktop app the vendor's page is in the system browser and this
+    // page stays, so the page going is a reload with the flow still live. Read
+    // as backed out of, it said the sign-in was not finished, and spent the
+    // record a failed finish reopens its form from.
+    it('reads a reload in the desktop app as nothing, and the shell giving up as unfinished', async () => {
+      shell = {
+        beginMcpOAuth: async () => ({
+          redirectUri: 'http://127.0.0.1:8790/mcp/callback',
+          flowId: 'flow-1',
+        }),
+      };
+      const { settleConnectReturn } = await import('../connectReturn');
       await renderTab();
       connectThrough('ibkr');
+      await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
 
-      await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true }),
-      );
-    });
+      leave();
+      expect(settleConnectReturn('')).toBeNull();
 
-    // The rollback the lifecycle holds runs from a catch that sits before the
-    // jump to the vendor, and every way the vendor can refuse happens after it.
-    // So whether this connect is what brought the row up has to travel with the
-    // marker, or the return has no way to know it owes the user the row back.
-    it('records that this connect is what brought the row live', async () => {
-      catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url, enabled: false })];
-      await renderTab();
-      connectThrough('ibkr');
-
-      await waitFor(() =>
-        expect(pendingMarkers()).toEqual([{ server: 'ibkr', broughtLive: true }]),
-      );
-    });
-
-    it('records a row that was already live as one it did not bring up', async () => {
-      catalogServers = [
-        catalogRow({ name: 'ibkr', url: IBKR.url, oauth_status: 'needs_reauth' }),
-      ];
-      await renderTab();
-      connectThrough('ibkr');
-
-      await waitFor(() =>
-        expect(pendingMarkers()).toEqual([{ server: 'ibkr', broughtLive: false }]),
-      );
+      // Past the shell's timeout, which brings the window back unanswered.
+      const later = Date.now() + 10 * 60_000;
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(later);
+      try {
+        expect(settleConnectReturn('')).toMatchObject({
+          kind: 'abandoned',
+          record: { server: 'ibkr' },
+        });
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('leaves an already-live row alone and just reconnects', async () => {
@@ -313,6 +479,7 @@ describe('the brokerages tab', () => {
           grantedCapabilities: IBKR_DEFAULT,
         }),
       );
+      expect(startPending).not.toHaveBeenCalled();
       expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
@@ -401,17 +568,18 @@ describe('the brokerages tab', () => {
       expect(screen.queryByTestId('brokerage-connect-ibkr')).toBeNull();
       // One button, not the row: everything else it owns is still its own.
       expect(screen.getByTestId('brokerage-ibkr')).toBeInTheDocument();
-      expect(screen.getAllByRole('switch')).toHaveLength(1);
+      // The row is redirected, so it wears its own name now.
+      expect(screen.getByLabelText('Actions for ibkr')).toBeInTheDocument();
     });
 
     it('asks first when connecting costs the account its other AI connection', async () => {
       await renderTab();
       fireEvent.click(screen.getByTestId('brokerage-connect-ibkr'));
 
-      // Nothing has happened yet -- not even the row, which connecting would
-      // otherwise create on the way past.
+      // Nothing has happened yet: no sign-in started, and nothing written.
       expect(connectConfirm()).not.toBeNull();
       expect(startConnect).not.toHaveBeenCalled();
+      expect(startPending).not.toHaveBeenCalled();
       expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
@@ -422,23 +590,24 @@ describe('the brokerages tab', () => {
         within(connectConfirm()!).getByRole('button', { name: 'Cancel' }),
       );
 
-      expect(connectConfirm()).toBeNull();
+      // The dialog leaves after its exit animation.
+      await waitFor(() => expect(connectConfirm()).toBeNull());
       expect(startConnect).not.toHaveBeenCalled();
+      expect(startPending).not.toHaveBeenCalled();
       expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
-    it('takes the connect back when Cancel is pressed after the answer', async () => {
-      // The strip stays up while the row is enabled and the flow is minted, and
-      // its Cancel stays live throughout -- so the window is real, and what sits
-      // on the far side of it is a vendor that drops whatever AI platform this
-      // account is connected to now. Nothing may open behind a click that said
-      // stop, and the row the answer brought up has to go back down with it.
+    it('stops before the vendor when Cancel is pressed after the answer', async () => {
+      // The dialog stays up while the flow is minted, and its Cancel stays live
+      // throughout -- so the window is real, and what sits on the far side of
+      // it is a vendor that drops whatever AI platform this account is
+      // connected to now. Nothing may open behind a click that said stop.
       let release: () => void = () => {};
-      startConnect.mockImplementationOnce(async (_name, _returnTo, options) => {
+      startPending.mockImplementationOnce(async (request, _returnTo, options) => {
         await new Promise<void>((resolve) => {
           release = resolve;
         });
-        return answerStart(options?.stillWanted);
+        return answerPending(request, options?.stillWanted);
       });
       await renderTab();
       fireEvent.click(screen.getByTestId('brokerage-connect-ibkr'));
@@ -446,37 +615,34 @@ describe('the brokerages tab', () => {
         within(connectConfirm()!).getByRole('button', { name: 'Connect' }),
       );
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(1));
-      expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true });
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
 
       fireEvent.click(
         within(connectConfirm()!).getByRole('button', { name: 'Cancel' }),
       );
       release();
 
-      await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenLastCalledWith({
-          name: 'ibkr',
-          enabled: false,
-        }),
-      );
+      await waitFor(() => expect(connectConfirm()).toBeNull());
+      await flush();
       expect(assign).not.toHaveBeenCalled();
       // No marker either: the return path is owed nothing by a flow that never
       // left, and one left behind would apologise on the next ordinary visit.
       expect(pendingMarkers()).toEqual([]);
+      // And no failure: the user is the one who stopped it.
+      expect(toastSpy).not.toHaveBeenCalled();
+      expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
     // Only the open Plugins tab is mounted, so leaving one mid-connect unmounts
     // the hook that started the run without stopping the run, and the connect
     // the user then starts from the other tab is a different instance entirely.
-    // The two used to keep separate ideas of who owned the row: the first run
-    // came back to one where it was still the owner and switched off a row the
-    // second connect had just brought live. Modelled by remounting rather than
-    // by rendering the other tab, since a fresh instance is the whole of what
-    // the switch produces.
-    it('leaves the row alone when a connect from another tab has taken it over', async () => {
+    // The older run failing late is not the newer one failing: it must not
+    // stand the newer connect down on its way out. Modelled by remounting
+    // rather than by rendering the other tab, since a fresh instance is the
+    // whole of what the switch produces.
+    it('lets a connect from another tab go on when the one it took over fails', async () => {
       let failFirst: (e: Error) => void = () => {};
-      startConnect.mockImplementationOnce(
+      startPending.mockImplementationOnce(
         () =>
           new Promise<null>((_resolve, reject) => {
             failFirst = reject;
@@ -485,21 +651,18 @@ describe('the brokerages tab', () => {
 
       const firstTab = await renderTab();
       connectThrough('ibkr');
-      await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true }),
-      );
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
 
       firstTab.unmount();
-      // What the second tab finds: the row the first connect brought up, live,
-      // so its own connect is a reconnect with nothing to prepare or undo.
-      catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url })];
-      toggleBrokerage.mockClear();
+      // What the second tab finds is what the first left: no row, since nothing
+      // is written before the vendor has answered.
       await renderTab();
       connectThrough('ibkr');
 
       failFirst(new LoopbackRequiredError('not-bound'));
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
       expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
@@ -514,22 +677,16 @@ describe('the brokerages tab', () => {
       const held = new Promise<void>((resolve) => {
         releaseFirst = resolve;
       });
-      startConnect.mockImplementationOnce(
-        async (_name: string, _returnTo?: string, options?: StartMcpOauthOptions) => {
-          await held;
-          return answerStart(options?.stillWanted);
-        },
-      );
+      startPending.mockImplementationOnce(async (request, _returnTo, options) => {
+        await held;
+        return answerPending(request, options?.stillWanted);
+      });
 
       const firstTab = await renderTab();
       connectThrough('ibkr');
-      await waitFor(() =>
-        expect(toggleBrokerage).toHaveBeenCalledWith({ name: 'ibkr', enabled: true }),
-      );
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
 
       firstTab.unmount();
-      catalogServers = [catalogRow({ name: 'ibkr', url: IBKR.url })];
-      toggleBrokerage.mockClear();
       await renderTab();
       connectThrough('ibkr');
 
@@ -537,21 +694,22 @@ describe('the brokerages tab', () => {
       // connect the backend retires is which start lands last, so an older one
       // still out would retire the consent screen the user is about to see.
       await flush();
-      expect(startConnect).toHaveBeenCalledTimes(1);
+      expect(startPending).toHaveBeenCalledTimes(1);
       expect(assign).not.toHaveBeenCalled();
 
       releaseFirst();
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(2));
-      // The newer connect's navigation is the only one, and the row it is using
-      // is still switched on.
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(2));
+      // The newer connect's navigation is the only one.
       await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+      leave();
+      expect(pendingMarkers()).toEqual([{ server: 'ibkr', from: '/plugins' }]);
       expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
     it('still goes out to the vendor when the answer stands', async () => {
-      // The control for the cancel above: the same click on the same row, left
-      // alone, must reach the consent screen exactly as it did before.
+      // The control for the cancel above: the same click on the same broker,
+      // left alone, must reach the consent screen.
       await renderTab();
       fireEvent.click(screen.getByTestId('brokerage-connect-ibkr'));
       fireEvent.click(
@@ -561,10 +719,8 @@ describe('the brokerages tab', () => {
       await waitFor(() =>
         expect(assign).toHaveBeenCalledWith('https://vendor.test/authorize'),
       );
-      expect(toggleBrokerage).toHaveBeenCalledExactlyOnceWith({
-        name: 'ibkr',
-        enabled: true,
-      });
+      expect(startPending).toHaveBeenCalledTimes(1);
+      expect(toggleBrokerage).not.toHaveBeenCalled();
     });
 
     it('raises the terms only of a vendor that has them', async () => {
@@ -593,14 +749,17 @@ describe('the brokerages tab', () => {
       // against the shell's loopback callback, and it is the whole reason a
       // Robinhood connect can finish at all. Nothing else in the tree pins it.
       await waitFor(() =>
-        expect(startConnect).toHaveBeenCalledWith('robinhood', '/plugins?tab=brokerages', {
-          vendorRefusesHostedCallback: true,
-          expectedUrl: RH.url,
-          stillWanted: expect.any(Function),
-          grantedCapabilities: RH_DEFAULT,
-        }),
+        expect(startPending).toHaveBeenCalledWith(
+          { kind: 'brokerage', name: 'robinhood' },
+          '/plugins?tab=brokerages',
+          {
+            vendorRefusesHostedCallback: true,
+            stillWanted: expect.any(Function),
+            grantedCapabilities: RH_DEFAULT,
+          },
+        ),
       );
-      expect(connectConfirm()).toBeNull();
+      await waitFor(() => expect(connectConfirm()).toBeNull());
     });
 
     // The change the whole consent step exists for. A user who connects a
@@ -616,8 +775,8 @@ describe('the brokerages tab', () => {
       await renderTab();
       connectThrough('robinhood');
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(1));
-      expect(startConnect.mock.calls[0][2]?.grantedCapabilities).not.toContain('trading');
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
+      expect(startPending.mock.calls[0][2]?.grantedCapabilities).not.toContain('trading');
     });
 
     it('grants them when the user turns them on', async () => {
@@ -638,15 +797,14 @@ describe('the brokerages tab', () => {
         within(connectConfirm()!).getByRole('button', { name: 'Connect' }),
       );
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(1));
-      expect(startConnect.mock.calls[0][2]?.grantedCapabilities).toContain('trading');
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
+      expect(startPending.mock.calls[0][2]?.grantedCapabilities).toContain('trading');
     });
 
     // Empty is an answer, and it is not the same as not asking: the backend
-    // reads a brokerage that named no group as one granted nothing, and a
-    // brokerage that named none because the field never arrived the same way.
-    // Sending the empty array is what keeps those from being different things
-    // on the wire.
+    // refuses a brokerage sign-in that names no selection, and reads one that
+    // names `[]` as granted nothing. Sending the empty array is what keeps
+    // "declined everything" a request the backend can take.
     it('sends an empty grant rather than none when everything is switched off', async () => {
       shell = {
         beginMcpOAuth: async () => ({
@@ -663,8 +821,84 @@ describe('the brokerages tab', () => {
         within(connectConfirm()!).getByRole('button', { name: 'Connect' }),
       );
 
-      await waitFor(() => expect(startConnect).toHaveBeenCalledTimes(1));
-      expect(startConnect.mock.calls[0][2]?.grantedCapabilities).toEqual([]);
+      await waitFor(() => expect(startPending).toHaveBeenCalledTimes(1));
+      expect(startPending.mock.calls[0][2]?.grantedCapabilities).toEqual([]);
+    });
+
+    // A switch cannot sign anyone in, so a row the backend will not switch on
+    // without a connection is answered with the way to make one, not with a
+    // failure: the toast carries the sign-in, and the user decides whether to
+    // leave this page for the vendor's. The row reads connected here, as one
+    // whose token lapsed since the list loaded does: the menu holds the switch
+    // only for a row it already knows is unconnected.
+    it('offers the sign-in when a switch is refused for want of one', async () => {
+      catalogServers = [
+        catalogRow({
+          name: 'ibkr',
+          url: IBKR.url,
+          enabled: false,
+          oauth_status: 'connected',
+          remembered_capabilities: ['market_data'],
+        }),
+      ];
+      toggleBrokerage.mockRejectedValueOnce(
+        apiError(409, {
+          code: 'mcp_sign_in_required',
+          servers: [{ server: 'ibkr', url: IBKR.url }],
+        }),
+      );
+      await renderTab();
+      await chooseFromMenu('Interactive Brokers', 'Switch on');
+
+      await waitFor(() => expect(toastSpy).toHaveBeenCalledTimes(1));
+      const offer = toastSpy.mock.calls[0][0] as {
+        variant?: string;
+        title: string;
+        action: ReactElement<{ onClick: () => void }>;
+      };
+      expect(offer.variant).toBeUndefined();
+      expect(offer.title).toBe('Sign-in needed');
+      expect(offer.title).not.toBe('Could not change this connector');
+      // Nothing starts until the user takes the offer.
+      expect(startConnect).not.toHaveBeenCalled();
+      expect(startPending).not.toHaveBeenCalled();
+
+      // Taking it is the ordinary connect, questions and all, on the row the
+      // user already has.
+      act(() => offer.action.props.onClick());
+      fireEvent.click(
+        within(connectConfirm()!).getByRole('button', { name: 'Connect' }),
+      );
+      await waitFor(() =>
+        expect(startConnect).toHaveBeenCalledWith(
+          'ibkr',
+          '/plugins?tab=brokerages',
+          expect.objectContaining({
+            expectedUrl: IBKR.url,
+            grantedCapabilities: ['market_data'],
+          }),
+        ),
+      );
+      expect(startPending).not.toHaveBeenCalled();
+    });
+
+    it('still reports a switch refused for any other reason', async () => {
+      catalogServers = [
+        catalogRow({ name: 'ibkr', url: IBKR.url, enabled: false, oauth_status: 'connected' }),
+      ];
+      toggleBrokerage.mockRejectedValueOnce(apiError(500, 'boom'));
+      await renderTab();
+      await chooseFromMenu('Interactive Brokers', 'Switch on');
+
+      await waitFor(() =>
+        expect(toastSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            variant: 'destructive',
+            title: 'Could not change this connector',
+          }),
+        ),
+      );
+      expect(toastSpy.mock.calls[0][0]).not.toHaveProperty('action');
     });
 
     it('does not start a flow the browser provably cannot finish', async () => {
@@ -675,6 +909,35 @@ describe('the brokerages tab', () => {
       expect(startConnect).not.toHaveBeenCalled();
       expect(toggleBrokerage).not.toHaveBeenCalled();
       expect(screen.getByText('Needs the desktop app')).toBeInTheDocument();
+    });
+
+    it('names the trading permission and links to where it is changed', async () => {
+      tradingLevel = 'autonomous';
+      await renderTab();
+
+      expect(screen.getByRole('heading', { name: 'Trading permission' })).toBeInTheDocument();
+      expect(screen.getByText('Full autonomy')).toBeInTheDocument();
+      expect(
+        screen.getByRole('link', { name: 'Manage trading permission' }),
+      ).toHaveAttribute('href', '/settings?tab=trading#trading-permission');
+    });
+
+    it('links to the download beside the note, without opening the row', async () => {
+      await renderTab();
+
+      // Said once, on the card beside the button it stops. The side column
+      // used to repeat it, which was the same sentence twice on one screen.
+      const links = screen.getAllByRole('link', { name: 'Download the desktop app' });
+      expect(links).toHaveLength(1);
+      const [onRow] = links;
+      expect(onRow).toHaveAttribute('href', 'https://langalpha.ai/download');
+      expect(onRow).toHaveAttribute('target', '_blank');
+      expect(onRow).toHaveTextContent('Download');
+      const bubbled = vi.fn();
+      document.addEventListener('click', bubbled);
+      fireEvent.click(onRow);
+      document.removeEventListener('click', bubbled);
+      expect(bubbled).not.toHaveBeenCalled();
     });
 
     it('says why to a screen reader, on a control it can still reach', async () => {
@@ -691,26 +954,24 @@ describe('the brokerages tab', () => {
       ).toHaveTextContent('Needs the desktop app');
     });
 
-    it('warns up top too, including for a connection that was revoked', async () => {
-      // The paragraph and the row read the same predicate. A revoked row still
-      // needs the authorize flow, and this browser still cannot finish it.
+    it('warns on a connection that was revoked too', async () => {
+      // A revoked row still needs the authorize flow, and this browser still
+      // cannot finish it.
       catalogServers = [
         catalogRow({ name: 'robinhood', url: RH.url, oauth_status: 'revoked' }),
       ];
       await renderTab();
 
-      expect(
-        screen.getByText(/only accept desktop apps/, { exact: false }),
-      ).toBeInTheDocument();
+      expect(screen.getByText('Needs the desktop app')).toBeInTheDocument();
     });
 
-    it('stops warning up top once every such broker is connected', async () => {
+    it('stops warning once the broker is connected', async () => {
       catalogServers = [
         catalogRow({ name: 'robinhood', url: RH.url, oauth_status: 'connected' }),
       ];
       await renderTab();
 
-      expect(screen.queryByText(/only accept desktop apps/)).toBeNull();
+      expect(screen.queryByText('Needs the desktop app')).toBeNull();
     });
 
     it('offers it in the desktop shell, which has the loopback listener', async () => {
@@ -777,7 +1038,7 @@ describe('the brokerages tab', () => {
     it('warns that an exclusive connection takes the account slot', async () => {
       await renderTab();
       expect(
-        screen.getByText("Replaces this account's other AI connection"),
+        screen.getByText('Disconnects other AI apps linked to this account'),
       ).toBeInTheDocument();
     });
 
@@ -787,7 +1048,7 @@ describe('the brokerages tab', () => {
       ];
       await renderTab();
       expect(
-        screen.queryByText("Replaces this account's other AI connection"),
+        screen.queryByText('Disconnects other AI apps linked to this account'),
       ).toBeNull();
     });
 
@@ -832,7 +1093,7 @@ describe('the brokerages tab', () => {
 
       // The exclusive-connection warning costs the user something; "needs the
       // desktop app" does not. They sat at the same tertiary grey.
-      const consequence = screen.getByText("Replaces this account's other AI connection");
+      const consequence = screen.getByText('Disconnects other AI apps linked to this account');
       const capability = screen.getByText('Needs the desktop app');
       expect(consequence).toHaveStyle({ color: 'var(--color-warning)' });
       expect(capability).toHaveStyle({ color: 'var(--color-text-tertiary)' });
@@ -850,7 +1111,7 @@ describe('the brokerages tab', () => {
 
       expect(container.querySelector('img[src*="/brokerages/ibkr/icon"]')).toBeNull();
       expect(
-        screen.queryByText("Replaces this account's other AI connection"),
+        screen.queryByText('Disconnects other AI apps linked to this account'),
       ).toBeNull();
       // The one beside it is untouched, so this is de-branding and not a
       // build with the art switched off.
@@ -887,9 +1148,9 @@ describe("the quirks after it is the user's own row", () => {
           ? undefined
           : vendorArg;
     catalogConnect.mockClear();
-    const { McpCatalogRow } = await import('../components/McpCatalogRow');
-    renderWithProviders(
-      <McpCatalogRow
+    const { ConnectorCell } = await import('../components/connectors/ConnectorCells');
+    return renderWithProviders(
+      <ConnectorCell
         server={catalogRow({
           name: 'whatever_they_called_it',
           url,
@@ -898,27 +1159,11 @@ describe("the quirks after it is the user's own row", () => {
         vendor={vendor}
         registryUnavailable={registryUnavailable}
         workspaces={[]}
-        selection={{
-          selecting: false,
-          selected: new Set(),
-          start: () => {},
-          exit: () => {},
-          toggle: () => {},
-          setMany: () => {},
-        }}
+        workspacesLoading={false}
         connecting={false}
         refreshing={false}
-        toggling={false}
-        scopeBusy={false}
         onOpen={() => {}}
         onConnect={catalogConnect}
-        onDisconnect={() => {}}
-        onRefreshSchemas={() => {}}
-        onEdit={() => {}}
-        onRequestDelete={() => {}}
-        onToggle={() => {}}
-        onSetWorkspaceDisabled={() => {}}
-        onMove={() => {}}
       />,
     );
   }
@@ -929,10 +1174,8 @@ describe("the quirks after it is the user's own row", () => {
   });
 
   it('follows a sibling path on the same host, which is still that vendor', async () => {
-    await row('https://api.ibkr.com/v1/api/something-else');
-    expect(
-      screen.getByText("Replaces this account's other AI connection"),
-    ).toBeInTheDocument();
+    const { container } = await row('https://api.ibkr.com/v1/api/something-else');
+    expect(container.querySelector('img[src*="/brokerages/ibkr/icon"]')).not.toBeNull();
   });
 
   it('claims nothing for a host that merely looks like one', async () => {
@@ -999,6 +1242,34 @@ describe("the quirks after it is the user's own row", () => {
     expect(catalogConnect).not.toHaveBeenCalled();
     expect(connect).toHaveAttribute('aria-disabled', 'true');
     expect(connect).toHaveAttribute('aria-describedby', 'oauth-block-registry');
+  });
+
+  // The row's own page has to read the vendor as the cell that opened it does.
+  // It once read an unanswered registry as "no vendor", so a broker's page
+  // offered a live Connect beside a cell that held it, and a click there went
+  // to the vendor before its terms could be asked.
+  it("holds the row's page Connect as well while the registry has not answered", async () => {
+    registryAnswered = false;
+    const onConnect = vi.fn();
+    const { ServerDetail } = await import('../components/ServerDetail');
+    const { DetailPageProvider } = await import('../components/DetailPage');
+    renderWithProviders(
+      <DetailPageProvider value={{ section: 'Connectors' }}>
+        <ServerDetail
+          data={{
+            origin: 'user',
+            server: catalogRow({ name: 'whatever_they_called_it', url: IBKR.url, oauth_status: null }),
+          }}
+          onClose={() => {}}
+          onConnect={onConnect}
+        />
+      </DetailPageProvider>,
+    );
+
+    const connect = screen.getAllByRole('button', { name: /^connect$/i })[0];
+    fireEvent.click(connect);
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(connect).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('still connects a plain row once the registry answers with no vendor', async () => {

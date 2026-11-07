@@ -1,8 +1,8 @@
 /**
- * The agent draws a chart in several `draw_chart_annotation` calls. Only the
- * LATEST draw per chart instance renders the rich preview card; earlier draws
- * fold into the activity timeline as ordinary tool-call rows so the user can
- * watch the chart get built up step by step.
+ * The agent draws a chart in several `draw_chart_annotation` calls. The
+ * freshest draw per chart instance feeds the single chart card pinned at the
+ * first draw; the others fold into the activity timeline as ordinary tool-call
+ * rows so the user can watch the chart get built up step by step.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -10,7 +10,7 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { MessageContentSegments } from '../MessageList';
 
-vi.mock('framer-motion', async () => {
+vi.mock('@/lib/framer', async () => {
   const ReactActual = await vi.importActual<typeof import('react')>('react');
   const FRAMER_ONLY_PROPS = new Set([
     'initial', 'animate', 'exit', 'transition', 'variants',
@@ -34,6 +34,9 @@ vi.mock('framer-motion', async () => {
     AnimatePresence: ({ children }: { children?: React.ReactNode }) =>
       ReactActual.createElement(ReactActual.Fragment, null, children),
     animate: () => ({ stop: () => {} }),
+    useMotionValue: (v: number) => ({ get: () => v, set: () => {}, jump: () => {}, getVelocity: () => 0, on: () => () => {} }),
+    useIsPresent: () => true,
+    PresenceContext: ReactActual.createContext(null),
   };
 });
 
@@ -70,6 +73,7 @@ vi.mock('../charts/InlineArtifactCards', () => {
   );
   const NullCard = () => null;
   return {
+    chartSymbolOf: () => null,
     INLINE_ARTIFACT_TOOLS: new Set<string>(['draw_chart_annotation']),
     isInlineArtifactReady: (name: string, artifact: unknown) =>
       !!artifact && name === 'draw_chart_annotation',
@@ -95,8 +99,6 @@ const baseProps = {
   toolCallProcesses: {},
   todoListProcesses: {},
   subagentTasks: {},
-  hasError: false,
-  isAssistant: true,
 } satisfies Partial<SegmentsProps>;
 
 // `cumulative` is the full annotation set returned by that draw, each draw is a

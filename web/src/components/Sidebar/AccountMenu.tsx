@@ -1,6 +1,6 @@
-import { User, Settings, LogOut, CreditCard, ChevronRight } from 'lucide-react';
+import { User, Settings, LogOut, CreditCard, ChevronRight, Plug } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../contexts/AuthContext';
 import { useUser } from '@/hooks/useUser';
@@ -13,6 +13,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
+import { INTEGRATIONS_URL, PLATFORM_URL } from '@/config/supportLinks';
+
+/** The account console's pages the menu opens; none on a self-hosted build. */
+const CONSOLE_ITEMS = [
+  { href: PLATFORM_URL, icon: CreditCard, labelKey: 'sidebar.account' },
+  { href: INTEGRATIONS_URL, icon: Plug, labelKey: 'sidebar.integrations' },
+];
 
 interface AccountMenuProps {
   /** 'rail' = avatar-only trigger (collapsed sidebar); 'row' = full-width
@@ -28,13 +35,6 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-
-  // OSS forks: hide the Usage & Plan link entirely, even if VITE_PLATFORM_URL
-  // is accidentally set (the default web/.env points it at /account, which
-  // doesn't exist outside platform deployments).
-  const platformUrl = isPlatformMode
-    ? ((import.meta.env.VITE_PLATFORM_URL as string | undefined) || '/account')
-    : null;
 
   const avatarUrl = useMemo(() => {
     const url = user?.avatar_url;
@@ -137,11 +137,6 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
               ) : (
                 <User className="sidebar-account-icon" />
               )}
-              {planDisplayName && (
-                <span className="sidebar-account-plan-flair" aria-hidden="true">
-                  {planDisplayName}
-                </span>
-              )}
             </button>
           )}
         </DropdownMenuTrigger>
@@ -155,18 +150,18 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
           // inset 10px inside the sidebar, so any fixed width lines up on the
           // left (align="start") and misses on the right. Collapsed, the
           // trigger is a 32px avatar and has no width worth inheriting.
-          className={variant === 'row' ? 'w-[var(--radix-dropdown-menu-trigger-width)]' : 'w-64'}
+          className={variant === 'row' ? 'w-(--radix-dropdown-menu-trigger-width)' : 'w-64'}
         >
           {/* The expanded trigger is a full row already carrying this avatar and
               this name, so repeating them here stacks the same identity twice.
-              Collapsed, the trigger is a bare circle and this block is the only
+              Collapsed, the trigger is a bare avatar and this block is the only
               place the account is named at all. The email is what neither
               trigger shows, so the row variant keeps that line and nothing else. */}
           {variant === 'rail' && (displayName || email) && (
             <>
               <div className="flex items-center gap-2.5 px-2.5 py-1.5">
                 <div
-                  className="h-9 w-9 rounded-full flex items-center justify-center overflow-hidden flex-shrink-0"
+                  className="h-9 w-9 rounded-lg flex items-center justify-center overflow-hidden shrink-0"
                   style={{ backgroundColor: 'var(--color-accent-soft)' }}
                 >
                   {avatarUrl && !avatarError ? (
@@ -193,7 +188,7 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
                       </span>
                       {planDisplayName && (
                         <span
-                          className="text-[0.625rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full flex-shrink-0"
+                          className="text-[0.625rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0"
                           style={{
                             backgroundColor: 'var(--color-accent-soft)',
                             color: 'var(--color-accent-light)',
@@ -227,23 +222,17 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
             </div>
           )}
 
-          {platformUrl && (
-            <DropdownMenuItem asChild>
-              <a href={platformUrl} className="flex items-center gap-2">
-                <CreditCard
-                  className="h-4 w-4"
-                  style={{ color: 'var(--color-accent-light)' }}
-                />
+          {CONSOLE_ITEMS.map(({ href, icon: Icon, labelKey }) => href && (
+            <DropdownMenuItem key={labelKey} asChild>
+              <a href={href} className="flex items-center gap-2">
+                <Icon className="h-4 w-4" style={{ color: 'var(--color-accent-light)' }} />
                 <span className="flex-1" style={{ color: 'var(--color-text-primary)' }}>
-                  {t('sidebar.account', 'Usage & Plan')}
+                  {t(labelKey)}
                 </span>
-                <ChevronRight
-                  className="h-3.5 w-3.5"
-                  style={{ color: 'var(--color-text-tertiary)' }}
-                />
+                <ChevronRight className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
               </a>
             </DropdownMenuItem>
-          )}
+          ))}
 
           <DropdownMenuItem onSelect={() => navigate('/settings')}>
             <Settings className="h-4 w-4" />

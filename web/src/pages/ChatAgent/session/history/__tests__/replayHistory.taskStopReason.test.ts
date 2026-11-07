@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A task that resumed must not replay carrying the reason its previous run
  * stopped for.
@@ -18,29 +19,31 @@ vi.mock('../../../utils/api', () => ({
 
 import { loadConversationHistory } from '../replayHistory';
 import type { HistoryRuntime } from '../../runtime';
-import type { HistoryInterruptInfo, MessageRecord } from '../../types';
+import type { HistoryInterruptInfo } from '../../types';
+import { createSubagentHistoryStore } from '../../subagents/historyStore';
+import type { ChatMessage } from '@/types/chat';
 
 type Ref<T> = { current: T };
 const ref = <T,>(current: T): Ref<T> => ({ current });
 
 function buildRuntime() {
-  let messages: MessageRecord[] = [];
+  let messages: ChatMessage[] = [];
   return {
     workspaceId: 'ws-1',
     threadId: 'thread-1',
-    get messages() { return messages; },
     t: (key: string) => key,
     updateTodoListCard: null,
-    setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+    setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
       messages = updater(messages);
     }) as HistoryRuntime['setMessages'],
     setIsLoadingHistory: vi.fn(),
+    setHistoryLoadFailed: vi.fn(),
     setIsCompacting: vi.fn(),
     setMessageError: vi.fn(),
     setFallbackSuggestion: vi.fn(),
     setThreadModels: vi.fn(),
-    setLastThreadModel: vi.fn(),
     setTokenUsage: vi.fn(),
+    setNextSummary: vi.fn(),
     setReloadTrigger: vi.fn(),
     setThreadId: vi.fn(),
     historyLoadingRef: ref(false),
@@ -52,10 +55,13 @@ function buildRuntime() {
     newMessagesStartIndexRef: ref(0),
     historyPendingTaskToolCallIdsRef: ref([] as string[]),
     currentMessageRef: ref<string | null>(null),
+    latestRunIdRef: ref<string | null>(null),
+    latestRunEpochRef: ref(0),
     lastEventIdRef: ref<number | string | null>(null),
     renderedInterruptIdsRef: ref(new Set<string>()),
-    toolCallIdToTaskIdMapRef: ref(new Map<string, string>()),
+    subagentHistory: createSubagentHistoryStore(),
     recentlySentTrackerRef: ref({ isRecentlySent: () => false }),
+    requestKeyRef: ref({ settle: () => {} }),
     offloadBatchRef: ref(null),
   } as unknown as HistoryRuntime;
 }

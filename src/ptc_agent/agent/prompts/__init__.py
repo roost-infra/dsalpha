@@ -25,9 +25,13 @@ Usage:
 """
 
 from .formatter import (
+    RegistryTools,
     build_tool_summary_from_registry,
+    format_registry_tools,
     format_subagent_summary,
     format_tool_summary,
+    read_registry_tools,
+    workspace_path_vars,
 )
 from .guidance import (
     DEFAULT_GUIDANCE,
@@ -47,13 +51,17 @@ __all__ = [
     "DEFAULT_GUIDANCE",
     "PromptGuidance",
     "PromptLoader",
+    "RegistryTools",
     "build_tool_summary_from_registry",
     "format_current_time",
+    "format_registry_tools",
     "format_subagent_summary",
     "format_tool_summary",
     "get_loader",
     "guidance_template_vars",
     "init_loader",
+    "read_registry_tools",
     "reset_loader",
     "resolve_prompt_guidance",
+    "workspace_path_vars",
 ]

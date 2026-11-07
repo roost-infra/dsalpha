@@ -6,7 +6,7 @@ interface UseWorkspacesOptions {
   limit?: number;
   offset?: number;
   sortBy?: string;
-  includeFlash?: boolean;
+  includeHome?: boolean;
   enabled?: boolean;
   /** 'always' forces a fetch on mount even inside the staleTime window, for a
    *  consumer that has to decide something against the current list. */
@@ -18,11 +18,11 @@ interface UseWorkspacesOptions {
  * Uses keepPreviousData for smooth pagination transitions.
  * All consumers with the same params share one cached entry.
  */
-export function useWorkspaces({ limit = 20, offset = 0, sortBy = 'custom', includeFlash = false, enabled = true, refetchOnMount }: UseWorkspacesOptions = {}) {
-  const params = { limit, offset, sortBy, includeFlash };
+export function useWorkspaces({ limit = 20, offset = 0, sortBy = 'custom', includeHome = false, enabled = true, refetchOnMount }: UseWorkspacesOptions = {}) {
+  const params = { limit, offset, sortBy, includeHome };
   return useQuery({
     queryKey: queryKeys.workspaces.list(params),
-    queryFn: () => getWorkspaces(limit, offset, sortBy, includeFlash),
+    queryFn: () => getWorkspaces(limit, offset, sortBy, includeHome),
     enabled,
     staleTime: 30_000,
     refetchOnMount,

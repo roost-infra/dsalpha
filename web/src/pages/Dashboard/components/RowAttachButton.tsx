@@ -63,14 +63,14 @@ export function RowAttachButton({ instanceId, rowId, className }: RowAttachButto
   return (
     <button
       type="button"
-      className={`row-attach widget-drag-cancel ${className ?? ''}`}
+      className={`row-attach tap-target widget-drag-cancel ${className ?? ''}`}
       onClick={handleClick}
       disabled={busy}
       aria-label={t('dashboard.widgets.frame.addRowToContext', { defaultValue: 'Attach to chat' })}
       title={t('dashboard.widgets.frame.addRowToContextTitle', { defaultValue: 'Attach to chat' })}
     >
       {busy ? (
-        <span aria-hidden="true" className="flex-shrink-0">
+        <span aria-hidden="true" className="shrink-0">
           <Loader size={12} className="text-current" />
         </span>
       ) : <Paperclip className="h-3 w-3" />}

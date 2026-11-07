@@ -2,24 +2,42 @@
 
 Endpoints (user-scoped):
 - GET    /api/v1/plugins
-- POST   /api/v1/plugins                      {source_url, subdir?} — public git/archive
-- POST   /api/v1/plugins/upload               multipart zip/tar (+ subdir field)
+- POST   /api/v1/plugins                      {source_url, subdir?, secrets?} — public git/archive
+- POST   /api/v1/plugins/upload               multipart zip/tar (+ subdir, secrets fields)
 - GET    /api/v1/plugins/{name}
-- POST   /api/v1/plugins/{name}/update        re-fetch a git source
-- POST   /api/v1/plugins/{name}/update/upload multipart replacement
+- POST   /api/v1/plugins/{name}/update        {source_url?, secrets?} — re-fetch a git source, or another revision of it
+- POST   /api/v1/plugins/{name}/update/upload multipart replacement (+ secrets field)
 - POST   /api/v1/plugins/{name}/sse-upgrades  {keys} — consent an sse→http upgrade
-- POST   /api/v1/plugins/{name}/bindings      {secrets} — fill declared credentials
+- POST   /api/v1/plugins/{name}/bindings      {secrets} — set a new value for a key it asks for
 - PATCH  /api/v1/plugins/{name}/enabled
 - DELETE /api/v1/plugins/{name}
 - GET    /api/v1/plugins/{name}/export
 
 Fatal validation problems (unreadable archive, invalid plugin.json past the
-tolerated warns, any ``ai.langalpha`` extension error) are a 422 carrying
-the collected diagnostics; everything survivable lands as a 201 whose
-InstallReport names each component's outcome. An archive holding several
+tolerated warns) are a 422 carrying the collected diagnostics; everything
+survivable lands as a 201 whose InstallReport names each component's
+outcome. That includes an ``ai.langalpha`` key or entry this build cannot
+read: it is dropped with a warning and the rest of the block applies, so a
+newer contract field costs only itself. An archive holding several
 plugins (a marketplace repo) is a 422 with ``code: "multiple_plugins"`` and
 the discovered candidates — the wizard renders a chooser and re-requests
 with ``subdir``.
+
+Every server a request would write is checked first, and nothing is written
+unless all of them pass (``services/plugins/checks``). ``secrets`` carries the
+values for the keys the plugin declares or its entries reference, which the
+checks use and the vault receives only after they pass. The refusals, each
+with nothing written:
+
+- 422 ``plugin_secrets_required`` with ``secrets: [{name, label, description?,
+  regex?, docs_url?}]``: declared keys the vault does not hold and the request
+  did not send.
+- 422 ``mcp_check_failed`` with ``failures: [{server, verdict, reason,
+  missing_secrets}]``: every server that did not pass.
+- 409 ``mcp_sign_in_required`` with ``servers: [{server, url}]``: one server
+  asks for a sign-in, which the client starts as a pending sign-in.
+- 422 ``plugin_sign_in_unsupported`` with ``servers``: more than one sign-in
+  on install, or any new one on update.
 """
 
 import asyncio
@@ -33,7 +51,6 @@ from fastapi import (
     File,
     Form,
     HTTPException,
-    Response,
     UploadFile,
 )
 from fastapi.responses import StreamingResponse
@@ -44,6 +61,7 @@ from src.server.database.account_disables import (
     set_account_disable,
 )
 from src.server.database.mcp_servers import list_catalog_servers
+from src.server.database.plugin_subagents import list_user_plugin_subagent_names
 from src.server.database.plugins import (
     MAX_PLUGINS_PER_USER,
     get_plugin,
@@ -64,32 +82,33 @@ from src.server.models.plugin import (
     UninstallResponse,
     plugin_row_to_info,
 )
+from src.server.services.mcp_catalog import sign_in_missing, sign_in_to_enable
 from src.server.services.plugins import (
     MAX_PACKAGE_BYTES,
-    PluginAmbiguous,
-    PluginFatal,
-    PluginRejected,
+    PackageSource,
     ValidatedPackage,
     apply_bindings,
     apply_sse_upgrades,
-    compose_subdir_url,
     export_plugin_zip,
-    fetch_plugin_source,
     install_plugin_package,
+    refusals_as_http,
+    resolve_update_source,
+    resolve_upload_source,
+    resolve_url_source,
     uninstall_plugin,
     update_plugin_package,
-    validate_package,
+    validate_source,
 )
+from src.server.services.plugins.source import SECRETS_FORM, SECRETS_REFUSAL
 from src.server.utils.api import CurrentUserId, handle_api_exceptions
-from src.server.utils.uploads import read_capped
-from src.server.services.brand_icons import icon_response
+from src.server.utils.uploads import json_form_field, read_capped
 from src.server.services.plugins.bundled import (
     bundled_names,
     BundleOwnershipUnavailable,
     enforcement_owners,
-    icon_site_for,
     list_bundled,
 )
+from src.server.services.plugins.icons import plugin_mark
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +117,23 @@ router = APIRouter(prefix="/api/v1/plugins", tags=["Plugins"])
 
 class PluginSourceInput(BaseModel):
     """POST body for a remote install: a public repo or archive URL, plus
-    the chosen subdirectory when the archive holds several plugins."""
+    the chosen subdirectory when the archive holds several plugins, and
+    values for the keys the plugin declares."""
 
     source_url: str
     subdir: str | None = None
+    secrets: dict[str, str] | None = None
+
+    model_config = {"extra": "forbid"}
+
+
+class PluginUpdateInput(BaseModel):
+    """Optional POST body for an update: another revision of the plugin's
+    own source to move it to (a catalog entry's ``source_url``), and values
+    for keys a new or moved server of the new version needs."""
+
+    source_url: str | None = None
+    secrets: dict[str, str] | None = None
 
     model_config = {"extra": "forbid"}
 
@@ -116,7 +148,7 @@ class SseUpgradeInput(BaseModel):
 
 
 class BindingsInput(BaseModel):
-    """POST body filling a plugin's declared secrets: name → value."""
+    """POST body setting new values for the keys a plugin asks for."""
 
     secrets: dict[str, str]
 
@@ -137,9 +169,14 @@ CurrentPlugin = Annotated[dict[str, Any], Depends(_require_plugin)]
 async def _components_by_plugin(
     user_id: str,
 ) -> dict[str, list[PluginComponentRef]]:
-    """plugin_id → still-owned component refs, in two queries total."""
+    """plugin_id → still-owned component refs, one query per kind."""
+    servers, skills, subagents = await asyncio.gather(
+        list_catalog_servers(user_id),
+        list_all_user_skills(user_id),
+        list_user_plugin_subagent_names(user_id),
+    )
     out: dict[str, list[PluginComponentRef]] = {}
-    for row in await list_catalog_servers(user_id):
+    for row in servers:
         plugin_id = row.get("plugin_id")
         if plugin_id:
             out.setdefault(plugin_id, []).append(
@@ -149,7 +186,7 @@ async def _components_by_plugin(
                     key=row.get("plugin_server_key") or row["name"],
                 )
             )
-    for row in await list_all_user_skills(user_id):
+    for row in skills:
         plugin_id = row.get("plugin_id")
         if plugin_id:
             out.setdefault(plugin_id, []).append(
@@ -159,6 +196,12 @@ async def _components_by_plugin(
                     key=row.get("plugin_skill_dir") or row["name"],
                 )
             )
+    for row in subagents:
+        out.setdefault(row["plugin_id"], []).append(
+            PluginComponentRef(
+                kind="subagent", name=row["name"], key=row["name"], edited=row["edited"]
+            )
+        )
     return out
 
 
@@ -170,41 +213,6 @@ def _header_safe(value: Any) -> str:
     )[:64]
 
 
-def _fatal_to_http(e: PluginFatal) -> HTTPException:
-    return HTTPException(
-        status_code=422,
-        detail={
-            "message": str(e),
-            "diagnostics": [d.model_dump() for d in e.diagnostics],
-        },
-    )
-
-
-def _ambiguous_to_http(e: PluginAmbiguous) -> HTTPException:
-    """The chooser payload: which plugins the archive holds, and where."""
-    return HTTPException(
-        status_code=422,
-        detail={
-            "message": str(e),
-            "code": "multiple_plugins",
-            "discovered": [
-                {
-                    "path": c.path,
-                    "dialect": c.dialect,
-                    "name": c.name,
-                    "description": c.description,
-                    "version": c.version,
-                    # Set when the plugin lives in another repo (a
-                    # marketplace external entry): install via this URL, not
-                    # via subdir.
-                    "source_url": c.source_url,
-                }
-                for c in e.candidates
-            ],
-        },
-    )
-
-
 @router.get("", response_model=PluginListResponse)
 @handle_api_exceptions("list plugins", logger)
 async def list_plugins_endpoint(user_id: CurrentUserId) -> PluginListResponse:
@@ -214,44 +222,19 @@ async def list_plugins_endpoint(user_id: CurrentUserId) -> PluginListResponse:
     # list and are not counted against the user's slots.
     return PluginListResponse(
         plugins=[
-            *list_bundled((await list_account_disables(user_id)).bundles),
-            *(
+            *await list_bundled((await list_account_disables(user_id)).bundles),
+            *[
                 plugin_row_to_info(
-                    r, components=components.get(r["user_plugin_id"], [])
+                    r,
+                    components=components.get(r["user_plugin_id"], []),
+                    icon_url=await plugin_mark(r),
                 )
                 for r in rows
-            ),
+            ],
         ],
         max_plugins=MAX_PLUGINS_PER_USER,
         remaining_slots=max(0, MAX_PLUGINS_PER_USER - len(rows)),
     )
-
-
-async def _validated(
-    raw: bytes,
-    *,
-    subdir: str | None = None,
-    expected_name: str | None = None,
-) -> ValidatedPackage:
-    try:
-        # Unzip + validate up to 50 MiB of tree: off the event loop.
-        return await asyncio.to_thread(validate_package, raw, subdir=subdir)
-    except PluginFatal as e:
-        raise _fatal_to_http(e)
-    except PluginAmbiguous as e:
-        # Update knows which plugin it wants: a unique name match settles a
-        # multi-plugin archive without re-asking the user.
-        if expected_name is not None:
-            matches = [c for c in e.candidates if c.name == expected_name]
-            if len(matches) == 1:
-                return await _validated(raw, subdir=matches[0].path)
-            if e.fallback_path is not None:
-                # The empty-package raise, which exists to offer a person a
-                # better plugin. An update has no person to offer it to and
-                # already means a specific plugin, so it reconciles the one
-                # it installed and lets the report say it is empty.
-                return await _validated(raw, subdir=e.fallback_path)
-        raise _ambiguous_to_http(e)
 
 
 async def _plugin_response(
@@ -266,22 +249,26 @@ async def _plugin_response(
     components = await _components_by_plugin(user_id)
     return InstallResponse(
         plugin=plugin_row_to_info(
-            row, components=components.get(row["user_plugin_id"], [])
+            row,
+            components=components.get(row["user_plugin_id"], []),
+            icon_url=await plugin_mark(row),
         ),
         report=report,
     )
 
 
 async def _install_response(
-    user_id: str,
-    package: ValidatedPackage,
-    *,
-    source_type: str,
-    source_ref: str | None,
+    user_id: str, source: PackageSource, secrets: dict[str, str] | None
 ) -> InstallResponse:
-    row, report = await install_plugin_package(
-        user_id, package, source_type=source_type, source_ref=source_ref
-    )
+    with refusals_as_http():
+        package = await validate_source(source)
+        row, report = await install_plugin_package(
+            user_id,
+            package,
+            source_type=source.source_type,
+            source_ref=source.source_ref,
+            secrets=secrets,
+        )
     return await _plugin_response(user_id, row, report)
 
 
@@ -290,27 +277,10 @@ async def _install_response(
 async def install_from_url(
     user_id: CurrentUserId, body: PluginSourceInput
 ) -> InstallResponse:
-    """Install from a public repository or archive URL (https only).
-
-    The URL itself may deep-link a subdirectory (a forge tree URL or a
-    ``#subdir=`` fragment); an explicit ``subdir`` in the body — the wizard's
-    chooser answer — wins over it, and is folded into the stored source_ref
-    so update lands on the same plugin.
-    """
-    try:
-        raw, url_subdir = await fetch_plugin_source(body.source_url)
-    except PluginFatal as e:
-        raise _fatal_to_http(e)
-    subdir = body.subdir if body.subdir is not None else url_subdir
-    package = await _validated(raw, subdir=subdir)
-    source_ref = (
-        compose_subdir_url(body.source_url, body.subdir)
-        if body.subdir is not None
-        else body.source_url
-    )
-    return await _install_response(
-        user_id, package, source_type="git", source_ref=source_ref
-    )
+    """Install from a public repository or archive URL (https only)."""
+    with refusals_as_http():
+        source = await resolve_url_source(body.source_url, body.subdir)
+    return await _install_response(user_id, source, body.secrets)
 
 
 @router.post("/upload", response_model=InstallResponse, status_code=201)
@@ -319,12 +289,16 @@ async def upload_plugin(
     user_id: CurrentUserId,
     file: UploadFile = File(...),
     subdir: str | None = Form(None),
+    secrets: str | None = Form(None),
 ) -> InstallResponse:
-    """Install a plugin from an uploaded package (zip or tar)."""
+    """Install a plugin from an uploaded package (zip or tar).
+
+    ``secrets`` is the JSON body's field as a form field holding JSON.
+    """
+    parsed = json_form_field(secrets, SECRETS_FORM, SECRETS_REFUSAL)
     raw = await read_capped(file, MAX_PACKAGE_BYTES)
-    package = await _validated(raw, subdir=subdir)
     return await _install_response(
-        user_id, package, source_type="zip", source_ref=file.filename
+        user_id, resolve_upload_source(raw, file.filename, subdir), parsed
     )
 
 
@@ -335,7 +309,9 @@ async def get_plugin_endpoint(
 ) -> PluginInfo:
     components = await _components_by_plugin(user_id)
     return plugin_row_to_info(
-        plugin, components=components.get(plugin["user_plugin_id"], [])
+        plugin,
+        components=components.get(plugin["user_plugin_id"], []),
+        icon_url=await plugin_mark(plugin),
     )
 
 
@@ -345,6 +321,7 @@ async def _update_response(
     package: ValidatedPackage,
     *,
     source_ref: str | None,
+    secrets: dict[str, str] | None = None,
 ) -> InstallResponse:
     if package.name != plugin["name"]:
         raise HTTPException(
@@ -354,18 +331,26 @@ async def _update_response(
                 f"is installed as {plugin['name']!r}"
             ),
         )
-    row, report = await update_plugin_package(
-        user_id, plugin, package, source_ref=source_ref
-    )
+    with refusals_as_http():
+        row, report = await update_plugin_package(
+            user_id, plugin, package, source_ref=source_ref, secrets=secrets
+        )
     return await _plugin_response(user_id, row, report)
 
 
 @router.post("/{name}/update", response_model=InstallResponse)
 @handle_api_exceptions("update plugin", logger, conflict_on_value_error=True)
 async def update_plugin_endpoint(
-    plugin: CurrentPlugin, user_id: CurrentUserId
+    plugin: CurrentPlugin,
+    user_id: CurrentUserId,
+    body: PluginUpdateInput | None = None,
 ) -> InstallResponse:
-    """Re-fetch a git-sourced plugin and reconcile its components."""
+    """Re-fetch a git-sourced plugin and reconcile its components.
+
+    A ``source_url`` moves the plugin to that revision of its own source, and
+    the row then remembers it; a 422 ``plugin_source_mismatch`` refuses any
+    other repository or folder before anything is fetched.
+    """
     if plugin["source_type"] != "git" or not plugin.get("source_ref"):
         raise HTTPException(
             status_code=409,
@@ -374,15 +359,17 @@ async def update_plugin_endpoint(
                 "upload a new package to update it"
             ),
         )
-    try:
-        raw, url_subdir = await fetch_plugin_source(plugin["source_ref"])
-    except PluginFatal as e:
-        raise _fatal_to_http(e)
-    package = await _validated(
-        raw, subdir=url_subdir, expected_name=plugin["name"]
-    )
+    with refusals_as_http():
+        source = await resolve_update_source(
+            plugin["source_ref"], body.source_url if body is not None else None
+        )
+        package = await validate_source(source, expected_name=plugin["name"])
     return await _update_response(
-        user_id, plugin, package, source_ref=plugin["source_ref"]
+        user_id,
+        plugin,
+        package,
+        source_ref=source.source_ref,
+        secrets=body.secrets if body is not None else None,
     )
 
 
@@ -392,10 +379,16 @@ async def update_plugin_upload(
     plugin: CurrentPlugin,
     user_id: CurrentUserId,
     file: UploadFile = File(...),
+    secrets: str | None = Form(None),
 ) -> InstallResponse:
     """Update from an uploaded replacement package."""
+    parsed = json_form_field(secrets, SECRETS_FORM, SECRETS_REFUSAL)
     raw = await read_capped(file, MAX_PACKAGE_BYTES)
-    package = await _validated(raw, expected_name=plugin["name"])
+    with refusals_as_http():
+        package = await validate_source(
+            resolve_upload_source(raw, file.filename, None),
+            expected_name=plugin["name"],
+        )
     # A git plugin keeps its remote source_ref: source_type is not editable, so
     # overwriting the URL with a filename would leave the row claiming 'git'
     # while holding something no fetch can resolve, and every later Update
@@ -405,11 +398,14 @@ async def update_plugin_upload(
         plugin,
         package,
         source_ref=None if plugin["source_type"] == "git" else file.filename,
+        secrets=parsed,
     )
 
 
 @router.post("/{name}/sse-upgrades", response_model=InstallResponse)
-@handle_api_exceptions("upgrade plugin sse entries", logger)
+@handle_api_exceptions(
+    "upgrade plugin sse entries", logger, conflict_on_value_error=True
+)
 async def sse_upgrades(
     plugin: CurrentPlugin, body: SseUpgradeInput, user_id: CurrentUserId
 ) -> InstallResponse:
@@ -423,10 +419,8 @@ async def sse_upgrades(
         raise HTTPException(
             status_code=409, detail="this plugin has no MCP component"
         )
-    try:
+    with refusals_as_http():
         report = await apply_sse_upgrades(user_id, plugin, body.keys)
-    except PluginFatal as e:
-        raise _fatal_to_http(e)
     return await _plugin_response(
         user_id, await get_plugin(user_id, plugin["name"]) or plugin, report
     )
@@ -437,13 +431,15 @@ async def sse_upgrades(
 async def bind_plugin_secrets(
     plugin: CurrentPlugin, body: BindingsInput, user_id: CurrentUserId
 ) -> BindingsResponse:
-    """Fill declared plugin secrets into the user vault (create or update)."""
+    """Set new values for keys the plugin declares, such as a rotated key.
+
+    Every server that reads one, whoever owns it, is checked with the new
+    value first; a 422 ``mcp_check_failed`` leaves the vault as it was, and so
+    does a 409 for a server that changed while the check ran.
+    """
     try:
-        written = await apply_bindings(user_id, plugin, body.secrets)
-    except PluginFatal as e:
-        raise _fatal_to_http(e)
-    except PluginRejected as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        with refusals_as_http():
+            written = await apply_bindings(user_id, plugin, body.secrets)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return BindingsResponse(set=written)
@@ -479,6 +475,27 @@ async def export_plugin(
     )
 
 
+async def _refuse_unconnected_servers(user_id: str, name: str) -> None:
+    """Refuse to switch on a plugin whose servers would go live unsigned-in.
+
+    Switching a plugin on puts every server of it whose own switch is on in
+    front of the agent, so each of those that needs a sign-in has to have one
+    first, the same rule the server's own switch keeps. A server switched off
+    on its own stays off and is not asked about.
+    """
+    plugin = await get_plugin(user_id, name)
+    if plugin is None or plugin.get("enabled"):
+        return
+    needed = []
+    for row in await list_catalog_servers(user_id):
+        if str(row.get("plugin_id")) != str(plugin["user_plugin_id"]) or not row.get("enabled"):
+            continue
+        if (missing := await sign_in_missing(user_id, row)) is not None:
+            needed.append(missing)
+    if needed:
+        raise sign_in_to_enable(*needed)
+
+
 @router.patch("/{name}/enabled", response_model=PluginEnabledResponse)
 @handle_api_exceptions("toggle plugin", logger)
 async def set_plugin_enabled_endpoint(
@@ -494,6 +511,8 @@ async def set_plugin_enabled_endpoint(
     """
     from src.server.services.mcp_oauth.lifecycle import revoke_live_grants
 
+    if body.enabled:
+        await _refuse_unconnected_servers(user_id, name)
     row = await set_plugin_enabled(user_id, name, body.enabled)
     if row is None:
         if name not in bundled_names():
@@ -558,24 +577,30 @@ async def set_plugin_enabled_endpoint(
             )
         else:
             await revoke_live_grants(user_id, [s["name"] for s in servers])
-    return PluginEnabledResponse(name=name, enabled=body.enabled)
+        return PluginEnabledResponse(name=name, enabled=False)
+
+    # As a server's own switch does: a component switched off with its plugin
+    # dropped its queued description, and switching it back on moves no tools.
+    from src.server.services.mcp_descriptions.worker import requeue_server
+
+    try:
+        servers = await list_plugin_server_names(user_id, row["user_plugin_id"])
+    except Exception:
+        logger.warning(
+            "plugin %s enabled, but its components could not be requeued for "
+            "descriptions",
+            name,
+            exc_info=True,
+        )
+        servers = []
+    for server in servers:
+        await requeue_server(user_id, server["name"])
+    return PluginEnabledResponse(name=name, enabled=True)
 
 
 @router.delete("/{name}", response_model=UninstallResponse)
-@handle_api_exceptions("uninstall plugin", logger)
+@handle_api_exceptions("uninstall plugin", logger, conflict_on_value_error=True)
 async def delete_plugin_endpoint(
     plugin: CurrentPlugin, user_id: CurrentUserId
 ) -> UninstallResponse:
     return UninstallResponse(deleted=await uninstall_plugin(user_id, plugin))
-
-
-@router.get("/{name}/icon")
-async def get_bundle_icon(name: str) -> Response:
-    """The mark a wrapper bundle names, proxied from the vendor's site.
-
-    Unauthenticated for the same reason the brokerage icon is: an ``<img>``
-    cannot send a bearer token, and the only input is a bundle name this build
-    ships. Bundles that ship their own art never reach here -- the frontend
-    already holds those files -- so a 404 is the ordinary answer, not a fault.
-    """
-    return await icon_response(icon_site_for(name))

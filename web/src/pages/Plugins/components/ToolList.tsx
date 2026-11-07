@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, X } from 'lucide-react';
 import { SegmentedControl } from '@/components/ui/segmented-control';
@@ -10,7 +10,9 @@ import type {
 } from '@/pages/ChatAgent/utils/api';
 import type { CapabilityGroup } from '../brokerages';
 import { SelectCheckbox } from './SelectCheckbox';
+import { ToolRow } from './ToolRow';
 import {
+  BINDING_PATHS,
   bindingOptions,
   checkStateOf,
   commonBinding,
@@ -45,8 +47,9 @@ import {
  * of the user, so it ticks the visible rows and nothing else.
  */
 
-/** A lone tool needs no filter, and an input over one row reads as clutter. */
-const FILTER_FROM = 2;
+/** A list that fits on a screen is read, not searched; an input over three
+ *  rows reads as clutter. */
+const FILTER_FROM = 8;
 
 export function ToolList({
   tools,
@@ -137,12 +140,17 @@ export function ToolList({
 
   return (
     <div className="flex flex-col gap-2.5">
+      {/* Before the filter and the rows, because every row ends in a control
+          whose three words mean nothing until this has been read once. A list
+          with nothing movable draws no such control, so it gets no legend. */}
+      {renderControl && movableAll.length > 0 && <ToolPathLegend />}
+
       {tools.length >= FILTER_FROM && (
         <ToolFilter value={query} onChange={setQuery} />
       )}
 
       {selection && movableShown.length > 0 && (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <SelectCheckbox
             state={allState}
             label={t('plugins.detail.bulkSelectAllAria')}
@@ -161,11 +169,22 @@ export function ToolList({
                 allState !== 'all',
               )
             }
-            className="text-[0.6875rem] hover:underline underline-offset-2"
+            className="text-xs hover:underline underline-offset-2"
             style={{ color: 'var(--color-text-tertiary)' }}
           >
             {t('plugins.detail.bulkSelectAll', { count: movableShown.length })}
           </button>
+          {/* What ticking a box is for, said before anything is ticked. Once
+              something is, the bar below carries the same sentence as an
+              action, and repeating it here would be twice on one screen. */}
+          {targets.length === 0 && (
+            <span
+              className="text-xs"
+              style={{ color: 'var(--color-text-quaternary)' }}
+            >
+              {t('plugins.detail.bulkSelectHint')}
+            </span>
+          )}
         </div>
       )}
 
@@ -192,6 +211,7 @@ export function ToolList({
       {selection && targets.length > 0 && (
         <ToolBulkBar
           count={targets.length}
+          total={movableAll.length}
           value={commonBinding(targets)}
           skipped={skipped}
           busy={bulkBusy}
@@ -210,6 +230,38 @@ export function ToolList({
   );
 }
 
+/**
+ * What the three words at the end of every row mean, in what they cost the
+ * user rather than in how they are wired. Prose in the reading order of the
+ * segments, so the line and the control it explains line up left to right.
+ *
+ * A legend rather than a tooltip per segment: the question is which of three
+ * to pick, and an answer you can only reach one at a time by hovering is the
+ * shape that left a 28-tool server unreadable in the first place.
+ */
+function ToolPathLegend() {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1">
+      <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        {t('plugins.detail.pathLegendTitle')}
+      </p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs">
+        {BINDING_PATHS.map((path) => (
+          <Fragment key={path.binding}>
+            <dt className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>
+              {t(path.label)}
+            </dt>
+            <dd className="min-w-0" style={{ color: 'var(--color-text-tertiary)' }}>
+              {t(path.desc)}
+            </dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 /** The name filter. Substring and case-insensitive, on the name alone: the
  *  names are what the agent calls and what the user is looking for. */
 function ToolFilter({
@@ -222,7 +274,13 @@ function ToolFilter({
   const { t } = useTranslation();
   const label = t('plugins.detail.searchPlaceholder');
   return (
-    <div className="relative rings-within">
+    <div
+      className="relative rings-within owns-its-edge rounded-md"
+      style={{
+        backgroundColor: 'var(--color-bg-input)',
+        border: '1px solid var(--color-border-muted)',
+      }}
+    >
       <Search
         className="h-3 w-3 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
         style={{ color: 'var(--color-text-tertiary)' }}
@@ -234,12 +292,8 @@ function ToolFilter({
         placeholder={label}
         aria-label={label}
         spellCheck={false}
-        className="text-xs pl-7 pr-7 py-1.5 rounded-md w-full"
-        style={{
-          color: 'var(--color-text-primary)',
-          backgroundColor: 'var(--color-bg-input)',
-          border: '1px solid var(--color-border-muted)',
-        }}
+        className="text-xs pl-7 pr-7 py-1.5 w-full bg-transparent border-none"
+        style={{ color: 'var(--color-text-primary)' }}
       />
       {value && (
         <button
@@ -375,21 +429,29 @@ function ToolSectionBlock({
             <ToolChip key={tool.name} tool={tool} dimmed={section.dimmed} />
           ))}
         </div>
-      ) : (
-        <div className={copy.names === 'prose' ? 'flex flex-col gap-2' : 'flex flex-col gap-1'}>
+      ) : copy.names === 'prose' ? (
+        <div className="tool-rows">
           {section.tools.map((tool) => (
-            <div key={tool.name} className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2 min-w-0">
+            <ToolRow
+              key={tool.name}
+              tool={tool}
+              checkbox={selection && <ToolRowCheckbox tool={tool} selection={selection} />}
+              control={control?.(tool)}
+              defaultOpen={section.tools.length === 1}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          {section.tools.map((tool) => (
+            <div key={tool.name} className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1">
+              <div className="flex items-start gap-2 shrink-0 max-w-full">
                 {selection && (
                   <span className="pt-0.5 inline-flex">
                     <ToolRowCheckbox tool={tool} selection={selection} />
                   </span>
                 )}
-                {copy.names === 'prose' ? (
-                  <ToolProse tool={tool} />
-                ) : (
-                  <ToolChip tool={tool} dimmed={section.dimmed} />
-                )}
+                <ToolChip tool={tool} dimmed={section.dimmed} />
               </div>
               {control?.(tool)}
             </div>
@@ -405,7 +467,7 @@ function ToolChip({ tool, dimmed }: { tool: McpToolSummary; dimmed: boolean }) {
   return (
     <span
       title={tool.description || undefined}
-      className="text-[0.625rem] px-1.5 py-0.5 rounded break-all"
+      className="text-[0.625rem] px-1.5 py-0.5 rounded break-all min-w-0"
       style={{
         color: dimmed ? 'var(--color-text-quaternary)' : 'var(--color-text-tertiary)',
         backgroundColor: 'var(--color-bg-tag)',
@@ -414,31 +476,6 @@ function ToolChip({ tool, dimmed }: { tool: McpToolSummary; dimmed: boolean }) {
     >
       {tool.name}
     </span>
-  );
-}
-
-/** A name with nothing above it to explain the bucket, so it brings its own. */
-function ToolProse({ tool }: { tool: McpToolSummary }) {
-  return (
-    <div className="flex flex-col gap-0.5 min-w-0">
-      <span
-        className="text-[0.6875rem] font-medium break-all"
-        style={{
-          color: 'var(--color-text-secondary)',
-          fontFamily: "'JetBrains Mono', 'Menlo', monospace",
-        }}
-      >
-        {tool.name}
-      </span>
-      {tool.description && (
-        <span
-          className="text-[0.6875rem] line-clamp-2"
-          style={{ color: 'var(--color-text-tertiary)' }}
-        >
-          {tool.description}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -456,7 +493,7 @@ function ToolRowCheckbox({
 }) {
   const { t } = useTranslation();
   if (!isSelectable(tool)) {
-    return <span aria-hidden className="h-3.5 w-3.5 flex-shrink-0" />;
+    return <span aria-hidden className="h-3.5 w-3.5 shrink-0" />;
   }
   return (
     <SelectCheckbox
@@ -478,6 +515,7 @@ function ToolRowCheckbox({
  */
 function ToolBulkBar({
   count,
+  total,
   value,
   skipped,
   busy,
@@ -487,6 +525,9 @@ function ToolBulkBar({
   onClear,
 }: {
   count: number;
+  /** Every tool a change could reach, so the count reads as a share of the
+   *  list rather than as a number the user has to hold against it. */
+  total: number;
   value: McpToolBinding | null;
   /** Selected tools the last apply could not move, and why the note is there. */
   skipped: number;
@@ -523,10 +564,15 @@ function ToolBulkBar({
         }}
       >
         <span
-          className="text-[0.6875rem] font-medium"
+          className="text-xs font-medium"
           style={{ color: 'var(--color-text-primary)' }}
         >
-          {t('plugins.detail.bulkSelected', { count })}
+          {t('plugins.detail.bulkSelected', { count, total })}
+        </span>
+        {/* The verb the segments are missing. Without it three words sit in a
+            bar beside a count and say nothing about what pressing one does. */}
+        <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+          {t('plugins.detail.bulkRunAs')}
         </span>
         <SegmentedControl
           size="compact"
@@ -540,7 +586,7 @@ function ToolBulkBar({
           type="button"
           disabled={busy}
           onClick={onReset}
-          className="px-1.5 py-0.5 text-[0.6875rem] rounded transition-colors hover:bg-foreground/10 disabled:opacity-50"
+          className="px-1.5 py-0.5 text-xs rounded transition-colors hover:bg-foreground/10 disabled:opacity-50"
           style={{ color: 'var(--color-text-secondary)' }}
         >
           {t('plugins.detail.bulkReset')}
@@ -548,19 +594,19 @@ function ToolBulkBar({
         <button
           type="button"
           onClick={onClear}
-          className="px-1.5 py-0.5 text-[0.6875rem] rounded transition-colors hover:bg-foreground/10"
+          className="px-1.5 py-0.5 text-xs rounded transition-colors hover:bg-foreground/10"
           style={{ color: 'var(--color-text-tertiary)' }}
         >
           {t('plugins.detail.bulkClear')}
         </button>
       </div>
       {skipped > 0 && (
-        <p className="pt-1 text-[0.625rem]" style={{ color: 'var(--color-text-quaternary)' }}>
+        <p className="pt-1 text-xs" style={{ color: 'var(--color-text-quaternary)' }}>
           {t('plugins.detail.bulkSkipped', { count: skipped })}
         </p>
       )}
       {error && (
-        <p role="alert" className="pt-1 text-[0.625rem]" style={{ color: 'var(--color-loss)' }}>
+        <p role="alert" className="pt-1 text-xs" style={{ color: 'var(--color-loss)' }}>
           {error}
         </p>
       )}

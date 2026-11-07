@@ -145,6 +145,6 @@ export function claimedCardFields(
       ? { status: 'skipped' }
       : { status: 'answered', answer: typeof claim.answer === 'string' ? claim.answer : null };
   }
-  // plan_approval and every proposal family share the one pair of names.
+  // Every proposal family and tool approval share the one pair of names.
   return { status: verdict };
 }

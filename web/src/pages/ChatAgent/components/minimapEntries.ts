@@ -1,6 +1,10 @@
+import { registerAuthReset } from '@/lib/authResets';
+import { clip, flattenMarkdown } from '@/lib/plainLine';
 import type { Attachment } from '@/types/sse';
 import type { MessageRecord } from './messageList/types';
-import { assistantText } from './messageList/messageText';
+import { assistantText, userMessageText } from './messageList/messageText';
+import { isReportRow } from './messageList/messagePredicates';
+import { sentMessageWords } from './messageList/sentMessage';
 
 export interface TurnEntry {
   id: string;
@@ -23,51 +27,45 @@ const RAW_SLACK = 4;
 // so a thread's history is flattened once, not once per token.
 const flatCache = new WeakMap<object, string>();
 
-function flatten(markdown: string): string {
-  return markdown
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+\.\s+)/gm, '')
-    // Only a matched pair is formatting. Research prose is full of literal
-    // `*`, `_` and `~` (BRK_B, A * B, ~5%), and stripping them by character
-    // rewrites the sentence the preview exists to quote.
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/~~([^~]+)~~/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/(^|[\s(])([*_])(?=\S)([^*_]*?[^\s*_])\2(?=[\s).,;:!?]|$)/g, '$1$3')
-    .replace(/\|/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+// The last flattening, keyed by its input. A streaming reply is a new object
+// on every chunk, so the per-message cache below cannot hold it; but the
+// preview reads only its head, which stops changing once it is longer than
+// the preview, so the same input arrives chunk after chunk. It is a reply's
+// text, so a sign-out or account switch empties it.
+let lastMarkdown: string | null = null;
+let lastPlain = '';
+registerAuthReset(() => {
+  lastMarkdown = null;
+  lastPlain = '';
+});
 
 /** One line of prose for the hover card. Fenced code is dropped in favour of the prose around it, unless the message is nothing but code, in which case the code text is the preview. */
 export function plainText(markdown: unknown): string {
   if (typeof markdown !== 'string') return '';
-  const prose = flatten(markdown.replace(/```[\s\S]*?(```|$)/g, ' '));
-  return prose || flatten(markdown.replace(/```[^\n]*/g, ' '));
-}
-
-export function clip(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max).trimEnd() + '…' : text;
+  if (markdown === lastMarkdown) return lastPlain;
+  const prose = flattenMarkdown(markdown.replace(/```[\s\S]*?(```|$)/g, ' '));
+  lastPlain = prose || flattenMarkdown(markdown.replace(/```[^\n]*/g, ' '));
+  lastMarkdown = markdown;
+  return lastPlain;
 }
 
 // `raw` is a producer, not a string: a settled message must cost nothing on a
 // cache hit, and building the raw text at the call site would sort and join
-// every prior message's segments once per streamed chunk.
-function flatOf(message: MessageRecord, raw: () => string, max: number): string {
+// every prior message's segments once per streamed chunk. It takes the length
+// the preview reads, so a streaming reply is read to its head, not in full.
+function flatOf(message: MessageRecord, raw: (limit: number) => string, max: number): string {
   const settled = !message.isStreaming;
   if (settled) {
     const hit = flatCache.get(message);
     if (hit !== undefined) return hit;
   }
-  const flat = plainText(raw().slice(0, max * RAW_SLACK));
+  const flat = plainText(raw(max * RAW_SLACK).slice(0, max * RAW_SLACK));
   if (settled) flatCache.set(message, flat);
   return flat;
 }
 
 function promptOf(message: MessageRecord): string {
-  const text = flatOf(message, () => (typeof message.content === 'string' ? message.content : ''), PROMPT_MAX);
+  const text = flatOf(message, () => sentMessageWords(userMessageText(message)), PROMPT_MAX);
   if (text) return clip(text, PROMPT_MAX);
   // Two shapes reach here: the history `Attachment` (name) and the upload-time
   // `AttachmentMeta` a live send stores as-is (the name is on the File).
@@ -110,6 +108,9 @@ export function buildEntries(messages: MessageRecord[], turnInFlight: boolean): 
   let open: Draft | null = null;
 
   for (const m of messages) {
+    // A report-back's row has no prompt to show, so its reply joins the entry
+    // above, as it did while the row was hidden.
+    if (isReportRow(m)) continue;
     if (m.role === 'user') {
       if (failedSend(m)) {
         drafts.push({ id: String(m.id), prompts: [promptOf(m)], reply: '', answered: false, failed: true });
@@ -125,7 +126,7 @@ export function buildEntries(messages: MessageRecord[], turnInFlight: boolean): 
       drafts.push(open);
     } else if (m.role === 'assistant' && open) {
       open.answered = true;
-      open.reply += flatOf(m, () => assistantText(m), REPLY_MAX) + ' ';
+      open.reply += flatOf(m, (limit) => assistantText(m, limit), REPLY_MAX) + ' ';
     }
   }
 

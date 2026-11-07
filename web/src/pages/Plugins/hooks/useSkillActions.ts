@@ -11,6 +11,7 @@ import {
 } from '@/hooks/useSkills';
 import { formatApiErrorDetail } from '@/pages/ChatAgent/utils/api';
 import type { SkillInfo } from '@/pages/ChatAgent/utils/api';
+import { skillRowKey } from '../utils/rowKeys';
 
 /**
  * Every single-row mutation on the Skills tab, with the busy keys the rows and
@@ -20,13 +21,6 @@ import type { SkillInfo } from '@/pages/ChatAgent/utils/api';
  * rejected promise that isn't turned into a toast is a silent failure the user
  * reads as success. Holding them together is what keeps that treatment uniform.
  */
-
-/**
- * Scope-qualified row key: a workspace row may share its name with the
- * inherited user-tier row it shadows, and only the mutated row should read busy.
- */
-export const skillRowKey = (skill: SkillInfo) =>
-  `${skill.workspace_id ?? ''}:${skill.name}`;
 
 export interface SkillDeleteRequest {
   name: string;

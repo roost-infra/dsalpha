@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useEffectEvent, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Previewer } from 'pagedjs';
 import { useReactToPrint } from 'react-to-print';
@@ -10,6 +10,7 @@ import { Select } from '@/components/ui/select';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import Markdown from './Markdown';
 import { stripLineNumbers } from './toolDisplayConfig';
+import { LARGE_TOOL_RESULTS_PREFIX } from './filePanel/fileMeta';
 import { PRINT_PAGE_STYLE } from './printPageStyle';
 import { renderToPdf } from '@/lib/shellPdf';
 import './ExportPreviewModal.css';
@@ -113,8 +114,7 @@ export default function ExportPreviewModal({
   /** A save in flight, which is a different wait from `rendering` (the preview). */
   const [saving, setSaving] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(0.5);
-  const previewZoomRef = useRef(previewZoom);
-  previewZoomRef.current = previewZoom;
+  const readPreviewZoom = useEffectEvent(() => previewZoom);
 
   // ---- Derived ----
   const activePreset = useMemo(
@@ -140,7 +140,7 @@ export default function ExportPreviewModal({
     readFileFullFn(workspaceId, fileName)
       .then((res) => {
         if (signal.aborted) return;
-        const raw = fileName.startsWith('/large_tool_results/')
+        const raw = fileName.startsWith(LARGE_TOOL_RESULTS_PREFIX)
           ? stripLineNumbers(res.content) ?? res.content
           : res.content;
         setFullContent(raw);
@@ -262,7 +262,7 @@ export default function ExportPreviewModal({
         // so we set the wrapper height explicitly to fix scroll extent.
         const pagesEl = container.querySelector('.pagedjs_pages') as HTMLElement | null;
         if (pagesEl) {
-          const zoom = previewZoomRef.current;
+          const zoom = readPreviewZoom();
           const naturalHeight = pagesEl.scrollHeight;
           pagesEl.style.transform = `scale(${zoom})`;
           pagesEl.style.transformOrigin = 'top center';
@@ -649,7 +649,7 @@ export default function ExportPreviewModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="export-preview-modal !w-[90vw] !max-w-7xl !p-0 !overflow-hidden"
+        className="export-preview-modal w-[90vw]! max-w-7xl! p-0! overflow-hidden!"
         variant="centered"
         aria-describedby={undefined}
       >

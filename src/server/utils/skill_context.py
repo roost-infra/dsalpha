@@ -12,7 +12,7 @@ import re
 from typing import Any, List, Optional
 
 from src.server.models.additional_context import SkillContext
-from ptc_agent.agent.middleware.skills import SkillMode, get_command_to_skill_map
+from ptc_agent.agent.middleware.skills import get_command_to_skill_map
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,12 @@ def parse_skill_contexts(
 
     Example:
         >>> contexts = parse_skill_contexts([
-        ...     {"type": "skills", "name": "user-profile", "instruction": "Help onboard"},
+        ...     {"type": "skills", "name": "onboarding", "instruction": "Help onboard"},
         ... ])
         >>> len(contexts)
         1
         >>> contexts[0].name
-        'user-profile'
+        'onboarding'
     """
     if not additional_context:
         return []
@@ -74,7 +74,6 @@ def parse_skill_contexts(
 
 def detect_slash_commands(
     message_text: str,
-    mode: SkillMode | None = None,
     *,
     extra_commands: Optional[dict[str, str]] = None,
     allowed_skills: Optional[set[str]] = None,
@@ -90,7 +89,6 @@ def detect_slash_commands(
 
     Args:
         message_text: Raw user message text
-        mode: Optional agent mode filter
         extra_commands: Additional command → skill-name entries (the caller's
             user-tier skills) merged over the builtin map.
         allowed_skills: Names the caller's build actually exposes. None means
@@ -102,7 +100,7 @@ def detect_slash_commands(
     if not message_text or not message_text.startswith("/"):
         return message_text, []
 
-    command_map = get_command_to_skill_map(mode)
+    command_map = get_command_to_skill_map()
     if extra_commands:
         # A caller-supplied trigger REPLACES any builtin trigger for the same
         # skill: a renamed platform command must stop answering to its old
@@ -117,9 +115,8 @@ def detect_slash_commands(
         # After the merge, never before: this drops a disabled skill's alias,
         # and doing it first would let the builtin trigger that alias replaced
         # come back. One filter covers the renamed map, the default triggers,
-        # the build's mode, and the user's own feature opt-outs, because a
-        # command whose skill the build refuses only ever strips the prefix
-        # and loads nothing.
+        # and the user's own feature opt-outs, because a command whose skill
+        # the build refuses only ever strips the prefix and loads nothing.
         command_map = {
             c: n for c, n in command_map.items() if n in allowed_skills
         }

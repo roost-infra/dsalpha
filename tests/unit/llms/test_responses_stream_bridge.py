@@ -16,6 +16,11 @@ from langchain_openai import ChatOpenAI
 from langchain_openai.chat_models import base
 from openai.types.responses import (
     ResponseFailedEvent,
+    ResponseFunctionCallArgumentsDeltaEvent,
+    ResponseFunctionCallArgumentsDoneEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputItemAddedEvent,
+    ResponseOutputItemDoneEvent,
     ResponseReasoningTextDeltaEvent,
     ResponseTextDeltaEvent,
 )
@@ -23,6 +28,7 @@ from openai.types.responses.response import Response
 from openai.types.responses.response_error import ResponseError
 
 import src.llms  # noqa: F401  installs the bridge
+from src.llms.extension.codex import ChatCodexOpenAI
 from src.llms.extension.dashscope import (
     ChatDashScope,
     ResponsesStreamFailedError,
@@ -70,6 +76,47 @@ def _failed(code=None, message=None):
     return ResponseFailedEvent(
         type="response.failed", response=response, sequence_number=1
     )
+
+
+def _function_call(index, name, arguments, *, streamed, added_with_arguments=False):
+    """One function call's events, as a backend that does or does not stream them.
+
+    The chatgpt.com Codex backend sends no argument deltas for a response with
+    parallel calls, only the ``.done`` frame carrying them whole.
+    """
+    item_id = f"fc_{index}"
+
+    def item(args, status):
+        return ResponseFunctionToolCall(
+            type="function_call", id=item_id, call_id=f"call_{index}",
+            name=name, arguments=args, status=status,
+        )
+
+    events = [
+        ResponseOutputItemAddedEvent(
+            type="response.output_item.added",
+            item=item(arguments if added_with_arguments else "", "in_progress"),
+            output_index=index, sequence_number=index * 10,
+        )
+    ]
+    if streamed:
+        events.append(
+            ResponseFunctionCallArgumentsDeltaEvent(
+                type="response.function_call_arguments.delta", delta=arguments,
+                item_id=item_id, output_index=index, sequence_number=index * 10 + 1,
+            )
+        )
+    return [
+        *events,
+        ResponseFunctionCallArgumentsDoneEvent(
+            type="response.function_call_arguments.done", arguments=arguments,
+            name=name, item_id=item_id, output_index=index, sequence_number=index * 10 + 2,
+        ),
+        ResponseOutputItemDoneEvent(
+            type="response.output_item.done", item=item(arguments, "completed"),
+            output_index=index, sequence_number=index * 10 + 3,
+        ),
+    ]
 
 
 class _FakeStream:
@@ -140,6 +187,13 @@ def _drain(llm):
 
 async def _adrain(llm):
     return [c async for c in llm.astream([HumanMessage(content="hi")])]
+
+
+def _tool_calls(chunks):
+    message = chunks[0]
+    for chunk in chunks[1:]:
+        message = message + chunk
+    return [(call["name"], call["args"]) for call in message.tool_calls]
 
 
 def _reasoning_text(chunks):
@@ -368,3 +422,96 @@ class TestStatusMappingAssertsNothingItCannotKnow:
             )
             == 400
         )
+
+
+
+class TestArgumentsSentOnlyInDone:
+    """Tool-call arguments Codex sends only in ``.done`` still reach the call.
+
+    Upstream builds arguments from deltas and the added item alone, so without
+    the replay every parallel Codex call reaches its tool as ``{}`` and fails
+    validation. The replay skips a call whose arguments already arrived, since
+    replaying those would double them, and it is scoped to Codex streams, each
+    keeping its own record, so no other backend and no other stream is read.
+    """
+
+    PARALLEL = [
+        ("Glob", '{"pattern": "**/*.md"}'),
+        ("Read", '{"file_path": "/a/x.md"}'),
+    ]
+    EXPECTED = [("Glob", {"pattern": "**/*.md"}), ("Read", {"file_path": "/a/x.md"})]
+
+    def _events(self, **shape):
+        return [
+            event
+            for index, (name, arguments) in enumerate(self.PARALLEL)
+            for event in _function_call(index, name, arguments, **shape)
+        ]
+
+    def test_parallel_calls_sent_only_in_done_keep_their_arguments(self):
+        llm, _ = _client(ChatCodexOpenAI, self._events(streamed=False))
+        assert _tool_calls(_drain(llm)) == self.EXPECTED
+
+    @pytest.mark.asyncio
+    async def test_async_parallel_calls_keep_their_arguments(self):
+        llm, _ = _client(ChatCodexOpenAI, self._events(streamed=False), is_async=True)
+        assert _tool_calls(await _adrain(llm)) == self.EXPECTED
+
+    def test_streamed_arguments_are_not_doubled(self):
+        llm, _ = _client(ChatCodexOpenAI, self._events(streamed=True))
+        assert _tool_calls(_drain(llm)) == self.EXPECTED
+
+    def test_arguments_carried_by_the_added_item_are_not_doubled(self):
+        events = self._events(streamed=False, added_with_arguments=True)
+        llm, _ = _client(ChatCodexOpenAI, events)
+        chunks = _drain(llm)
+        assert _tool_calls(chunks) == self.EXPECTED
+        message = chunks[0]
+        for chunk in chunks[1:]:
+            message = message + chunk
+        sent_back = [b["arguments"] for b in message.content if b.get("type") == "function_call"]
+        assert sent_back == [arguments for _, arguments in self.PARALLEL]
+
+    def test_calls_added_before_any_done_keep_their_own_arguments(self):
+        # Every call added before the first ``.done``: upstream would number a
+        # replayed delta by the latest call, so each must land on its own.
+        calls = [
+            _function_call(index, name, arguments, streamed=False)
+            for index, (name, arguments) in enumerate(self.PARALLEL)
+        ]
+        events = [call[0] for call in calls] + [e for call in calls for e in call[1:]]
+        llm, _ = _client(ChatCodexOpenAI, events)
+        chunks = _drain(llm)
+        assert _tool_calls(chunks) == self.EXPECTED
+        message = chunks[0]
+        for chunk in chunks[1:]:
+            message = message + chunk
+        sent_back = [b["arguments"] for b in message.content if b.get("type") == "function_call"]
+        assert sent_back == [arguments for _, arguments in self.PARALLEL]
+
+    def test_a_done_reporting_a_later_output_index_lands_on_its_own_call(self):
+        # The API can report a later output_index on an item's ``.done`` than on
+        # its ``added``, and langchain-openai 1.7 pins the item to the first.
+        # Replayed at the ``.done``'s own index, the arguments open a block of
+        # their own and the call keeps {}.
+        added, done, item_done = _function_call(0, *self.PARALLEL[0], streamed=False)
+        done = done.model_copy(update={"output_index": 2})
+        item_done = item_done.model_copy(update={"output_index": 2})
+        llm, _ = _client(ChatCodexOpenAI, [added, done, item_done])
+        assert _tool_calls(_drain(llm)) == self.EXPECTED[:1]
+
+    def test_other_clients_are_left_to_upstream(self):
+        llm, _ = _client(ChatOpenAI, self._events(streamed=False))
+        assert _tool_calls(_drain(llm)) == [(name, {}) for name, _ in self.EXPECTED]
+
+    def test_streams_reusing_item_ids_keep_separate_records(self):
+        # Both streams number their calls fc_0 and fc_1. A record shared across
+        # streams would read the streamed one's deltas as the other's and skip
+        # its replay, leaving it with {}.
+        streamed, _ = _client(ChatCodexOpenAI, self._events(streamed=True))
+        live = streamed.stream([HumanMessage(content="hi")])
+        first = [next(live), next(live)]  # mid-flight, a delta already seen
+
+        done_only, _ = _client(ChatCodexOpenAI, self._events(streamed=False))
+        assert _tool_calls(_drain(done_only)) == self.EXPECTED
+        assert _tool_calls([*first, *live]) == self.EXPECTED

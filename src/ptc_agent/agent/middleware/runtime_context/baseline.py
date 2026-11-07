@@ -14,6 +14,9 @@ changed underneath reaches the model as a durable row written into history
 An epoch survives until compaction, because compaction is the one event that can
 remove the block from the model's retained history: "the file did not change" is
 not enough after a summarization dropped the injection it is measured against.
+Where Claude's thinking is in view the block outlives that too, since it is the
+prefix every thinking block after it was produced on: nothing rebuilds it, and
+after a summary one row restates every section that moved instead.
 
 The split of work is the point. This module does the IO and the rendering; the
 record itself, and the decision between rebuilding it and filing rows against
@@ -25,7 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from html import escape
 from typing import Any
@@ -42,25 +45,50 @@ from ptc_agent.agent.middleware.provider_cache import (
     breakpoint_marker,
     tag_last_text_block,
 )
-from ptc_agent.agent.middleware.compaction.utils import resolve_cutoff_index
 from ptc_agent.agent.middleware.runtime_context.changes import SourceRead
 from ptc_agent.agent.middleware.runtime_context.durable import (
     build_update_message,
-    runtime_update_from_message,
+    messages_in_view,
+    rows_in_view,
 )
+from ptc_agent.agent.middleware.thinking_binding import holds_bound_thinking
 from ptc_agent.agent.middleware.runtime_context.epoch import (
     MEMO_DISPLAY_CAP,
     MEMORY_TIERS,
+    OTHER_COMPUTERS,
     BaselineEpoch,
     Identity,
     Observations,
     Workspace,
     advance_epoch,
     compaction_fingerprint,
+    machine_lines,
 )
-from ptc_agent.agent.middleware.runtime_context.profile import ProfileSnapshot
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    HARNESS_BLOCKS,
+    harness_update_kind,
+)
+from ptc_agent.agent.middleware.runtime_context.profile import (
+    ProfileSnapshot,
+    ProfileSwitches,
+    profile_read_answered,
+    render_user_profile,
+)
+from ptc_agent.agent.middleware.runtime_context.restate import (
+    SECTION_FILES,
+    SECTION_IDENTITY,
+    SECTION_MEMO,
+    SECTION_PROFILE,
+    SECTION_WORKSPACE,
+    note_sent,
+)
 from ptc_agent.agent.middleware.runtime_context.state import STATE_BASELINE, state_get
 from ptc_agent.agent.middleware.runtime_context.templates import render_template
+from ptc_agent.agent.middleware.runtime_context.turn import (
+    NON_CHANGE_ROW_KINDS,
+    NOTICE_ROW_KINDS,
+)
+from ptc_agent.agent.roles import AgentRole
 from ptc_agent.agent.tools.context_file_policy import MAX_AGENT_MD_SIZE, MAX_MEMORY_BLOCK_SIZE
 from ptc_agent.core.paths import (
     MEMO_INDEX_FILENAME,
@@ -73,26 +101,18 @@ logger = logging.getLogger(__name__)
 AGENT_MD_PATH = "/agent.md"
 
 
+
 def _retained_change_rows(state: Any) -> tuple[str, ...]:
-    """The kinds of the change rows the model can still read, anchors excluded.
+    """The kinds of the change rows the model can still read.
 
-    Resolved the way the compaction slice is, so a row the summary swallowed
-    does not count and a row after the boundary does. A rebuilt row that kept
-    earlier rows in force stands in for them: once a compaction has taken
-    those rows and kept it, it is the only word left that their source was
-    carried unread, and the next rebuild has to keep carrying it or fold it.
+    A rebuilt row that kept earlier rows in force stands in for them: once a
+    compaction has taken those rows and kept it, it is the only word left that
+    their source was carried unread, and the next rebuild has to keep carrying
+    it or fold it.
     """
-    from ptc_agent.agent.middleware.runtime_context.turn import TURN_ROW_KIND
-
-    messages = state_get(state, "messages")
-    if not isinstance(messages, (list, tuple)):
-        return ()
-    event = state_get(state, "_summarization_event")
-    cutoff = resolve_cutoff_index(messages, event) if isinstance(event, dict) else 0
     kinds: list[str] = []
-    for message in list(messages)[cutoff:]:
-        update = runtime_update_from_message(message)
-        if update is None or update.kind == TURN_ROW_KIND:
+    for update in rows_in_view(state):
+        if update.kind in NON_CHANGE_ROW_KINDS or update.kind in NOTICE_ROW_KINDS:
             continue
         kinds.append(update.kind)
         if update.kind == "baseline_rebuilt":
@@ -102,6 +122,7 @@ def _retained_change_rows(state: Any) -> tuple[str, ...]:
                 if isinstance(kind, str) and kind not in kinds
             )
     return tuple(kinds)
+
 
 # A store or sandbox read at the turn boundary must not stall the turn.
 _READ_TIMEOUT_S = 2.0
@@ -116,6 +137,10 @@ _COUNT_QUERY_LIMIT = MEMO_DISPLAY_CAP + 1
 # diff honest and the history short. A judgement call, not a measured constant.
 DEFAULT_REBUILD_AFTER_UPDATES = 20
 
+# Epochs whose rendered block is kept: one for the main agent, one per run in
+# flight for a subagent's definition.
+_BLOCK_CACHE_SIZE = 8
+
 NamespaceFactory = Callable[[], tuple[str, ...]]
 
 #: Reads the current text of one harness-authored block from the turn's agent
@@ -123,15 +148,8 @@ NamespaceFactory = Callable[[], tuple[str, ...]]
 #: and marks the epoch incomplete; a string, empty included, is the text.
 BlockReader = Callable[[Any], str | None]
 
-# The harness-authored blocks, in the order they render. The label is what a
-# change row names: an element rather than a path, because neither one is a
-# file. Adding a third is an entry here plus its template.
-_BLOCKS: dict[str, tuple[str, str]] = {
-    "mcp_servers": ("envelope/baseline_mcp_servers.md.j2", "<mcp-servers>"),
-    "skills": ("envelope/baseline_skills.md.j2", "<skills>"),
-}
-
-BLOCK_KINDS: tuple[str, ...] = tuple(_BLOCKS)
+# The harness-authored blocks, in the order they render (see harness_blocks.py).
+BLOCK_KINDS: tuple[str, ...] = tuple(HARNESS_BLOCKS)
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +195,11 @@ class BaselineContextMiddleware(AgentMiddleware):
 
     Args:
         session: Workspace session, the agent.md read path. None disables the
-            agent.md tier entirely (Flash has no sandbox).
-        workspace_name: Workspace name as its row had it at agent build.
-        workspace_description: Workspace description, from the same read.
+            agent.md tier entirely.
+        workspace: The workspace as its row had it at agent build, or None
+            when that read did not answer.
         sources: Store-backed tiers to read (memory, memo). None reads neither.
-        blocks: Harness-authored text this flavor states, keyed by read kind
+        blocks: Harness-authored text this build states, keyed by read kind
             (see :data:`BlockReader`). A kind with no reader is a block this
             build does not have, which renders nothing and files no row.
         user_profile: Identity plus the steering it carries (locale language
@@ -189,46 +207,68 @@ class BaselineContextMiddleware(AgentMiddleware):
         user_data_counts: Portfolio/watchlist/preference counts, snapshot at
             agent build. Counts drift within a turn, so the snapshot is what
             renders rather than a live read.
-        sandbox_enabled: Whether the agent has a filesystem. It gates the
-            filesystem-dependent steering in the user_profile component, and
-            it is the build that has a workspace to read, so it decides
-            whether a missing ``workspace_name`` is a read that did not answer
-            or a build with no workspace.
+        sandbox_enabled: Whether the agent can open files. False for a
+            subagent without file tools: its memory index renders read-only,
+            since the detail files it points to cannot be opened.
         preferred_market: Market the identity block reports, from
             ``resolve_preferred_market``.
+        timezone: The turn's zone, which the identity block states ahead of
+            the profile's own, so it agrees with the stamp.
         guidance: Resolved prompt guidance level; None resolves it lazily.
         model_name: Model the turn resolved to, used only for guidance.
         rebuild_after_updates: Durable rows since the last epoch that force a
             rebuild. Zero disables the safety valve.
         read_timeout_s: Ceiling on any one turn-boundary read.
+        files_mounted: Whether the file mount served as the agent was built,
+            which a rebuild freezes for the static prompt to state. None for
+            a build whose prompt says nothing about the mount.
+        role: The role the agent runs in, for the wording of the blocks that
+            differ by role. Fixed per build, so the block stays deterministic.
+        switches: What the build has that the profile block points to. A
+            rebuild freezes ``channels`` (the chat-app settings folder) for
+            the block to state. ``wakeups`` (``schedule_wakeup``, which the
+            Automations paragraph names) is read from the build rather than
+            frozen: it changes only when the user flips the setting, and a
+            block that kept naming a tool the turn no longer has would
+            contradict the row that says it is gone.
+        subagent: A subagent's baseline. It has no workspace block and a
+            profile without the main agent's filesystem steering, reads memory
+            without being told to write it, and its scratchpad has no notes.
+            One instance serves every run of its definition in a parent turn,
+            each with its own epoch in that run's checkpoint.
     """
 
     def __init__(
         self,
         *,
         session: Any | None = None,
-        workspace_name: str | None = None,
-        workspace_description: str | None = None,
+        workspace: Workspace | None = None,
         sources: BaselineSources | None = None,
         blocks: dict[str, BlockReader] | None = None,
         user_profile: dict[str, Any] | None = None,
         user_data_counts: dict[str, Any] | None = None,
-        sandbox_enabled: bool = False,
+        sandbox_enabled: bool = True,
         preferred_market: str | None = None,
+        timezone: str | None = None,
         guidance: str | None = None,
         model_name: str | None = None,
         rebuild_after_updates: int = DEFAULT_REBUILD_AFTER_UPDATES,
         read_timeout_s: float = _READ_TIMEOUT_S,
+        files_mounted: bool | None = None,
+        role: AgentRole = "analyst",
+        switches: ProfileSwitches = ProfileSwitches(),
+        subagent: bool = False,
     ) -> None:
         super().__init__()
+        self._subagent = subagent
         self._session = session
-        # None is a read that did not answer (or a build with no workspace);
-        # an empty string is a workspace with no name. Only the first is kept
-        # out of change detection, and ``sandbox_enabled`` below tells the two
-        # meanings of None apart at rebuild time.
-        self._workspace_available = workspace_name is not None
-        self._workspace_name = (workspace_name or "").strip()
-        self._workspace_description = (workspace_description or "").strip()
+        self._role = role
+        self._files_mounted = files_mounted
+        self._switches = switches
+        # None is a read that did not answer; an empty name is a workspace
+        # with no name. Only the first is kept out of change detection.
+        self._workspace_available = workspace is not None
+        self._workspace = workspace or Workspace()
         resolved = sources or BaselineSources()
         self._store = resolved.store
         self._store_cache = resolved.store_cache
@@ -247,15 +287,20 @@ class BaselineContextMiddleware(AgentMiddleware):
         )
         self._memo = resolved.memo if resolved.store is not None else None
         self._blocks: dict[str, BlockReader] = {
-            kind: reader for kind, reader in (blocks or {}).items() if kind in _BLOCKS
+            kind: reader
+            for kind, reader in (blocks or {}).items()
+            if kind in HARNESS_BLOCKS
         }
         # Both platform reads answer with a dict or None, and None is either
         # a failure or no user at all; neither is a profile the user cleared.
-        self._profile_available = user_profile is not None and user_data_counts is not None
+        self._profile_available = (
+            profile_read_answered(user_profile) and user_data_counts is not None
+        )
         self._user_profile = user_profile or {}
         self._user_data_counts = user_data_counts
         self._sandbox_enabled = sandbox_enabled
         self._preferred_market = preferred_market
+        self._timezone = timezone
         self._guidance_value = guidance
         # Set once the turn-boundary read has run on this instance; see
         # ``abefore_model``.
@@ -263,10 +308,13 @@ class BaselineContextMiddleware(AgentMiddleware):
         self._model_name = model_name
         self._rebuild_after_updates = max(0, rebuild_after_updates)
         self._read_timeout_s = read_timeout_s
-        # Rendered block, memoized per epoch. The memo is what makes
+        # Rendered blocks, memoized per epoch. The memo is what makes
         # byte-identity a property of the code rather than of the templates
-        # happening to be deterministic.
-        self._block_cache: tuple[Any, str] | None = None
+        # happening to be deterministic. More than one entry because a
+        # subagent's instance renders for every run of its definition at once,
+        # and the scratchpad is in the key because it is what tells two runs'
+        # blocks apart.
+        self._block_cache: dict[tuple[Any, ...], str] = {}
 
     # -- rendering inputs ---------------------------------------------------
 
@@ -281,7 +329,7 @@ class BaselineContextMiddleware(AgentMiddleware):
         profile = self._user_profile
         return Identity(
             name=profile.get("name") or "User",
-            timezone=profile.get("timezone") or "UTC",
+            timezone=self._timezone or profile.get("timezone") or "UTC",
             locale=profile.get("locale") or "en-US",
             preferred_market=self._preferred_market or "US",
         )
@@ -317,7 +365,9 @@ class BaselineContextMiddleware(AgentMiddleware):
         self._opened = True
         try:
             epoch = BaselineEpoch.from_state(state_get(state, STATE_BASELINE))
-            advanced, rows = advance_epoch(epoch, await self.read_observations(state))
+            advanced, rows = advance_epoch(
+                epoch, await self.read_observations(state), self._render_sections
+            )
             if advanced is None:
                 return None
             written: dict[str, Any] = {STATE_BASELINE: advanced.to_state()}
@@ -339,10 +389,15 @@ class BaselineContextMiddleware(AgentMiddleware):
     ) -> dict[str, Any] | None:
         # A turn that resumes an interrupt re-enters the graph at the
         # interrupted node, never at the entry node, so ``abefore_agent`` does
-        # not run for it. The instance is built per request, so a first model
-        # call on one that never opened a turn is that resume: the boundary
-        # read runs here instead, after the tool result the resume produced.
-        if self._opened:
+        # not run for it. A main agent's instance is built per request, so a
+        # first model call on one that never opened a turn is that resume: the
+        # boundary read runs here instead, after the tool result the resume
+        # produced. A subagent's instance serves every run of its definition in
+        # the parent's turn, and each of those runs enters through
+        # ``abefore_agent``. A summary written mid-turn is read here too, on
+        # the call after it, so the row it owes follows the first user-side
+        # message after the turns the summary kept rather than waiting a turn.
+        if self._opened and not _unseen_compaction(state):
             return None
         return await self.abefore_agent(state, runtime)
 
@@ -360,23 +415,31 @@ class BaselineContextMiddleware(AgentMiddleware):
         reads, memo_count = await asyncio.gather(
             self._read_sources(state), self._memo_count()
         )
+        event = state_get(state, "_summarization_event")
+        summary = event.get("summary_message") if isinstance(event, dict) else None
+        sent = note_sent(messages_in_view(state), getattr(summary, "id", None))
         return Observations(
             now=datetime.now(tz=UTC),
-            workspace=Workspace(
-                name=self._workspace_name, description=self._workspace_description
-            ),
+            workspace=self._workspace,
             identity=self._identity(),
             profile=self._profile_snapshot(),
             reads=tuple(reads),
             memo_configured=self._memo is not None,
             memo_count=memo_count,
             memo_path=self._memo.display_path if self._memo is not None else "",
-            compaction=compaction_fingerprint(state_get(state, "_summarization_event")),
+            compaction=compaction_fingerprint(event),
             rebuild_after_updates=self._rebuild_after_updates,
             retained_rows=_retained_change_rows(state),
             profile_available=self._profile_available,
             workspace_available=self._workspace_available,
-            workspace_configured=self._sandbox_enabled,
+            workspace_configured=not self._subagent,
+            files_mounted=self._files_mounted,
+            channels_enabled=self._switches.channels,
+            wakeups_enabled=self._switches.wakeups,
+            thinking_bound=holds_bound_thinking(messages_in_view(state)),
+            compaction_note=None if sent else _compaction_note(event),
+            compaction_note_sent=sent,
+            role=self._role,
         )
 
     async def _read_sources(self, state: Any) -> list[SourceRead]:
@@ -404,8 +467,8 @@ class BaselineContextMiddleware(AgentMiddleware):
         """One harness-authored block as this turn sees it."""
         read = SourceRead(
             kind=kind,
-            update_kind=f"{kind}_changed",
-            path=_BLOCKS[kind][1],
+            update_kind=harness_update_kind(kind),
+            path=HARNESS_BLOCKS[kind].label,
             available=False,
             provenance={"source": "harness"},
         )
@@ -534,88 +597,114 @@ class BaselineContextMiddleware(AgentMiddleware):
         """The whole baseline block, in its fixed order.
 
         Reads the frozen epoch and nothing else, which is what makes the block
-        byte-identical for the life of that epoch. The file blocks carry their
-        own one-paragraph trust preface, rendered here rather than in the system
-        prefix so the rule sits next to the text it governs; it is emitted only
-        when there is a file block for it to govern, and the harness blocks go
-        above it so nothing stands between the preface and the files it names.
+        byte-identical for the life of that epoch.
+        """
+        return "\n\n".join(self._render_sections(epoch).values())
+
+    def _render_sections(self, epoch: BaselineEpoch) -> dict[str, str]:
+        """Each section of the block, in its fixed order, keyed by what it states.
+
+        A source's section is keyed by its read kind, the rest by the
+        ``SECTION_*`` names, so a row can state one section whole. An empty
+        section is left out. The file blocks carry their own one-paragraph
+        trust preface, rendered here rather than in the system prefix so the
+        rule sits next to the text it governs; it is emitted only when there
+        is a file block for it to govern, and the harness blocks go above it
+        so nothing stands between the preface and the files it names.
         """
         guidance = self._guidance()
-        parts: list[str] = []
+        parts: dict[str, str] = {}
 
-        parts.append(_workspace_block(epoch.workspace))
-        parts.append(self._user_profile_block(epoch.profile))
+        parts[SECTION_WORKSPACE] = _workspace_block(epoch.workspace, self._role)
+        parts[SECTION_PROFILE] = self._user_profile_block(
+            epoch.profile, epoch.channels_enabled, epoch.wakeups_enabled
+        )
 
         identity = epoch.identity or self._identity()
-        parts.append(
-            render_template(
-                "envelope/baseline_identity.md.j2",
-                guidance=guidance,
-                **identity.to_state(),
-            )
+        parts[SECTION_IDENTITY] = render_template(
+            "envelope/baseline_identity.md.j2",
+            guidance=guidance,
+            **identity.to_state(),
         )
 
         for kind in BLOCK_KINDS:
             entry = epoch.blocks.get(kind)
             if entry is None:
                 continue
-            parts.append(
-                render_template(_BLOCKS[kind][0], content=entry.text, guidance=guidance)
+            parts[kind] = render_template(
+                HARNESS_BLOCKS[kind].template,
+                content=entry.text,
+                guidance=guidance,
+                subagent=self._subagent,
             )
 
         if epoch.has_files:
-            parts.append(
-                render_template("envelope/baseline_files.md.j2", guidance=guidance)
+            parts[SECTION_FILES] = render_template(
+                "envelope/baseline_files.md.j2", guidance=guidance
             )
 
         if epoch.agent_md is not None:
-            parts.append(
-                render_template(
-                    "envelope/baseline_agentmd.md.j2",
-                    path=epoch.agent_md.path or AGENT_MD_PATH,
-                    content=epoch.agent_md.text,
-                    guidance=guidance,
-                )
+            parts["agent_md"] = render_template(
+                "envelope/baseline_agentmd.md.j2",
+                path=epoch.agent_md.path or AGENT_MD_PATH,
+                content=epoch.agent_md.text,
+                guidance=guidance,
+                role=self._role,
             )
 
         for tier in MEMORY_TIERS:
             entry = epoch.memory.get(tier)
             if entry is None:
                 continue
-            parts.append(
-                render_template(
-                    "envelope/baseline_memory.md.j2",
-                    path=entry.path or tier,
-                    content=entry.text,
-                    readonly=not self._sandbox_enabled,
-                    guidance=guidance,
-                )
+            parts[f"memory:{tier}"] = render_template(
+                "envelope/baseline_memory.md.j2",
+                path=entry.path or tier,
+                content=entry.text,
+                readonly=not self._sandbox_enabled,
+                subagent=self._subagent,
+                guidance=guidance,
             )
 
         if epoch.memo is not None and epoch.memo.display:
-            parts.append(
+            parts[SECTION_MEMO] = (
                 f'<memo-index count="{epoch.memo.display}" path="{epoch.memo.path}"/>'
             )
 
-        return "\n\n".join(p for p in parts if p)
+        return {key: part for key, part in parts.items() if part}
 
-    def _user_profile_block(self, frozen: ProfileSnapshot | None) -> str:
+    def _user_profile_block(
+        self,
+        frozen: ProfileSnapshot | None,
+        channels: bool | None = None,
+        wakeups: bool | None = None,
+    ) -> str:
         """The ``<user_profile>`` component: identity plus the steering it carries.
 
         Rendered from the epoch's frozen snapshot so the block never moves
-        inside an epoch. A preference or count that changes mid-thread reaches
-        the model as a `profile_changed` row on the next turn. An epoch frozen
-        before profiles were captured falls back to this turn's snapshot.
+        inside an epoch for what the profile says. A preference or count that
+        changes mid-thread reaches the model as a `profile_changed` row on the
+        next turn. An epoch frozen before profiles were captured falls back to
+        this turn's snapshot, and one that froze no ``channels`` or
+        ``wakeups`` to this build's.
         """
         snapshot = frozen if frozen is not None else self._profile_snapshot()
+        if channels is None:
+            channels = self._switches.channels
+        if wakeups is None:
+            wakeups = self._switches.wakeups
         if not snapshot.user_profile and not snapshot.user_data_counts:
             return ""
+        # A subagent's profile leaves out what only the main agent acts on:
+        # the profile files, the delivery format and where settings live.
+        # The role words the research-depth guidance around the Chief of
+        # Staff's hand-offs.
         try:
-            content = render_template(
-                "components/user_profile.md.j2",
-                user_profile=snapshot.user_profile,
-                user_data_counts=snapshot.user_data_counts or None,
-                sandbox_enabled=self._sandbox_enabled,
+            content = render_user_profile(
+                snapshot.user_profile,
+                snapshot.user_data_counts or None,
+                main_agent_steering=not self._subagent,
+                switches=replace(self._switches, channels=channels, wakeups=wakeups),
+                role=self._role,
             )
         except Exception:  # noqa: BLE001 - one component is not the whole block
             logger.warning("[Baseline] user_profile render failed", exc_info=True)
@@ -643,14 +732,7 @@ class BaselineContextMiddleware(AgentMiddleware):
         boundary or captured at agent build. A read on this path is what made
         the old middlewares re-write the whole history at the write rate.
         """
-        try:
-            epoch = BaselineEpoch.from_state(
-                state_get(getattr(request, "state", None), STATE_BASELINE)
-            )
-            block = self._cached_block(epoch)
-        except Exception:  # noqa: BLE001 - context is never worth failing a turn for
-            logger.warning("[Baseline] render failed; sending the call without it", exc_info=True)
-            return await handler(request)
+        block = self.sent_block(getattr(request, "state", None))
         if not block:
             return await handler(request)
 
@@ -662,12 +744,31 @@ class BaselineContextMiddleware(AgentMiddleware):
                 system_message = SystemMessage(content=tagged)
         return await handler(request.override(system_message=system_message))
 
+    def sent_block(self, state: Any) -> str:
+        """The block a call is sent for the epoch frozen in ``state``, or ""
+        when it fails to render, so the call goes without it: context is never
+        worth failing a turn for."""
+        try:
+            return self.frozen_block(state)[1]
+        except Exception:  # noqa: BLE001
+            logger.warning("[Baseline] render failed; sending the call without it", exc_info=True)
+            return ""
+
+    def frozen_block(self, state: Any) -> tuple[str, str]:
+        """The epoch frozen in ``state`` as one block, and a key naming that
+        epoch, for a carrier that has to know whether the model already holds it."""
+        epoch = BaselineEpoch.from_state(state_get(state, STATE_BASELINE))
+        return f"{epoch.epoch}:{epoch.built_at}", self._cached_block(epoch)
+
     def _cached_block(self, epoch: BaselineEpoch) -> str:
-        key = (epoch.epoch, epoch.built_at)
-        if self._block_cache is not None and self._block_cache[0] == key:
-            return self._block_cache[1]
-        block = self._render_block(epoch)
-        self._block_cache = (key, block)
+        scratchpad = epoch.blocks.get("scratchpad")
+        key = (epoch.epoch, epoch.built_at, scratchpad.text if scratchpad else None)
+        block = self._block_cache.get(key)
+        if block is None:
+            block = self._render_block(epoch)
+            if len(self._block_cache) >= _BLOCK_CACHE_SIZE:
+                self._block_cache.pop(next(iter(self._block_cache)))
+            self._block_cache[key] = block
         return block
 
 
@@ -676,8 +777,9 @@ class BaselineContextMiddleware(AgentMiddleware):
 # ---------------------------------------------------------------------------
 
 
-def _workspace_block(workspace: Workspace) -> str:
-    """What the workspace is called, as element text.
+
+def _workspace_block(workspace: Workspace, role: AgentRole = "analyst") -> str:
+    """What the workspace is called, and the computer it is on, as element text.
 
     Text rather than attributes: a name is free text the user typed, and as text
     an escape of ``<`` and ``&`` is the whole obligation, with no quoting rule to
@@ -690,14 +792,34 @@ def _workspace_block(workspace: Workspace) -> str:
     description = workspace.description.strip()
     if description:
         lines.append(f"Description: {escape(description, quote=False)}")
+    computer = workspace.computer.strip()
+    if computer:
+        lines.append(f"Computer: {escape(computer, quote=False)}")
+        if role != "chief_of_staff":
+            lines.append(OTHER_COMPUTERS)
+    lines.extend(machine_lines(workspace, role))
     body = "\n".join(lines)
     return f"<workspace>\n{body}\n</workspace>"
+
+
+def _unseen_compaction(state: Any) -> bool:
+    """Whether the newest summary in state is one the epoch has not taken in."""
+    seen = compaction_fingerprint(state_get(state, "_summarization_event"))
+    epoch = BaselineEpoch.from_state(state_get(state, STATE_BASELINE))
+    return seen is not None and seen != epoch.compaction_seen
+
+
+def _compaction_note(event: Any) -> str | None:
+    """What the newest summary leaves for the turns after it to read, if anything."""
+    from src.llms.provider_compaction import deferred_text
+
+    return deferred_text(event.get("summary_message") if isinstance(event, dict) else None)
 
 
 async def _read_sandbox_text(session: Any, relative_path: str) -> str | None:
     """One workspace file's text, or None when the file does not exist.
 
-    A session without a sandbox (Flash, a test double) reads as absent rather
+    A session without a sandbox (a test double) reads as absent rather
     than as an error, since there is no file for it to have.
     """
     sandbox = getattr(session, "sandbox", None)

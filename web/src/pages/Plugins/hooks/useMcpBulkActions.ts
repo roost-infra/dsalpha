@@ -1,149 +1,104 @@
 import { useTranslation } from 'react-i18next';
 import {
-  adoptMcpServerToWorkspace,
   deleteMcpCatalogServer,
-  promoteWorkspaceMcpServerToTemplate,
   setBuiltinMcpServerEnabled,
   setMcpCatalogServerEnabled,
+  setMcpCatalogServerNewWorkspaces,
   setWorkspaceMcpServerEnabled,
   type BuiltinMcpServer,
   type CatalogServer,
-  type WorkspaceScopedMcpServer,
 } from '@/pages/ChatAgent/utils/api';
-import type { BulkAction } from '../components/BulkActionBar';
+import { useHomeWorkspaceId } from '@/hooks/useHomeWorkspace';
 import type { BulkScopeSpec } from '../components/BulkScopeMenu';
-import type { ScopeWorkspace } from '../components/ScopeControl';
-import type { BulkTarget } from '../components/useBulkSelection';
-import { isPluginOwned } from '../utils/provenance';
+import { scopeLocked, type ScopeWorkspace } from '../components/ScopeControl';
+import type { BulkRunOptions } from '../components/useBulkSelection';
+import { buildBulkActions, type BulkActions } from '../utils/bulkActions';
+import { connectorState } from '../utils/connectorState';
+import { isEffectivelyEnabled, isPluginOwned, isPluginSuppressed } from '../utils/provenance';
+import { connectorRowKey, type ConnectorRow } from '../utils/rowKeys';
 import type { PluginListSurface } from './usePluginListSurface';
 import { useScopeBulk } from './useScopeBulk';
 
-/**
- * The select-mode actions for the MCP tab. One selection spans three row
- * tiers with three different endpoints, so the keys are tier-namespaced and
- * the rows travel as a tagged union rather than as three parallel arrays —
- * the scope algorithm downstream wants one list.
- */
-
-type McpScopeRow =
-  | { tier: 'builtin'; server: BuiltinMcpServer }
-  | { tier: 'catalog'; server: CatalogServer }
-  | { tier: 'workspace'; server: WorkspaceScopedMcpServer };
-
-const rowKey = (row: McpScopeRow) =>
-  row.tier === 'workspace'
-    ? `ws:${row.server.workspace_id}:${row.server.name}`
-    : `${row.tier}:${row.server.name}`;
-
+/** The select-mode actions for the MCP tab, over both row tiers at once. */
 export function useMcpBulkActions({
   builtins,
   catalog,
-  workspaceServers,
   surface,
   workspaces,
+  signIn,
 }: {
   builtins: readonly BuiltinMcpServer[];
   catalog: readonly CatalogServer[];
-  workspaceServers: readonly WorkspaceScopedMcpServer[];
   surface: PluginListSurface;
   workspaces: ScopeWorkspace[];
-}): { actions: BulkAction[]; scope: BulkScopeSpec; count: number } {
+  /** Starts the sign-in a switch-on was refused for, until the connector is
+   *  signed in to. */
+  signIn?: BulkRunOptions['signIn'];
+}): BulkActions & { scope: BulkScopeSpec } {
   const { t } = useTranslation();
   const { selected } = surface.selection;
+  const homeId = useHomeWorkspaceId() ?? null;
 
-  const rows: McpScopeRow[] = [
+  const rows: ConnectorRow[] = [
     ...builtins.map((server) => ({ tier: 'builtin' as const, server })),
     ...catalog.map((server) => ({ tier: 'catalog' as const, server })),
-    ...workspaceServers.map((server) => ({ tier: 'workspace' as const, server })),
-  ].filter((row) => selected.has(rowKey(row)));
+  ].filter((row) => selected.has(connectorRowKey(row)));
 
-  function toggleTargets(enabled: boolean): BulkTarget[] {
-    return rows.flatMap((row) => {
-      if (!!row.server.enabled === enabled) return [];
-      const key = rowKey(row);
-      const { name } = row.server;
-      if (row.tier === 'builtin') {
-        return [{ key, run: () => setBuiltinMcpServerEnabled(name, enabled) }];
-      }
-      if (row.tier === 'catalog') {
-        return [{ key, run: () => setMcpCatalogServerEnabled(name, enabled) }];
-      }
-      const workspaceId = row.server.workspace_id;
-      return [
-        { key, run: () => setWorkspaceMcpServerEnabled(workspaceId, name, enabled) },
-      ];
-    });
-  }
-
-  // Same eligibility as each row's ScopeControl: the deny-list checklist
-  // exists on enabled user-tier rows (builtin + catalog); moving into a
-  // workspace exists for catalog rows that are neither plugin-owned nor
-  // OAuth-connected (connections live only at the user tier); a workspace
-  // row's only destination is up, blocked while it shadows an inherited name.
-  const movableCatalog = (row: McpScopeRow) =>
-    row.tier === 'catalog' &&
-    !isPluginOwned(row.server) &&
-    !(row.server.oauth_status && row.server.oauth_status !== 'revoked');
-
-  const scope = useScopeBulk<McpScopeRow>(rows, {
+  // Same eligibility as each row's ScopeControl: a locked checklist, off or
+  // under a plugin that is off, is out. No move: every server lives on the account.
+  const scope = useScopeBulk<ConnectorRow>(rows, {
     workspaces,
-    run: surface.run,
-    key: rowKey,
+    // Switching a connector on in a workspace is refused for a missing
+    // sign-in as its account switch is.
+    run: (targets) => surface.run(targets, { verb: 'scope', noun: 'connector', signIn }),
+    key: connectorRowKey,
+    name: (row) => row.server.name,
     denyMarkers: (row) =>
-      row.tier !== 'workspace' && row.server.enabled
-        ? (row.server.disabled_workspace_ids ?? [])
-        : null,
+      scopeLocked(row.server) ? null : (row.server.disabled_workspace_ids ?? []),
+    // Home, for user rows only, as each row's checklist offers it.
+    homeWorkspaceId: (row) => (row.tier === 'catalog' ? homeId : null),
     setWorkspaceEnabled: (row, workspaceId, enabled) =>
       setWorkspaceMcpServerEnabled(workspaceId, row.server.name, enabled),
-    promote: (row) => {
-      if (row.tier !== 'workspace' || row.server.shadows_inherited) return null;
-      const { workspace_id: workspaceId, name } = row.server;
-      return () => promoteWorkspaceMcpServerToTemplate(workspaceId, name, false, true);
-    },
-    movable: movableCatalog,
-    moveTo: (row, workspaceId) => {
-      if (!movableCatalog(row)) return null;
-      const { name } = row.server;
-      return () => adoptMcpServerToWorkspace(workspaceId, name);
+    // Only a user row (brokerages included) has the setting. Absent reads as
+    // on, like the badge: every row inherited before the setting existed.
+    newWorkspaces: (row, on) => {
+      if (row.tier !== 'catalog') return null;
+      const current = row.server.enabled_in_new_workspaces !== false;
+      return current === on
+        ? null
+        : () => setMcpCatalogServerNewWorkspaces(row.server.name, on);
     },
   });
 
-  // Builtins have no delete, and plugin-owned rows uninstall through their
-  // plugin — bulk delete covers only the user's own catalog rows.
-  const deleteTargets = rows.filter(
-    (row) => row.tier === 'catalog' && !isPluginOwned(row.server),
-  );
-  const enableCount = toggleTargets(true).length;
-  const disableCount = toggleTargets(false).length;
-
-  const actions: BulkAction[] = [
-    {
-      id: 'enable',
-      label: t('plugins.bulk.enable', { count: enableCount }),
-      disabled: enableCount === 0,
-      run: () => surface.run(toggleTargets(true)),
-    },
-    {
-      id: 'disable',
-      label: t('plugins.bulk.disable', { count: disableCount }),
-      disabled: disableCount === 0,
-      run: () => surface.run(toggleTargets(false)),
-    },
-    {
-      id: 'delete',
-      label: t('plugins.bulk.delete', { count: deleteTargets.length }),
-      destructive: true,
-      disabled: deleteTargets.length === 0,
-      confirmMessage: t('plugins.bulk.confirmDelete', { count: deleteTargets.length }),
-      run: () =>
-        surface.run(
-          deleteTargets.map((row) => ({
-            key: rowKey(row),
-            run: () => deleteMcpCatalogServer(row.server.name),
-          })),
-        ),
-    },
-  ];
-
-  return { actions, scope, count: rows.length };
+  return {
+    ...buildBulkActions(t, surface, rows, {
+      noun: 'connector',
+      key: connectorRowKey,
+      name: (row) => row.server.name,
+      // Decided on the state the pills show, not on the row's own flag.
+      isOn: (row) => isEffectivelyEnabled(row.server),
+      held: (row) => isPluginSuppressed(row.server),
+      // Held as the row's own switch holds it: a row a check refused would be
+      // switched on as asked and sent failing to every workspace. A missing
+      // sign-in is left in, since that switch-on is refused before anything is
+      // written and the refusal is what offers the sign-in.
+      enableLocked: (row) => row.tier === 'catalog' && connectorState(row.server).kind === 'failing',
+      setEnabled: (row, on) =>
+        row.tier === 'builtin'
+          ? setBuiltinMcpServerEnabled(row.server.name, on)
+          : setMcpCatalogServerEnabled(row.server.name, on),
+      // Builtins have no delete, and plugin-owned rows uninstall through
+      // their plugin: bulk delete covers only the user's own catalog rows.
+      remove: {
+        verb: 'remove',
+        labelKey: 'plugins.bulk.remove',
+        confirmKey: 'plugins.bulk.confirmRemoveConnectors',
+        eligible: (row) => row.tier === 'catalog' && !isPluginOwned(row.server),
+        run: (row) => deleteMcpCatalogServer(row.server.name),
+      },
+      keptKey: 'plugins.bulk.keptBundled',
+      signIn,
+    }),
+    scope,
+  };
 }

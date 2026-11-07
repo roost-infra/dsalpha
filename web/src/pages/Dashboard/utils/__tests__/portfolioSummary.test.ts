@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import {
   formatPortfolioMoney,
@@ -17,7 +18,9 @@ const createPortfolioRow = (overrides: Partial<PortfolioRow>): PortfolioRow => (
   quantity: 0,
   average_cost: 0,
   currency: 'USD',
+  costCurrency: overrides.currency ?? 'USD',
   marketValue: 0,
+  places: 2,
   ...overrides,
 });
 
@@ -37,6 +40,7 @@ describe('portfolioSummary', () => {
         totalPl: 25,
         totalPlPct: expect.any(Number),
         isPlPositive: true,
+        uncosted: [],
       },
       {
         currency: 'HKD',
@@ -45,6 +49,7 @@ describe('portfolioSummary', () => {
         totalPl: 100,
         totalPlPct: expect.any(Number),
         isPlPositive: true,
+        uncosted: [],
       },
     ]);
     expect(summaries[0].totalPlPct).toBeCloseTo(16.67, 2);
@@ -72,7 +77,7 @@ describe('portfolioSummary', () => {
       createPortfolioRow({ symbol: '0700.HK', price: 80, currency: 'HKD', marketValue: 800, average_cost: 70, quantity: 10 }),
     ]);
 
-    expect(formatPortfolioNavMarkdownLine(summaries)).toBe(
+    expect(formatPortfolioNavMarkdownLine(summaries, 'en-US')).toBe(
       [
         '**NAV (USD)** USD 120.00 (cost USD 100.00, P/L +USD 20.00 / +20.00%)',
         '**NAV (HKD)** HKD 800.00 (cost HKD 700.00, P/L +HKD 100.00 / +14.29%)',
@@ -85,7 +90,7 @@ describe('portfolioSummary', () => {
       createPortfolioRow({ symbol: 'BONUS', price: 15, currency: 'USD', marketValue: 150, average_cost: 0, quantity: 10 }),
     ]);
 
-    expect(formatPortfolioNavMarkdownLine(summaries)).toBe('**NAV (USD)** USD 150.00');
+    expect(formatPortfolioNavMarkdownLine(summaries, 'en-US')).toBe('**NAV (USD)** USD 150.00');
   });
 
   it('formats negative P/L in NAV markdown with negative signs', () => {
@@ -93,7 +98,7 @@ describe('portfolioSummary', () => {
       createPortfolioRow({ symbol: 'LOSS', price: 8, currency: 'USD', marketValue: 80, average_cost: 10, quantity: 10 }),
     ]);
 
-    expect(formatPortfolioNavMarkdownLine(summaries)).toBe(
+    expect(formatPortfolioNavMarkdownLine(summaries, 'en-US')).toBe(
       '**NAV (USD)** USD 80.00 (cost USD 100.00, P/L -USD 20.00 / -20.00%)',
     );
   });
@@ -103,7 +108,7 @@ describe('portfolioSummary', () => {
       createPortfolioRow({ symbol: 'EMPTY', price: 0, currency: 'USD', marketValue: 0, average_cost: 0, quantity: 0 }),
     ]);
 
-    expect(formatPortfolioNavMarkdownLine(summaries)).toBe('');
+    expect(formatPortfolioNavMarkdownLine(summaries, 'en-US')).toBe('');
   });
 
   it('excludes unavailable quotes from currency NAV and cost basis', () => {
@@ -115,6 +120,53 @@ describe('portfolioSummary', () => {
 
     expect(summaries.map((summary) => summary.currency)).toEqual(['USD', 'HKD']);
     expect(summaries.find((summary) => summary.currency === 'CNY')).toBeUndefined();
+  });
+
+  it('values a holding with no cost but leaves it out of the cost and P/L', () => {
+    const [usd] = summarizePortfolioByCurrency([
+      createPortfolioRow({ symbol: 'AAPL', marketValue: 3319, average_cost: 150, quantity: 10 }),
+      createPortfolioRow({ symbol: 'NVDA', marketValue: 1033.45, average_cost: null, quantity: 5 }),
+    ]);
+
+    expect(usd.totalValue).toBeCloseTo(4352.45, 2);
+    expect(usd.totalCost).toBe(1500);
+    expect(usd.totalPl).toBe(1819);
+    expect(usd.totalPlPct).toBeCloseTo(121.27, 2);
+    expect(usd.uncosted).toEqual([{ symbol: 'NVDA', value: 1033.45 }]);
+  });
+
+  it('counts a holding entered at zero cost as all gain, not as having no cost', () => {
+    const [usd] = summarizePortfolioByCurrency([
+      createPortfolioRow({ symbol: 'AAPL', marketValue: 3319, average_cost: 150, quantity: 10 }),
+      createPortfolioRow({ symbol: 'BONUS', marketValue: 150, average_cost: 0, quantity: 10 }),
+    ]);
+
+    expect(usd.totalCost).toBe(1500);
+    expect(usd.totalPl).toBe(1969);
+    expect(usd.uncosted).toEqual([]);
+  });
+
+  it('leaves out of the P/L a cost entered in another currency than the quote', () => {
+    const [hkd] = summarizePortfolioByCurrency([
+      createPortfolioRow({ symbol: '0700.HK', currency: 'HKD', marketValue: 80280, average_cost: 380, quantity: 200 }),
+      createPortfolioRow({ symbol: '0700.HK', currency: 'HKD', costCurrency: 'USD', marketValue: 40140, average_cost: 50, quantity: 100 }),
+    ]);
+
+    expect(hkd.totalValue).toBe(120420);
+    expect(hkd.totalCost).toBe(76000);
+    expect(hkd.totalPl).toBe(4280);
+    expect(hkd.uncosted).toEqual([{ symbol: '0700.HK', value: 40140 }]);
+  });
+
+  it('names the holdings a NAV line leaves out of its P/L', () => {
+    const summaries = portfolioSummary([
+      createPortfolioRow({ symbol: 'AAPL', marketValue: 3319, average_cost: 150, quantity: 10 }),
+      createPortfolioRow({ symbol: 'NVDA', marketValue: 1033.45, average_cost: null, quantity: 5 }),
+    ]);
+
+    expect(formatPortfolioNavMarkdownLine(summaries, 'en-US')).toBe(
+      '**NAV (USD)** USD 4352.45 (cost USD 1500.00, P/L +USD 1819.00 / +121.27%, excluding NVDA (USD 1033.45): no cost in USD)',
+    );
   });
 
   it('formats portfolio money with the holding currency', () => {

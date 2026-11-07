@@ -26,10 +26,17 @@ from langchain_openai import ChatOpenAI
 from src.llms.extension import ChatAnthropicOAuth, ChatCodexOpenAI
 from src.llms.llm import LLM
 from src.llms.operator_channel import (
+    OPERATOR_CHANNEL_KEY,
+    INLINE_TOOLS_BETA,
+    TURN_SCOPED_BETA,
+    anthropic_serves_midturn_system,
     build_operator_message,
+    carries_tool_changes,
+    carries_turn_scoped,
     is_operator_system_message,
     operator_request,
     resolve_operator_channel,
+    tool_change_betas,
 )
 from src.llms.vendor.langchain_zai import ChatZai
 
@@ -235,19 +242,51 @@ def test_unproven_anthropic_hosts_stay_off(base_url):
         assert resolve_operator_channel(client) is None
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8"])
-def test_official_anthropic_models_that_accept_the_role(model):
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-opus-4-8",
+        "claude-sonnet-5-5-20261001",
+        "claude-opus-4-10",
+        "claude-haiku-9",
+    ],
+)
+def test_official_anthropic_models_from_opus_4_8_on_take_the_role(model):
+    """The cutoff is a rule, so a release nobody listed (``claude-haiku-9``) needs no edit.
+
+    ``claude-opus-4-10`` pins the comparison as numeric rather than lexical.
+    """
     client = _anthropic("anthropic-test", model=model)
     with provider_entry("anthropic-test", {"sdk": "anthropic", "operator_channel": "system"}):
         assert resolve_operator_channel(client) == "system"
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"])
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-4-20250514",
+        "claude-3-5-haiku-latest",
+    ],
+)
 def test_anthropic_models_without_midturn_system_forced_off(model):
-    """A provider entry is coarser than the feature: these 400 on the role."""
+    """A provider entry is coarser than the feature: these 400 on the role.
+
+    A custom model can name any of them on the official host.
+    """
     client = _anthropic("anthropic-test", model=model)
     with provider_entry("anthropic-test", {"sdk": "anthropic", "operator_channel": "system"}):
         assert resolve_operator_channel(client) is None
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [None, "", "claude-opus", "claude-opus-5-5-fast", "Claude-Opus-5-5", "gpt-5.6"],
+)
+def test_an_id_that_names_no_claude_generation_fails_closed(model_id):
+    assert anthropic_serves_midturn_system(None, model_id) is False
 
 
 def test_zai_resolves_system_on_the_model_that_reads_it():
@@ -388,8 +427,14 @@ def test_developer_message_reaches_the_wire_as_developer_role():
 # ---------------------------------------------------------------------------
 
 
-def _client():
-    return ChatAnthropic(model="claude-opus-5", api_key="test-key", max_tokens=1024)
+def _client(model: str = "claude-opus-5"):
+    return ChatAnthropic(model=model, api_key="test-key", max_tokens=1024)
+
+
+# langchain-anthropic 1.7 keeps a non-leading SystemMessage in place by itself on
+# a model whose bundled profile sets `mid_conversation_system_messages` (Opus 4.8
+# on), so the stock refusal these tests lean on needs a model it still refuses on.
+_STOCK_REFUSES = "claude-sonnet-4-6"
 
 
 def _payload(messages, model=None):
@@ -414,7 +459,7 @@ def test_outside_the_window_the_tagged_message_is_refused(shape):
     for a request it composed in the system shape."""
     with pytest.raises(ValueError, match="multiple non-consecutive system messages"):
         with operator_request(shape):
-            _client()._get_request_payload(_conversation(), stop=None)
+            _client(_STOCK_REFUSES)._get_request_payload(_conversation(), stop=None)
 
 
 def test_window_closes_with_the_call():
@@ -424,7 +469,7 @@ def test_window_closes_with_the_call():
         assert _in_operator_request.get() is True
     assert _in_operator_request.get() is False
     with pytest.raises(ValueError, match="multiple non-consecutive system messages"):
-        _client()._get_request_payload(_conversation(), stop=None)
+        _client(_STOCK_REFUSES)._get_request_payload(_conversation(), stop=None)
 
 
 def test_windowed_payload_carries_the_system_message_in_messages():
@@ -475,7 +520,8 @@ def test_window_still_refuses_a_second_untagged_system_message():
                 SystemMessage("base prompt"),
                 HumanMessage("first question"),
                 SystemMessage("a plain second system message"),
-            ]
+            ],
+            model=_client(_STOCK_REFUSES),
         )
 
 
@@ -544,6 +590,108 @@ def test_multiple_carriers_each_get_their_own_entry():
     assert payload["messages"][4]["content"] == [{"type": "text", "text": "second envelope"}]
 
 
+def test_a_carrier_no_assistant_turn_follows_rides_as_a_reminder():
+    """Anthropic refuses a system entry with a user turn after it, which is
+    where a turn stopped before the model answered leaves its carrier."""
+    payload = _payload(
+        [
+            SystemMessage("base prompt"),
+            HumanMessage("first question"),
+            build_operator_message("stopped turn", "system"),
+            HumanMessage("second question"),
+            build_operator_message("this turn", "system"),
+        ]
+    )
+    assert [m["role"] for m in payload["messages"]] == ["user", "user", "user", "system"]
+    assert payload["messages"][1]["content"] == [
+        {"type": "text", "text": "<system-reminder>\nstopped turn\n</system-reminder>"}
+    ]
+    assert payload["messages"][3]["content"] == [{"type": "text", "text": "this turn"}]
+
+
+def test_an_assistant_turn_the_formatter_drops_does_not_count():
+    """An assistant message with nothing to send never reaches the wire, so it
+    is not the turn a system entry stands before."""
+    payload = _payload(
+        [
+            SystemMessage("base prompt"),
+            HumanMessage("first question"),
+            build_operator_message("row", "system"),
+            AIMessage(""),
+            HumanMessage("second question"),
+            build_operator_message("envelope", "system"),
+        ]
+    )
+    assert [m["role"] for m in payload["messages"]] == ["user", "user", "user", "system"]
+
+
+# ---------------------------------------------------------------------------
+# Mid-conversation tool changes
+# ---------------------------------------------------------------------------
+
+_ADD = {"type": "tool_addition", "tool": {"type": "tool_reference", "name": "draw_chart"}}
+
+
+def _tool_change(*blocks):
+    return SystemMessage(
+        content=list(blocks),
+        additional_kwargs={OPERATOR_CHANNEL_KEY: "system", "lc_source": "tool_change"},
+    )
+
+
+def test_a_tool_change_reaches_the_wire_in_its_own_entry():
+    payload = _payload([SystemMessage("base prompt"), HumanMessage("hi"), _tool_change(_ADD)])
+    assert payload["messages"][-1] == {"role": "system", "content": [_ADD]}
+
+
+def test_entries_that_meet_are_joined_into_one():
+    """A row and a tool change written at the same point go out as one system
+    entry, the shape the wire rule allows, in the order they were written."""
+    payload = _payload(
+        [
+            SystemMessage("base prompt"),
+            HumanMessage("hi"),
+            build_operator_message("row", "system"),
+            _tool_change(_ADD),
+            AIMessage("answer"),
+        ]
+    )
+    assert payload["messages"] == [
+        {"role": "user", "content": "hi"},
+        {"role": "system", "content": [{"type": "text", "text": "row"}, _ADD]},
+        {"role": "assistant", "content": "answer"},
+    ]
+
+
+def test_a_tool_change_the_wire_cannot_place_is_not_sent():
+    """A user turn has no form for a tool change, so an entry of nothing else
+    that no assistant turn follows is left out rather than refused."""
+    payload = _payload(
+        [SystemMessage("base prompt"), HumanMessage("hi"), _tool_change(_ADD), HumanMessage("again")]
+    )
+    assert [m["role"] for m in payload["messages"]] == ["user", "user"]
+
+
+def _official(model: str = "claude-opus-5-5", **kwargs):
+    return _anthropic("anthropic-test", model=model, **kwargs)
+
+
+def test_tool_changes_ride_the_official_host_on_a_model_that_serves_them():
+    with provider_entry("anthropic-test", {"sdk": "anthropic", "operator_channel": "system"}):
+        assert carries_tool_changes(_official()) is True
+        assert carries_tool_changes(_official("claude-sonnet-5")) is False
+        assert carries_tool_changes(_official(base_url="https://api.deepseek.com/anthropic")) is False
+    with provider_entry("anthropic-test", {"sdk": "anthropic"}):
+        assert carries_tool_changes(_official()) is False
+    assert carries_tool_changes(_openai()) is False
+
+
+def test_tool_change_betas_add_inline_tools_once():
+    assert tool_change_betas() == [INLINE_TOOLS_BETA]
+    assert tool_change_betas(["compact-2026-09-04"]) == ["compact-2026-09-04", INLINE_TOOLS_BETA]
+    assert tool_change_betas([INLINE_TOOLS_BETA]) == [INLINE_TOOLS_BETA]
+
+
 def test_bridge_is_installed_once_and_idle_outside_the_window():
     """The wrapped hoist is the one module global; outside the window it is
     the stock function's answer, so every other Anthropic call is untouched."""
@@ -556,4 +704,51 @@ def test_bridge_is_installed_once_and_idle_outside_the_window():
     operator_channel._install_format_bridge()
     assert chat_models._format_messages is bridged
     with pytest.raises(ValueError, match="multiple non-consecutive system messages"):
-        bridged(_conversation())
+        bridged(_conversation(), model=None)
+
+
+
+@pytest.mark.parametrize(
+    ("model", "takes"),
+    [
+        ("claude-sonnet-5", False),
+        ("claude-haiku-5", False),
+        ("claude-fable-5-1", True),
+        ("claude-mythos-5", True),
+        ("claude-newfamily-9", False),
+    ],
+)
+def test_the_role_cutoff_is_per_family(model, takes):
+    """Sonnet 5 refuses the role though Opus 4.8 takes it; a family nobody
+    named fails closed."""
+    assert anthropic_serves_midturn_system(None, model) is takes
+
+
+def _turn_scoped(text: str) -> SystemMessage:
+    message = build_operator_message(text, "system", source="runtime_update")
+    message.additional_kwargs["clear_at"] = "next_user_message"
+    return message
+
+
+def test_a_turn_scoped_entry_keeps_its_clear_at_and_its_own_entry():
+    """Joining it to a row's entry would clear the row, or render it forever."""
+    row = build_operator_message("row", "system", source="runtime_update")
+    payload = _payload([SystemMessage("base prompt"), HumanMessage("hi"), row, _turn_scoped("stamp")])
+
+    entries = [m for m in payload["messages"] if m["role"] == "system"]
+    assert len(entries) == 2
+    assert "clear_at" not in entries[0]
+    assert entries[1]["clear_at"] == "next_user_message"
+    assert entries[1]["content"] == [{"type": "text", "text": "stamp"}]
+
+
+@pytest.mark.parametrize("key", ["anthropic-beta", "Anthropic-Beta"])
+def test_turn_scoped_needs_the_beta_in_the_clients_own_header(key):
+    """A header name is case-insensitive on the wire, so any casing sends it."""
+    with provider_entry("anthropic-test", {"sdk": "anthropic", "operator_channel": "system"}):
+        assert carries_turn_scoped(_official()) is False
+        with_beta = _official(default_headers={key: f"other-beta, {TURN_SCOPED_BETA}"})
+        assert carries_turn_scoped(with_beta) is True
+        assert carries_turn_scoped(_official("claude-sonnet-5", default_headers={"anthropic-beta": TURN_SCOPED_BETA})) is False
+    assert carries_turn_scoped(_openai()) is False
+

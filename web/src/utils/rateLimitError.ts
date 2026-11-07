@@ -18,12 +18,13 @@ export interface RateLimitErrorInfo {
 
 /** Hints the backend emits for upstream provider failures — each maps to an
  *  i18n-bound bullet the user sees ("check your API key", etc.). Keep in sync
- *  with the ``hints`` list in ``sse_producer.format_error_event``. */
+ *  with the ``hints`` list in ``stream_errors.error_event_data``. */
 export type UpstreamErrorHint =
   | 'api_key'
   | 'model_access'
   | 'provider_status'
-  | 'try_another_model';
+  | 'try_another_model'
+  | 'reconnect_account';
 
 /** The allowlist used to sanitize ``hints`` coming off the SSE wire. Any hint
  *  not in this set is dropped — protects renderers from rendering unknown
@@ -33,6 +34,7 @@ export const UPSTREAM_HINT_KEYS: readonly UpstreamErrorHint[] = [
   'model_access',
   'provider_status',
   'try_another_model',
+  'reconnect_account',
 ];
 
 /** i18n key lookup for each hint. Keep renderers in sync by importing this
@@ -42,6 +44,16 @@ export const UPSTREAM_HINT_I18N_KEY: Record<UpstreamErrorHint, string> = {
   model_access: 'chat.errorHintModelAccess',
   provider_status: 'chat.errorHintProviderStatus',
   try_another_model: 'chat.errorHintTryAnotherModel',
+  reconnect_account: 'chat.errorHintReconnectAccount',
+};
+
+/** Where a subscription whose sign-in lapsed is renewed. The server's refusal
+ *  of a turn carries the same link already worded; a failure mid-stream names
+ *  only the hint, so the client supplies the destination. */
+export const RECONNECT_ACCOUNT_LINK: ErrorLinkSpec = {
+  url: '/settings?tab=model',
+  label: 'Reconnect',
+  labelKey: 'chat.errorLinkReconnect',
 };
 
 export function isUpstreamHint(value: unknown): value is UpstreamErrorHint {
@@ -70,8 +82,9 @@ export interface StructuredError {
   /** Rendered in order after the message; the first is the primary action. */
   links?: ErrorLinkSpec[];
   /** ``upstream`` = LLM provider's fault (their 5xx/401/429). ``internal`` =
-   *  our pipeline. Undefined for rate-limit errors built on the client. */
-  kind?: 'upstream' | 'internal';
+   *  our pipeline. Undefined for rate-limit errors built on the client.
+   *  ``notice`` = nothing failed, so it reads as information, not an error. */
+  kind?: 'upstream' | 'internal' | 'notice';
   /** HTTP status from the upstream provider, when known. */
   statusCode?: number;
   /** Bulleted guidance to render under the message. */
@@ -85,7 +98,7 @@ export interface StructuredError {
 }
 
 /** The one 429 this service raises on its own: the concurrency gate in
- *  ``enforce_chat_limit``. Never travels through the quota service, so it
+ *  ``chat_limit_for``. Never travels through the quota service, so it
  *  arrives without a message and we supply one. */
 const OUR_OWN_LIMIT = 'burst_limit';
 

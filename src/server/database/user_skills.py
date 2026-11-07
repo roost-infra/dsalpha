@@ -25,14 +25,19 @@ un-owned tells a later plugin update to skip the row rather than overwrite
 the customization.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
+from psycopg.errors import LockNotAvailable
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
+from src.server.database import pool
 from src.server.database.pool import get_db_connection
+from src.server.database.session_lock import await_settled
+from src.server.database.user_lock import lock_user_writes
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,21 @@ class SkillCapReached(ValueError):
         self.limit = limit
 
 
+class SkillTriggerTaken(ValueError):
+    """A skill's name or alias would answer to a slash command already taken.
+
+    A ValueError like its siblings. ``code`` says what holds the trigger
+    (``trigger_reserved``: a built-in; ``trigger_taken``: an alias the user
+    gave a built-in; ``trigger_is_command``: another skill's alias, named by
+    ``params["skill"]``), since each has a different thing to rename.
+    """
+
+    def __init__(self, message: str, *, code: str, **params: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params
+
+
 class SkillNotOwned(ValueError):
     """An ``owned_by_plugin`` upsert found the row detached under it.
 
@@ -72,8 +92,10 @@ class SkillNotOwned(ValueError):
 # Namespace for the per-workspace skill-sync advisory lock (two-arg form).
 # The reconciler holds the session-level variant across a whole pass;
 # workspace-scoped content mutations (upsert/move/delete) take the xact-level
-# variant so they serialize against it. Lock order is always SKILL_SYNC →
-# per-user lock; for cross-workspace moves, both workspace locks sorted by id.
+# variant so they serialize against it, and a file restore holds it while it
+# fills the folder. Lock order is always SKILL_SYNC → workspace sync, and
+# SKILL_SYNC → per-user lock; for cross-workspace moves, both workspace locks
+# sorted by id.
 _SKILL_SYNC_NS = "SKILL_SYNC"
 
 # Rows of a soft-deleted workspace survive so restoring the workspace brings
@@ -102,16 +124,28 @@ class SkillSyncLockBusy(Exception):
 
 
 @asynccontextmanager
+async def _own_session():
+    """A connection outside the pool, closed on exit, which releases every
+    lock taken on it however the holder ends."""
+    conn = await pool.open_session_connection()
+    try:
+        yield conn
+    finally:
+        await await_settled(asyncio.ensure_future(conn.close()))
+
+
+@asynccontextmanager
 async def workspace_skill_sync_lock(workspace_id: str):
     """Session-level advisory lock held across one full reconcile pass.
 
-    Pins one pooled connection for the duration; released in ``finally`` and
-    by Postgres automatically if the connection dies mid-pass. Acquisition is
-    try-only: a pass is periodic, so waiting behind a stuck holder would park
-    a second pooled connection for as long as that holder lives, and a queue
-    of waiters is how one hung sandbox exhausts the pool.
+    Held on a session of its own, not a pooled connection: the pass spans
+    sandbox calls while it reads and writes through the pool, so as many
+    passes as the pool has slots would each keep one and wait on another.
+    Closing the session is the release, so a cancelled pass cannot leave the
+    lock behind. Acquisition is try-only: a pass is periodic, and a queue of
+    waiters behind one hung sandbox would hold a connection each.
     """
-    async with get_db_connection() as conn:
+    async with _own_session() as conn:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT pg_try_advisory_lock(hashtext(%s), hashtext(%s::text))",
@@ -120,14 +154,37 @@ async def workspace_skill_sync_lock(workspace_id: str):
             row = await cur.fetchone()
         if not (row and row[0]):
             raise SkillSyncLockBusy(workspace_id)
+        yield
+
+
+@asynccontextmanager
+async def hold_workspace_skill_sync(workspace_id: str, *, wait_s: float):
+    """Wait out a pass in flight, then hold the reconcile lock; yields the session.
+
+    For a writer that fills a workspace's skill folder over many transactions,
+    as a restore does, and so cannot take the transaction-level form. The wait
+    runs on a session of its own and before any other lock: the pass it waits
+    on needs pool slots to finish, so waiters each pinning one could take them
+    all, and a waiter holding its workspace's sync lock would queue that
+    workspace's backups behind the pass too.
+    """
+    async with _own_session() as conn:
         try:
-            yield
-        finally:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s::text))",
-                    (_SKILL_SYNC_NS, workspace_id),
-                )
+            # SET LOCAL scopes the timeout to this transaction; the session
+            # lock itself outlives the commit.
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        f"SET LOCAL lock_timeout = '{int(wait_s * 1000)}ms'"
+                    )
+                    await cur.execute(
+                        "SELECT pg_advisory_lock(hashtext(%s), hashtext(%s::text))",
+                        (_SKILL_SYNC_NS, workspace_id),
+                    )
+        except LockNotAvailable as e:
+            raise SkillSyncLockBusy(workspace_id) from e
+        yield conn
+
 
 # Hard cap on skills per user. Defined here (not in
 # services/user_skills/limits.py, which re-exports them) so the database layer
@@ -214,11 +271,11 @@ def _row_to_dict(row: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 async def list_user_skills(
-    user_id: str, *, workspace_id: str | None = None
+    user_id: str, *, workspace_id: str | None = None, conn=None
 ) -> list[dict[str, Any]]:
     """Every skill in one scope (user tier or one workspace), ordered by name."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_SKILL_COLUMNS_JOINED} FROM user_skills {_PLUGIN_JOIN} "
                 "WHERE user_skills.user_id = %s "
@@ -370,9 +427,7 @@ async def archive_key_unused_guard(archive_key: str, user_id: str):
     async with get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 await cur.execute(
                     "SELECT 1 FROM user_skills WHERE archive_key = %s LIMIT 1",
                     (archive_key,),
@@ -397,8 +452,11 @@ async def _check_trigger_clash(
     )
     clash = await cur.fetchone()
     if clash is not None:
-        raise ValueError(
-            f"/{name} is already the command of the skill {clash['name']!r}"
+        raise SkillTriggerTaken(
+            f"/{name} is already the command of the skill {clash['name']!r}",
+            code="trigger_is_command",
+            trigger=name,
+            skill=clash["name"],
         )
 
 
@@ -437,9 +495,7 @@ async def user_trigger_guard(user_id: str):
     async with get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
             yield
 
 
@@ -564,9 +620,7 @@ async def upsert_user_skill(
             async with conn.cursor(row_factory=dict_row) as cur:
                 if workspace_id is not None:
                     await _lock_skill_sync_xact(cur, workspace_id)
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 await _check_skill_caps(cur, user_id, name, workspace_id, archive_bytes)
 
                 await _check_trigger_clash(cur, user_id, name, workspace_id)
@@ -575,8 +629,10 @@ async def upsert_user_skill(
                 # since (set_platform_alias holds this same lock) can't end
                 # up duplicated by this row's name.
                 if name in await _platform_override_values(cur, user_id):
-                    raise ValueError(
-                        f"/{name} is already in use by another skill"
+                    raise SkillTriggerTaken(
+                        f"/{name} is already in use by another skill",
+                        code="trigger_taken",
+                        trigger=name,
                     )
                 command = await _free_command(
                     cur, user_id, name, workspace_id, command
@@ -700,10 +756,13 @@ async def move_user_skill(
     Raises ValueError when the name is taken in the target scope; returns None
     when no row exists in the source scope. Runs under the same per-user
     advisory lock as uploads, so the collision check and the update cannot
-    race a concurrent upsert. Any per-workspace disable of this name in the
-    two workspaces involved is cleared: the move is an explicit statement
-    that the skill is wanted where it now lives (and it was live where it
-    just left).
+    race a concurrent upsert. The move is an explicit statement that the
+    skill is wanted where it now lives, so the per-workspace disables of its
+    name go: in the two workspaces involved for a move between them, and in
+    every workspace of the user for a move onto or off the user tier. Those
+    markers describe the inherited skill, and the move either makes it the
+    one every workspace inherits or leaves none to inherit, where a marker
+    left behind would disable it again once it moves back up.
 
     A plugin-owned row cannot move INTO a workspace; that raises ValueError
     and the route turns it into a 409. Detaching it on the way down was the
@@ -722,9 +781,7 @@ async def move_user_skill(
                     {w for w in (from_workspace_id, to_workspace_id) if w}
                 ):
                     await _lock_skill_sync_xact(cur, ws)
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 if to_workspace_id is not None:
                     # The JOIN makes this return a row only for an owned one,
                     # so there is no plugin_id null-check to get wrong.
@@ -801,8 +858,16 @@ async def move_user_skill(
                 row = _row_to_dict(await cur.fetchone())
                 if row is None:
                     return None
-                for ws in (from_workspace_id, to_workspace_id):
-                    if ws is not None:
+                if from_workspace_id is None or to_workspace_id is None:
+                    await cur.execute(
+                        "DELETE FROM workspace_skill_disables "
+                        "WHERE name = %s AND workspace_id IN ("
+                        "SELECT workspace_id FROM workspaces "
+                        "WHERE user_id = %s)",
+                        (name, user_id),
+                    )
+                else:
+                    for ws in (from_workspace_id, to_workspace_id):
                         await cur.execute(
                             "DELETE FROM workspace_skill_disables "
                             "WHERE workspace_id = %s AND name = %s",
@@ -857,9 +922,7 @@ async def set_user_skill_command(
             async with conn.cursor(row_factory=dict_row) as cur:
                 if workspace_id is not None:
                     await _lock_skill_sync_xact(cur, workspace_id)
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 if command is not None and command in (
                     await _platform_override_values(cur, user_id)
                 ):
@@ -913,6 +976,7 @@ async def delete_user_skill(
     *,
     workspace_id: str | None = None,
     owned_by_plugin: str | None = None,
+    hand_made: bool = False,
     conn=None,
 ) -> dict[str, Any] | None:
     """Delete a skill row in one scope, returning it so the caller can drop
@@ -920,7 +984,9 @@ async def delete_user_skill(
 
     ``owned_by_plugin`` narrows the delete to a row that plugin still owns, so
     a Customize that detaches it after the caller read ownership is not
-    silently overridden. Same predicate as the catalog's delete.
+    silently overridden. Same predicate as the catalog's delete. ``hand_made``
+    is the other side of it: a row no plugin owns, so an install that takes
+    the name after the caller read it keeps its skill.
     """
     async with get_db_connection(conn) as db:
         async with db.transaction():
@@ -931,10 +997,11 @@ async def delete_user_skill(
                     f"DELETE FROM user_skills WHERE user_id = %s AND name = %s "
                     f"AND workspace_id IS NOT DISTINCT FROM %s "
                     f"AND (%s::uuid IS NULL OR plugin_id = %s::uuid) "
+                    f"AND (NOT %s OR plugin_id IS NULL) "
                     f"RETURNING {_SKILL_COLUMNS}",
                     (
                         user_id, name, workspace_id,
-                        owned_by_plugin, owned_by_plugin,
+                        owned_by_plugin, owned_by_plugin, hand_made,
                     ),
                 )
                 row = _row_to_dict(await cur.fetchone())
@@ -1003,9 +1070,7 @@ async def create_user_skill(
     async with get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 await _check_skill_caps(cur, user_id, name, workspace_id, archive_bytes)
                 await _check_trigger_clash(cur, user_id, name, workspace_id)
                 command = await _free_command(
@@ -1069,9 +1134,7 @@ async def update_user_skill_content_cas(
     async with get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s::text))", (user_id,)
-                )
+                await lock_user_writes(cur, user_id)
                 await cur.execute(
                     "SELECT name, workspace_id, archive_key FROM user_skills "
                     "WHERE user_id = %s AND user_skill_id = %s "
@@ -1136,10 +1199,10 @@ async def delete_user_skill_cas(
             return row
 
 
-async def list_workspace_skill_disables(workspace_id: str) -> set[str]:
+async def list_workspace_skill_disables(workspace_id: str, *, conn=None) -> set[str]:
     """Names of inherited skills this workspace has switched off."""
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 "SELECT name FROM workspace_skill_disables WHERE workspace_id = %s",
                 (workspace_id,),

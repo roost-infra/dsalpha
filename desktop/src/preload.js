@@ -48,6 +48,36 @@ contextBridge.exposeInMainWorld('langalphaDesktop', {
   scheme: flag('shell-scheme'),
 
   /**
+   * What this shell does that a page cannot detect by looking for a method,
+   * because it is behaviour rather than a function to call. Ask with
+   * `includes`, never with the version; a shell older than the list has none,
+   * which reads as "can do none of these".
+   *
+   * - `integration-login`: a `<scheme>://integrations/login/<name>/callback`
+   *   link opens the console's callback page for that login in this app, so a
+   *   browser that finished the login can hand the provider's answer back
+   *   rather than redeem it itself.
+   * - `integration-install`: the same for an install, through
+   *   `<scheme>://integrations/install/<name>/callback`, so a browser that
+   *   finished the install can hand its result back to the page that started
+   *   it.
+   * - `console-return`: the shell will load a console page a link from the
+   *   browser names, on the console's origin, in the console's window. The
+   *   link is `<scheme>://console/<page>?…` and the page one of a fixed few, so
+   *   a browser that landed on a console page with no session can hand it back
+   *   to the app, which has one.
+   *
+   *   All three present only in an edition that has a console to open them on;
+   *   one with no platform origin drops those links, so it leaves all three out.
+   *
+   * A list fixed when the window opens, and deliberately not a channel: nothing
+   * on it hands the page a way to drive anything.
+   */
+  capabilities: Object.freeze(
+    flag('console-returns') === '1' ? ['integration-login', 'integration-install', 'console-return'] : [],
+  ),
+
+  /**
    * Tell the shell which theme the page settled on, so the window background
    * matches the page. A mismatch shows as a coloured band during a live resize,
    * because the frame outruns the paint and the window colour fills the gap.
@@ -91,6 +121,29 @@ contextBridge.exposeInMainWorld('langalphaDesktop', {
    * shell 0.1.3, alongside `beginMcpOAuth`.
    */
   cancelMcpOAuth: (flowId) => ipcRenderer.invoke('shell:mcp-oauth-cancel', flowId),
+
+  /**
+   * Remote control of this Mac (Preview): a helper the bundle carries that lets
+   * the agent use this Mac as an SSH computer, run by macOS whether or not the
+   * app is open. Present on every platform, answering `supported: false` with a
+   * reason where it cannot work, so a page can tell "not here" from a shell too
+   * old to know it. Only the app's own pages are answered; anything else gets
+   * null.
+   */
+  getRemoteControl: () => ipcRenderer.invoke('shell:remote-control-status'),
+
+  /**
+   * Pair this Mac with the pairing at `scriptUrl` and turn the helper on.
+   * Nothing happens until the user agrees in a native dialog naming the server
+   * and the account, which is why a page cannot do this on its own. A Mac
+   * already paired, perhaps for another account signed in on it, is disconnected
+   * only after that same yes, so a page never turns one off to start afresh.
+   * Answers an outcome rather than rejecting, `{ ok, error?, message?, status }`.
+   */
+  enableRemoteControl: (scriptUrl) => ipcRenderer.invoke('shell:remote-control-enable', scriptUrl),
+
+  /** Turn the helper off and delete its folder, keys and tunnel with it. Safe to repeat. */
+  disableRemoteControl: () => ipcRenderer.invoke('shell:remote-control-disable'),
 })
 
 // The outage page is a local file loaded into this same window, so it shares

@@ -35,15 +35,17 @@ from langchain_core.tools import tool
 
 from ptc_agent.agent.middleware.runtime_context import (
     ENVELOPE_OPEN,
+    HARNESS_BLOCKS,
     MAX_AGENT_MD_SIZE,
     RUNTIME_UPDATE_KEY,
     BaselineContextMiddleware,
     BaselineEpoch,
     BaselineSources,
+    FrozenPromptMiddleware,
     MemoSource,
     MemoryTierSource,
     Observations,
-    TailEnvelopeMiddleware,
+    RowCarrierMiddleware,
     TurnContextMiddleware,
     advance_epoch,
     is_runtime_update_message,
@@ -51,16 +53,34 @@ from ptc_agent.agent.middleware.runtime_context import (
 )
 from ptc_agent.agent.middleware.runtime_context.baseline import _workspace_block
 from ptc_agent.agent.middleware.runtime_context.changes import render_diff, sha256_text
-from ptc_agent.agent.middleware.runtime_context.epoch import Workspace
+from ptc_agent.agent.middleware.runtime_context.epoch import (
+    ANALYST_MACHINE,
+    HOME_MACHINE,
+    HOSTED,
+    MAC_TOOLS,
+    MACHINE_PHRASES,
+    MOVED,
+    OTHER_COMPUTERS,
+    Workspace,
+)
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_update_kind,
+)
+from ptc_agent.agent.middleware.runtime_context.profile import ProfileSnapshot, ProfileSwitches
 from ptc_agent.core.paths import (
     MEMORY_INDEX_FILENAME,
     MEMORY_USER_DIR,
-    MEMORY_WORKSPACE_DIR,
+    WorkspaceLayout,
 )
 
 STATE_BASELINE = "runtime_baseline"
 
 NOW = datetime(2026, 4, 5, 19, 42, tzinfo=UTC)
+
+
+def _unrendered(epoch: BaselineEpoch) -> dict[str, str]:
+    """A block renderer for an epoch no thinking is bound to, which never states a section."""
+    return {}
 
 
 def _rows(update: dict) -> list:
@@ -105,7 +125,7 @@ def _middleware(session=None, **kwargs) -> BaselineContextMiddleware:
 
 _MEMORY_DISPLAY = {
     "user": f"{MEMORY_USER_DIR}/{MEMORY_INDEX_FILENAME}",
-    "workspace": f"{MEMORY_WORKSPACE_DIR}/{MEMORY_INDEX_FILENAME}",
+    "workspace": f"{WorkspaceLayout.MEMORY_DIR}/{MEMORY_INDEX_FILENAME}",
 }
 
 
@@ -194,7 +214,7 @@ class TestTheBlockIsFrozenForTheTurn:
         )
         mw = _middleware(
             _session("# Notes"),
-            workspace_name="Q3 Semis",
+            workspace=Workspace(name="Q3 Semis"),
             sources=_sources(
                 store,
                 memory={
@@ -294,7 +314,7 @@ class TestTheEpoch:
 
     @pytest.mark.asyncio
     async def test_a_build_that_no_longer_reads_a_source_rebuilds_without_it(self):
-        """A PTC thread continued without a sandbox must not keep rendering agent.md."""
+        """A thread continued on a build without agent.md must not keep rendering it."""
         with_sandbox = _middleware(_session("# Notes\nalpha"))
         state = await with_sandbox.abefore_agent({}, None)
         assert state[STATE_BASELINE]["agent_md"]["text"] == "# Notes\nalpha"
@@ -307,23 +327,6 @@ class TestTheEpoch:
 
         # Settled: the next turn without the source neither rebuilds nor files.
         assert await without.abefore_agent({**state, **second}, None) is None
-
-    @pytest.mark.asyncio
-    async def test_a_build_with_no_workspace_drops_the_one_the_ptc_epoch_froze(self):
-        """Flash reads no workspace at all, which is not a read that failed."""
-        ptc = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="Alpha Desk", workspace_description="desk",
-        )
-        state = await ptc.abefore_agent({}, None)
-        assert state[STATE_BASELINE]["workspace"]["name"] == "Alpha Desk"
-
-        flash = _middleware(None)
-        second = await flash.abefore_agent(state, None)
-        assert second[STATE_BASELINE]["reason"] == "source_removed"
-        assert second[STATE_BASELINE]["workspace"]["name"] == ""
-        assert second[STATE_BASELINE]["incomplete"] is False
-        assert "Alpha Desk" not in _text(await _render(flash, {**state, **second}))
 
     @pytest.mark.asyncio
     async def test_the_first_model_call_opens_the_turn_when_the_entry_hook_did_not_run(self):
@@ -343,14 +346,14 @@ class TestTheEpoch:
         session = _session("# Notes\nalpha")
         profile = {"name": "Ada", "timezone": "UTC", "locale": "en-US"}
         counts = {"portfolio_count": 2}
-        first = _middleware(session, user_profile=profile, user_data_counts=counts, sandbox_enabled=True)
+        first = _middleware(session, user_profile=profile, user_data_counts=counts)
         state = await first.abefore_agent({}, None)
         _set_agent_md(session, "# Notes\nalpha\nbeta")
         second = await first.abefore_agent(state, None)
         assert [runtime_update_from_message(m).kind for m in _rows(second)] == ["agent_md_changed"]
 
         event = {**_compaction_event("a1"), "cutoff_index": 0, "anchor_message_id": None}
-        blind = _middleware(session, user_profile=None, user_data_counts=None, sandbox_enabled=True)
+        blind = _middleware(session, user_profile=None, user_data_counts=None)
         third = await blind.abefore_agent({**state, **second, "_summarization_event": event}, None)
         assert third[STATE_BASELINE]["incomplete"] is False
         rows = [runtime_update_from_message(m) for m in _rows(third)]
@@ -363,17 +366,17 @@ class TestTheEpoch:
         """An agent.md row and a profile row in view; only the profile read failed."""
         session = _session("# Notes\nalpha")
         profile = {"name": "Ada", "timezone": "Asia/Hong_Kong", "locale": "en-US"}
-        first = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 2}, sandbox_enabled=True)
+        first = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 2})
         state = await first.abefore_agent({}, None)
         _set_agent_md(session, "# Notes\nalpha\nbeta")
-        moved = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 7}, sandbox_enabled=True)
+        moved = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 7})
         second = await moved.abefore_agent(state, None)
         assert sorted(runtime_update_from_message(m).kind for m in _rows(second)) == [
             "agent_md_changed", "profile_changed",
         ]
 
         event = {**_compaction_event("a1"), "cutoff_index": 0, "anchor_message_id": None}
-        blind = _middleware(session, user_profile=None, user_data_counts=None, sandbox_enabled=True)
+        blind = _middleware(session, user_profile=None, user_data_counts=None)
         third = await blind.abefore_agent({**state, **second, "_summarization_event": event}, None)
         rows = [runtime_update_from_message(m) for m in _rows(third)]
         assert [r.kind for r in rows] == ["baseline_rebuilt"]
@@ -389,9 +392,9 @@ class TestTheEpoch:
         and waiting for the retry would keep it in force for as long as agent.md stays down."""
         session = _session("# Notes\nalpha")
         profile = {"name": "Ada", "timezone": "UTC", "locale": "en-US"}
-        first = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 2}, sandbox_enabled=True)
+        first = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 2})
         state = await first.abefore_agent({}, None)
-        moved = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 7}, sandbox_enabled=True)
+        moved = _middleware(session, user_profile=profile, user_data_counts={"portfolio_count": 7})
         second = await moved.abefore_agent(state, None)
         assert [runtime_update_from_message(m).kind for m in _rows(second)] == ["profile_changed"]
 
@@ -710,7 +713,7 @@ class TestCrossWriterChanges:
             text="original",
         )
         advanced, updates = advance_epoch(
-            epoch, Observations(now=NOW, reads=(read,))
+            epoch, Observations(now=NOW, reads=(read,)), _unrendered
         )
 
         assert len(updates) == 1
@@ -738,7 +741,7 @@ class TestProfileFollowsTheGoldenRule:
         "name": "Ada",
         "timezone": "Europe/Paris",
         "locale": "fr-FR",
-        "agent_preference": {"output_format": "html"},
+        "agent_preference": {"output_format": ["visual"]},
     }
     COUNTS = {"portfolio_count": 2, "watchlist_summary": "1:5", "prefs_set": True}
 
@@ -749,7 +752,6 @@ class TestProfileFollowsTheGoldenRule:
             _session("# Notes"),
             user_profile=profile,
             user_data_counts=counts,
-            sandbox_enabled=True,
         )
 
     @pytest.mark.asyncio
@@ -798,13 +800,112 @@ class TestProfileFollowsTheGoldenRule:
     async def test_a_preference_change_names_only_that_key(self):
         state = await self._turn(self.PROFILE, self.COUNTS).abefore_agent({}, None)
         later = self._turn(
-            {**self.PROFILE, "agent_preference": {"output_format": "markdown", "tone": "terse"}},
+            {**self.PROFILE, "agent_preference": {"output_format": ["text", "visual"], "tone": "terse"}},
             self.COUNTS,
         )
         row = runtime_update_from_message(_rows(await later.abefore_agent(state, None))[0])
-        assert "Preference output_format: markdown (the frozen block says html)" in row.text
+        assert "Preference output_format: text, visual (the frozen block says visual)" in row.text
         assert "Preference tone: terse (not in the frozen block)" in row.text
         assert "Timezone" not in row.text
+
+    @pytest.mark.asyncio
+    async def test_a_list_preference_reads_as_a_list_in_words(self):
+        state = await self._turn(
+            {**self.PROFILE, "agent_preference": {"avoid": ["jargon"]}}, self.COUNTS
+        ).abefore_agent({}, None)
+        later = self._turn(
+            {**self.PROFILE, "agent_preference": {"avoid": ["jargon", "emoji"], "tone": ""}},
+            self.COUNTS,
+        )
+        row = runtime_update_from_message(_rows(await later.abefore_agent(state, None))[0])
+        assert "Preference avoid: jargon, emoji (the frozen block says jargon)" in row.text
+        # A key holding nothing has no line in the block, so no row either.
+        assert "Preference tone" not in row.text
+
+    @pytest.mark.asyncio
+    async def test_the_depth_guidance_is_worded_for_the_role(self):
+        """Home's research is often a hand-off, so its block says so."""
+        profile = {**self.PROFILE, "agent_preference": {"research_depth": "light"}}
+        texts = {}
+        for role in ("analyst", "chief_of_staff"):
+            mw = _middleware(
+                _session("# Notes"), user_profile=profile, user_data_counts=self.COUNTS, role=role
+            )
+            texts[role] = _text(await _render(mw, await mw.abefore_agent({}, None)))
+        assert "offer the full research rather than starting it unasked" in texts["analyst"]
+        assert "offer the hand-off to an analyst" in texts["chief_of_staff"]
+
+    def test_a_preference_field_is_its_line_in_the_block(self):
+        fields = ProfileSnapshot(
+            {"agent_preference": {"avoid": ["jargon", "emoji"], "flag": False, "none": [], "blank": ""}}
+        ).fields()
+        assert {k: v for k, v in fields.items() if k.startswith("Preference")} == {
+            "Preference avoid": "jargon, emoji",
+            "Preference flag": "False",
+        }
+
+    INVESTMENT = {
+        "investor_type": "individual",
+        "risk_level": "moderate",
+        "markets": ["us", "hk"],
+        "sectors": ["technology"],
+    }
+
+    @pytest.mark.asyncio
+    async def test_an_investment_profile_change_names_only_that_key(self):
+        state = await self._turn(
+            {**self.PROFILE, "investment_profile": self.INVESTMENT}, self.COUNTS
+        ).abefore_agent({}, None)
+        moved = {**self.INVESTMENT, "markets": ["us"], "horizon": "years"}
+        del moved["investor_type"]
+        later = self._turn({**self.PROFILE, "investment_profile": moved}, self.COUNTS)
+
+        rows = _rows(await later.abefore_agent(state, None))
+
+        assert len(rows) == 1
+        row = runtime_update_from_message(rows[0])
+        assert row.kind == "profile_changed"
+        changed = [
+            "Holding horizon: years (not in the frozen block)",
+            "Investor type: no longer set (the frozen block says individual)",
+            "Markets: us (the frozen block says us, hk)",
+        ]
+        assert [line for line in row.text.splitlines() if line in changed] == changed
+        for unchanged in ("Risk level", "Sectors", "Timezone", "Preference"):
+            assert unchanged not in row.text
+
+    @pytest.mark.asyncio
+    async def test_what_the_user_wants_help_with_leads_the_suggestions(self):
+        profile = {**self.PROFILE, "investment_profile": {"help_with": ["ideas", "portfolio"]}}
+        mw = self._turn(profile, self.COUNTS)
+        text = _text(await _render(mw, await mw.abefore_agent({}, None)))
+        block = text[text.index("## Investment Profile") : text.index("## Financial Context")]
+        assert "- **Wants help with**: ideas, portfolio" in block
+        assert "start from what they want help with, in the order listed." in block
+
+    @pytest.mark.parametrize(
+        "investment, guided",
+        [
+            ({"investor_type": "student"}, True),
+            ({"experience": "under_1y", "markets": ["us"]}, True),
+            ({"risk_level": "moderate", "approaches": ["technical"]}, False),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_who_the_user_is_sets_how_deep_to_go(self, investment, guided):
+        """The depth guidance follows the investor type or experience, and
+        only those: without either there is nothing to pitch the depth to."""
+        mw = self._turn({**self.PROFILE, "investment_profile": investment}, self.COUNTS)
+        text = _text(await _render(mw, await mw.abefore_agent({}, None)))
+        start = text.index("## Investment Profile")
+        block = text[start : text.index("## Financial Context")]
+        assert ("Match the depth to who they are." in block) is guided
+
+    @pytest.mark.asyncio
+    async def test_an_empty_investment_profile_renders_no_section(self):
+        mw = self._turn({**self.PROFILE, "investment_profile": {}}, self.COUNTS)
+        text = _text(await _render(mw, await mw.abefore_agent({}, None)))
+        assert "## Investment Profile" not in text
 
     @pytest.mark.asyncio
     async def test_compaction_catches_the_block_up(self):
@@ -854,7 +955,7 @@ class TestProfileFollowsTheGoldenRule:
     async def test_a_profile_read_that_did_not_answer_files_no_row(self):
         """Both platform helpers answer None on failure; that is not a cleared profile."""
         state = await self._turn(self.PROFILE, self.COUNTS).abefore_agent({}, None)
-        blind = _middleware(_session("# Notes"), user_profile=None, user_data_counts=None, sandbox_enabled=True)
+        blind = _middleware(_session("# Notes"), user_profile=None, user_data_counts=None)
 
         assert await blind.abefore_agent(state, None) is None
 
@@ -878,7 +979,7 @@ class TestProfileFollowsTheGoldenRule:
         merged = {**state, **second, "_summarization_event": event}
 
         blind = _middleware(
-            _session("# Notes"), user_profile=None, user_data_counts=None, sandbox_enabled=True
+            _session("# Notes"), user_profile=None, user_data_counts=None
         )
         third = await blind.abefore_agent(merged, None)
         assert third[STATE_BASELINE]["reason"] == "compaction"
@@ -911,7 +1012,7 @@ class TestProfileFollowsTheGoldenRule:
         merged = {**state, **second, "_summarization_event": event}
 
         blind = _middleware(
-            _session("# Notes"), user_profile=None, user_data_counts=None, sandbox_enabled=True
+            _session("# Notes"), user_profile=None, user_data_counts=None
         )
         third = await blind.abefore_agent(merged, None)
         fourth = await later.abefore_agent({**merged, **third}, None)
@@ -945,12 +1046,12 @@ class TestProfileFollowsTheGoldenRule:
         (an explicit choice, the watchlist); the block stays, the row says."""
         first = _middleware(
             _session("# Notes"), user_profile=self.PROFILE, user_data_counts=self.COUNTS,
-            sandbox_enabled=True, preferred_market="US",
+            preferred_market="US",
         )
         state = await first.abefore_agent({}, None)
         later = _middleware(
             _session("# Notes"), user_profile=self.PROFILE, user_data_counts=self.COUNTS,
-            sandbox_enabled=True, preferred_market="CN",
+            preferred_market="CN",
         )
         second = await later.abefore_agent(state, None)
 
@@ -974,6 +1075,53 @@ class TestProfileFollowsTheGoldenRule:
         later = self._turn(self.PROFILE, {**self.COUNTS, "portfolio_count": 7})
         assert await later.abefore_agent(state, None) is None
         assert "Portfolio: 7 holding(s)" in _text(await _render(later, state))
+
+    @pytest.mark.asyncio
+    async def test_an_epoch_stored_before_the_cursor_kept_the_profile_takes_it_from_a_quiet_read(
+        self,
+    ):
+        """A turn whose profile read does not answer measures the trading rule
+        against the profile as last seen, which such an epoch names by hash alone."""
+        state = await self._turn(self.PROFILE, self.COUNTS).abefore_agent({}, None)
+        moved = {**self.PROFILE, "timezone": "America/New_York"}
+        second = await self._turn(moved, self.COUNTS).abefore_agent(state, None)
+        assert [runtime_update_from_message(m).kind for m in _rows(second)] == [
+            "profile_changed"
+        ]
+        legacy = {**state, **second}
+        legacy[STATE_BASELINE] = {
+            k: v for k, v in second[STATE_BASELINE].items() if k != "profile_seen"
+        }
+
+        quiet = await self._turn(moved, self.COUNTS).abefore_agent(legacy, None)
+        assert quiet is not None
+        assert _rows(quiet) == []
+        assert quiet[STATE_BASELINE]["profile_seen"]["user_profile"] == moved
+
+        blind = _middleware(
+            _session("# Notes"),
+            user_profile={
+                "trading_permission": "autonomous",
+                "trading_settings_url": "https://example.com/settings",
+            },
+            user_data_counts=None,
+        )
+        third = await blind.abefore_agent({**legacy, **quiet}, None)
+        rows = [runtime_update_from_message(m) for m in _rows(third)]
+        assert [r.kind for r in rows] == ["profile_changed"]
+        assert "Trading permission: **Full autonomy.**" in rows[0].text
+        # A later profile row supersedes the earlier one whole, so it restates
+        # the change that row carried.
+        assert "Timezone: America/New_York (the frozen block says Europe/Paris)" in rows[0].text
+
+    def test_a_quiet_read_of_an_epoch_that_names_its_profile_writes_nothing(self):
+        frozen = ProfileSnapshot(self.PROFILE, self.COUNTS)
+        epoch = BaselineEpoch.from_state(
+            {"profile": frozen.to_state(), "observed": {"profile": frozen.sha()}}
+        )
+        assert advance_epoch(
+            epoch, Observations(now=NOW, profile=frozen), _unrendered
+        ) == (None, [])
 
 
 class TestSupersession:
@@ -1027,15 +1175,14 @@ class TestRendering:
             user_profile={
                 "name": "Ada",
                 "locale": "fr-FR",
-                "agent_preference": {"output_format": "html", "tone": "terse"},
+                "agent_preference": {"output_format": ["visual"], "tone": "terse"},
             },
             user_data_counts={"portfolio_count": 2, "watchlist_summary": "1:5"},
-            sandbox_enabled=True,
         )
         state = await mw.abefore_agent({}, None)
         text = _text(await _render(mw, state))
 
-        assert "Output Format: Styled HTML" in text
+        assert "Fit how you hand back an answer to the work behind it." in text
         assert "Default to the user's locale (fr-FR)" in text
         assert "**tone**: terse" in text
         assert ".agents/user/profile/portfolio.json" in text
@@ -1067,20 +1214,6 @@ class TestRendering:
         assert "the user's locale is the safe choice" in text
 
     @pytest.mark.asyncio
-    async def test_a_flash_style_agent_gets_no_html_routing_and_no_agentmd(self):
-        mw = _middleware(
-            None,
-            user_profile={"agent_preference": {"output_format": "html"}},
-            sandbox_enabled=False,
-        )
-        state = await mw.abefore_agent({}, None)
-        text = _text(await _render(mw, state))
-
-        assert "Output Format: Styled HTML" not in text
-        assert "<agentmd" not in text
-        assert "<user_identity>" in text
-
-    @pytest.mark.asyncio
     async def test_a_missing_agent_md_keeps_the_create_it_placeholder(self):
         mw = _middleware(_session(None))
         state = await mw.abefore_agent({}, None)
@@ -1097,13 +1230,13 @@ class TestRendering:
         """The static prompt calls <workspace> the one authoritative place for
         the name, so a rename has to reach the model without a rebuild."""
         first = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="Old Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="Old Name", description="old desc"),
         )
         state = await first.abefore_agent({}, None)
         later = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="New Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="New Name", description="old desc"),
         )
         second = await later.abefore_agent(state, None)
 
@@ -1120,18 +1253,18 @@ class TestRendering:
         # Back to the frozen name: one row that supersedes the notice.
         back = await first.abefore_agent(merged, None)
         assert runtime_update_from_message(_rows(back)[0]).text.endswith(
-            "Name and description are back to what <workspace> says."
+            "The workspace is back to what <workspace> says."
         )
 
     @pytest.mark.asyncio
     async def test_a_workspace_read_that_did_not_answer_files_no_row(self):
         """A DB blip is not a workspace that lost its name."""
         first = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="Old Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="Old Name", description="old desc"),
         )
         state = await first.abefore_agent({}, None)
-        blind = _middleware(_session("# Notes"), sandbox_enabled=True)
+        blind = _middleware(_session("# Notes"))
 
         assert await blind.abefore_agent(state, None) is None
 
@@ -1145,20 +1278,20 @@ class TestRendering:
     @pytest.mark.asyncio
     async def test_a_rebuild_blind_to_the_workspace_leaves_the_rename_row_in_force(self):
         first = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="Old Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="Old Name", description="old desc"),
         )
         state = await first.abefore_agent({}, None)
         later = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="New Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="New Name", description="old desc"),
         )
         second = await later.abefore_agent(state, None)
         assert len(_rows(second)) == 1
         event = {**_compaction_event("a1"), "cutoff_index": 0, "anchor_message_id": None}
         merged = {**state, **second, "_summarization_event": event}
 
-        blind = _middleware(_session("# Notes"), sandbox_enabled=True)
+        blind = _middleware(_session("# Notes"))
         third = await blind.abefore_agent(merged, None)
         assert third[STATE_BASELINE]["workspace"]["name"] == "Old Name"
         assert _rows(third) == []
@@ -1168,16 +1301,16 @@ class TestRendering:
         assert fourth is None or _rows(fourth) == []
 
         renamed_back = _middleware(
-            _session("# Notes"), sandbox_enabled=True,
-            workspace_name="Old Name", workspace_description="old desc",
+            _session("# Notes"),
+            workspace=Workspace(name="Old Name", description="old desc"),
         )
         fifth = await renamed_back.abefore_agent({**merged, **third}, None)
         row = runtime_update_from_message(_rows(fifth)[0])
         assert row.kind == "workspace_changed"
-        assert row.text.endswith("Name and description are back to what <workspace> says.")
+        assert row.text.endswith("The workspace is back to what <workspace> says.")
 
     @pytest.mark.asyncio
-    async def test_a_flash_build_drops_the_memo_pointer_a_ptc_epoch_froze(self):
+    async def test_a_build_with_no_memo_source_drops_the_pointer_a_ptc_epoch_froze(self):
         store = MagicMock()
 
         async def aget(namespace, key):
@@ -1187,15 +1320,15 @@ class TestRendering:
 
         store.aget = AsyncMock(side_effect=aget)
         ptc = _middleware(
-            _session("# Notes"), sources=_sources(store, memo=("u", "memos")), sandbox_enabled=True
+            _session("# Notes"), sources=_sources(store, memo=("u", "memos"))
         )
         state = await ptc.abefore_agent({}, None)
         assert "<memo-index" in _text(await _render(ptc, state))
 
-        flash = _middleware(None)
-        second = await flash.abefore_agent(state, None)
+        bare = _middleware(None)
+        second = await bare.abefore_agent(state, None)
         assert second[STATE_BASELINE]["reason"] == "source_removed"
-        assert "<memo-index" not in _text(await _render(flash, {**state, **second}))
+        assert "<memo-index" not in _text(await _render(bare, {**state, **second}))
 
     def test_the_workspace_name_is_escaped_as_element_text(self):
         block = _workspace_block(
@@ -1206,6 +1339,168 @@ class TestRendering:
 
     def test_a_workspace_with_no_name_leaves_no_empty_tag(self):
         assert _workspace_block(Workspace(description="x")) == ""
+
+    def test_a_user_with_one_computer_freezes_what_they_froze_before(self):
+        """No computer stays out of the state and the hash, so an epoch frozen
+        before computers were named files no row on the next turn."""
+        before = Workspace(name="Semis", description="Chips")
+        assert before.to_state() == {"name": "Semis", "description": "Chips"}
+        assert Workspace.from_state(before.to_state()).sha() == before.sha()
+        assert "Computer" not in _workspace_block(before)
+
+    def test_the_computer_is_named_and_only_the_analyst_is_told_its_reach(self):
+        """The Chief of Staff's own prompt says what another computer means
+        for it, so its block names the computer and nothing more."""
+        workspace = Workspace(name="Semis", computer="Big <box>")
+        analyst = _workspace_block(workspace, "analyst").splitlines()
+        chief = _workspace_block(workspace, "chief_of_staff").splitlines()
+        assert "Computer: Big &lt;box&gt;" in analyst
+        assert chief == ["<workspace>", "Name: Semis", "Computer: Big &lt;box&gt;", "</workspace>"]
+        assert len(analyst) == len(chief) + 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["analyst", "chief_of_staff"])
+    async def test_a_second_computer_is_a_row_and_the_block_stays(self, role):
+        """A block frozen with one computer never said what another computer
+        means, so the analyst's row says it; the Chief of Staff's prompt does."""
+        first = _middleware(
+            _session("# Notes"), workspace=Workspace(name="Semis"), role=role
+        )
+        state = await first.abefore_agent({}, None)
+        later = _middleware(
+            _session("# Notes"),
+            workspace=Workspace(name="Semis", computer="Big box"),
+            role=role,
+        )
+        second = await later.abefore_agent(state, None)
+        rows = [runtime_update_from_message(m) for m in _rows(second)]
+        assert [r.kind for r in rows] == ["workspace_changed"]
+        expected = ["Computer: Big box (not in the frozen block)"]
+        if role == "analyst":
+            expected.append(OTHER_COMPUTERS)
+        assert rows[0].text.splitlines()[-len(expected):] == expected
+        assert second[STATE_BASELINE]["epoch"] == state[STATE_BASELINE]["epoch"]
+
+    @pytest.mark.asyncio
+    async def test_a_renamed_computer_is_a_row_without_the_reach_sentence(self):
+        first = _middleware(
+            _session("# Notes"), workspace=Workspace(name="Semis", computer="Big box")
+        )
+        state = await first.abefore_agent({}, None)
+        later = _middleware(
+            _session("# Notes"), workspace=Workspace(name="Semis", computer="Lab")
+        )
+        rows = [
+            runtime_update_from_message(m)
+            for m in _rows(await later.abefore_agent(state, None))
+        ]
+        assert rows[0].text.splitlines()[-1] == "Computer: Lab (the frozen block says Big box)"
+        assert OTHER_COMPUTERS not in rows[0].text
+
+    @pytest.mark.parametrize("computer", ["", "Big box"])
+    def test_a_hosted_computer_freezes_the_hash_it_froze_before(self, computer):
+        """No machine stays out of the state and the hash, so an epoch frozen
+        before machines were told files no row on the next turn."""
+        before = Workspace(name="Semis", description="Chips", computer=computer)
+        legacy = f"Semis\nChips\n{computer}" if computer else "Semis\nChips"
+        assert before.sha() == sha256_text(legacy)
+        assert "machine" not in before.to_state()
+        mac = Workspace(
+            name="Semis",
+            description="Chips",
+            computer=computer,
+            machine="own",
+            root="/home/dev/langalpha",
+        )
+        assert Workspace.from_state(mac.to_state()) == mac
+        assert mac.sha() != before.sha()
+
+    @pytest.mark.parametrize("role", ["analyst", "chief_of_staff"])
+    @pytest.mark.parametrize("machine", ["personal_mac", "personal", "own_mac", "own"])
+    def test_the_users_own_machine_is_said_last_and_a_macs_tools_after_it(
+        self, role, machine
+    ):
+        workspace = Workspace(
+            name="Semis",
+            computer="Studio Mac",
+            machine=machine,
+            root="/Users/me/a<b",
+        )
+        template = HOME_MACHINE if role == "chief_of_staff" else ANALYST_MACHINE
+        expected = [
+            template.format(phrase=MACHINE_PHRASES[machine], root="/Users/me/a&lt;b")
+        ]
+        if machine.endswith("_mac"):
+            expected.append(MAC_TOOLS)
+        lines = _workspace_block(workspace, role).splitlines()
+        assert lines[-len(expected) - 1 :] == [*expected, "</workspace>"]
+        assert lines[2] == "Computer: Studio Mac"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("frozen", "now", "expected"),
+        [
+            # An epoch frozen before machines were told: no move to name.
+            (
+                ("", ""),
+                ("personal_mac", "/Users/me/langalpha"),
+                [
+                    ANALYST_MACHINE.format(
+                        phrase=MACHINE_PHRASES["personal_mac"],
+                        root="/Users/me/langalpha",
+                    ),
+                    MAC_TOOLS,
+                ],
+            ),
+            (
+                ("own_mac", "/Users/me/langalpha"),
+                ("", ""),
+                [
+                    MOVED.format(
+                        subject="This workspace",
+                        old=MACHINE_PHRASES["own_mac"],
+                        new=HOSTED,
+                    )
+                ],
+            ),
+            # Off a Mac onto another machine of theirs: the Mac's tools go.
+            (
+                ("own_mac", "/Users/me/langalpha"),
+                ("own", "/home/me/langalpha"),
+                [
+                    MOVED.format(
+                        subject="This workspace",
+                        old=MACHINE_PHRASES["own_mac"],
+                        new="another computer",
+                    ),
+                    ANALYST_MACHINE.format(
+                        phrase=MACHINE_PHRASES["own"], root="/home/me/langalpha"
+                    ),
+                ],
+            ),
+        ],
+    )
+    async def test_a_machine_change_is_a_row_in_the_blocks_words(
+        self, frozen, now, expected
+    ):
+        machine, root = frozen
+        first = _middleware(
+            _session("# Notes"),
+            workspace=Workspace(name="Semis", machine=machine, root=root),
+        )
+        state = await first.abefore_agent({}, None)
+        machine, root = now
+        later = _middleware(
+            _session("# Notes"),
+            workspace=Workspace(name="Semis", machine=machine, root=root),
+        )
+        rows = [
+            runtime_update_from_message(m)
+            for m in _rows(await later.abefore_agent(state, None))
+        ]
+        assert [r.kind for r in rows] == ["workspace_changed"]
+        # The row's own lines, after its heading and what it says of them.
+        assert rows[0].text.split("\n\n", 2)[2].splitlines() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -1263,7 +1558,7 @@ class TestTheHarnessBlocks:
 
     @pytest.mark.asyncio
     async def test_a_source_that_is_not_configured_leaves_no_block(self):
-        """Flash has no MCP roster to state, and no hole to rebuild for."""
+        """A build with no MCP roster has none to state, and no hole to rebuild for."""
         mw = _middleware(
             _session("# Notes"), blocks={"skills": lambda _state: self.MANIFEST}
         )
@@ -1313,6 +1608,36 @@ class TestTheHarnessBlocks:
         assert row.kind == "skills_changed"
         assert "+- **xlsx**: read and write workbooks" in row.text
         assert row.provenance == {"source": "harness"}
+
+    @pytest.mark.asyncio
+    async def test_a_block_changed_too_much_to_diff_rides_whole_in_its_row(self):
+        """A file row too large to diff points the model at the file; a block
+        has no file, so that notice left it nothing to read. A new day's
+        automation runs replacing the last day's in `<activity>` was the case.
+        """
+        def runs(day: int) -> str:
+            return "\n".join(
+                f"- 09:{i:02d} brief {i}, failed on day {day}: "
+                + " ".join(["provider timed out"] * 12)
+                for i in range(10)
+            )
+
+        texts = {"activity": runs(4)}
+        mw = _middleware(
+            _session("# Notes"), blocks={"activity": lambda _state: texts["activity"]}
+        )
+        state = await mw.abefore_agent({}, None)
+
+        texts["activity"] = runs(5)
+        second = await mw.abefore_agent(state, None)
+
+        row = runtime_update_from_message(_rows(second)[0])
+        assert row.kind == "activity_changed"
+        assert row.text.endswith(f"so this row carries all of it:\n\n{runs(5)}")
+        assert "Read it" not in row.text
+        # A row, not a rebuild: the frozen block and the cache behind it stay.
+        assert second[STATE_BASELINE]["epoch"] == 1
+        assert second[STATE_BASELINE]["blocks"]["activity"]["text"] == runs(4)
 
     @pytest.mark.asyncio
     async def test_a_manifest_with_no_skills_in_it_is_an_answer_not_a_hole(self):
@@ -1380,6 +1705,42 @@ class TestTheHarnessBlocks:
         assert state[STATE_BASELINE]["incomplete"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", list(HARNESS_BLOCKS))
+    async def test_a_rebuild_blind_to_a_block_keeps_its_row_in_force(self, kind):
+        """The rebuilt row names the exception by the block's own element.
+
+        A second block moves and is read, so the rebuild has a row to fold and
+        files the retiring row that carries the exception.
+        """
+        other = next(k for k in HARNESS_BLOCKS if k != kind)
+        texts: dict = {k: f"{k} v1" for k in HARNESS_BLOCKS}
+        mw = _middleware(
+            _session("# Notes"),
+            blocks={k: (lambda _state, k=k: texts[k]) for k in HARNESS_BLOCKS},
+        )
+        state = await mw.abefore_agent({}, None)
+        texts[kind] = f"{kind} v2"
+        texts[other] = f"{other} v2"
+        second = await mw.abefore_agent(state, None)
+        assert sorted(
+            runtime_update_from_message(m).kind for m in _rows(second)
+        ) == sorted([harness_update_kind(kind), harness_update_kind(other)])
+
+        texts[kind] = None
+        event = {
+            **_compaction_event("a1"),
+            "cutoff_index": 0,
+            "anchor_message_id": None,
+        }
+        third = await mw.abefore_agent(
+            {**state, **second, "_summarization_event": event}, None
+        )
+
+        rows = [runtime_update_from_message(m) for m in _rows(third)]
+        assert [r.kind for r in rows] == ["baseline_rebuilt"]
+        assert rows[0].provenance["still_in_force"] == [HARNESS_BLOCKS[kind].label]
+
+    @pytest.mark.asyncio
     async def test_the_blocks_survive_the_state_round_trip(self):
         """They are checkpointed, so a reload has to hand back the same bytes."""
         mw = self._middleware({"mcp_servers": self.ROSTER, "skills": self.MANIFEST})
@@ -1420,9 +1781,7 @@ class TestBreakpointBudget:
             [
                 AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"),
                 mw,
-                TailEnvelopeMiddleware(
-                    now=datetime(2026, 4, 5, 19, 42, tzinfo=UTC), guidance="lean"
-                ),
+                RowCarrierMiddleware(),
             ],
             capture,
         )
@@ -1482,9 +1841,7 @@ class TestBreakpointBudget:
             captured["request"] = request
             return MagicMock()
 
-        tail = TailEnvelopeMiddleware(
-            now=datetime(2026, 4, 5, 19, 42, tzinfo=UTC), guidance="lean"
-        )
+        tail = RowCarrierMiddleware()
         request = _request({**state, **second}, rows=await _turn_row())
         request = request.override(messages=[*request.messages, *_rows(second)])
         await tail.awrap_model_call(request, capture)
@@ -1512,3 +1869,156 @@ def _compose(middlewares, final_handler):
         chain = wrapper
 
     return chain
+
+
+# ---------------------------------------------------------------------------
+# The mount the static prompt states
+# ---------------------------------------------------------------------------
+
+
+class TestTheMountTheStaticPromptStates:
+    """Whether the file mount serves is stated in the static prompt, which is
+    the cached prefix, so the epoch freezes it: a mount coming up or going
+    down mid-epoch changes the prompt only at the next rebuild."""
+
+    @pytest.mark.asyncio
+    async def test_the_epoch_keeps_the_value_it_froze_until_a_compaction(self):
+        first = await _middleware(_session("# Notes"), files_mounted=False).abefore_agent(
+            {}, None
+        )
+        assert first[STATE_BASELINE]["files_mounted"] is False
+
+        mounted = _middleware(_session("# Notes"), files_mounted=True)
+        assert await mounted.abefore_agent(first, None) is None
+
+        rebuilt = await _middleware(_session("# Notes"), files_mounted=True).abefore_agent(
+            {**first, "_summarization_event": _compaction_event("msg-1")}, None
+        )
+        assert rebuilt[STATE_BASELINE]["files_mounted"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_epoch_stored_before_the_value_takes_this_turns_without_a_row(self):
+        first = await _middleware(_session("# Notes")).abefore_agent({}, None)
+        assert "files_mounted" not in first[STATE_BASELINE]
+
+        adopted = await _middleware(_session("# Notes"), files_mounted=True).abefore_agent(
+            first, None
+        )
+
+        assert adopted[STATE_BASELINE]["files_mounted"] is True
+        assert adopted[STATE_BASELINE]["epoch"] == first[STATE_BASELINE]["epoch"]
+        assert "messages" not in adopted
+
+    @pytest.mark.asyncio
+    async def test_the_prompt_is_sent_as_the_epoch_froze_it(self):
+        frozen = await _middleware(_session("# Notes"), files_mounted=False).abefore_agent(
+            {}, None
+        )
+        renders: list[bool] = []
+
+        def render(mounted: bool) -> str:
+            renders.append(mounted)
+            return f"Static system prompt, mounted={mounted}."
+
+        sent: list[SystemMessage] = []
+
+        async def handler(request: ModelRequest) -> ModelResponse:
+            sent.append(request.system_message)
+            return MagicMock()
+
+        built_mounted = FrozenPromptMiddleware(files_mounted=True, render=render)
+        await built_mounted.awrap_model_call(_request(frozen), handler)
+        await built_mounted.awrap_model_call(_request(frozen), handler)
+        assert [m.content for m in sent] == ["Static system prompt, mounted=False."] * 2
+        assert renders == [False]
+
+        built_unmounted = FrozenPromptMiddleware(files_mounted=False, render=render)
+        await built_unmounted.awrap_model_call(_request(frozen), handler)
+        await built_unmounted.awrap_model_call(_request({}), handler)
+        assert [m.content for m in sent[2:]] == ["Static system prompt."] * 2
+        assert renders == [False]
+
+
+class TestTheChannelsParagraph:
+    """The `<user_profile>` component names the chat-app settings folder when
+    the build has it. The block is cached per thread, so the epoch freezes
+    the value as it freezes ``files_mounted``."""
+
+    PROFILE = {"name": "Ada", "timezone": "Europe/Paris"}
+    HEADING = "## Channels"
+
+    def _turn(self, channels: bool | None) -> BaselineContextMiddleware:
+        return _middleware(
+            _session("# Notes"),
+            user_profile=self.PROFILE,
+            user_data_counts={"portfolio_count": 2},
+            switches=ProfileSwitches(channels=channels),
+        )
+
+    async def _block(self, mw, state: dict) -> tuple[dict, str]:
+        update = await mw.abefore_agent(state, None) or {}
+        merged = {**state, **update}
+        return merged, _text(await _render(mw, merged))
+
+    @pytest.mark.asyncio
+    async def test_it_renders_with_the_folder(self):
+        _, text = await self._block(self._turn(True), {})
+
+        assert self.HEADING in text
+        assert "`.agents/user/channels/`" in text
+        assert "Read the README there before you edit them." in text
+        assert "Use Read, Edit and Write only; Bash and code can't reach" in text
+
+    @pytest.mark.parametrize("channels", [False, None])
+    @pytest.mark.asyncio
+    async def test_it_is_absent_without(self, channels):
+        _, text = await self._block(self._turn(channels), {})
+
+        assert self.HEADING not in text
+        assert ".agents/user/channels" not in text
+
+    @pytest.mark.asyncio
+    async def test_the_epoch_keeps_the_value_it_froze_until_a_compaction(self):
+        state, first = await self._block(self._turn(False), {})
+        assert state[STATE_BASELINE]["channels_enabled"] is False
+
+        state, second = await self._block(self._turn(True), state)
+        assert second == first
+
+        compacted = {**state, "_summarization_event": _compaction_event("msg-1")}
+        state, rebuilt = await self._block(self._turn(True), compacted)
+        assert state[STATE_BASELINE]["channels_enabled"] is True
+        assert self.HEADING in rebuilt
+
+    @pytest.mark.asyncio
+    async def test_an_epoch_stored_before_the_value_takes_this_turns(self):
+        first = await self._turn(None).abefore_agent({}, None)
+        assert "channels_enabled" not in first[STATE_BASELINE]
+
+        adopted = await self._turn(True).abefore_agent(first, None)
+
+        assert adopted[STATE_BASELINE]["channels_enabled"] is True
+        assert adopted[STATE_BASELINE]["epoch"] == first[STATE_BASELINE]["epoch"]
+        assert "messages" not in adopted
+
+    def test_the_value_round_trips_through_the_checkpoint(self):
+        epoch = BaselineEpoch(channels_enabled=True, stored=True)
+
+        assert BaselineEpoch.from_state(epoch.to_state()).channels_enabled is True
+        assert "channels_enabled" not in BaselineEpoch().to_state()
+
+
+def test_a_summary_written_before_the_block_went_alone_restates_nothing():
+    """Its text already rides with the block, so restating it after the kept
+    turns would send it twice."""
+    from ptc_agent.agent.middleware.runtime_context.baseline import _compaction_note
+    from src.llms.provider_compaction import SIDECAR_KEY
+
+    def event(**marker):
+        carried = {"block": {"type": "compaction", "content": "x"}, "origin": "anthropic"}
+        carried |= {"text": "pointers", **marker}
+        summary = HumanMessage("[Context Summary] s", additional_kwargs={SIDECAR_KEY: carried})
+        return {"summary_message": summary}
+
+    assert _compaction_note(event(alone=True)) == "pointers"
+    assert _compaction_note(event()) is None

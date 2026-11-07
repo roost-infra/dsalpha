@@ -1,5 +1,6 @@
 /**
- * What is owed to someone whose connect left this tab and never came back.
+ * What is owed to someone whose connect left this tab and came back, with an
+ * answer or without one.
  *
  * Some authorization servers allowlist only the RFC 8252 native-app profile: a
  * loopback callback on the user's own machine. They refuse a hosted one at the
@@ -13,160 +14,220 @@
  * does is the part no advance note can cover: a provider can refuse for reasons
  * nobody listed, and the user is owed a sentence either way.
  */
-import { useEffect, useRef, useState } from 'react';
-import { readConnectOutcome } from './connectOutcome';
+import { refsOnlyValue } from '@/pages/ChatAgent/components/mcp/mcpSchemas';
+import type { McpServerInput, PendingSignIn } from '@/pages/ChatAgent/utils/api';
+import { readConnectOutcome, type ConnectOutcome } from './connectOutcome';
+import { CONNECTS_KEY } from './hooks/useConnectLanding';
 
-const PENDING_KEY = 'mcp:connect-started';
+/** Enough for a few sign-ins out at once in the desktop app, and no more. */
+const CONNECTS_MAX = 8;
+
+type Pending<K extends PendingSignIn['kind']> = Extract<PendingSignIn, { kind: K }>;
 
 /**
- * The connects that have left, as a set rather than a single name.
- *
- * More than one can be out at a time. Inside the shell the authorize URL opens
- * in the system browser, so the page never leaves and the tab keeps the other
- * rows clickable on purpose. A single slot meant the second connect overwrote
- * the first's marker, and then whichever flow answered first consumed a marker
- * belonging to the other -- so an abandoned connect went unreported, or a
- * timeout announced a broker that was still live.
+ * How to put the user back if a sign-in does not finish: the save that waited
+ * on it, less what cannot be kept (a zip, typed keys), or the Discover entry it
+ * was installing.
  */
-interface Pending {
+export type ConnectRetry =
+  | { kind: 'catalog'; entry: string }
+  | Pick<Pending<'plugin'>, 'kind' | 'sourceUrl' | 'subdir'>
+  /** A zip cannot be kept; the wizard opens to ask for it again. */
+  | Pick<Pending<'plugin_upload'>, 'kind'>
+  | Pending<'server'>
+  | Pick<Pending<'server_edit'>, 'kind' | 'name' | 'server'>
+  /** Anything with no form to restore: a reconnect, a brokerage, a workspace's. */
+  | { kind: 'other' };
+
+/**
+ * One connect this tab sent out, kept from the moment it starts until a
+ * landing settles it.
+ *
+ * Session-scoped and same-tab on purpose: that is exactly the span of the flow.
+ * A closed tab took its unfinished connect with it, and there is nobody left to
+ * explain it to. More than one can be out at a time: inside the shell the
+ * authorize URL opens in the system browser, so the page never leaves and the
+ * other rows stay clickable.
+ */
+export interface ConnectRecord {
+  /** The name the callback answers with, which is what the record is found by. */
   server: string;
+  /** The path of the page the connect started from, which is where Back lands. */
+  from: string;
+  /** What the user knows it as, which can be a plugin's or a vendor's name. */
+  label: string;
+  retry: ConnectRetry;
+  /** The vendor refuses a sign-in that does not come home through the
+   *  desktop app, so in a browser there is nothing to try again. */
+  desktopOnly: boolean;
   /**
-   * This connect is what brought the row live, so a return that says the
-   * connect failed owes the user the row back the way they left it.
-   *
-   * It has to survive the navigation because that is where the undo became
-   * unreachable: the rollback the lifecycle holds runs from a catch that sits
-   * before the jump to the vendor, and everything the vendor can refuse
-   * happens after it.
+   * The page went to the vendor. Only such a connect can be backed out of:
+   * the desktop app never leaves, and a browser can refuse the navigation, so
+   * a record marked at the start read as abandoned while the flow was live or
+   * had never gone at all.
    */
-  broughtLive: boolean;
+  left: boolean;
+  /**
+   * In the desktop app, when the shell gives the flow up (epoch ms), or null.
+   * The vendor's page is in the system browser there, so this page never
+   * leaves, and a load of it with nothing to say is a reload while the flow is
+   * still live, until the shell's timeout brings the window back with no
+   * answer.
+   */
+  shellGivesUpAt: number | null;
+  /**
+   * Where the connect asked its callback to land, path and query, or null
+   * from a build that did not keep it. A callback the server can no longer
+   * tie to its flow (a sign-in slower than the flow's state lives) can only
+   * fall back to the Plugins page, and this is the way back from there.
+   */
+  returnTo: string | null;
 }
 
-function readPending(): Pending[] {
+/**
+ * How long the desktop app holds a connect it sent to the system browser
+ * before bringing the window back without an answer, which is also how long
+ * the flow's state lives on the server. Read a little short, since the shell's
+ * clock starts a round trip before this page's does, and a landing that
+ * timeout causes must not be read as early.
+ */
+const SHELL_FLOW_MS = 10 * 60_000 - 30_000;
+
+/**
+ * A connector body with every value that could be a key taken out.
+ *
+ * Session storage outlives the form and is readable by any script on the
+ * page, so a value typed into a header or an env var is not kept. One that
+ * names a stored secret is only a name, and keeping it is what saves the user
+ * from picking it again.
+ */
+function withoutKeys(server: McpServerInput): McpServerInput {
+  const refsOnly = (values?: Record<string, string>) =>
+    values && Object.fromEntries(Object.entries(values).map(([k, v]) => [k, refsOnlyValue(v)]));
+  return { ...server, env: refsOnly(server.env), headers: refsOnly(server.headers) };
+}
+
+function keepable(retry: ConnectRetry): ConnectRetry {
+  return retry.kind === 'server' || retry.kind === 'server_edit'
+    ? { ...retry, server: withoutKeys(retry.server) }
+    : retry;
+}
+
+const RETRY_KINDS = new Set(['catalog', 'plugin', 'plugin_upload', 'server', 'server_edit', 'other']);
+
+function readConnects(): ConnectRecord[] {
   try {
-    const raw = sessionStorage.getItem(PENDING_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(CONNECTS_KEY) ?? 'null');
     if (!Array.isArray(parsed)) return [];
     return parsed.flatMap((v) => {
-      const e = v as Partial<Pending> | null;
-      return e && typeof e.server === 'string'
-        ? [{ server: e.server, broughtLive: e.broughtLive === true }]
-        : [];
+      const r = v as { [K in keyof ConnectRecord]?: unknown } | null;
+      if (!r || typeof r.server !== 'string') return [];
+      const retry = r.retry as { kind?: unknown } | undefined;
+      // Lenient on purpose: a marker an older build wrote is `{server}` alone,
+      // left by a connect that went to the vendor from this page.
+      return [
+        {
+          server: r.server,
+          from: typeof r.from === 'string' ? r.from : '/plugins',
+          label: typeof r.label === 'string' ? r.label : r.server,
+          retry:
+            typeof retry?.kind === 'string' && RETRY_KINDS.has(retry.kind)
+              ? (r.retry as ConnectRetry)
+              : { kind: 'other' },
+          desktopOnly: r.desktopOnly === true,
+          left: r.left !== false,
+          shellGivesUpAt: typeof r.shellGivesUpAt === 'number' ? r.shellGivesUpAt : null,
+          returnTo: typeof r.returnTo === 'string' ? r.returnTo : null,
+        },
+      ];
     });
   } catch {
-    // Unreadable or not the shape this build writes. Either way there is
-    // nothing here to explain to anyone.
+    // Unreadable or not a shape any build wrote. Either way there is nothing
+    // here to explain to anyone.
     return [];
   }
 }
 
-function writePending(pending: Pending[]): void {
+function writeConnects(records: ConnectRecord[]): void {
   try {
-    if (pending.length) sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
-    else sessionStorage.removeItem(PENDING_KEY);
+    if (records.length) {
+      sessionStorage.setItem(CONNECTS_KEY, JSON.stringify(records.slice(-CONNECTS_MAX)));
+    } else {
+      sessionStorage.removeItem(CONNECTS_KEY);
+    }
   } catch {
-    // Private windows, blocked site data.
+    // Private windows, blocked site data: the user retypes, nothing breaks.
   }
 }
 
 /**
- * Record that a connect left this tab, so the page can tell "never tried" from
- * "tried and never came back" when it next loads.
- *
- * Session-scoped and same-tab on purpose: that is exactly the span of the flow.
- * A closed tab took its unfinished connect with it, and there is nobody left to
- * explain it to.
+ * Keep what this connect is doing, under the page it starts from. A second
+ * connect for a server already out replaces the first: the callback names the
+ * server and nothing of the flow, so the newer one is the flow still live.
  */
-export function markConnectStarted(server: string, broughtLive: boolean): void {
-  const pending = readPending();
-  if (pending.some((p) => p.server === server)) {
-    // A second connect for a row that already has one open. Nothing coming back
-    // can say which of the two it settled: the callback carries the server name
-    // and nothing of the flow, so both attempts read the same marker. The undo
-    // is given up rather than guessed at. Guessing wrong switches off a row the
-    // newer flow has just brought live, which costs the user a connection;
-    // giving it up leaves an enabled row with nothing behind it, which they can
-    // switch off themselves. The shell is where this happens at all -- it keeps
-    // the page alive while the consent screen is elsewhere, so the second click
-    // is reachable.
-    writePending(
-      pending.map((p) => (p.server === server ? { ...p, broughtLive: false } : p)),
-    );
-    return;
-  }
-  writePending([...pending, { server, broughtLive }]);
+export function rememberConnect(
+  record: Pick<ConnectRecord, 'server' | 'label' | 'retry' | 'desktopOnly' | 'returnTo'>,
+): void {
+  const kept: ConnectRecord = {
+    ...record,
+    retry: keepable(record.retry),
+    from: window.location.pathname,
+    left: false,
+    shellGivesUpAt: null,
+  };
+  writeConnects([...readConnects().filter((r) => r.server !== record.server), kept]);
 }
+
+/** The page has gone to the vendor for this connect. */
+export function markConnectLeft(server: string): void {
+  writeConnects(readConnects().map((r) => (r.server === server ? { ...r, left: true } : r)));
+}
+
+/** The desktop app has sent this connect to the system browser. */
+export function markConnectHandedOff(server: string): void {
+  const shellGivesUpAt = Date.now() + SHELL_FLOW_MS;
+  writeConnects(readConnects().map((r) => (r.server === server ? { ...r, shellGivesUpAt } : r)));
+}
+
+/** What a landing says about the connects this tab sent out. */
+export type ConnectReturn =
+  /** The callback's answer, and the connect it settles, when this tab sent
+   *  it. Its params arrive in the address bar, so without a record they are
+   *  not proof of anything the user did. */
+  | { kind: 'answered'; outcome: ConnectOutcome; record: ConnectRecord | null }
+  /** A connect that went to the vendor and came back with nothing to say. */
+  | { kind: 'abandoned'; record: ConnectRecord };
 
 /**
- * What a landing owes the connects that left this tab.
- *
- * The marker is read on every landing, not only an unexplained one: the
- * callback's own params mean a flow ended, and a marker left behind would have
- * some later, ordinary visit to this page announce a failure that resolved long
- * ago.
+ * Read a landing at `search` once, and take the record it settles out of
+ * storage: left behind, it would have some later, ordinary visit announce a
+ * connect that resolved long ago. Null when the landing says nothing.
  */
-export interface ConnectReturnHandlers {
-  /** A connect that left and never came back, with nothing to say for itself. */
-  onAbandoned: (server: string) => void;
-  /**
-   * A connect that came back refused, having brought its row live on the way
-   * out. Only the refusals get this: a landing with nothing to say could as
-   * easily be a connect that finished in another tab, and switching off a live
-   * broker on a guess is worse than leaving one switched on.
-   */
-  onStandDown: (server: string) => void;
-}
-
-export function useConnectReturn(handlers: ConnectReturnHandlers): void {
-  // Captured during render, ahead of every effect. The component that owns the
-  // callback params strips them from the URL in an effect of its own, and
-  // whether that has happened yet is not a thing this hook should have to know.
-  const [landedWith] = useState(() => window.location.search);
-  const handler = useRef(handlers);
-  handler.current = handlers;
-
-  useEffect(() => {
-    const settle = (search: string) => {
-      const pending = readPending();
-      if (!pending.length) return;
-      const outcome = readConnectOutcome(new URLSearchParams(search));
-      if (outcome) {
-        // One flow answered. Retire that flow's marker and leave the rest
-        // alone; on the desktop another broker may still be out. An answer
-        // that names no server settles the only outstanding connect when
-        // there is exactly one, and otherwise names nobody, so it retires
-        // nobody.
-        const settled =
-          outcome.server ?? (pending.length === 1 ? pending[0].server : null);
-        if (!settled) return;
-        const entry = pending.find((p) => p.server === settled);
-        writePending(pending.filter((p) => p.server !== settled));
-        // The row this connect switched on has nothing behind it now, and a
-        // brokerage left switched on is inherited by every workspace, where it
-        // fails on first use with no connection to explain it.
-        if (entry?.broughtLive && outcome.kind === 'failed') {
-          handler.current.onStandDown(settled);
-        }
-        return;
-      }
-      // A landing with nothing to say about any flow, which is the case this
-      // hook exists for: backing out of the vendor's page. In a browser the
-      // page left, so there is exactly one connect it could belong to. With
-      // several out, nothing here names which one, and blaming a live broker
-      // reads worse than staying quiet -- so they are left to their own
-      // callbacks.
-      if (pending.length !== 1) return;
-      writePending([]);
-      handler.current.onAbandoned(pending[0].server);
-    };
-    settle(landedWith);
-    // Backing out of the vendor's page is usually a bfcache restore, which
-    // returns the tab without remounting anything. The single most common way
-    // to come back from a refused connect is the one a mount effect misses.
-    const onShow = (e: PageTransitionEvent) => {
-      if (e.persisted) settle(window.location.search);
-    };
-    window.addEventListener('pageshow', onShow);
-    return () => window.removeEventListener('pageshow', onShow);
-  }, [landedWith]);
+export function settleConnectReturn(search: string): ConnectReturn | null {
+  const records = readConnects();
+  const outcome = readConnectOutcome(new URLSearchParams(search));
+  if (outcome) {
+    // One flow answered, whichever page it left from: the callback lands here
+    // for every surface. The rest stay, since on the desktop another may still
+    // be out. An answer that names no server settles the only connect out when
+    // there is exactly one, and otherwise names nobody.
+    const settled = outcome.server ?? (records.length === 1 ? records[0].server : null);
+    const record = records.find((r) => r.server === settled) ?? null;
+    if (record) writeConnects(records.filter((r) => r !== record));
+    return { kind: 'answered', outcome, record };
+  }
+  // No answer at all: backing out of the vendor's page, or in the desktop app
+  // the shell giving the flow up. Back returns to the page a connect left
+  // from, and the shell to the page it started on, so only this page's are
+  // this landing's to explain, and of those, in a browser exactly one can have
+  // left. With several out nothing here names which, and blaming a live
+  // broker reads worse than staying quiet, so they are left to their own
+  // callbacks.
+  const now = Date.now();
+  const over = (r: ConnectRecord) =>
+    r.left || (r.shellGivesUpAt !== null && now >= r.shellGivesUpAt);
+  const mine = records.filter((r) => over(r) && r.from === window.location.pathname);
+  if (mine.length !== 1) return null;
+  writeConnects(records.filter((r) => r !== mine[0]));
+  return { kind: 'abandoned', record: mine[0] };
 }

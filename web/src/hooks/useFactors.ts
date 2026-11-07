@@ -8,7 +8,6 @@
  * rather than from an effect that has to be torn down on unmount.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AxiosError } from 'axios';
 
 import {
   deleteFactorLibraryItem,
@@ -44,8 +43,9 @@ import { queryKeys } from '@/lib/queryKeys';
  */
 export function detectionErrorMessage(error: unknown): string {
   if (!error) return '';
-  const axiosError = error as AxiosError<{ detail?: unknown }>;
-  const detail = axiosError.response?.data?.detail;
+  // The shape, not axios's type: the client is a fetch wrapper now, and this
+  // only ever reads `response.data.detail` off whatever it rejected with.
+  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
   if (detail && typeof detail === 'object' && typeof (detail as { message?: string }).message === 'string') {
     return (detail as { message: string }).message;
   }

@@ -59,6 +59,13 @@ def _build_tree(root: Path) -> None:
         "reference/LICENSE.txt",
         "reference/__pycache__",
         "data/nested/deep/values.csv",
+        ".DS_Store",
+        "reference/._notes.md",
+        "__MACOSX/reference/._notes.md",
+        ".env.example",
+        "data/.gitkeep",
+        ".git/HEAD",
+        "scripts/node_modules/dep/index.js",
     ):
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +95,18 @@ def test_sandbox_and_host_projections_agree(tmp_path):
         "reference/LICENSE.txt",
         "reference/__pycache__",
         "scripts/__pycache__/run.cpython-313.pyc",
+        ".DS_Store",
+        "reference/._notes.md",
+        "__MACOSX/reference/._notes.md",
     }
+    # What an upload sets aside (validate.py::_not_uploaded) is not dropped
+    # here: an agent-made skill keeps its dotfiles and dependencies in sync.
+    assert {
+        ".env.example",
+        "data/.gitkeep",
+        ".git/HEAD",
+        "scripts/node_modules/dep/index.js",
+    } <= sandbox_view
 
 
 def test_sandbox_reports_a_symlink_as_unsyncable(tmp_path):

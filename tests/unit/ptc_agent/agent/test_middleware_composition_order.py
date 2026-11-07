@@ -24,15 +24,12 @@ REPO_ROOT = os.path.abspath(
 
 # Every stack that composes both middlewares. A new agent stack wiring them must
 # be added here, or its ordering goes unguarded.
-SCAN_FILES = (
-    "src/ptc_agent/agent/agent.py",
-    "src/ptc_agent/agent/flash/agent.py",
-)
+SCAN_FILES = ("src/ptc_agent/agent/agent.py",)
 
-# Sites expected to wire both: agent.py's subagent + deepagent lists, and flash's
-# append sequence. The floor makes the guard non-vacuous — a rename that stopped
-# matching would otherwise leave zero sites and pass.
-MIN_SITES = 3
+# Sites expected to wire both: agent.py's subagent + deepagent lists. The floor
+# makes the guard non-vacuous — a rename that stopped matching would otherwise
+# leave zero sites and pass.
+MIN_SITES = 2
 
 _RESILIENCE_NAMES = frozenset(
     {
@@ -48,8 +45,8 @@ def _markers(node: ast.AST) -> set[str]:
     """Which of the two middlewares *node* refers to, by name or by constructor.
 
     Matches the local variable and the class alike, since agent.py splices
-    pre-built locals (``*model_resilience``, ``multimodal_strip``) while flash
-    appends the constructor call directly.
+    pre-built locals (``*model_resilience``, ``multimodal_strip``) while a
+    stack built by appending may pass the constructor call directly.
     """
     found: set[str] = set()
     for sub in ast.walk(node):
@@ -78,7 +75,7 @@ def _list_literal_sites(tree: ast.AST, rel_path: str) -> list[tuple[str, list[se
 
 
 def _append_sites(tree: ast.AST, rel_path: str) -> list[tuple[str, list[set[str]]]]:
-    """Ordered markers for each ``<var>.append/extend`` sequence — flash's stack.
+    """Ordered markers for each ``<var>.append/extend`` sequence.
 
     Source line order stands in for statement order; both calls sit in one
     straight-line function body, so the two agree.
@@ -192,8 +189,8 @@ def _strip_construction_sites(tree: ast.AST) -> list[tuple[ast.Call, ast.AST | N
     """Every ``MultimodalStripMiddleware(...)`` with the branch it sits under.
 
     The construction itself rather than the assignment: agent.py binds it to a
-    name and flash appends the call straight into its list, so a check written
-    against assignments alone never looks at one of the two stacks.
+    name, but a stack built by appending may put the call straight into its
+    list, and a check written against assignments alone never looks at it.
     """
     parents = {
         child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
@@ -238,7 +235,7 @@ def _sites(snippet: str) -> list[tuple[ast.Call, ast.AST | None]]:
 
 
 def test_unconditional_guard_accepts_a_plain_append() -> None:
-    """Self-test: flash's shape, appended straight into the list."""
+    """Self-test: the call appended straight into the list."""
     sites = _sites("def f():\n    mw.append(MultimodalStripMiddleware(a=1))\n")
     assert len(sites) == 1 and sites[0][1] is None
 

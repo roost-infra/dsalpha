@@ -4,16 +4,22 @@ Its counterpart, the Read interception that puts an attachment into history in
 the first place, is covered in ``test_multimodal_read``.
 """
 
+import base64
 import io
 import types
 
 import pypdf
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from PIL import Image
 
 from ptc_agent.agent.middleware._message_utils import order_tool_results_first
 from ptc_agent.agent.middleware.file_operations.multimodal_strip import (
+    _IF_NOT,
+    PLACEHOLDER_GUIDANCE,
     MultimodalStripMiddleware,
+    placeholder_guidance,
+    remove_attachments,
     strip_unsupported_content_blocks,
 )
 from src.llms.llm import LLM, get_input_modalities
@@ -38,6 +44,111 @@ def _pdf_bytes(pages: int = 1) -> bytes:
     buf = io.BytesIO()
     writer.write(buf)
     return buf.getvalue()
+
+
+def _read_result(call_id: str, path: str, block: dict | None = None) -> list:
+    """A Read call and its result carrying an attachment."""
+    block = block or {
+        "type": "file", "base64": "JVBERi0=", "mime_type": "application/pdf",
+        "filename": "x.pdf", "pages": 3,
+    }
+    return [
+        AIMessage(content="", tool_calls=[
+            {"name": "Read", "args": {"file_path": path}, "id": call_id}
+        ]),
+        ToolMessage(
+            content=[{"type": "text", "text": f"Loading: {path}"}, block],
+            tool_call_id=call_id,
+            id=f"t-{call_id}",
+        ),
+    ]
+
+
+class TestRemoveAttachments:
+    """What stands in for an attachment taken out to fit the context window."""
+
+    def test_a_pdf_read_names_its_path_and_pages(self):
+        msgs = _read_result("c1", "docs/a.pdf")
+        (_, result) = remove_attachments(msgs, {"t-c1"})
+        assert result.content[1]["text"] == (
+            "[docs/a.pdf (3 pages) was removed from the conversation to fit the context "
+            "window. Read it again by page range if you need it.]"
+        )
+        assert result.content[0] == msgs[1].content[0]
+
+    def test_a_one_page_pdf_is_one_page(self):
+        msgs = _read_result("c1", "docs/a.pdf")
+        (_, result) = remove_attachments(msgs, {"t-c1"}, pages=lambda block: 1)
+        assert result.content[1]["text"].startswith("[docs/a.pdf (1 page) was removed")
+
+    def test_an_image_read_names_its_path(self):
+        image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}
+        (_, result) = remove_attachments(_read_result("c1", "charts/c.png", image), {"t-c1"})
+        assert result.content[1]["text"] == (
+            "[Image charts/c.png was removed from the conversation to fit the context window.]"
+        )
+
+    def test_an_upload_names_what_it_carries(self):
+        upload = HumanMessage(id="h1", content=[
+            {"type": "text", "text": "[Attached PDF: q3.pdf (saved to work/uploads/q3.pdf)]"},
+            {"type": "file", "base64": "JVBERi0=", "mime_type": "application/pdf",
+             "filename": "q3.pdf"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+        ])
+        (result,) = remove_attachments([upload], {"h1"}, pages=lambda block: None)
+        assert [b["text"] for b in result.content[1:]] == [
+            "[q3.pdf was removed from the conversation to fit the context window. "
+            "Read it again by page range if you need it.]",
+            "[Image was removed from the conversation to fit the context window.]",
+        ]
+
+    def test_an_unsaved_upload_asks_for_it_again_instead_of_a_read(self):
+        upload = HumanMessage(id="h1", content=[
+            {"type": "file", "base64": "JVBERi0=", "mime_type": "application/pdf",
+             "filename": "q3.pdf", "unsaved": True},
+        ])
+        (result,) = remove_attachments([upload], {"h1"}, pages=lambda block: 12)
+        assert result.content == [{"type": "text", "text": (
+            "[q3.pdf (12 pages) was removed from the conversation to fit the context "
+            "window, and no copy was saved. Ask the user to attach it again if you need it.]"
+        )}]
+
+    def test_an_image_uploaded_with_no_saved_copy_asks_for_it_again(self):
+        upload = HumanMessage(id="h1", content=[
+            {"type": "text", "text": "[Attached image: chart.png]"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            {"type": "text", "text": "[Attached image: kept.png (saved to work/uploads/kept.png)]"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,def"}},
+        ])
+        (result,) = remove_attachments([upload], {"h1"})
+        assert [b["text"] for b in result.content] == [
+            "[Attached image: chart.png]",
+            "[Image chart.png was removed from the conversation to fit the context window, "
+            "and no copy was saved. Ask the user to attach it again if you need it.]",
+            "[Attached image: kept.png (saved to work/uploads/kept.png)]",
+            "[Image was removed from the conversation to fit the context window.]",
+        ]
+
+    @pytest.mark.parametrize("path", [None, "work/uploads/chart.png"], ids=["unsaved", "saved"])
+    def test_the_label_the_server_writes_is_the_one_read_back(self, path):
+        from src.server.models.additional_context import MultimodalContext
+        from src.server.utils.multimodal_context import inject_multimodal_context
+
+        image = MultimodalContext(
+            type="image", data="data:image/png;base64,abc", description="chart.png"
+        )
+        (written,) = inject_multimodal_context(
+            [{"role": "user", "content": "what is this?"}], [image], file_paths=[path]
+        )
+        upload = HumanMessage(id="h1", content=written["content"])
+        (result,) = remove_attachments([upload], {"h1"})
+        asked = "Ask the user to attach it again" in result.content[1]["text"]
+        assert asked is (path is None)
+
+    def test_messages_not_named_are_the_same_objects(self):
+        msgs = _read_result("c1", "docs/a.pdf")
+        assert remove_attachments(msgs, {"other"}) is msgs
+        assert remove_attachments(msgs, set()) is msgs
 
 
 class TestStripUnsupportedContentBlocks:
@@ -74,6 +185,32 @@ class TestStripUnsupportedContentBlocks:
         assert len(placeholders) == 3
         assert "Ask for a description." in placeholders[0]
         assert all("Ask for a description" not in p for p in placeholders[1:])
+
+    def test_a_url_read_is_not_said_to_be_in_the_workspace(self):
+        # The server fetched it; nothing wrote it into the workspace.
+        url = "https://example.test/report.pdf"
+        msgs = [
+            *_read_result("c1", "docs/a.pdf"),
+            *_read_result("c2", url),
+            *_read_result("c3", "docs/b.pdf"),
+        ]
+        result = strip_unsupported_content_blocks(
+            msgs, has_image=True, has_pdf=False, guidance=placeholder_guidance
+        )
+        texts = [m.content[1]["text"] for m in result if isinstance(m, ToolMessage)]
+
+        assert texts[0].endswith(f" {PLACEHOLDER_GUIDANCE}]")
+        assert texts[1] == (
+            "[PDF attached in a prior turn, not visible to the current model. "
+            f"The file is at {url}: download it in the sandbox and extract it yourself "
+            "with Python (a PDF's text or page renders, OCR or image analysis) before "
+            "giving up. If that cannot answer the question, tell the user: an unsupported "
+            "input type means switching to a model that accepts it, a page-limit rejection "
+            "means splitting the document or a longer-context model. Answer in best effort "
+            "otherwise.]"
+        )
+        # Each guidance is said once, on the first block it applies to.
+        assert texts[2] == "[PDF attached in a prior turn, not visible to the current model.]"
 
     def test_text_only_strips_image_blocks(self):
         msgs = [
@@ -255,7 +392,7 @@ class TestResolveModalities:
     """
 
     def test_reads_the_stamped_model_not_the_configured_one(self):
-        mw = MultimodalStripMiddleware(model_name="gpt-5.5")
+        mw = MultimodalStripMiddleware(model_name="gpt-6.1-sol")
         # Configured for a vision model, but resilience substituted a text-only
         # client; judging on the configured name would replay image blocks at it.
         assert mw._resolve_target(_request("glm-5.2"))[1] == ["text"]
@@ -271,12 +408,12 @@ class TestResolveModalities:
         carries no stamp. Lending it the configured model's modalities let a
         vision parent replay image blocks into a text-only subagent — the exact
         400 this strip exists to prevent."""
-        mw = MultimodalStripMiddleware(model_name="claude-sonnet-4-6")
-        assert "image" in get_input_modalities("claude-sonnet-4-6")  # parent sees images
+        mw = MultimodalStripMiddleware(model_name="claude-sonnet-5-5")
+        assert "image" in get_input_modalities("claude-sonnet-5-5")  # parent sees images
         assert mw._resolve_target(_request(None))[1] == ["text"]
 
     def test_a_client_with_no_metadata_at_all_is_text_only(self):
-        mw = MultimodalStripMiddleware(model_name="claude-sonnet-4-6")
+        mw = MultimodalStripMiddleware(model_name="claude-sonnet-5-5")
         no_metadata = types.SimpleNamespace(model=types.SimpleNamespace())
         assert mw._resolve_target(no_metadata)[1] == ["text"]
 
@@ -290,6 +427,29 @@ class TestResolveModalities:
         is not that model."""
         mw = MultimodalStripMiddleware(model_name="my-custom-vlm", custom_modalities=["text", "image"])
         assert mw._resolve_target(_request(None))[1] == ["text"]
+
+
+class TestReceives:
+    """What compaction counts toward its trigger: the blocks this strip
+    would send a model as they are, nothing it turns into a placeholder."""
+
+    PDF = {"type": "file", "base64": "JVBERi0=", "mime_type": "application/pdf", "pages": 20}
+    IMAGE = {"type": "image", "base64": "iVBORw0KGgo=", "mime_type": "image/png"}
+
+    def test_a_text_only_model_is_sent_neither(self):
+        receives = MultimodalStripMiddleware().receives(_request("glm-5.2").model)
+        assert not receives(self.PDF) and not receives(self.IMAGE)
+        assert receives({"type": "text", "text": "x"})
+
+    def test_a_pdf_model_is_sent_one_within_its_page_ceiling(self):
+        receives = MultimodalStripMiddleware().receives(_request("glm-5.3-flash-cn").model)
+        assert receives(self.PDF) and receives(self.IMAGE)
+        assert not receives({**self.PDF, "pages": 142})  # over its 100 pages
+
+    def test_an_override_applies_to_the_configured_model_only(self):
+        mw = MultimodalStripMiddleware(model_name="glm-5.2", custom_modalities=["text", "image"])
+        assert mw.receives(_request("glm-5.2").model)(self.IMAGE)
+        assert not mw.receives(_request(None).model)(self.IMAGE)
 
 
 class _ModelCallRequest:
@@ -315,10 +475,15 @@ class TestAwrapModelCall:
 
     @staticmethod
     def _image_history():
+        # A real image: a vision target now also has each image fitted to its
+        # pixel limit, and bytes that do not decode are replaced.
+        png = io.BytesIO()
+        Image.new("RGB", (4, 4), "white").save(png, "PNG")
+        url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
         return [
             HumanMessage(content=[
                 {"type": "text", "text": "Look at this"},
-                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {"type": "image_url", "image_url": {"url": url}},
             ]),
         ]
 
@@ -330,8 +495,9 @@ class TestAwrapModelCall:
             seen["request"] = request
             return "ok"
 
-        request = _ModelCallRequest("claude-sonnet-4-6", self._image_history())
-        assert await MultimodalStripMiddleware().awrap_model_call(request, handler) == "ok"
+        request = _ModelCallRequest("claude-sonnet-5-5", self._image_history())
+        response = await MultimodalStripMiddleware().awrap_model_call(request, handler)
+        assert getattr(response, "model_response", response) == "ok"
         assert seen["request"] is request, "vision target must not be cloned or stripped"
 
     @pytest.mark.asyncio
@@ -372,8 +538,8 @@ class TestManifestModelStampRoundTrip:
     rename on either cannot pass."""
 
     def test_the_key_the_producer_writes_is_the_key_the_middleware_reads(self):
-        client = LLM("claude-sonnet-4-6", api_key="unused-offline").get_llm()
-        assert client.metadata["manifest_model"] == "claude-sonnet-4-6"
+        client = LLM("claude-sonnet-5-5", api_key="unused-offline").get_llm()
+        assert client.metadata["manifest_model"] == "claude-sonnet-5-5"
 
         # Configured for a text-only model, handed a vision client: the stamp is
         # what must win, which only works if both sides name the same key.
@@ -384,7 +550,7 @@ class TestManifestModelStampRoundTrip:
     def test_the_stamp_is_the_manifest_key_not_the_provider_model_id(self):
         """``get_input_modalities`` looks up models.json keys; the API model id
         would silently resolve to text-only for every renamed model."""
-        client = LLM("claude-sonnet-4-6", api_key="unused-offline").get_llm()
+        client = LLM("claude-sonnet-5-5", api_key="unused-offline").get_llm()
         stamped = client.metadata["manifest_model"]
         assert get_input_modalities(stamped) != ["text"]
 
@@ -412,27 +578,13 @@ class TestTheGuidanceRidesInThePlaceholder:
             seen["request"] = request
             return "ok"
 
-        mw = MultimodalStripMiddleware(can_extract=True)
-        await mw.awrap_model_call(self._request(), handler)
+        await MultimodalStripMiddleware().awrap_model_call(self._request(), handler)
 
         placeholder = seen["request"].messages[0].content[1]["text"]
         assert placeholder.startswith("[Image attached in a prior turn, not visible to the current model.")
-        assert mw.placeholder_guidance in placeholder
+        assert PLACEHOLDER_GUIDANCE in placeholder
         assert "extract it yourself" in placeholder
         assert _system_text(seen["request"]) == "prefix"
-
-    @pytest.mark.asyncio
-    async def test_a_flash_agent_is_not_told_to_extract(self):
-        seen = {}
-
-        async def handler(request):
-            seen["request"] = request
-            return "ok"
-
-        await MultimodalStripMiddleware(can_extract=False).awrap_model_call(self._request(), handler)
-        placeholder = seen["request"].messages[0].content[1]["text"]
-        assert "extract it yourself" not in placeholder
-        assert "switching to a model that accepts it" in placeholder
 
 
 def _batch(*after_ai):
@@ -480,7 +632,7 @@ class TestToolResultsPrecedeInjectedMedia:
             _media(),
             ToolMessage(content="file1", tool_call_id="toolu_B"),
         )
-        request = _ModelCallRequest("claude-sonnet-4-6", history)
+        request = _ModelCallRequest("claude-sonnet-5-5", history)
         await MultimodalStripMiddleware().awrap_model_call(request, handler)
 
         kinds = [type(m).__name__ for m in seen["request"].messages]
@@ -500,12 +652,12 @@ class TestToolResultsPrecedeInjectedMedia:
             _media(),
             ToolMessage(content="file1", tool_call_id="toolu_B"),
         )
-        _, before = _format_messages(broken)
+        _, before = _format_messages(broken, model="claude-sonnet-4-6")
         assert [b["type"] for b in before[-1]["content"]] == [
             "tool_result", "text", "image", "tool_result"
         ], "precondition: the raw order interleaves a tool_result after content"
 
-        _, after = _format_messages(order_tool_results_first(broken))
+        _, after = _format_messages(order_tool_results_first(broken), model="claude-sonnet-4-6")
         kinds = [b["type"] for b in after[-1]["content"]]
         assert kinds.index("text") > max(
             i for i, k in enumerate(kinds) if k == "tool_result"
@@ -606,28 +758,61 @@ class TestPDFPageCeilingIsPerTarget:
 
     @pytest.mark.asyncio
     async def test_a_long_pdf_survives_to_a_1m_context_route(self):
-        blocks, _ = await _blocks_reaching("claude-sonnet-5", _pdf_block(300))
+        blocks, _ = await _blocks_reaching("claude-sonnet-5-5", _pdf_block(300))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
-    @pytest.mark.asyncio
-    async def test_the_same_pdf_is_stripped_for_a_200k_route(self):
-        blocks, request = await _blocks_reaching("claude-sonnet-4-6", _pdf_block(300))
-        assert [b["type"] for b in blocks] == ["text", "text"]
-        assert "300 pages" in blocks[1]["text"]
-        assert _STRIP.placeholder_guidance in blocks[1]["text"]
+    @pytest.fixture
+    def route_200k(self, monkeypatch):
+        """No shipped Anthropic model sits below a 1M context any more. A model
+        missing from the manifest would also be held to 100 pages, but it would
+        have no PDF modality either, so the 80-page case below only passes when
+        this entry is the one being read."""
+        monkeypatch.setitem(
+            LLM.get_model_config().llm_config,
+            "_route_200k",
+            {
+                "model_id": "_route_200k",
+                "provider": "anthropic",
+                "context": 200_000,
+                "input_modalities": ["text", "image", "pdf"],
+            },
+        )
+        return "_route_200k"
 
     @pytest.mark.asyncio
-    async def test_a_pdf_inside_the_200k_ceiling_still_reaches_it(self):
-        blocks, _ = await _blocks_reaching("claude-sonnet-4-6", _pdf_block(80))
+    async def test_the_same_pdf_is_stripped_for_a_200k_route(self, route_200k):
+        blocks, request = await _blocks_reaching(route_200k, _pdf_block(300))
+        assert [b["type"] for b in blocks] == ["text", "text"]
+        assert "300 pages" in blocks[1]["text"]
+        assert PLACEHOLDER_GUIDANCE in blocks[1]["text"]
+
+    @pytest.mark.asyncio
+    async def test_an_unsaved_upload_over_it_is_not_pointed_at_a_copy(self, route_200k):
+        """A composer PDF inlined because nothing could save it: no workspace
+        copy exists, so only what to tell the user follows."""
+        upload = HumanMessage(content=[
+            {"type": "text", "text": "[Attached PDF: filing.pdf]"},
+            {"type": "file", "base64": "abc", "mime_type": "application/pdf",
+             "filename": "filing.pdf", "pages": 300, "unsaved": True},
+        ])
+        blocks, _ = await _blocks_reaching(route_200k, upload)
+        assert blocks[1]["text"] == (
+            "[PDF filing.pdf (300 pages) is over the current model's 100-page limit "
+            f"and was not sent. {_IF_NOT}]"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_pdf_inside_the_200k_ceiling_still_reaches_it(self, route_200k):
+        blocks, _ = await _blocks_reaching(route_200k, _pdf_block(80))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
     @pytest.mark.asyncio
     async def test_a_provider_documenting_no_page_limit_keeps_the_block(self):
-        blocks, _ = await _blocks_reaching("gpt-5.5", _pdf_block(900))
+        blocks, _ = await _blocks_reaching("gpt-6.1-sol", _pdf_block(900))
         assert [b["type"] for b in blocks] == ["text", "file"]
 
     @pytest.mark.asyncio
-    async def test_an_unstamped_block_is_left_alone(self):
+    async def test_an_unstamped_block_is_left_alone(self, route_200k):
         """Blocks written before the stamp existed. Re-deriving the count would
         mean decoding every PDF in history per call; leaving them keeps the old
         behaviour rather than regressing threads that already work."""
@@ -636,7 +821,7 @@ class TestPDFPageCeilingIsPerTarget:
             {"type": "file", "base64": "abc", "mime_type": "application/pdf",
              "filename": "old.pdf"},
         ])
-        blocks, _ = await _blocks_reaching("claude-sonnet-4-6", legacy)
+        blocks, _ = await _blocks_reaching(route_200k, legacy)
         assert [b["type"] for b in blocks] == ["text", "file"]
 
 
@@ -647,7 +832,98 @@ class TestPageStampStaysLocal:
         if one passed it through, it would be an unknown field in the payload."""
         from langchain_anthropic.chat_models import _format_messages
 
-        _, payload = _format_messages([_pdf_block(300)])
+        _, payload = _format_messages([_pdf_block(300)], model="claude-sonnet-4-6")
         document = [b for b in payload[0]["content"] if b["type"] == "document"][0]
         assert "pages" not in document
         assert "pages" not in document["source"]
+
+    def test_the_unsaved_mark_never_reaches_the_wire(self):
+        from langchain_anthropic.chat_models import _format_messages
+
+        message = _pdf_block(3)
+        message.content[1]["unsaved"] = True
+        _, payload = _format_messages([message], model="claude-sonnet-4-6")
+        document = [b for b in payload[0]["content"] if b["type"] == "document"][0]
+        assert "unsaved" not in document and "unsaved" not in document["source"]
+
+
+class TestImageSideRule:
+    """A thread keeps the side its images were first sent at: one whose first
+    call already holds thinking was sent them by count, and fitting them to
+    the fixed 2000px side would invalidate that thinking."""
+
+    @staticmethod
+    def _history(*, thinking: bool) -> list:
+        png = io.BytesIO()
+        Image.new("RGB", (2400, 1200), "white").save(png, "PNG")
+        url = "data:image/png;base64," + base64.b64encode(png.getvalue()).decode()
+        answer = [{"type": "thinking", "thinking": "a chart", "signature": "sig"}] if thinking else []
+        return [
+            HumanMessage(content=[
+                {"type": "text", "text": "Look at this"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ]),
+            AIMessage(
+                content=[*answer, {"type": "text", "text": "A chart."}],
+                response_metadata={"model_name": "claude-sonnet-5-5"},
+            ),
+            HumanMessage(content="And now?"),
+        ]
+
+    @staticmethod
+    async def _call(history: list, state: dict) -> tuple[int, object]:
+        seen = {}
+
+        async def handler(request):
+            seen["request"] = request
+            return "ok"
+
+        request = _ModelCallRequest("claude-sonnet-5-5", history)
+        request.state = state
+        response = await MultimodalStripMiddleware().awrap_model_call(request, handler)
+        image = next(
+            block
+            for block in seen["request"].messages[0].content
+            if isinstance(block, dict) and block.get("type") != "text"
+        )
+        url = image.get("image_url", {}).get("url") or image["source"]["data"]
+        data = base64.b64decode(url.split(",", 1)[-1])
+        return Image.open(io.BytesIO(data)).width, response
+
+    @pytest.mark.asyncio
+    async def test_a_thread_from_before_the_fixed_side_keeps_its_images_by_count(self):
+        width, response = await self._call(self._history(thinking=True), {})
+
+        assert width == 2400
+        assert response.command.update == {"image_side_rule": "count"}
+        assert await self._call(self._history(thinking=True), {"image_side_rule": "count"}) == (
+            2400,
+            "ok",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_thread_with_thinking_and_no_image_behind_it_takes_the_fixed_side(self):
+        """Only an image sent ahead of thinking ties the thread to the count:
+        one arriving after it fits to the fixed side from its first call, so a
+        later image count never refits it."""
+        history = self._history(thinking=True)
+        history = [HumanMessage(content="Hi"), history[1], history[0]]
+
+        seen = {}
+
+        async def handler(request):
+            seen["request"] = request
+            return "ok"
+
+        request = _ModelCallRequest("claude-sonnet-5-5", history)
+        request.state = {}
+        response = await MultimodalStripMiddleware().awrap_model_call(request, handler)
+
+        assert response.command.update == {"image_side_rule": "fixed"}
+
+    @pytest.mark.asyncio
+    async def test_a_new_thread_fits_its_images_to_the_fixed_side(self):
+        width, response = await self._call(self._history(thinking=False), {})
+
+        assert width == 2000
+        assert response.command.update == {"image_side_rule": "fixed"}

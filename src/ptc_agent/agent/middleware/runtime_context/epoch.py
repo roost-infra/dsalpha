@@ -14,9 +14,11 @@ downstream works from typed fields instead of guessing at a dict.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any
+from html import escape
+from typing import Any, Literal
 
 from ptc_agent.agent.middleware.runtime_context.changes import (
     UPDATE_SCHEMA_VERSION,
@@ -25,11 +27,21 @@ from ptc_agent.agent.middleware.runtime_context.changes import (
     sha256_text,
 )
 from ptc_agent.agent.middleware.runtime_context.durable import DurableUpdate
+from ptc_agent.agent.middleware.runtime_context.harness_blocks import (
+    harness_block_for,
+)
 from ptc_agent.agent.middleware.runtime_context.profile import (
     ProfileSnapshot,
     profile_diff_lines,
 )
+from ptc_agent.agent.middleware.runtime_context.restate import (
+    restate,
+    restated_row,
+    row_block,
+    stated_sources,
+)
 from ptc_agent.agent.middleware.runtime_context.state import as_dict
+from ptc_agent.agent.roles import AgentRole
 
 # Rendered in a fixed order so the block is byte-identical for equal inputs.
 MEMORY_TIERS: tuple[str, ...] = ("user", "workspace")
@@ -46,10 +58,19 @@ MEMO_DISPLAY_CAP = 500
 
 @dataclass(frozen=True, slots=True)
 class Workspace:
-    """What the workspace was called when the epoch froze."""
+    """What the workspace was called, and the computer it was on, when the epoch froze.
+
+    The computer is empty for a user with one, and the machine (a
+    ``computer_machine`` token) and its folder there for a computer the
+    deployment hosts. None is in the state or the hash while empty, so an
+    epoch frozen before it was told reads the same.
+    """
 
     name: str = ""
     description: str = ""
+    computer: str = ""
+    machine: str = ""
+    root: str = ""
 
     @classmethod
     def from_state(cls, value: Any) -> Workspace:
@@ -57,13 +78,114 @@ class Workspace:
         return cls(
             name=str(data.get("name") or ""),
             description=str(data.get("description") or ""),
+            computer=str(data.get("computer") or ""),
+            machine=str(data.get("machine") or ""),
+            root=str(data.get("root") or ""),
         )
 
     def to_state(self) -> dict[str, Any]:
-        return {"name": self.name, "description": self.description}
+        state = {"name": self.name, "description": self.description}
+        if self.computer:
+            state["computer"] = self.computer
+        if self.machine:
+            state["machine"] = self.machine
+        if self.root:
+            state["root"] = self.root
+        return state
 
     def sha(self) -> str:
-        return sha256_text(f"{self.name}\n{self.description}")
+        text = f"{self.name}\n{self.description}"
+        if self.computer or self.machine:
+            text += f"\n{self.computer}"
+        if self.machine:
+            text += f"\n{self.machine}\n{self.root}"
+        return sha256_text(text)
+
+
+# Only to the analyst: the Chief of Staff's own prompt says what a workspace
+# on another computer means for it. Leans on the static prompt's sibling-folder
+# sentence rather than restating it.
+OTHER_COMPUTERS = (
+    "A workspace the user names that has no sibling folder is on another "
+    "computer, out of reach of your files. Say so, and that their Chief of "
+    "Staff can reach it, or they can work on it from that workspace."
+)
+
+# A computer that is the user's own machine, by its ``computer_machine`` token.
+# Their files and sign-ins sit beside LangAlpha's two folders there, which a
+# hosted computer never has, and a Mac's tools break GNU habits. The second
+# folder is where the machine's runtime is installed (``_ssh_bootstrap``).
+MACHINE_PHRASES = {
+    "personal_mac": "the user's own Mac, the one they work on",
+    "personal": "the user's own computer, the one they work on",
+    "own_mac": "a Mac of the user's own, reached over SSH",
+    "own": "a machine of the user's own, reached over SSH",
+}
+ANALYST_MACHINE = (
+    "This computer is {phrase}. Everything else on it is the user's: their "
+    "files, apps, settings and sign-ins. LangAlpha's part of it is `{root}`, "
+    "which holds this workspace and its siblings, and `~/.langalpha`, the "
+    "Python and tools your commands run with, where `pip install` puts "
+    "packages. Keep your work inside those two, and open or change anything "
+    "of the user's outside them, or act with their sign-ins (`git push`, "
+    "`gh`, cloud command line tools), only when the user asks you to."
+)
+HOME_MACHINE = (
+    "Home is on {phrase}. Everything else on it is the user's: their files, "
+    "apps, settings and sign-ins. LangAlpha's part of it is `{root}`, which "
+    "holds Home and the workspace folders, and `~/.langalpha`, the Python and "
+    "tools your commands run with, where `pip install` puts packages. Keep "
+    "your work inside those two, and open or change anything of the user's "
+    "outside them, or act with their sign-ins (`git push`, `gh`, cloud "
+    "command line tools), only when the user asks you to."
+)
+MAC_TOOLS = (
+    "It runs macOS, whose command line tools are not GNU's: `sed -i` needs "
+    "`''`, and `date -d`, `grep -P`, `stat -c`, `find -printf` and `timeout` "
+    "don't exist. Its bash may be version 3.2, without `declare -A` or `mapfile`."
+)
+# What a row says first when the workspace leaves a machine the frozen block
+# described; every phrase above ends in a clause the comma closes. Hosted
+# computers are all Linux, and "the cloud" would be wrong for a self-hosted
+# Docker one.
+MOVED = (
+    "{subject} moved from {old}, to {new}, so what <workspace> says about the "
+    "computer it left no longer applies."
+)
+HOSTED = "a Linux sandbox LangAlpha runs"
+
+
+def machine_lines(workspace: Workspace, role: AgentRole) -> list[str]:
+    """What the block says of the computer when it is the user's own machine."""
+    phrase = MACHINE_PHRASES.get(workspace.machine)
+    if phrase is None:
+        return []
+    template = HOME_MACHINE if role == "chief_of_staff" else ANALYST_MACHINE
+    lines = [template.format(phrase=phrase, root=escape(workspace.root, quote=False))]
+    if workspace.machine.endswith("_mac"):
+        lines.append(MAC_TOOLS)
+    return lines
+
+
+def moved_lines(frozen: Workspace, current: Workspace, role: AgentRole) -> list[str]:
+    """What a row says when the workspace is on another computer than the block says.
+
+    The move is named only off a machine the block described: an epoch frozen
+    before machines were told says nothing to take back, and its empty token
+    cannot tell a hosted computer from an SSH one.
+    """
+    if (current.machine, current.root) == (frozen.machine, frozen.root):
+        return []
+    lines: list[str] = []
+    if frozen.machine in MACHINE_PHRASES:
+        lines.append(
+            MOVED.format(
+                subject="Home" if role == "chief_of_staff" else "This workspace",
+                old=MACHINE_PHRASES[frozen.machine],
+                new="another computer" if current.machine else HOSTED,
+            )
+        )
+    return lines + machine_lines(current, role)
 
 
 def workspace_diff_lines(frozen: Workspace, current: Workspace) -> list[str]:
@@ -71,6 +193,7 @@ def workspace_diff_lines(frozen: Workspace, current: Workspace) -> list[str]:
     for label, was, now in (
         ("Name", frozen.name, current.name),
         ("Description", frozen.description, current.description),
+        ("Computer", frozen.computer, current.computer),
     ):
         if was == now:
             continue
@@ -184,6 +307,11 @@ class ObservationCursor:
 
     observed: dict[str, str] = field(default_factory=dict)
     drift_updates: int = 0
+    # The profile behind ``observed["profile"]``. A turn whose profile reads
+    # did not answer still knows the trading rule, and a row stating it has
+    # to restate everything else as last seen, since a later profile row
+    # supersedes the earlier ones whole.
+    profile: ProfileSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +335,22 @@ class BaselineEpoch:
     compaction_seen: str | None = None
     incomplete: bool = False
     cursor: ObservationCursor = field(default_factory=ObservationCursor)
+    # Whether the static system prompt says the file mount serves. The prompt
+    # is the cached prefix, so the mount coming up or going down mid-epoch
+    # would miss the whole prefix; the value holds until the next rebuild,
+    # and the tools work either way. None for a build that states nothing
+    # about the mount (no sandbox) or an epoch stored before the value was.
+    files_mounted: bool | None = None
+    # Whether the block states the chat-app settings folder, held the same
+    # way, since the block is cached per thread. None for a build that says
+    # nothing of it or an epoch stored before the value was.
+    channels_enabled: bool | None = None
+    # Whether the block names ``schedule_wakeup``. Held like the two above,
+    # since the block is the prefix of every thinking block after it; a flip
+    # is a rebuild where nothing binds the block, and is restated after the
+    # next summary where something does. None for an epoch stored before the
+    # value was.
+    wakeups_enabled: bool | None = None
     # False for the empty epoch of a thread's first turn, which is what tells
     # the first turn apart from an epoch that happens to carry no sources.
     stored: bool = False
@@ -230,6 +374,9 @@ class BaselineEpoch:
             str(key): str(sha) for key, sha in as_dict(data.get("observed")).items()
         }
         seen = data.get("compaction_seen")
+        mounted = data.get("files_mounted")
+        channels = data.get("channels_enabled")
+        wakeups = data.get("wakeups_enabled")
         return cls(
             epoch=int(data.get("epoch") or 0),
             built_at=str(data.get("built_at") or ""),
@@ -244,8 +391,13 @@ class BaselineEpoch:
             compaction_seen=seen if isinstance(seen, str) else None,
             incomplete=bool(data.get("incomplete")),
             cursor=ObservationCursor(
-                observed=observed, drift_updates=int(data.get("drift_updates") or 0)
+                observed=observed,
+                drift_updates=int(data.get("drift_updates") or 0),
+                profile=ProfileSnapshot.from_state(data.get("profile_seen")),
             ),
+            files_mounted=mounted if isinstance(mounted, bool) else None,
+            channels_enabled=channels if isinstance(channels, bool) else None,
+            wakeups_enabled=wakeups if isinstance(wakeups, bool) else None,
             stored=bool(data),
         )
 
@@ -268,6 +420,15 @@ class BaselineEpoch:
         }
         if self.agent_md is not None:
             state["agent_md"] = self.agent_md.to_state()
+        if self.files_mounted is not None:
+            state["files_mounted"] = self.files_mounted
+        if self.channels_enabled is not None:
+            state["channels_enabled"] = self.channels_enabled
+        if self.wakeups_enabled is not None:
+            state["wakeups_enabled"] = self.wakeups_enabled
+        if self.cursor.profile is not None and self.cursor.profile != self.profile:
+            # Left out when it is the frozen copy, which the hash then names.
+            state["profile_seen"] = self.cursor.profile.to_state()
         return state
 
     def source_entry(self, kind: str) -> FileEntry | None:
@@ -318,13 +479,38 @@ class Observations:
     # False when the platform read behind ``profile`` or ``workspace`` did not
     # answer this turn. A failed read is not a cleared profile or an unnamed
     # workspace, so the change detector skips the source and a rebuild keeps
-    # the previous copy, the way ``_entry`` does for a file.
+    # the previous copy, the way ``_entry`` does for a file. The trading rule
+    # in ``profile`` is the exception: it comes off the binding plans, so it
+    # is measured either way.
     profile_available: bool = True
     workspace_available: bool = True
-    # False for a build with no workspace to read at all (Flash). Such a build
-    # is not blind to the workspace, it has none, so a rebuild drops the one
-    # an earlier PTC epoch froze instead of carrying it forward.
+    # False for a build with no workspace to read at all (a subagent). Such a
+    # build is not blind to the workspace, it has none, so a rebuild drops
+    # any workspace an earlier epoch froze instead of carrying it forward.
     workspace_configured: bool = True
+    # Whether the file mount serves as this turn's agent was built. None for
+    # a build whose prompt says nothing about it.
+    files_mounted: bool | None = None
+    # Whether this turn's agent has the chat-app settings folder. None for a
+    # build whose block says nothing about it.
+    channels_enabled: bool | None = None
+    # Whether this turn's agent has ``schedule_wakeup``. None for a build
+    # whose block says nothing about it.
+    wakeups_enabled: bool | None = None
+    # Whether Claude's thinking is in what the next call sends. Such a block
+    # stays valid only while the system prompt in front of it is sent as it
+    # was, so while one is in view the block is never rebuilt: what a rebuild
+    # would have said goes into rows instead.
+    thinking_bound: bool = False
+    # What the newest summary leaves for the turns after it to read, carried
+    # by the row filed once that summary is seen. None when it leaves nothing.
+    compaction_note: str | None = None
+    # Whether the call that answered from that summary was sent its note
+    # already, so the rows after it restate without it.
+    compaction_note_sent: bool = False
+    # The role this turn's agent runs in, for the rows whose wording differs
+    # by role.
+    role: AgentRole = "analyst"
 
 
 # ---------------------------------------------------------------------------
@@ -332,38 +518,120 @@ class Observations:
 # ---------------------------------------------------------------------------
 
 
+Plan = Literal["observe", "rebuild", "restate", "state_sources"]
+
+
 def advance_epoch(
-    epoch: BaselineEpoch, observations: Observations
+    epoch: BaselineEpoch,
+    observations: Observations,
+    render: Callable[[BaselineEpoch], dict[str, str]],
 ) -> tuple[BaselineEpoch | None, list[DurableUpdate]]:
     """The epoch this turn leaves behind, and the rows it owes the model.
 
-    One decision for all of it. Either the epoch is rebuilt, and no row is owed
-    because the block itself now says what the sources hold, or the block stands
-    and every source that moved since it was last observed files a row. Returns
-    ``(None, [])`` when nothing moved, which is the common case and writes no
-    state at all.
+    One decision for all of it (:func:`_plan`). Either the epoch is rebuilt,
+    and no row is owed because the block itself now says what the sources
+    hold, or the block stands and every source that moved since it was last
+    observed files a row. Returns ``(None, [])`` when nothing moved, which is
+    the common case and writes no state at all. ``render`` gives each section
+    of an epoch's block, which is how a row states a section whole where the
+    block stands with a rebuild due.
     """
-    reason = _rebuild_reason(epoch, observations)
-    if reason is not None:
-        rebuilt = _freeze(epoch, observations, reason)
-        # A rebuild that carried a source's old copy forward has not folded
-        # that source's rows in, so they stay the current word on it and the
-        # retiring row names them as the exception; every other row is
-        # retired now, whether or not the epoch is complete, since a source
-        # that stays unavailable would otherwise keep a row about a folded
-        # source in force for as long as the retries run. A file read that
-        # failed is retried by the incomplete epoch; a platform read that did
-        # not answer is measured again by the change detector next turn.
-        carried = _carried_row_kinds(observations)
-        folded = [kind for kind in observations.retained_rows if kind not in carried]
-        if not folded:
-            return rebuilt, []
-        still = sorted({kind for kind in observations.retained_rows if kind in carried})
-        return rebuilt, [_rebuilt_row(observations.now, folded, still)]
+    plan, reason = _plan(epoch, observations)
+    if plan == "rebuild":
+        return _rebuild(epoch, observations, reason)
+    if plan == "restate":
+        return restate(epoch, _freeze(epoch, observations, reason), observations, render)
     rows, cursor = _observe(epoch, observations)
-    if not rows:
+    if plan == "state_sources":
+        rebuilt = _freeze(epoch, observations, reason)
+        stated, cursor = stated_sources(epoch, rebuilt, observations, cursor, render)
+        if stated is not None:
+            rows.append(stated)
+    # An epoch stored before the cursor kept the profile has a hash that a row
+    # since may have moved off the frozen copy. A read that answers says what
+    # it names; kept, a later turn whose read does not answer can still
+    # measure the trading rule against it.
+    backfilled = (
+        epoch.profile is not None
+        and _seen_profile(epoch) is None
+        and cursor.profile is not None
+    )
+    adopted = {}
+    for name in ("files_mounted", "channels_enabled", "wakeups_enabled"):
+        value = getattr(observations, name)
+        if getattr(epoch, name) is None and value is not None:
+            adopted[name] = value
+    if adopted:
+        # An epoch stored before it froze a value takes this turn's, as its
+        # rebuild would have: no row, since no prompt stated another.
+        epoch = replace(epoch, **adopted)
+        backfilled = True
+    if not rows and not backfilled:
         return None, []
     return replace(epoch, cursor=cursor), rows
+
+
+def _plan(epoch: BaselineEpoch, obs: Observations) -> tuple[Plan, str | None]:
+    """How this turn advances the epoch, and the rebuild reason behind it.
+
+    ``observe`` files a row for each source that moved, and ``rebuild``
+    freezes a new block. A block Claude's thinking is bound to stands even
+    when a rebuild is due, since rebuilding it would invalidate every thinking
+    block after it, so what the rebuild would have said goes into rows
+    instead: ``restate`` after a summary, and otherwise ``state_sources``,
+    which observes as well.
+    """
+    reason = _rebuild_reason(epoch, obs)
+    if reason is None:
+        return "observe", None
+    if not (epoch.stored and obs.thinking_bound):
+        return "rebuild", reason
+    if _summarized(epoch, obs):
+        return "restate", reason
+    return "state_sources", reason
+
+
+def _rebuild(
+    epoch: BaselineEpoch, obs: Observations, reason: str
+) -> tuple[BaselineEpoch, list[DurableUpdate]]:
+    """The rebuilt epoch, and the rows that hand authority back to its block."""
+    rebuilt = _freeze(epoch, obs, reason)
+    # A rebuild that carried a source's old copy forward has not folded
+    # that source's rows in, so they stay the current word on it and the
+    # retiring row names them as the exception; every other row is
+    # retired now, whether or not the epoch is complete, since a source
+    # that stays unavailable would otherwise keep a row about a folded
+    # source in force for as long as the retries run. A file read that
+    # failed is retried by the incomplete epoch; a platform read that did
+    # not answer is measured again by the change detector next turn.
+    carried = _carried_row_kinds(obs)
+    folded = [kind for kind in obs.retained_rows if kind not in carried]
+    rows: list[DurableUpdate] = []
+    if folded:
+        still = sorted({kind for kind in obs.retained_rows if kind in carried})
+        rows.append(_rebuilt_row(obs.now, folded, still))
+    if not obs.profile_available:
+        # The rebuilt block states this turn's trading rule, but a profile
+        # row it leaves in force can still state the one before it.
+        profile_row, seen = _profile_step(rebuilt, obs)
+        if profile_row is not None and seen is not None:
+            rows.append(profile_row)
+            rebuilt = replace(
+                rebuilt,
+                cursor=ObservationCursor(
+                    observed={**rebuilt.cursor.observed, "profile": seen.sha()},
+                    drift_updates=rebuilt.cursor.drift_updates + 1,
+                    profile=seen,
+                ),
+            )
+    if _summarized(epoch, obs) and obs.compaction_note:
+        rows.insert(0, restated_row(obs, [], [], after_summary=True))
+    return rebuilt, rows
+
+
+def _summarized(epoch: BaselineEpoch, obs: Observations) -> bool:
+    """Whether a summary the epoch has not taken in is in view."""
+    return obs.compaction is not None and epoch.compaction_seen != obs.compaction
 
 
 def compaction_fingerprint(event: Any) -> str | None:
@@ -394,25 +662,6 @@ def _carried_row_kinds(obs: Observations) -> set[str]:
     return kinds
 
 
-#: The block a change row of each kind speaks for, as the retiring row names it.
-_ROW_BLOCKS: dict[str, str] = {
-    "agent_md_changed": "<agentmd>",
-    "memo_changed": "the memo count",
-    "profile_changed": "<user_profile> and <user_identity>",
-    "workspace_changed": "<workspace>",
-    "mcp_servers_changed": "<mcp-servers>",
-    "skills_changed": "<skills>",
-}
-
-
-def _row_block(kind: str) -> str:
-    # The two memory tiers are two blocks with one tag, and a rebuild can fold
-    # one while the other read fails, so the exception has to name the tier.
-    if kind.startswith("memory_changed:"):
-        return f"<memory> for the {kind.split(':', 1)[1]} tier"
-    return _ROW_BLOCKS.get(kind, kind)
-
-
 def _rebuilt_row(now: datetime, folded: list[str], still: list[str]) -> DurableUpdate:
     """The row that retires the change rows a rebuild folded in.
 
@@ -425,7 +674,7 @@ def _rebuilt_row(now: datetime, folded: list[str], still: list[str]) -> DurableU
     """
     provenance: dict[str, Any] = {"source": "harness"}
     if still:
-        provenance["still_in_force"] = sorted({_row_block(kind) for kind in still})
+        provenance["still_in_force"] = sorted({row_block(kind) for kind in still})
         # The kinds behind the labels, for the next rebuild's retained-row
         # scan: a compaction can take the change rows this row keeps in force
         # while keeping this row, and the exception has to outlive them.
@@ -451,17 +700,22 @@ def _rebuild_reason(epoch: BaselineEpoch, obs: Observations) -> str | None:
         return "new_source"
     if epoch.source_kinds() - {read.kind for read in obs.reads}:
         # The inverse: the stored epoch froze a source this build does not
-        # read (a PTC thread continued in flash mode has no agent.md, no
-        # workspace memory and no roster). The block would keep rendering it
-        # and the change detector would never look at it again.
+        # read (a deploy retired it, or a block an earlier build stated, such
+        # as the scratchpad, this one does not). The block would keep rendering
+        # it and the change detector would never look at it again.
         return "source_removed"
-    if obs.compaction is not None and epoch.compaction_seen != obs.compaction:
+    if _summarized(epoch, obs):
         return "compaction"
     if (
         obs.rebuild_after_updates
         and epoch.cursor.drift_updates >= obs.rebuild_after_updates
     ):
         return "drift"
+    # TODO(2026-11-25): delete 30 days after this ships, once the threads written before it have aged out. None then means off.
+    if None not in (epoch.wakeups_enabled, obs.wakeups_enabled) and (
+        epoch.wakeups_enabled != obs.wakeups_enabled
+    ):
+        return "switches"
     return None
 
 
@@ -499,7 +753,7 @@ def _freeze(
     # instead of losing the source for the life of the epoch.
     if obs.memo_configured and obs.memo_count is None:
         incomplete = True
-    # A build with no memo source (Flash) has none to carry: the pointer an
+    # A build with no memo source has none to carry: the pointer an
     # earlier PTC epoch froze names a path this build cannot reach.
     memo = previous.memo if obs.memo_configured else None
     memo_carried = memo is not None and obs.memo_count is None
@@ -521,7 +775,7 @@ def _freeze(
     identity = obs.identity
     profile_carried = not obs.profile_available and previous.profile is not None
     if profile_carried:
-        profile = previous.profile
+        profile = previous.profile.with_trading_of(obs.profile)
         # The identity block is derived from the same read, so a read that
         # did not answer keeps both: the defaults it would render otherwise
         # are nobody's name, zone or market.
@@ -549,6 +803,9 @@ def _freeze(
     ):
         if carried and kind in retained and key in previous.cursor.observed:
             observed[key] = previous.cursor.observed[key]
+    # The loop above may have kept the previous cursor's hash, and with it the
+    # profile behind that hash.
+    seen = profile if observed["profile"] == profile.sha() else _seen_profile(previous)
 
     return BaselineEpoch(
         epoch=previous.epoch + 1,
@@ -563,7 +820,10 @@ def _freeze(
         blocks=blocks,
         compaction_seen=obs.compaction,
         incomplete=incomplete,
-        cursor=ObservationCursor(observed=observed, drift_updates=0),
+        cursor=ObservationCursor(observed=observed, drift_updates=0, profile=seen),
+        files_mounted=obs.files_mounted,
+        channels_enabled=obs.channels_enabled,
+        wakeups_enabled=obs.wakeups_enabled,
         stored=True,
     )
 
@@ -591,17 +851,19 @@ def _observe(
             rows.append(workspace_row)
         observed["workspace"] = obs.workspace.sha()
 
-    if obs.profile_available:
-        profile_row = _profile_row(epoch, obs, observed.get("profile"))
-        if profile_row is not None:
-            rows.append(profile_row)
+    profile_row, seen = _profile_step(epoch, obs)
+    if profile_row is not None:
+        rows.append(profile_row)
+    if seen is not None:
         # Advanced whether or not a row was written: a change the rows cannot
         # describe still counts as seen, and a later return to the frozen
         # values has to read as a change from what was seen last.
-        observed["profile"] = obs.profile.sha()
+        observed["profile"] = seen.sha()
 
     return rows, ObservationCursor(
-        observed=observed, drift_updates=epoch.cursor.drift_updates + len(rows)
+        observed=observed,
+        drift_updates=epoch.cursor.drift_updates + len(rows),
+        profile=seen or epoch.cursor.profile,
     )
 
 
@@ -625,7 +887,13 @@ def _file_row(
         # supersedes an earlier "changed" notice that is now wrong.
         text = f"{read.path} matches its frozen copy again."
     else:
-        text = render_diff(entry.text, read.content, read.path)
+        # A harness block has no file behind it for the model to open.
+        text = render_diff(
+            entry.text,
+            read.content,
+            read.path,
+            readable=harness_block_for(read.update_kind) is None,
+        )
     return DurableUpdate(
         kind=read.update_kind,
         schema_version=UPDATE_SCHEMA_VERSION,
@@ -668,7 +936,7 @@ def _memo_row(epoch: BaselineEpoch, obs: Observations) -> DurableUpdate | None:
 def _workspace_row(
     epoch: BaselineEpoch, obs: Observations, last: str | None
 ) -> DurableUpdate | None:
-    """A row when the workspace was renamed or redescribed since last seen.
+    """A row when the name, description, computer or machine changed since last seen.
 
     The static prompt names <workspace> as the one authoritative place for the
     name, so a rename has to reach the model without the block, and the cache
@@ -679,9 +947,15 @@ def _workspace_row(
     if (last or frozen.sha()) == current_sha:
         return None
     if current_sha == frozen.sha():
-        text = "Name and description are back to what <workspace> says."
+        text = "The workspace is back to what <workspace> says."
     else:
-        text = "\n".join(workspace_diff_lines(frozen, obs.workspace))
+        lines = workspace_diff_lines(frozen, obs.workspace)
+        if obs.role != "chief_of_staff" and obs.workspace.computer and not frozen.computer:
+            # A block frozen with one computer never said what a workspace on
+            # another one means.
+            lines.append(OTHER_COMPUTERS)
+        lines.extend(moved_lines(frozen, obs.workspace, obs.role))
+        text = "\n".join(lines)
     return DurableUpdate(
         kind="workspace_changed",
         schema_version=UPDATE_SCHEMA_VERSION,
@@ -691,8 +965,44 @@ def _workspace_row(
     )
 
 
+def _seen_profile(epoch: BaselineEpoch) -> ProfileSnapshot | None:
+    """The profile the cursor last measured, or None when the epoch cannot say.
+
+    An epoch stored before the cursor kept it has the hash alone, which names
+    the frozen copy only when no row has moved it since.
+    """
+    if epoch.cursor.profile is not None:
+        return epoch.cursor.profile
+    frozen = epoch.profile
+    if (
+        frozen is not None
+        and epoch.cursor.observed.get("profile", frozen.sha()) == frozen.sha()
+    ):
+        return frozen
+    return None
+
+
+def _profile_step(
+    epoch: BaselineEpoch, obs: Observations
+) -> tuple[DurableUpdate | None, ProfileSnapshot | None]:
+    """The profile row this turn owes, if any, and the profile the cursor moves to.
+
+    A turn whose profile reads did not answer still stamps its order tools off
+    the binding plans the trading rule comes from, so the rule is measured
+    against the rest of the profile as last seen rather than skipped with it.
+    """
+    if obs.profile_available:
+        current = obs.profile
+    else:
+        seen = _seen_profile(epoch)
+        if seen is None:
+            return None, None
+        current = seen.with_trading_of(obs.profile)
+    return _profile_row(epoch, current, obs.now), current
+
+
 def _profile_row(
-    epoch: BaselineEpoch, obs: Observations, last: str | None
+    epoch: BaselineEpoch, current: ProfileSnapshot, now: datetime
 ) -> DurableUpdate | None:
     """A row when the profile or the data counts moved since they were last seen.
 
@@ -705,22 +1015,22 @@ def _profile_row(
         # An epoch from before profiles were frozen: nothing to measure against
         # until the next rebuild carries a snapshot.
         return None
-    current_sha = obs.profile.sha()
+    current_sha = current.sha()
     frozen_sha = frozen.sha()
-    if (last or frozen_sha) == current_sha:
+    if (epoch.cursor.observed.get("profile") or frozen_sha) == current_sha:
         return None
     if current_sha == frozen_sha:
         # Back to what the block already says. Still a row: it supersedes an
         # earlier "changed" notice that is now wrong.
         text = "Every field is back to the value in <user_profile>."
     else:
-        text = "\n".join(profile_diff_lines(frozen, obs.profile))
+        text = "\n".join(profile_diff_lines(frozen, current))
     return DurableUpdate(
         kind="profile_changed",
         schema_version=UPDATE_SCHEMA_VERSION,
         text=text,
         provenance={"source": "platform", "tier": "profile"},
-        created_at=obs.now,
+        created_at=now,
     )
 
 

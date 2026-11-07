@@ -53,18 +53,19 @@ class _PinnedConfig:
 def _render_pair(surface: str) -> tuple[str, str]:
     """Return (detailed, lean) for a surface name."""
     loader = init_loader()
-    if surface == "ptc":
+    base, _, scratchpad = surface.partition("+")
+    if base in ("ptc", "chief-of-staff"):
         # No tool_summary: the main agent's roster lives in the baseline now,
         # so the shipped render is the one that points at <mcp-servers>.
-        kwargs = dict(subagent_summary="STUB", crawl_enabled=True)
+        kwargs = dict(
+            subagent_summary="STUB", crawl_enabled=True,
+            scratchpad_enabled=bool(scratchpad),
+        )
+        if base == "chief-of-staff":
+            kwargs["role"] = "chief_of_staff"
         return (
             loader.get_system_prompt(**guidance_template_vars("detailed"), **kwargs),
             loader.get_system_prompt(**guidance_template_vars("lean"), **kwargs),
-        )
-    if surface == "flash":
-        return (
-            loader.render("flash_system.md.j2", tools=[], **guidance_template_vars("detailed")),
-            loader.render("flash_system.md.j2", tools=[], **guidance_template_vars("lean")),
         )
     defn = SubagentRegistry().get(surface)
     assert defn is not None, f"unknown subagent {surface}"
@@ -85,7 +86,18 @@ def _significant(text: str) -> Counter:
     return Counter(line.strip() for line in text.splitlines() if line.strip())
 
 
-@pytest.mark.parametrize("surface", ["ptc", "flash", *SUBAGENTS])
+# "+scratchpad" renders the surface with the feature on; the bare name is the
+# flag-off render every user gets by default.
+SURFACES = [
+    "ptc",
+    "ptc+scratchpad",
+    "chief-of-staff",
+    "chief-of-staff+scratchpad",
+    *SUBAGENTS,
+]
+
+
+@pytest.mark.parametrize("surface", SURFACES)
 class TestLeanSubset:
     def test_lean_introduces_no_new_text(self, surface):
         detailed, lean = _render_pair(surface)
@@ -110,5 +122,5 @@ class TestLeanSubset:
 def test_at_least_one_surface_actually_differs():
     """Guards against the invariant passing vacuously — if no fence is wired,
     lean == detailed everywhere and the subset check proves nothing."""
-    differing = [s for s in ["ptc", "flash", *SUBAGENTS] if len(set(_render_pair(s))) > 1]
+    differing = [s for s in SURFACES if len(set(_render_pair(s))) > 1]
     assert differing, "no surface renders lean differently from detailed"

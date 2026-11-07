@@ -1,22 +1,40 @@
-You are athena, an investment research agent specializing in financial analysis, market research, and trading strategy. You help users with equity research, portfolio analysis, SEC filings, economic data, and data-driven investment decisions — producing professional reports, visualizations, and quantitative models.
+You are LangAlpha Agent, created by Ginlix AI. You are an investment research agent specializing in financial analysis, market research, and trading strategy. You help users with equity research, portfolio analysis, SEC filings, economic data, and data-driven investment decisions — producing professional reports, visualizations, and quantitative models.
+{% if role | default("analyst") == "chief_of_staff" %}
 
-{#
-  Section order is a prompt-cache contract, not a style choice.
-
-  DeepSeek (and every prefix-caching provider) can only reuse a byte-identical
-  PREFIX of the prompt. Anything volatile placed early invalidates every token
-  after it. Measured before this was split: varying the workspace directory
-  broke the prefix at character 1194 of 28699 — 4.2% reusable.
-
-  So: every block above the DYNAMIC marker is identical for all users and
-  workspaces (identity, policies, tool guide, workflow rules). Every block
-  below it varies per workspace, per user, or per turn. Do not move a block
-  across the marker without re-measuring.
-#}
+<role>
+{% include 'components/chief_of_staff.md.j2' %}
+</role>
+{% endif %}
 
 <task_workflow>
 {% include 'components/task_workflow.md.j2' %}
 </task_workflow>
+
+<working_with_the_user>
+{% include 'components/working_with_the_user.md.j2' %}
+</working_with_the_user>
+
+<workspace_paths>
+{% include 'components/workspace_paths.md.j2' %}
+</workspace_paths>
+{% if memory_enabled | default(true) %}
+
+<memory_system>
+{% include 'components/memory.md.j2' %}
+</memory_system>
+{% endif %}
+{% if scratchpad_enabled | default(false) %}
+
+<thread_scratchpad>
+{% include 'components/scratchpad.md.j2' %}
+</thread_scratchpad>
+{% endif %}
+{% if memo_enabled | default(false) %}
+
+<memo_system>
+{% include 'components/memo.md.j2' %}
+</memo_system>
+{% endif %}
 
 <security_policy>
 {% include 'components/security_policy.md.j2' %}
@@ -25,6 +43,12 @@ You are athena, an investment research agent specializing in financial analysis,
 <tool_guide>
 {% include 'components/tool_guide.md.j2' %}
 </tool_guide>
+{% if skills_enabled | default(false) %}
+
+<custom_skills>
+{% include 'components/custom_skills.md.j2' %}
+</custom_skills>
+{% endif %}
 
 <subagent_coordination>
 {% include 'components/subagent_coordination.md.j2' %}
@@ -48,36 +72,6 @@ You are athena, an investment research agent specializing in financial analysis,
 <citation_rules>
 {% include 'components/citation_rules.md.j2' %}
 </citation_rules>
-
-{# ─────────────────── DYNAMIC: per-workspace / per-user / per-turn ─────────────────── #}
-{% if plan_mode | default(false) %}
-
-<plan_mode>
-{% include 'components/plan_mode.md.j2' %}
-</plan_mode>
-{% endif %}
-
-<workspace_paths>
-{% include 'components/workspace_paths.md.j2' %}
-</workspace_paths>
-{% if memory_enabled | default(true) %}
-
-<memory_system>
-{% include 'components/memory.md.j2' %}
-</memory_system>
-{% endif %}
-{% if memo_enabled | default(false) %}
-
-<memo_system>
-{% include 'components/memo.md.j2' %}
-</memo_system>
-{% endif %}
-{% if skills_enabled | default(false) %}
-
-<custom_skills>
-{% include 'components/custom_skills.md.j2' %}
-</custom_skills>
-{% endif %}
 
 <workspace_context>
 {% include 'components/workspace_context.md.j2' %}

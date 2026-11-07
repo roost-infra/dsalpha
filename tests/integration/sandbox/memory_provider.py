@@ -10,7 +10,6 @@ Design principles:
 - Every SandboxRuntime abstract method is implemented with real behavior
 - File I/O is backed by a dict[str, bytes] in-memory filesystem
 - exec() runs commands via asyncio subprocess (real shell)
-- code_run() executes Python code via subprocess with env injection
 - State machine (start/stop/delete/archive) is fully functional
 - No mocks — this IS the provider, just an in-process one
 """
@@ -18,29 +17,103 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import codecs
+import contextlib
 import os
+import signal
 import tempfile
 import uuid
 from typing import Any
 
-from ptc_agent.core.sandbox.providers._chart_capture import (
-    build_code_wrapper,
-    extract_artifacts,
-)
 from ptc_agent.core.sandbox.runtime import (
-    CodeRunResult,
     ExecResult,
     RuntimeState,
     SandboxProvider,
     SandboxRuntime,
     SandboxTransientError,
+    SessionCommandResult,
+    SessionState,
+    StreamProcess,
 )
+
+
+async def _decoded(source: asyncio.StreamReader, sink: asyncio.StreamReader) -> None:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    try:
+        while chunk := await source.read(65536):
+            sink.feed_data(decoder.decode(chunk).encode())
+        sink.feed_data(decoder.decode(b"", final=True).encode())
+    finally:
+        sink.feed_eof()
+
+
+class _LocalStream(StreamProcess):
+    """A local subprocess behind the stream contract, a session of its own so
+    a signal reaches its whole process group, its output read as UTF-8 as
+    every provider's is."""
+
+    def __init__(self, proc: asyncio.subprocess.Process) -> None:
+        self._proc = proc
+        assert proc.stdout is not None and proc.stderr is not None
+        self.stdout = asyncio.StreamReader()
+        self.stderr = asyncio.StreamReader()
+        self._pumps = [
+            asyncio.ensure_future(_decoded(proc.stdout, self.stdout)),
+            asyncio.ensure_future(_decoded(proc.stderr, self.stderr)),
+        ]
+
+    @property
+    def failure(self) -> str | None:
+        return None
+
+    @property
+    def returncode(self) -> int | None:
+        code = self._proc.returncode
+        # asyncio reports signal N as -N; the contract follows the shell.
+        return None if code is None else (128 - code if code < 0 else code)
+
+    async def write(self, data: bytes) -> None:
+        if self._proc.returncode is not None:
+            raise ConnectionError("The process has ended")
+        assert self._proc.stdin is not None
+        self._proc.stdin.write(data)
+        await self._proc.stdin.drain()
+
+    async def write_eof(self) -> bool:
+        assert self._proc.stdin is not None
+        self._proc.stdin.close()
+        return True
+
+    async def wait(self) -> int:
+        await self._proc.wait()
+        await asyncio.wait(self._pumps)
+        return self.returncode  # type: ignore[return-value]
+
+    async def terminate(self) -> None:
+        self._signal(signal.SIGTERM)
+
+    async def kill(self) -> None:
+        self._signal(signal.SIGKILL)
+
+    def _signal(self, number: int) -> None:
+        if self._proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._proc.pid, number)
+
+    async def close(self) -> None:
+        try:
+            await self.kill()
+            await self._proc.wait()
+        finally:
+            for pump in self._pumps:
+                pump.cancel()
+            await asyncio.gather(*self._pumps, return_exceptions=True)
 
 
 class MemoryRuntime(SandboxRuntime):
     """In-memory sandbox runtime backed by a temp directory and real subprocesses.
 
-    Uses a real temp directory for file I/O so that exec/code_run can access
+    Uses a real temp directory for file I/O so that exec can access
     the files they create. This gives us realistic behavior while remaining
     fully self-contained.
     """
@@ -96,7 +169,9 @@ class MemoryRuntime(SandboxRuntime):
 
     # -- Execution --
 
-    async def exec(self, command: str, timeout: int = 60) -> ExecResult:
+    async def exec(
+        self, command: str, timeout: int = 60, *, env: dict[str, str] | None = None
+    ) -> ExecResult:
         self._check_running()
         try:
             proc = await asyncio.create_subprocess_shell(
@@ -104,7 +179,7 @@ class MemoryRuntime(SandboxRuntime):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self._work_dir,
-                env={**os.environ, **self._env_vars},
+                env={**os.environ, **self._env_vars, **(env or {})},
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
@@ -121,56 +196,20 @@ class MemoryRuntime(SandboxRuntime):
         except Exception as e:
             return ExecResult(stdout="", stderr=str(e), exit_code=-1)
 
-    async def code_run(
-        self,
-        code: str,
-        env: dict[str, str] | None = None,
-        timeout: int = 300,
-    ) -> CodeRunResult:
+    async def open_stream(self, command: str) -> StreamProcess:
         self._check_running()
-
-        # Write code to temp file and execute with Python
-        code_file = os.path.join(self._work_dir, f"_exec_{uuid.uuid4().hex[:8]}.py")
-
-        # Wrap code to capture chart artifacts (matches Daytona behavior)
-        wrapper = build_code_wrapper(code)
-        with open(code_file, "w") as f:
-            f.write(wrapper)
-
-        run_env = {**os.environ, **self._env_vars, **(env or {})}
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "python3",
-                code_file,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=self._work_dir,
-                env=run_env,
-            )
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-            stdout = (stdout_bytes or b"").decode("utf-8", errors="replace")
-            stderr = (stderr_bytes or b"").decode("utf-8", errors="replace")
-
-            # Extract artifacts from stdout markers
-            artifacts, clean_stdout = extract_artifacts(stdout)
-
-            return CodeRunResult(
-                stdout=clean_stdout,
-                stderr=stderr,
-                exit_code=proc.returncode or 0,
-                artifacts=artifacts,
-            )
-        except asyncio.TimeoutError:
-            return CodeRunResult(
-                stdout="", stderr="Execution timed out", exit_code=-1
-            )
-        finally:
-            try:
-                os.unlink(code_file)
-            except OSError:
-                pass
+        proc = await asyncio.create_subprocess_exec(
+            "bash",
+            "-c",
+            command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=self._work_dir,
+            env={**os.environ, **self._env_vars},
+            start_new_session=True,
+        )
+        return _LocalStream(proc)
 
     # -- File I/O --
 
@@ -216,11 +255,31 @@ class MemoryRuntime(SandboxRuntime):
             )
         return entries
 
+    # -- Sessions (not supported in-process) --
+
+    async def create_session(self, session_id: str) -> None:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
+    async def session_execute(self, session_id: str, command: str) -> str:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
+    async def session_command_logs(
+        self, session_id: str, command_id: str
+    ) -> SessionCommandResult:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
+    async def session_logs(self, session_id: str) -> SessionCommandResult | None:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
+    async def list_sessions(self) -> list[SessionState]:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
+    async def delete_session(self, session_id: str) -> None:
+        raise NotImplementedError("MemoryRuntime has no sessions")
+
     # -- Capabilities & metadata --
 
-    @property
-    def capabilities(self) -> set[str]:
-        return {"exec", "code_run", "file_io", "archive"}
+    archives = True
 
     async def archive(self) -> None:
         if self._deleted:

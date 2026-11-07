@@ -8,7 +8,11 @@ from typing import Any
 
 import structlog
 
-from ptc_agent.core.sandbox.runtime import SandboxGoneError, SandboxTransientError
+from ptc_agent.core.sandbox.runtime import (
+    SandboxGoneError,
+    SandboxHostUnavailableError,
+    SandboxTransientError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -53,9 +57,12 @@ async def async_retry_with_backoff(
         The return value of *func* on success.
 
     Raises:
-        SandboxGoneError: When the reconnect callback determines the sandbox no
-            longer exists — propagated so the caller can recover rather than
-            burning every remaining attempt against a sandbox that is not there.
+        SandboxGoneError: When *func* or the reconnect callback determines the
+            sandbox no longer exists — propagated so the caller can recover rather
+            than burning every remaining attempt against a sandbox that is not there.
+        SandboxHostUnavailableError: When the reconnect callback finds the
+            sandbox's host not answering, which no attempt within this budget
+            outlasts.
         SandboxTransientError: When retries or timeout are exhausted, or when
             an UNSAFE policy encounters a transient error.
     """
@@ -72,7 +79,9 @@ async def async_retry_with_backoff(
         try:
             return await func(*args, **kwargs)
         except Exception as e:
-            if not is_transient(e):
+            # Gone is a verdict, whatever words its reason carries; the
+            # transient check scans messages for "timed out" and the like.
+            if isinstance(e, SandboxGoneError) or not is_transient(e):
                 raise
 
             # Fire the on_transient callback at most once.
@@ -80,11 +89,14 @@ async def async_retry_with_backoff(
                 try:
                     await on_transient()
                     on_transient_called = True
-                except SandboxGoneError:
-                    # The reconnect proved the sandbox is gone — a verdict, not a
-                    # callback failure. Swallowing it costs four more doomed
-                    # attempts and hands the caller a generic transient, so the
-                    # recovery path that recreates the sandbox never runs.
+                except (SandboxGoneError, SandboxHostUnavailableError):
+                    # The reconnect proved the sandbox is gone, or that its host
+                    # does not answer: a verdict, not a callback failure.
+                    # Swallowing it costs four more doomed attempts, each paying
+                    # a reconnect's connect timeout again, and hands the caller
+                    # a generic transient in place of the reason, so the
+                    # recovery path that recreates a gone sandbox never runs and
+                    # the person is never told the machine is unreachable.
                     raise
                 except Exception as cb_err:
                     logger.debug(

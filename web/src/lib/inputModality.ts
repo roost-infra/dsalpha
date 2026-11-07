@@ -165,6 +165,33 @@ if (typeof window !== 'undefined') {
   });
 }
 
+/**
+ * Focus for the field a finished action carries on in, such as the composer once
+ * a quote lands in it. The Enter that finished the action was no walk through
+ * the page, so this is not the keyboard's focus and draws no ring, as a text
+ * field the mouse focused does not.
+ */
+export function focusWithoutRing(field: HTMLElement | null | undefined, options?: FocusOptions) {
+  if (!field) return;
+  field.focus(options);
+  document.documentElement.toggleAttribute(POINTER_FOCUS, true);
+}
+
 export function lastInputWasPointer(): boolean {
   return pointer;
+}
+
+/**
+ * `onCloseAutoFocus` for a Radix overlay. Radix hands focus back to the trigger
+ * on close so a keyboard user keeps their place, and Chromium carries
+ * :focus-visible across that programmatic move, so an overlay opened and
+ * dismissed with the mouse would leave the trigger ringed until the next click.
+ * Skip the restore when no key was pressed: focus falls to <body>, which is
+ * where clicking anywhere else would have put it anyway.
+ */
+export function closeAutoFocus(userHandler?: (event: Event) => void) {
+  return (event: Event) => {
+    userHandler?.(event);
+    if (!event.defaultPrevented && pointer) event.preventDefault();
+  };
 }

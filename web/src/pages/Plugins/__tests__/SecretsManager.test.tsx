@@ -1,22 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished } from 'vitest';
 import { act, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import React from 'react';
+import { useLocation } from 'react-router';
 import { renderWithProviders } from '@/test/utils';
 
 /**
- * `SecretsManager` is one state machine behind two ports: the workspace Vault
- * tab drives it with imperative API calls + an explicit reload, Plugins →
- * Secrets drives it with React Query mutations. Every branch below is exercised
- * through a real adapter rather than through hand-passed props, because the
- * interesting failures live in the wiring — a mutation shape the component
- * doesn't call the way the adapter expects, or a rejection the adapter swallows
- * before the shared error region can render it.
- *
- * Coverage is split to avoid restating what `SandboxSettingsPanel.test.tsx`
- * already pins on the workspace side (blueprints, the regex hint, the load
- * generation guard, form reset on workspace switch, create + refetch): here the
- * workspace adapter covers the read/reveal/delete half and the error paths.
+ * `SecretsManager` driven through its one adapter, Plugins → Secrets (React
+ * Query mutations). Every branch below is exercised through that adapter
+ * rather than through hand-passed props, because the interesting failures live
+ * in the wiring: a mutation shape the component doesn't call the way the
+ * adapter expects, or a rejection the adapter swallows before the form or row
+ * it belongs to can say so.
  */
 
 // ---------------------------------------------------------------------------
@@ -43,46 +38,49 @@ interface UserVaultData {
 
 let userVaultData: UserVaultData | undefined;
 let userVaultError: Error | null = null;
+const refetchVault = vi.fn();
 let userVaultLoading = false;
 
+let userBlueprints: Array<{
+  name: string;
+  label: string;
+  description?: string;
+  docs_url?: string | null;
+  regex?: string | null;
+}> = [];
+
 vi.mock('@/hooks/useUserVault', () => ({
-  useUserVaultSecrets: () => ({ data: userVaultData, isLoading: userVaultLoading, error: userVaultError }),
-  useUserVaultBlueprints: () => ({ data: { blueprints: [], remaining_slots: 0 } }),
+  useUserVaultSecrets: () => ({
+    data: userVaultData,
+    isLoading: userVaultLoading,
+    error: userVaultError,
+    refetch: refetchVault,
+  }),
+  useUserVaultBlueprints: () => ({ data: { blueprints: userBlueprints, remaining_slots: 20 } }),
   useCreateUserVaultSecret: () => ({ mutateAsync: userVault.create, isPending: false }),
   useUpdateUserVaultSecret: () => ({ mutateAsync: userVault.update, isPending: false }),
   useDeleteUserVaultSecret: () => ({ mutateAsync: userVault.del, isPending: false }),
 }));
 
+// Which connectors read each key: names only, which is all the rows show.
+let usageByKey: Record<string, string[]> | null = {};
+
+vi.mock('@/hooks/useSecretUsage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useSecretUsage')>()),
+  useSecretReaders: () => (usageByKey === null ? undefined : new Map(Object.entries(usageByKey))),
+}));
+
 // ---------------------------------------------------------------------------
-// API boundary — the workspace adapter (imperative calls + reload) plus the
-// one direct call the user adapter makes (`revealUserVaultSecret`).
+// API boundary: the one direct call the adapter makes (`revealUserVaultSecret`).
 // ---------------------------------------------------------------------------
 
-const wsVault = {
-  get: vi.fn(),
-  create: vi.fn(),
-  update: vi.fn(),
-  del: vi.fn(),
-  reveal: vi.fn(),
-  blueprints: vi.fn(),
-};
 const mockRevealUserVaultSecret = vi.fn();
-const mockGetSandboxStats = vi.fn();
 
 vi.mock('@/pages/ChatAgent/utils/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
     // `formatApiErrorDetail` stays real — the error copy is what's under test.
-    getVaultSecrets: (...a: unknown[]) => wsVault.get(...a),
-    createVaultSecret: (...a: unknown[]) => wsVault.create(...a),
-    updateVaultSecret: (...a: unknown[]) => wsVault.update(...a),
-    deleteVaultSecret: (...a: unknown[]) => wsVault.del(...a),
-    revealVaultSecret: (...a: unknown[]) => wsVault.reveal(...a),
-    getVaultBlueprints: (...a: unknown[]) => wsVault.blueprints(...a),
-    getSandboxStats: (...a: unknown[]) => mockGetSandboxStats(...a),
-    installSandboxPackages: vi.fn(),
-    refreshWorkspace: vi.fn(),
     revealUserVaultSecret: (...a: unknown[]) => mockRevealUserVaultSecret(...a),
   };
 });
@@ -98,7 +96,6 @@ vi.mock('@/api/client', () => ({
 }));
 
 import { PluginSecrets } from '../components/PluginSecrets';
-import { SandboxSettingsContent } from '@/pages/ChatAgent/components/SandboxSettingsPanel';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -116,35 +113,19 @@ function userSecret(name: string, overrides: Partial<UserVaultData['secrets'][nu
   };
 }
 
-function wsSecret(name: string, description = '') {
-  return {
-    workspace_vault_secret_id: `wvs-${name}`,
-    name,
-    description,
-    masked_value: 'tok-…9f21',
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-  };
-}
-
-/** Mount the workspace port: the settings panel's Vault tab. */
-function renderWorkspaceVault(workspaceId = 'ws-1') {
-  const view = renderWithProviders(<SandboxSettingsContent workspaceId={workspaceId} />);
-  fireEvent.click(screen.getByRole('button', { name: /vault/i }));
-  return view;
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   userVaultData = { secrets: [], remaining_slots: 20 };
   userVaultError = null;
   userVaultLoading = false;
-  wsVault.get.mockResolvedValue([]);
-  wsVault.blueprints.mockResolvedValue({ blueprints: [], remaining_slots: 20 });
-  mockGetSandboxStats.mockResolvedValue({
-    state: 'running', sandbox_id: 'sandbox-abc', resources: {}, packages: [], skills: [], mcp_servers: [],
-  });
+  userBlueprints = [];
+  usageByKey = {};
 });
+
+/** The inline confirm under a row; the row's own trash button is also "Delete". */
+function confirmStrip() {
+  return within(screen.getByRole('group'));
+}
 
 // ===========================================================================
 // User adapter — Plugins → Secrets (React Query mutations)
@@ -171,27 +152,80 @@ describe('SecretsManager via the user vault adapter — list', () => {
 
   it('shows the user-scope empty state and hint', () => {
     renderWithProviders(<PluginSecrets />);
-    expect(screen.getByText(/No secrets stored. Add API keys or credentials for your servers/i)).toBeInTheDocument();
-    expect(screen.getByText(/available in every workspace/i)).toBeInTheDocument();
+    expect(screen.getByText(/No keys stored yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/code in every workspace/i)).toBeInTheDocument();
   });
 
-  it('surfaces a load failure', () => {
-    userVaultError = new Error('vault unreachable');
+  it('says which connectors read each key, and that nothing reads an unused one', () => {
+    userVaultData = {
+      secrets: [userSecret('SHARED_KEY'), userSecret('SOLO_KEY'), userSecret('IDLE_KEY')],
+      remaining_slots: 17,
+    };
+    usageByKey = { SHARED_KEY: ['alpha', 'beta'], SOLO_KEY: ['gamma'] };
     renderWithProviders(<PluginSecrets />);
-    expect(screen.getByText('vault unreachable')).toBeInTheDocument();
+
+    expect(screen.getByRole('link', { name: 'gamma' })).toHaveAttribute(
+      'href',
+      '/plugins?tab=mcp&detail=server%3Agamma',
+    );
+    expect(screen.getByText('No connector reads it')).toBeInTheDocument();
+    const many = screen.getByRole('button', { name: /used by 2 connectors/i });
+    expect(screen.queryByRole('link', { name: 'alpha' })).not.toBeInTheDocument();
+    fireEvent.click(many);
+    expect(many).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('link', { name: 'alpha' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'beta' })).toBeInTheDocument();
+  });
+
+  it('claims nothing about readers when the connectors did not load', () => {
+    userVaultData = { secrets: [userSecret('IDLE_KEY')], remaining_slots: 19 };
+    usageByKey = null;
+    renderWithProviders(<PluginSecrets />);
+    expect(screen.queryByText('No connector reads it')).not.toBeInTheDocument();
+  });
+
+  it('surfaces a load failure alone, with a retry', () => {
+    userVaultData = undefined;
+    userVaultError = new Error('Request failed with status code 500');
+    renderWithProviders(<PluginSecrets />);
+    expect(screen.getByText(/Couldn't load your secrets\./)).toBeInTheDocument();
+    // Nothing that reads as an empty or full vault: the user may have keys.
+    expect(screen.queryByText(/No keys stored/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('0 / 0')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(refetchVault).toHaveBeenCalled();
   });
 
   it('renders the skeleton while loading, not an empty list', () => {
     userVaultLoading = true;
     userVaultData = undefined;
     renderWithProviders(<PluginSecrets />);
-    expect(screen.queryByText(/No secrets stored/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No keys stored/i)).not.toBeInTheDocument();
   });
 
-  it('hides Add Secret at the cap', () => {
-    userVaultData = { secrets: [userSecret('ONLY_TOKEN')], remaining_slots: 0 };
+  it('waits for a list that has not arrived, without claiming an empty, full vault', () => {
+    // A read paused offline is neither loading nor failed: it has no data yet.
+    userVaultData = undefined;
     renderWithProviders(<PluginSecrets />);
-    expect(screen.queryByRole('button', { name: /add secret/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/No keys stored/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('0 / 0')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add key/i })).not.toBeInTheDocument();
+  });
+
+  it('holds Add key at the cap, says why in words, and points at unread keys', () => {
+    userVaultData = { secrets: [userSecret('ONLY_TOKEN'), userSecret('USED_TOKEN')], remaining_slots: 0 };
+    usageByKey = { USED_TOKEN: ['alpha'] };
+    renderWithProviders(<PluginSecrets />);
+
+    const add = screen.getByRole('button', { name: /add key/i });
+    expect(add).toBeDisabled();
+    const reason = document.getElementById(add.getAttribute('aria-describedby')!);
+    expect(reason).toHaveTextContent('Secrets holds 2 of 2. Delete a key you no longer use.');
+    expect(reason).toHaveTextContent("1 key isn't read by any connector.");
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show it' }));
+    expect(screen.queryByText('USED_TOKEN')).not.toBeInTheDocument();
+    expect(screen.getByText('ONLY_TOKEN')).toBeInTheDocument();
   });
 });
 
@@ -200,9 +234,9 @@ describe('SecretsManager via the user vault adapter — create', () => {
     userVault.create.mockResolvedValue({ name: 'NEW_TOKEN' });
     renderWithProviders(<PluginSecrets />);
 
-    fireEvent.click(screen.getByRole('button', { name: /add secret/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
     fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'NEW_TOKEN' } });
-    fireEvent.change(screen.getByPlaceholderText('Secret value'), { target: { value: 'placeholder-value' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'placeholder-value' } });
     fireEvent.change(screen.getByPlaceholderText('Description (optional)'), { target: { value: 'for testing' } });
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
@@ -211,41 +245,58 @@ describe('SecretsManager via the user vault adapter — create', () => {
         name: 'NEW_TOKEN', value: 'placeholder-value', description: 'for testing',
       }),
     );
-    await waitFor(() => expect(screen.queryByPlaceholderText('Secret value')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByPlaceholderText('Paste the key')).not.toBeInTheDocument());
   });
 
-  it('normalizes the typed name so the mutation only ever sees a legal one', async () => {
-    // The name field is the guard: it upper-cases, drops anything outside
-    // [A-Z0-9_], and strips leading digits, so what reaches `onCreate` always
-    // satisfies the backend's name rule. (`vault.nameInvalid` still backstops
-    // the prefill deep-link, which sets the name without passing through here.)
-    userVault.create.mockResolvedValue({ name: 'BAD_NAME' });
+  it('spells a typed name as the vault stores it, the same way the key picker does', async () => {
+    userVault.create.mockResolvedValue({ name: 'BAD_NAME_' });
     renderWithProviders(<PluginSecrets />);
 
-    fireEvent.click(screen.getByRole('button', { name: /add secret/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
     const nameInput = screen.getByPlaceholderText('SECRET_NAME');
-    fireEvent.change(nameInput, { target: { value: '9bad-name!' } });
-    expect((nameInput as HTMLInputElement).value).toBe('BADNAME');
+    fireEvent.change(nameInput, { target: { value: 'plain_name' } });
+    expect(nameInput).toHaveValue('PLAIN_NAME');
 
-    fireEvent.change(screen.getByPlaceholderText('Secret value'), { target: { value: 'x' } });
+    fireEvent.change(nameInput, { target: { value: '9bad-name!' } });
+    expect(nameInput).toHaveValue('BAD_NAME_');
+    expect(screen.queryByText(/Will be saved as/)).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'x' } });
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() =>
-      expect(userVault.create).toHaveBeenCalledWith({ name: 'BADNAME', value: 'x', description: undefined }),
+      expect(userVault.create).toHaveBeenCalledWith({ name: 'BAD_NAME_', value: 'x', description: undefined }),
     );
+  });
+
+  it('stops a name that is already stored at the field, and offers its edit form', () => {
+    userVaultData = { secrets: [userSecret('WIND_API_KEY')], remaining_slots: 19 };
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+    fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'wind_api_key' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'test-not-real' } });
+
+    expect(screen.getByText('is already stored.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^save$/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit WIND_API_KEY instead' }));
+    // The value typed for that name carries over to its edit form.
+    expect(screen.getByPlaceholderText('Leave empty to keep this key')).toHaveValue('test-not-real');
+    expect(userVault.create).not.toHaveBeenCalled();
   });
 
   it('keeps Save disabled until both a name and a value are present', () => {
     renderWithProviders(<PluginSecrets />);
 
-    fireEvent.click(screen.getByRole('button', { name: /add secret/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
     const save = screen.getByRole('button', { name: /^save$/i });
     expect(save).toBeDisabled();
 
     fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'NAME_ONLY' } });
     expect(save).toBeDisabled();
 
-    fireEvent.change(screen.getByPlaceholderText('Secret value'), { target: { value: 'v' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'v' } });
     expect(save).not.toBeDisabled();
     expect(userVault.create).not.toHaveBeenCalled();
   });
@@ -254,13 +305,33 @@ describe('SecretsManager via the user vault adapter — create', () => {
     userVault.create.mockRejectedValue({ response: { data: { detail: 'name already taken' } } });
     renderWithProviders(<PluginSecrets />);
 
-    fireEvent.click(screen.getByRole('button', { name: /add secret/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
     fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'DUP_TOKEN' } });
-    fireEvent.change(screen.getByPlaceholderText('Secret value'), { target: { value: 'v' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'v' } });
     fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    await waitFor(() => expect(screen.getByText('name already taken')).toBeInTheDocument());
-    expect(screen.getByPlaceholderText('Secret value')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/name already taken/)).toBeInTheDocument());
+    expect(screen.getByPlaceholderText('Paste the key')).toBeInTheDocument();
+  });
+
+  it('places a refused value under the value field, in plain words', async () => {
+    userVault.create.mockRejectedValue({
+      response: {
+        status: 422,
+        data: { detail: [{ loc: ['body', 'value'], msg: 'Value error, Secret value must not contain NUL bytes' }] },
+      },
+    });
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+    fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'NUL_TOKEN' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'v' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText('Secret value must not contain NUL bytes')).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/body\.value/)).not.toBeInTheDocument();
   });
 });
 
@@ -271,10 +342,10 @@ describe('SecretsManager via the user vault adapter — update', () => {
     renderWithProviders(<PluginSecrets />);
 
     fireEvent.click(screen.getByTitle('Edit'));
-    fireEvent.change(screen.getByPlaceholderText('New value (leave empty to keep current)'), {
+    fireEvent.change(screen.getByPlaceholderText('Leave empty to keep this key'), {
       target: { value: 'rotated-value' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() =>
       expect(userVault.update).toHaveBeenCalledWith({
@@ -291,7 +362,7 @@ describe('SecretsManager via the user vault adapter — update', () => {
 
     fireEvent.click(screen.getByTitle('Edit'));
     fireEvent.change(screen.getByPlaceholderText('Description (optional)'), { target: { value: 'new note' } });
-    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
     await waitFor(() =>
       expect(userVault.update).toHaveBeenCalledWith({ name: 'EDIT_TOKEN', body: { description: 'new note' } }),
@@ -304,9 +375,22 @@ describe('SecretsManager via the user vault adapter — update', () => {
     renderWithProviders(<PluginSecrets />);
 
     fireEvent.click(screen.getByTitle('Edit'));
-    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
 
-    await waitFor(() => expect(screen.getByText('value too long')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/value too long/)).toBeInTheDocument());
+  });
+
+  it('says before the save who gets the new value, and when', () => {
+    userVaultData = { secrets: [userSecret('EDIT_TOKEN')], remaining_slots: 19 };
+    usageByKey = { EDIT_TOKEN: ['alpha', 'beta', 'gamma'] };
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByTitle('Edit'));
+    expect(
+      screen.getByText(
+        'The 3 connectors that read it and code in every workspace get the new value by the next message.',
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -319,18 +403,44 @@ describe('SecretsManager via the user vault adapter — delete', () => {
     fireEvent.click(screen.getByTitle('Delete'));
     expect(userVault.del).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    fireEvent.click(confirmStrip().getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(userVault.del).toHaveBeenCalledWith('DOOMED_TOKEN'));
   });
 
-  it('cancels the confirm without deleting', () => {
+  it('names what the delete breaks before it happens', async () => {
+    userVaultData = {
+      secrets: [userSecret('SHARED_KEY'), userSecret('SOLO_KEY'), userSecret('IDLE_KEY')],
+      remaining_slots: 17,
+    };
+    usageByKey = { SHARED_KEY: ['alpha', 'beta'], SOLO_KEY: ['gamma'] };
+    renderWithProviders(<PluginSecrets />);
+    const [shared, solo, idle] = screen.getAllByTitle('Delete');
+    // The confirm a click replaces folds away first, so wait for one strip.
+    const strip = async () => {
+      await waitFor(() => expect(screen.getAllByRole('group')).toHaveLength(1));
+      return screen.getByRole('group');
+    };
+
+    fireEvent.click(shared);
+    expect(await strip()).toHaveTextContent(
+      'Delete SHARED_KEY? 2 connectors stop working until a key is added.',
+    );
+    fireEvent.click(solo);
+    expect(await strip()).toHaveTextContent(
+      'Delete SOLO_KEY? gamma stops working until a key is added.',
+    );
+    fireEvent.click(idle);
+    expect(await strip()).toHaveTextContent('Delete IDLE_KEY? No connector reads it');
+  });
+
+  it('cancels the confirm without deleting', async () => {
     userVaultData = { secrets: [userSecret('DOOMED_TOKEN')], remaining_slots: 19 };
     renderWithProviders(<PluginSecrets />);
 
     fireEvent.click(screen.getByTitle('Delete'));
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    fireEvent.click(confirmStrip().getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByRole('button', { name: /^confirm$/i })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('group')).not.toBeInTheDocument());
     expect(userVault.del).not.toHaveBeenCalled();
   });
 
@@ -340,11 +450,25 @@ describe('SecretsManager via the user vault adapter — delete', () => {
     renderWithProviders(<PluginSecrets />);
 
     fireEvent.click(screen.getByTitle('Delete'));
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    fireEvent.click(confirmStrip().getByRole('button', { name: 'Delete' }));
 
-    await waitFor(() => expect(screen.getByText('referenced by a live server')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText('Not deleted: referenced by a live server')).toBeInTheDocument(),
+    );
     // Still armed — the user can retry or back out.
-    expect(screen.getByRole('button', { name: /^confirm$/i })).toBeInTheDocument();
+    expect(confirmStrip().getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('closes the confirm when the key was already deleted elsewhere', async () => {
+    userVaultData = { secrets: [userSecret('DOOMED_TOKEN')], remaining_slots: 19 };
+    userVault.del.mockRejectedValue({ response: { status: 404, data: { detail: 'Secret not found' } } });
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByTitle('Delete'));
+    fireEvent.click(confirmStrip().getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(screen.queryByRole('group')).not.toBeInTheDocument());
+    expect(screen.queryByText(/Not deleted/)).not.toBeInTheDocument();
   });
 });
 
@@ -373,7 +497,9 @@ describe('SecretsManager via the user vault adapter — reveal', () => {
 
     fireEvent.click(screen.getByTitle('Reveal value'));
 
-    await waitFor(() => expect(screen.getByText('decrypt failed')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Couldn't show the value: decrypt failed")).toBeInTheDocument(),
+    );
     expect(screen.getByText('sk-…abcd')).toBeInTheDocument();
   });
 
@@ -393,7 +519,7 @@ describe('SecretsManager via the user vault adapter — reveal', () => {
     await waitFor(() => expect(mockRevealUserVaultSecret).toHaveBeenCalledWith('RACE_TOKEN'));
 
     fireEvent.click(screen.getByTitle('Delete'));
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
+    fireEvent.click(confirmStrip().getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(userVault.del).toHaveBeenCalledWith('RACE_TOKEN'));
 
     await act(async () => { resolveReveal('stale-plaintext'); });
@@ -417,10 +543,10 @@ describe('SecretsManager via the user vault adapter — reveal', () => {
     await waitFor(() => expect(mockRevealUserVaultSecret).toHaveBeenCalledWith('RACE_TOKEN'));
 
     fireEvent.click(screen.getByTitle('Edit'));
-    fireEvent.change(screen.getByPlaceholderText('New value (leave empty to keep current)'), {
+    fireEvent.change(screen.getByPlaceholderText('Leave empty to keep this key'), {
       target: { value: 'rotated-value' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
     await waitFor(() => expect(userVault.update).toHaveBeenCalled());
 
     await act(async () => { resolveReveal('pre-edit-plaintext'); });
@@ -430,115 +556,261 @@ describe('SecretsManager via the user vault adapter — reveal', () => {
   });
 });
 
-// ===========================================================================
-// Workspace adapter — the settings-panel Vault tab (imperative + reload)
-// ===========================================================================
-
-describe('SecretsManager via the workspace adapter — list and reveal', () => {
-  it('renders the workspace list and its scope-specific copy', async () => {
-    wsVault.get.mockResolvedValue([wsSecret('WS_TOKEN', 'workspace-only credential')]);
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('WS_TOKEN')).toBeInTheDocument());
-    expect(screen.getByText('workspace-only credential')).toBeInTheDocument();
-    expect(screen.getByText('tok-…9f21')).toBeInTheDocument();
-    // The workspace port passes a footer the user port does not.
-    expect(screen.getByText('Usage')).toBeInTheDocument();
-  });
-
-  it('reveals through the workspace endpoint, scoped to the workspace id', async () => {
-    wsVault.get.mockResolvedValue([wsSecret('WS_TOKEN')]);
-    wsVault.reveal.mockResolvedValue('workspace-plaintext');
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('WS_TOKEN')).toBeInTheDocument());
-    fireEvent.click(screen.getByTitle('Reveal value'));
-
-    await waitFor(() => expect(wsVault.reveal).toHaveBeenCalledWith('ws-1', 'WS_TOKEN'));
-    await waitFor(() => expect(screen.getByText('workspace-plaintext')).toBeInTheDocument());
-  });
-
-  it('surfaces a rejected reveal', async () => {
-    wsVault.get.mockResolvedValue([wsSecret('WS_TOKEN')]);
-    wsVault.reveal.mockRejectedValue({ response: { data: { detail: 'sandbox key unavailable' } } });
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('WS_TOKEN')).toBeInTheDocument());
-    fireEvent.click(screen.getByTitle('Reveal value'));
-
-    await waitFor(() => expect(screen.getByText('sandbox key unavailable')).toBeInTheDocument());
-  });
-});
-
-describe('SecretsManager via the workspace adapter — delete and errors', () => {
-  it('deletes after the confirm and reloads the list', async () => {
-    wsVault.get.mockResolvedValue([wsSecret('WS_DOOMED')]);
-    wsVault.del.mockResolvedValue({ ok: true });
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('WS_DOOMED')).toBeInTheDocument());
-    const callsBefore = wsVault.get.mock.calls.length;
-
-    fireEvent.click(screen.getByTitle('Delete'));
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
-
-    await waitFor(() => expect(wsVault.del).toHaveBeenCalledWith('ws-1', 'WS_DOOMED'));
-    // The workspace port has no cache to invalidate — it re-reads explicitly.
-    await waitFor(() => expect(wsVault.get.mock.calls.length).toBeGreaterThan(callsBefore));
-  });
-
-  it('surfaces a rejected delete', async () => {
-    wsVault.get.mockResolvedValue([wsSecret('WS_DOOMED')]);
-    wsVault.del.mockRejectedValue({ response: { data: { detail: 'secret is locked' } } });
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('WS_DOOMED')).toBeInTheDocument());
-    fireEvent.click(screen.getByTitle('Delete'));
-    fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
-
-    await waitFor(() => expect(screen.getByText('secret is locked')).toBeInTheDocument());
-  });
-
-  it('surfaces a rejected create', async () => {
-    wsVault.create.mockRejectedValue({ response: { data: { detail: 'workspace vault is full' } } });
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByRole('button', { name: /add secret/i })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /add secret/i }));
-    fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'WS_NEW' } });
-    fireEvent.change(screen.getByPlaceholderText('Secret value'), { target: { value: 'v' } });
-    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
-
-    await waitFor(() => expect(screen.getByText('workspace vault is full')).toBeInTheDocument());
-  });
-
-  it('surfaces a list-load failure through the same error region', async () => {
-    wsVault.get.mockRejectedValue({ response: { data: { detail: 'vault service down' } } });
-    renderWorkspaceVault();
-
-    await waitFor(() => expect(screen.getByText('vault service down')).toBeInTheDocument());
-  });
-});
-
-describe('SecretsManager — the two ports drive the same state machine', () => {
-  it('opens an edit form scoped to the clicked row in either scope', async () => {
-    // Same interaction, both adapters: the edit form replaces exactly one row.
+describe('SecretsManager via the user vault adapter: edit and deep link', () => {
+  it('opens an edit form scoped to the clicked row', () => {
     userVaultData = {
       secrets: [userSecret('FIRST_TOKEN'), userSecret('SECOND_TOKEN')],
       remaining_slots: 18,
     };
-    const { unmount } = renderWithProviders(<PluginSecrets />);
-    fireEvent.click(within(screen.getByText('SECOND_TOKEN').closest('div.flex')!.parentElement!.parentElement!)
-      .getByTitle('Edit'));
-    expect(screen.getByPlaceholderText('New value (leave empty to keep current)')).toBeInTheDocument();
-    expect(screen.getByText('FIRST_TOKEN')).toBeInTheDocument();
-    unmount();
-
-    wsVault.get.mockResolvedValue([wsSecret('WS_FIRST'), wsSecret('WS_SECOND')]);
-    renderWorkspaceVault();
-    await waitFor(() => expect(screen.getByText('WS_SECOND')).toBeInTheDocument());
+    renderWithProviders(<PluginSecrets />);
     fireEvent.click(screen.getAllByTitle('Edit')[1]);
-    expect(screen.getByPlaceholderText('New value (leave empty to keep current)')).toBeInTheDocument();
-    expect(screen.getByText('WS_FIRST')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Leave empty to keep this key')).toBeInTheDocument();
+    expect(screen.getByText('FIRST_TOKEN')).toBeInTheDocument();
+  });
+
+  it('opens the add form prefilled from a "Set up NAME" link, once', async () => {
+    // The workspace MCP tab links here for a missing secret; the param is
+    // stripped once acted on, so a remount does not reopen the form.
+    function Search() {
+      return <span data-testid="search">{useLocation().search}</span>;
+    }
+    renderWithProviders(
+      <>
+        <PluginSecrets />
+        <Search />
+      </>,
+      { route: '/plugins?tab=secrets&secret=MY_API_KEY' },
+    );
+
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toHaveValue('MY_API_KEY');
+    await waitFor(() => expect(screen.getByTestId('search')).toHaveTextContent('?tab=secrets'));
+    expect(screen.getByTestId('search')).not.toHaveTextContent('secret=');
+  });
+
+  it('reads a recommended key\'s setup from its blueprint when a link names it', () => {
+    userBlueprints = [
+      { name: 'X_BEARER_TOKEN', label: 'X (Twitter) Bearer Token', docs_url: 'https://console.x.com/' },
+    ];
+    renderWithProviders(<PluginSecrets />, { route: '/plugins?tab=secrets&secret=X_BEARER_TOKEN' });
+
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toHaveValue('X_BEARER_TOKEN');
+    expect(screen.getByText(/Setting up/)).toHaveTextContent('Setting up X (Twitter) Bearer Token');
+    expect(screen.getByText('Docs').closest('a')).toHaveAttribute('href', 'https://console.x.com/');
+  });
+
+  it('opens a stored key\'s own edit form from `?edit=NAME`, focused, then strips the param', async () => {
+    userVaultData = {
+      secrets: [userSecret('FIRST_TOKEN'), userSecret('WIND_API_KEY', { description: 'wind' })],
+      remaining_slots: 18,
+    };
+    function Search() {
+      return <span data-testid="search">{useLocation().search}</span>;
+    }
+    renderWithProviders(
+      <>
+        <PluginSecrets />
+        <Search />
+      </>,
+      { route: '/plugins?tab=secrets&edit=WIND_API_KEY' },
+    );
+
+    const value = screen.getByPlaceholderText('Leave empty to keep this key');
+    expect(value).toHaveFocus();
+    expect(screen.getByPlaceholderText('Description (optional)')).toHaveValue('wind');
+    expect(screen.queryByPlaceholderText('SECRET_NAME')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('search')).not.toHaveTextContent('edit='));
+  });
+
+  it('says so when `?edit=NAME` names a key that is not stored, and that saving adds it', () => {
+    userVaultData = { secrets: [userSecret('FIRST_TOKEN')], remaining_slots: 19 };
+    renderWithProviders(<PluginSecrets />, { route: '/plugins?tab=secrets&edit=NOT_STORED_KEY' });
+
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toHaveValue('NOT_STORED_KEY');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'No key named NOT_STORED_KEY is stored. Saving adds it.',
+    );
+  });
+
+  it('keeps `?edit=NAME` through a failed list, for the Retry that lands it', async () => {
+    userVaultData = undefined;
+    userVaultError = new Error('Request failed with status code 500');
+    function Search() {
+      return <span data-testid="search">{useLocation().search}</span>;
+    }
+    const tree = () => (
+      <>
+        <PluginSecrets />
+        <Search />
+      </>
+    );
+    const { rerender } = renderWithProviders(tree(), { route: '/plugins?tab=secrets&edit=WIND_API_KEY' });
+    expect(screen.getByTestId('search')).toHaveTextContent('edit=WIND_API_KEY');
+
+    userVaultError = null;
+    userVaultData = { secrets: [userSecret('WIND_API_KEY')], remaining_slots: 19 };
+    rerender(tree());
+
+    expect(screen.getByPlaceholderText('Leave empty to keep this key')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('SECRET_NAME')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('search')).not.toHaveTextContent('edit='));
+  });
+
+  it('explains how sandbox code reads a secret', () => {
+    renderWithProviders(<PluginSecrets />);
+    expect(screen.getByRole('heading', { name: 'Reading a key' })).toBeInTheDocument();
+    expect(screen.getByText(/from vault import get/)).toBeInTheDocument();
+  });
+});
+
+describe('SecretsManager via the user vault adapter: recommended credentials', () => {
+  const X_BLUEPRINT = {
+    name: 'X_BEARER_TOKEN',
+    label: 'X (Twitter) Bearer Token',
+    description: 'Read-only app-only auth for x_api.',
+    docs_url: 'https://console.x.com/',
+    regex: '^[A-Za-z0-9%_-]{20,}$',
+  };
+
+  it('opens the add form prefilled, with the docs link', () => {
+    userBlueprints = [X_BLUEPRINT];
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByText('Set up'));
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toHaveValue('X_BEARER_TOKEN');
+    expect(screen.getByText('Docs').closest('a')).toHaveAttribute('href', 'https://console.x.com/');
+  });
+
+  it('disables Set up at the cap', () => {
+    userBlueprints = [X_BLUEPRINT];
+    userVaultData = { secrets: [userSecret('ONLY_TOKEN')], remaining_slots: 0 };
+    renderWithProviders(<PluginSecrets />);
+    expect(screen.getByText('Set up').closest('button')).toBeDisabled();
+  });
+
+  it('hints when the value does not match the blueprint regex, and not when it does', async () => {
+    userBlueprints = [X_BLUEPRINT];
+    renderWithProviders(<PluginSecrets />);
+    fireEvent.click(screen.getByText('Set up'));
+
+    const value = screen.getByPlaceholderText('Paste the key');
+    fireEvent.change(value, { target: { value: 'Bearer abc' } });
+    await waitFor(() => expect(screen.getByText(/doesn't match the usual format/i)).toBeInTheDocument());
+
+    fireEvent.change(value, { target: { value: 'A'.repeat(25) } });
+    await waitFor(() =>
+      expect(screen.queryByText(/doesn't match the usual format/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it('survives a malformed blueprint regex', () => {
+    userBlueprints = [{ ...X_BLUEPRINT, regex: '[unterminated' }];
+    renderWithProviders(<PluginSecrets />);
+    fireEvent.click(screen.getByText('Set up'));
+
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'anything' } });
+    expect(screen.queryByText(/doesn't match the usual format/i)).not.toBeInTheDocument();
+  });
+});
+
+// ===========================================================================
+// The add form as a disclosure: the button that opens it, the labels on it,
+// the keystroke that closes it, and what stays on screen beside it.
+// ===========================================================================
+
+describe('SecretsManager: the add form opens as a disclosure', () => {
+  it('turns the Add Secret button into the form\'s cancel while it is open', () => {
+    renderWithProviders(<PluginSecrets />);
+
+    const add = screen.getByRole('button', { name: /add key/i });
+    expect(add).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(add);
+
+    expect(screen.queryByRole('button', { name: /add key/i })).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { expanded: true });
+    expect(toggle).toHaveTextContent(/cancel/i);
+    // It points at the region it opened, so a screen reader can follow it there.
+    const region = document.getElementById(toggle.getAttribute('aria-controls')!);
+    expect(region).toContainElement(screen.getByPlaceholderText('SECRET_NAME'));
+  });
+
+  it('closes again from the same button', async () => {
+    renderWithProviders(<PluginSecrets />);
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+    fireEvent.click(screen.getByRole('button', { expanded: true }));
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('SECRET_NAME')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /add key/i })).toBeInTheDocument();
+  });
+
+  it('names every field above it, not only inside it', () => {
+    renderWithProviders(<PluginSecrets />);
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+
+    expect(screen.getByLabelText('Name')).toBe(screen.getByPlaceholderText('SECRET_NAME'));
+    expect(screen.getByLabelText('Value')).toBe(screen.getByPlaceholderText('Paste the key'));
+    expect(screen.getByLabelText('Description')).toBe(
+      screen.getByPlaceholderText('Description (optional)'),
+    );
+  });
+
+  it('closes on Escape from inside the form', async () => {
+    renderWithProviders(<PluginSecrets />);
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+    fireEvent.keyDown(screen.getByPlaceholderText('SECRET_NAME'), { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByPlaceholderText('SECRET_NAME')).not.toBeInTheDocument());
+    expect(userVault.create).not.toHaveBeenCalled();
+  });
+
+  it('ignores Escape while the save is in flight', async () => {
+    // Backing out of a form whose create is already on the wire would leave
+    // the user with no sight of how it landed.
+    userVault.create.mockImplementation(() => new Promise(() => {}));
+    // The file's beforeEach only clears calls, which keeps implementations, so
+    // a create that never settles would be the one every later test gets.
+    onTestFinished(() => {
+      userVault.create.mockReset();
+    });
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByRole('button', { name: /add key/i }));
+    fireEvent.change(screen.getByPlaceholderText('SECRET_NAME'), { target: { value: 'SLOW_TOKEN' } });
+    fireEvent.change(screen.getByPlaceholderText('Paste the key'), { target: { value: 'v' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(userVault.create).toHaveBeenCalled());
+    fireEvent.keyDown(screen.getByPlaceholderText('SECRET_NAME'), { key: 'Escape' });
+
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toBeInTheDocument();
+  });
+
+  it('keeps the recommended credentials on screen while the form is open', () => {
+    // The cards are what tell the user which name the server is looking for.
+    userBlueprints = [{ name: 'ACME_API_KEY', label: 'Acme API key' }];
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByText('Set up'));
+
+    expect(screen.getByText('Keys your connectors ask for')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('SECRET_NAME')).toHaveValue('ACME_API_KEY');
+  });
+});
+
+describe('SecretsManager: the edit form opens as a disclosure', () => {
+  it('closes on Escape without sending an update', async () => {
+    userVaultData = { secrets: [userSecret('EDIT_TOKEN')], remaining_slots: 19 };
+    renderWithProviders(<PluginSecrets />);
+
+    fireEvent.click(screen.getByTitle('Edit'));
+    const value = screen.getByPlaceholderText('Leave empty to keep this key');
+    expect(screen.getByLabelText('New value')).toBe(value);
+    fireEvent.keyDown(value, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByPlaceholderText('Leave empty to keep this key'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(userVault.update).not.toHaveBeenCalled();
   });
 });

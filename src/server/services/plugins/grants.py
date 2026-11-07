@@ -63,8 +63,8 @@ class BindGrants:
     def disclosure_reason(self) -> str:
         names = ", ".join(self.preexisting)
         return (
-            f"this plugin uses credentials already in your vault ({names}). "
-            f"Customize the server and remove the reference if that is not "
+            f"this plugin uses keys already in Secrets ({names}). "
+            f"Customize the connector and remove the reference if that is not "
             f"what you want."
         )
 
@@ -195,11 +195,11 @@ def disclose_vaulted_literals(report: InstallReport) -> None:
             scope="plugin",
             code="embedded_credential",
             message=(
-                f"this package carried credential values inline; they were "
-                f"moved into your vault as {names} rather than left in the "
-                f"server config. Check them there — a value that was meant to "
-                f"be a ${{vault:NAME}} reference but was mistyped lands here "
-                f"too, and would be sent as written."
+                f"this package carried key values inline; they were saved "
+                f"to Secrets as {names} rather than left in the connector's "
+                f"settings. Check them there. A value that was meant to be a "
+                f"${{vault:NAME}} reference but was mistyped lands there too, "
+                f"and would be sent as written."
             ),
             spec_ref="https://agent-plugins.org/specification",
         )
@@ -235,9 +235,9 @@ def disclose_undeclared_refs(
                 target=plan.key,
                 code="secret_undeclared",
                 message=(
-                    f"this entry sends credentials already in your vault "
+                    f"this entry sends keys already in Secrets "
                     f"({', '.join(undeclared)}) to {_destination(plan.config)} "
-                    f"without declaring them. Customize the server and remove "
+                    f"without declaring them. Customize the connector and remove "
                     f"the reference if that is not what you want."
                 ),
             )

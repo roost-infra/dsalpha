@@ -8,7 +8,9 @@ import type {
   OrderProposal,
   ProvenanceSourceType,
 } from './sse';
-import type { ErrorLinkSpec } from '@/utils/rateLimitError';
+import type { ErrorLinkSpec, StructuredError } from '@/utils/rateLimitError';
+import type { DispatchingAgent, ReportOutcome } from './api';
+import type { CommandFailureReason, CommandTool } from './commands';
 
 // --- Content Segments (discriminated union) ---
 
@@ -18,12 +20,22 @@ export interface ReasoningSegment {
   order: number;
 }
 
+/** Where each chunk of a streamed text segment ended, newest first. Immutable,
+ *  so extending a segment by a chunk is O(1) (see `session/stream/textChunks`). */
+export interface TextChunkMark {
+  readonly order: number;
+  readonly end: number;
+  readonly prev: TextChunkMark | null;
+}
+
 export interface TextSegment {
   type: 'text';
   content: string;
   order: number;
   /** OpenAI Responses text-block phase, carried through but not yet rendered. */
   phase?: 'commentary' | 'final_answer';
+  /** Set on text that arrived live: one segment holds a run of chunks. */
+  chunks?: TextChunkMark;
 }
 
 export interface ToolCallSegment {
@@ -71,11 +83,32 @@ export interface SubagentTaskRecord {
    *  the task's eventual outcome. A refused launch never starts a task, so for
    *  those this reply is the whole account of what happened. */
   result?: string;
+  /** The reply itself was a failure, so nothing ran. Kept apart from `status`,
+   *  which a started task's own settle can also set to `error`. */
+  launchFailed?: boolean;
+  /** Why a launch was refused, when the reply names a reason the user can be
+   *  told in their own words (`result` is written for the model). */
+  launchRefusal?: 'subagents_off';
+}
+
+/** A switch to another model, as the server reported it. The notice names
+ *  the models and the payer when shown, since the catalog that names them can
+ *  arrive after the event, and the language can change after both. */
+export interface ModelFallbackNotice {
+  /** Manifest keys. */
+  from: string;
+  to: string;
+  /** Who pays for `to`, the server's `billing_type`. */
+  paidBy?: string;
+  /** The provider `to`'s call went through, which names a sign-in's plan. */
+  provider?: string;
 }
 
 export interface NotificationSegment {
   type: 'notification';
-  content: string;
+  /** The label. A model switch has none: its label is written from `fallback`. */
+  content?: string;
+  fallback?: ModelFallbackNotice;
   order: number;
   /** Optional longer text (e.g. the compaction summary) shown in an
    *  expandable panel beneath the notification label. */
@@ -126,12 +159,6 @@ export interface DeleteThreadSegment {
   order: number;
 }
 
-export interface PlanApprovalSegment {
-  type: 'plan_approval';
-  planApprovalId: string;
-  order: number;
-}
-
 export interface CreditPauseSegment {
   type: 'credit_pause';
   proposalId: string;
@@ -159,7 +186,6 @@ export type ContentSegment =
   | DeleteWorkspaceSegment
   | StopWorkspaceSegment
   | DeleteThreadSegment
-  | PlanApprovalSegment
   | CreditPauseSegment
   | ToolApprovalSegment;
 
@@ -170,8 +196,12 @@ export interface ReasoningProcess {
   isReasoning: boolean;
   reasoningComplete: boolean;
   order: number;
-  reasoningTitle?: string | null;
   _completedAt?: number;
+  /** Wall clock at the start signal, for the live "thinking for" header. */
+  _startedAt?: number;
+  /** How long the model thought, from the server's complete signal when it
+   *  carries one, else measured here. Absent when neither side knew. */
+  elapsedMs?: number;
 }
 
 export interface ToolCallProcess {
@@ -291,19 +321,14 @@ export interface TodoListProcess {
 
 export interface PendingToolCallChunk {
   toolName: string | null;
+  /** From the first chunk when the producer sends it; matches the landed call. */
+  toolCallId: string | null;
   chunkCount: number;
   argsLength: number;
   firstSeenAt: number;
 }
 
 // --- HITL Interrupt State Records ---
-
-export interface PlanApprovalState {
-  status: string;
-  description?: string;
-  planApprovalId?: string;
-  interruptId?: string;
-}
 
 /** Where one approval card sits among the action requests its interrupt raised.
  *  The resume answers all of them in order, so the card carries its own slot. */
@@ -373,16 +398,31 @@ export interface QuestionProposalState {
   interruptId?: string;
 }
 
+/** A `delegate_to_analyst` hand-off, as the approval request carried it or,
+ *  made without asking, as its result did (`utils/preapprovedCards.ts`). */
 export interface PTCAgentProposalState {
   proposalId?: string;
-  status: string;
+  status: 'pending' | 'approved' | 'rejected';
   workspace_id?: string;
   workspace_name?: string;
   thread_id?: string;
-  question?: string;
+  question: string;
   interruptId?: string;
+  /** The call that made the hand-off, which names it in the transcript. */
   tool_call_id?: string;
   report_back?: boolean;
+  /** Approved, but the dispatch failed (`utils/dispatchResult.ts`). */
+  dispatch_failed?: boolean;
+  /** With `dispatch_failed`: the failure left it unknown whether the run
+   *  started, so the thread named may yet run it. */
+  dispatch_unknown?: boolean;
+  /** The hand-off's own run, as the dispatch's result named it. Absent on
+   *  older proposals and when the dispatch's reply was lost. */
+  run_id?: string;
+  /** A hand-off steered into a run already going: its steer, which names the
+   *  run that took it in, since `run_id` can end before reading it. Absent on
+   *  older proposals and on a hand-off that started its own run. */
+  steer_id?: string;
 }
 
 export interface SecretaryActionProposalState {
@@ -390,6 +430,7 @@ export interface SecretaryActionProposalState {
   status: string;
   actionType: 'delete_workspace' | 'stop_workspace' | 'delete_thread';
   workspace_id?: string;
+  workspace_name?: string | null;
   thread_id?: string;
   interruptId?: string;
 }
@@ -414,7 +455,50 @@ export interface CreditPauseState {
 
 // --- Chat Messages ---
 
-export interface UserMessage {
+/**
+ * Where a message came from when nobody typed it in this view, named by the
+ * label above it. The user's own messages carry none. Unrelated to a reply's
+ * `provenanceRecords`, which are the sources it read.
+ */
+export type MessageProvenance =
+  /** A turn an agent handed to this thread. `agent` is null on rows from
+   *  before the dispatcher was recorded. */
+  | { kind: 'agent'; agent: DispatchingAgent | null; threadId: string | null }
+  | { kind: 'automation'; automationId: string | null; name: string | null }
+  /** `platform` is the chat app's key as a gateway sends it (`telegram`). */
+  | { kind: 'channel'; platform: string }
+  /** A subagent's instruction its main agent wrote: the spawn or resume
+   *  prompt, or a follow-up. */
+  | { kind: 'main_agent' }
+  /** The two report-backs. Each is drawn as its label alone: the turn's own
+   *  message is written for the model. */
+  | {
+      kind: 'analyst_report'; threadId: string; workspaceId: string | null; workspaceName: string | null;
+      /** How the reported run ended; absent on older reports. */
+      outcome?: ReportOutcome;
+      /** The run reported on and the interrupted runs it continued, one of
+       *  which its hand-off names; absent on older reports. */
+      runIds?: string[];
+      /** The hand-off steers those runs took in: empty when they took none,
+       *  absent when unknown (a report from before the list, or one the
+       *  server could not read it for), which cannot say. */
+      steerIds?: string[];
+    }
+  | {
+      kind: 'task_report'; taskId: string; displayId: string; description: string | null; failed: boolean;
+      /** The subagent's role; absent on older reports. */
+      subagentType?: string;
+    }
+  /** A background command of the agent's that ended. `toolCallId` is the
+   *  call it started from, whose tool card the report opens; null for a
+   *  command whose call had no id. */
+  | {
+      kind: 'command_report'; tool: CommandTool; description: string | null; status: 'completed' | 'failed' | 'stopped';
+      failureReason: CommandFailureReason | null;
+      toolCallId: string | null;
+    };
+
+export type UserMessage = {
   id: string;
   role: 'user';
   content: string;
@@ -422,6 +506,10 @@ export interface UserMessage {
   timestamp: Date;
   isStreaming: false;
   isHistory?: boolean;
+  /** The backend turn this bubble belongs to, stamped when it is created (see
+   *  projectTurns). A paged transcript starts mid-thread, so position alone
+   *  cannot name the turn. */
+  turnIndex?: number;
   attachments?: Attachment[];
   /**
    * Widget context snapshots attached to this message. Rendered as inline
@@ -437,8 +525,34 @@ export interface UserMessage {
    * re-renders these cards (see serialize_chart_selections_for_metadata).
    */
   chartSelections?: import('@/pages/MarketView/stores/chartSelectionStore').ChartSelectionSnapshot[];
+  /** The file comments this message sent, drawn under its note. `content`
+   *  is that note wherever the row came from: the server keeps the block the
+   *  agent read as the query, and every way a row comes in (a replay, a
+   *  delivery) puts the note in its place. */
+  artifactComments?: import('./api').ArtifactCommentsShown;
+  /** Who sent it, when not the user in this view. A report-back's row has
+   *  empty content and is drawn as this label alone. */
+  provenance?: MessageProvenance;
+  /** On a report-back's row only: the run it opened. History and a live
+   *  attach can both draw that row, and know it by this. */
+  runId?: string;
   steeringDelivered?: boolean;
   steering?: boolean;
+  /** The request key this view sent the message under. A delivery that
+   *  claims the bubble settles this key rather than its text, since another
+   *  send of the same words may still be waiting on its answer. */
+  requestKey?: string;
+  /** On a steer, the run it was sent to. The view stamps a steer's turn from
+   *  its own count, which may be behind; replay names a settled run's turn, so
+   *  a reload places the steer by this. */
+  steeredRunId?: string;
+  /**
+   * On a failed steer, whether the server answered its POST with a refusal (a
+   * 4xx). The server sends one before it queues a steer, so no delivery can be
+   * this steer's. A failure with no such answer may have come after the
+   * server took it.
+   */
+  queueRefused?: boolean;
   /**
    * Set while this message is parked during an in-progress compaction (the
    * backend 409s a POST mid-compaction). Rendered as a shimmer bubble like a
@@ -446,9 +560,16 @@ export interface UserMessage {
    * and dropped if the user stops the compaction.
    */
   queued?: boolean;
-}
+  /** The server refused this send before it named a run, so it holds no row
+   *  of it: the bubble opens no turn of the server's, and an edit of it goes
+   *  out as a send. */
+  unadmitted?: boolean;
+  /** Sent from this view, as against drawn from history, a replay or a
+   *  reconnect: only such a bubble arrives with an entrance (isFreshSend). */
+  sentHere?: true;
+};
 
-export interface AssistantMessage {
+export type AssistantMessage = {
   id: string;
   role: 'assistant';
   content: string;
@@ -456,6 +577,11 @@ export interface AssistantMessage {
   timestamp: Date;
   isStreaming: boolean;
   isHistory?: boolean;
+  /** The backend turn this bubble belongs to (see UserMessage.turnIndex). */
+  turnIndex?: number;
+  /** The bubble a reconnect's bubble continues: where the same run's stream
+   *  was writing when it dropped (`session/stream/continuedBubbles.ts`). */
+  continues?: string;
   contentSegments: ContentSegment[];
   reasoningProcesses: Record<string, ReasoningProcess>;
   toolCallProcesses: Record<string, ToolCallProcess>;
@@ -464,7 +590,6 @@ export interface AssistantMessage {
   subagentTasks?: Record<string, SubagentTaskRecord>;
   pendingToolCallChunks?: Record<string, PendingToolCallChunk>;
   // HITL interrupt state
-  planApprovals?: Record<string, PlanApprovalState>;
   userQuestions?: Record<string, UserQuestionState>;
   workspaceProposals?: Record<string, WorkspaceProposalState>;
   questionProposals?: Record<string, QuestionProposalState>;
@@ -477,18 +602,36 @@ export interface AssistantMessage {
   steeringDelivered?: boolean;
   isSteering?: boolean;
   error?: boolean | string;
+  /** Why the turn failed, kept apart from `content` so whatever the turn
+   *  streamed still renders as its reply. Absent when the failure shows in
+   *  the chat input's banner instead. */
+  structuredError?: StructuredError;
+  /** A reply replay could not load (`replay_unavailable`). Its turn ran to
+   *  the end, so it offers a Regenerate: the server refuses a Retry for a
+   *  run that did not fail. */
+  unloaded?: boolean;
   // Set when the user hard-stopped this turn (live finalize or history replay
   // of a stopped turn). Drives the per-message "⏹ Stopped" chip.
   stopped?: boolean;
-  /** Monotonic counter bumped by every landed reply text, reasoning text or
-   *  tool-argument chunk (`nextArrivalSeq`). The streaming indicator reads it
-   *  to tell arriving text from a pause. */
-  arrivalSeq?: number;
-}
+  /** The reply to a send the server refused before admitting it (see
+   *  UserMessage.unadmitted). */
+  unadmitted?: boolean;
+  /** The reply to a send that drew no message of its own (a hidden opener),
+   *  so it opens its turn on screen. A replay of the turn has no opener row
+   *  to find this live copy by, and finds it by this instead. The replay
+   *  flags its own copy too, and a turn with it offers no Regenerate
+   *  (`hiddenOpenerTurns`). */
+  hiddenOpener?: boolean;
+  /** Server settlement instant supplied by historical replay. */
+  completedAt?: number;
+  /** Local observation of completion, stop, or failure. Not set on transport
+   * loss or a paused turn; replay's completedAt takes precedence. */
+  completionObservedAt?: number;
+};
 
 export type NotificationVariant = 'info' | 'success' | 'warning';
 
-export interface NotificationMessage {
+export type NotificationMessage = {
   id: string;
   role: 'notification';
   content: string;
@@ -497,8 +640,23 @@ export interface NotificationMessage {
   /** Optional longer text (e.g. a compaction summary) surfaced via the
    *  notification's expand toggle. */
   detail?: string;
+  /** Set on a wakeup's row, a price alert's included, which is drawn from
+   *  this instead of `content`: a notification rides the turn it sits in, as
+   *  the wakeup does. */
+  wakeup?: WakeupArrival;
   isHistory?: boolean;
-}
+};
+
+/**
+ * Wakeups reaching the thread, drawn as one row: `delivered` landed inside a
+ * running turn (one `steering_delivered` entry), `wake` started turn
+ * `turnIndex`, whose quiet fold finds it by that turn. `legacy` marks a price
+ * target's notice from before wakeups, whose row reads as a price alert even
+ * when the notice names nothing.
+ */
+export type WakeupArrival =
+  | { source: 'delivered'; notices: import('./wakeups').WakeNotice[]; legacy?: true }
+  | { source: 'wake'; notices: import('./wakeups').WakeNotice[]; turnIndex: number; legacy?: true };
 
 export type ChatMessage = UserMessage | AssistantMessage | NotificationMessage;
 

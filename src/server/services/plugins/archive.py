@@ -25,6 +25,7 @@ Forge tarballs (and zips exported the same way) wrap the repo in a single
 entry and ``plugin.json`` is not already at the root.
 """
 
+import bisect
 import bz2
 import gzip
 import io
@@ -32,9 +33,12 @@ import lzma
 import stat
 import tarfile
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 
 from src.server.models.plugin import Diagnostic
+from src.server.services.os_litter import is_os_litter
+from src.server.services.plugins.agents import AGENTS_DIR, is_agent_file
+from src.server.services.plugins.discover import _VENDOR_DIRS
 from src.server.services.plugins.errors import PluginFatal
 from src.server.services.plugins.paths import split_member
 
@@ -110,41 +114,161 @@ def _link_target(link_path: str, linkname: str, *, hard: bool) -> str | None:
     return "/".join(parts) or None
 
 
+def _final_target(links: dict[str, str], path: str) -> str | None:
+    """Where the link at ``path`` lands past the links it points through, or
+    None past MAX_LINK_HOPS. A cycle stops at the link that closes it."""
+    target = links[path]
+    seen = {path}
+    for _ in range(MAX_LINK_HOPS):
+        if target not in links or target in seen:
+            return target
+        seen.add(target)
+        target = links[target]
+    return None
+
+
+def _level_keys(path: str) -> list[int]:
+    """A key for each directory level of ``path``, each made from the one
+    above, so keying every level costs the path's length once. Joining each
+    level from its segments costs the length at every level, and a crafted
+    archive chooses how deep its paths go. A collision only adds a candidate:
+    every caller checks the path itself."""
+    keys, key = [], 0
+    for segment in path.split("/"):
+        key = hash((key, segment))
+        keys.append(key)
+    return keys
+
+
+def _links_seen_from(
+    links: dict[str, str], root: str
+) -> dict[str, str | None]:
+    """The links a package rooted at ``root`` can see: inside it, above it
+    (a package reached through a linked directory), and the same again for
+    each place those land, since a mirrored directory brings its links along.
+    Each maps to the part of its target the package sees: a link above the
+    package to the matching folder (``"/a"`` for ``plugins -> packages`` and
+    ``plugins/a``), any other to None, the whole target.
+
+    A repository that mirrors its skills for other agents keeps hundreds of
+    directory links outside the package, and expanding those would charge the
+    package's member cap for files it never holds. The walk is linear in the
+    links' size: each place is keyed once, a link is scanned under one place
+    only, and a link above several places takes its whole target from the
+    second on.
+    """
+    ordered = sorted(links)
+    by_key: dict[int, list[str]] = {}
+    for path in ordered:
+        by_key.setdefault(_level_keys(path)[-1], []).append(path)
+    # The next index in ``ordered`` that no scan below a place has taken.
+    untaken = list(range(len(ordered) + 1))
+
+    def next_untaken(i: int) -> int:
+        while untaken[i] != i:
+            untaken[i] = untaken[untaken[i]]
+            i = untaken[i]
+        return i
+
+    seen: dict[str, str | None] = {}
+    whole: set[str] = set()
+    areas, visited = [root], set()
+
+    def land(path: str, below: str | None = None) -> None:
+        seen[path] = below
+        target = _final_target(links, path)
+        if below is None:
+            whole.add(path)
+        if target:
+            areas.append(target if below is None else target + below)
+
+    while areas:
+        area = areas.pop()
+        if area in visited:
+            continue
+        visited.add(area)
+        for key in _level_keys(area):
+            for path in by_key.get(key, ()):
+                if path in whole or not (
+                    path == area or area.startswith(path + "/")
+                ):
+                    continue
+                if path == area or path in seen:
+                    land(path)
+                else:
+                    land(path, below=area[len(path):])
+        # Every path under ``area`` sorts in [area + "/", area + "0"): "0"
+        # is the character after "/".
+        i = next_untaken(bisect.bisect_left(ordered, area + "/"))
+        end = bisect.bisect_left(ordered, area + "0")
+        while i < end:
+            if ordered[i] not in whole:
+                land(ordered[i])
+            untaken[i] = i + 1
+            i = next_untaken(i + 1)
+    return seen
+
+
 def _resolve_links(
-    files: dict[str, bytes], links: dict[str, str]
+    files: dict[str, bytes],
+    links: dict[str, str],
+    holding: set[str],
+    only: dict[str, str | None] | None = None,
 ) -> list[tuple[str, str]]:
-    """Fold every in-archive link into ``files``; return the ones that dangle.
+    """Fold the in-archive links into ``files``, all of them or ``only``
+    those, each for the part of its target ``only`` names; return the ones
+    that dangle, wherever a mirror shows them as well.
 
     A link to a directory mirrors that subtree under the link's own path,
     which is how a package publishes the same skills under two vendor
-    directories. Mirrored bytes count against the uncompressed cap like any
-    other member, so a link cannot be used to multiply a tree past it.
+    directories. Mirrored bytes count against the uncompressed cap and
+    mirrored entries against the member cap, like any other member, so a link
+    cannot be used to multiply a tree past either: a chain of directory links
+    doubles at every level, and empty files cost no bytes.
+
+    A link that dangles inside a mirrored directory is missing from the
+    mirror too, and a package reached through the mirror sees it there, so it
+    is reported at each place a file in its spot would have been copied to,
+    through the links in ``holding``. Those reports share the member cap with
+    the files, so a link cannot multiply them past it either.
     """
     unresolved: list[tuple[str, str]] = []
+    mirrors: list[tuple[str, str, str]] = []
     budget = MAX_UNCOMPRESSED_BYTES - sum(len(b) for b in files.values())
-    for path in sorted(links):
-        target = links[path]
-        seen = {path}
-        for _ in range(MAX_LINK_HOPS):
-            if target not in links or target in seen:
-                break
-            seen.add(target)
-            target = links[target]
-        else:
+    for path in sorted(links if only is None else only):
+        target = _final_target(links, path)
+        if target is None:
             unresolved.append((path, links[path]))
             continue
+        # Whether the link resolves is the whole target's question, even
+        # where only the part under ``source`` is copied.
+        source = target + ((only or {}).get(path) or "")
         if target in files:
-            payload = {path: files[target]}
+            payload, held = {path: files[target]}, True
         else:
-            prefix = target + "/"
-            payload = {
-                f"{path}/{p[len(prefix):]}": b
-                for p, b in files.items()
-                if p.startswith(prefix)
-            }
-        if not payload:
+            payload, held = {}, False
+            for p, b in files.items():
+                if p.startswith(target + "/"):
+                    held = True
+                    if p == source or p.startswith(source + "/"):
+                        payload[path + p[len(target):]] = b
+            # A tar can hold a file and a folder at one path, and the whole
+            # target would bring a file on the way down to the folder too.
+            at = len(source)
+            while (at := source.rfind("/", 0, at)) > len(target):
+                if source[:at] in files:
+                    payload[path + source[len(target):at]] = files[source[:at]]
+        if path in holding:
+            mirrors.append((path, target, source))
+        if not held:
             unresolved.append((path, links[path]))
             continue
+        if len(files) + len(payload) > MAX_MEMBERS:
+            raise _fatal(
+                f"archive has more than {MAX_MEMBERS} members once its links "
+                "are resolved",
+                code="too_many_members",
+            )
         budget -= sum(len(b) for b in payload.values())
         if budget < 0:
             raise _fatal(
@@ -154,7 +278,20 @@ def _resolve_links(
                 code="too_large",
             )
         files.update(payload)
-    return unresolved
+    missing = dict(unresolved)
+    order = sorted(missing)
+    for path, target, source in mirrors:
+        start = bisect.bisect_left(order, source + "/")
+        end = bisect.bisect_left(order, source + "0")
+        for dangling in order[start:end]:
+            copy = path + dangling[len(target):]
+            if copy in files or copy in missing:
+                continue
+            if len(files) + len(missing) >= MAX_MEMBERS:
+                return list(missing.items())
+            missing[copy] = missing[dangling]
+            bisect.insort(order, copy)
+    return list(missing.items())
 
 
 def _inflate(zf: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> bytes:
@@ -203,7 +340,7 @@ def _extract_zip(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
         total = 0
         for info in infos:
             segments = _check_member_path(info.filename)
-            if info.is_dir() or not segments:
+            if info.is_dir() or not segments or is_os_litter(segments):
                 continue
             if info.flag_bits & 0x1:
                 raise _fatal(
@@ -364,9 +501,19 @@ def _extract_tar(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
                     code="too_many_members",
                 )
             segments = _check_member_path(member.name)
-            if member.isdir():
+            if member.isdir() or not segments or is_os_litter(segments):
                 continue
             if member.issym() or member.islnk():
+                # tarfile reads a header's bytes that are not UTF-8 as lone
+                # surrogates, which this turns back into those bytes.
+                target_bytes = member.linkname.encode("utf-8", "surrogateescape")
+                if len(target_bytes) > MAX_LINK_TARGET_BYTES:
+                    raise _fatal(
+                        f"link {member.name!r} has a target longer than "
+                        f"{MAX_LINK_TARGET_BYTES} bytes",
+                        code="link_target_too_long",
+                        target=member.name,
+                    )
                 links["/".join(segments)] = _link_target(
                     "/".join(segments), member.linkname, hard=member.islnk()
                 ) or ""
@@ -427,21 +574,145 @@ def _extract_tar(raw: bytes) -> tuple[dict[str, bytes], dict[str, str]]:
     return files, links
 
 
-def _single_root_prefix(files: dict[str, bytes]) -> str:
-    """The wrapping ``repo-ref/`` directory to strip, or "" when there is none."""
-    if "plugin.json" in files or not files:
+# What inside a lone ``agents/`` makes it a plugin's folder rather than the
+# subagents folder: discovery's manifest folders, or an ``agents/`` of its own.
+_PLUGIN_FOLDER_DIRS = (AGENTS_DIR, *(f"{d}/" for d in _VENDOR_DIRS))
+
+
+def _single_root_prefix(paths: Collection[str]) -> str:
+    """The wrapping ``repo-ref/`` directory to strip, or "" when there is none.
+
+    Any member at the top level means there is no wrapper, even one named
+    like the directory beside it: stripping would drop it. Nor is a lone
+    ``agents/`` holding a subagent file, which is that folder zipped on its
+    own: stripped, its files would read as no package at all. A stray file
+    beside the subagents leaves it that folder, since install reports the
+    file and keeps the rest, but a manifest or an ``agents/`` inside makes it
+    a plugin folder that happens to bear the name.
+    """
+    if not paths or any("/" not in path for path in paths):
         return ""
-    roots = {path.split("/", 1)[0] for path in files}
+    roots = {path.split("/", 1)[0] for path in paths}
     if len(roots) != 1:
         return ""
-    prefix = next(iter(roots)) + "/"
-    if not any(len(path) > len(prefix) for path in files):
+    root = roots.pop()
+    if (
+        f"{root}/" == AGENTS_DIR
+        and any(is_agent_file(path) for path in paths)
+        and not any(
+            rest == "plugin.json" or rest.startswith(_PLUGIN_FOLDER_DIRS)
+            for rest in (path.removeprefix(AGENTS_DIR) for path in paths)
+        )
+    ):
         return ""
-    return prefix
+    return f"{root}/"
+
+
+def _links_holding_content(
+    files: dict[str, bytes], links: dict[str, str]
+) -> set[str]:
+    """The links whose target can hold content once links resolve: a file of
+    the archive at or under it, or another such link at, above or under it.
+
+    Decided without expanding anything and whatever order the links resolve
+    in, so a whole read and a package read agree on it. Links that only reach
+    each other hold nothing. It can name a link that resolution leaves empty
+    (one reached only through a link that sorts after it), never miss one
+    that resolution fills, so a wrapper strip it allows never drops content.
+    """
+    by_target: dict[str, list[str]] = {}
+    for path in links:
+        if target := _final_target(links, path):
+            by_target.setdefault(target, []).append(path)
+    link_keys: dict[int, list[str]] = {}
+    for path in links:
+        link_keys.setdefault(_level_keys(path)[-1], []).append(path)
+
+    def links_above(path: str, keys: list[int] | None = None) -> list[str]:
+        return [
+            link
+            for key in (_level_keys(path) if keys is None else keys)[:-1]
+            for link in link_keys.get(key, ())
+            if path.startswith(link + "/")
+        ]
+
+    # A target's levels are walked once, for both of the lookups it needs.
+    by_key: dict[int, list[str]] = {}
+    above: dict[str, list[str]] = {}
+    for target in by_target:
+        keys = _level_keys(target)
+        by_key.setdefault(keys[-1], []).append(target)
+        if found := links_above(target, keys):
+            above[target] = found
+    link_names = sorted(links)
+    ordered = sorted(by_target)
+    untaken = list(range(len(ordered) + 1))
+
+    def next_untaken(i: int) -> int:
+        while untaken[i] != i:
+            untaken[i] = untaken[untaken[i]]
+            i = untaken[i]
+        return i
+
+    names = sorted(files)
+
+    def under(paths: list[str], path: str) -> bool:
+        i = bisect.bisect_left(paths, path + "/")
+        return i < len(paths) and paths[i].startswith(path + "/")
+
+    def may_hold(path: str, via: str) -> bool:
+        # ``via`` is the link being followed, still empty when it is copied.
+        return (
+            path in files
+            or (path in links and path != via)
+            or under(names, path)
+            or under(link_names, path)
+            or any(link != via for link in links_above(path))
+        )
+
+    held: set[str] = set()
+    filled: set[str] = set()
+    queue: list[str] = []
+
+    def fill(target: str) -> None:
+        if target not in filled:
+            filled.add(target)
+            for path in by_target[target]:
+                if path not in held:
+                    held.add(path)
+                    queue.append(path)
+
+    for target in by_target:
+        if target in files or under(names, target):
+            fill(target)
+    while queue:
+        path = queue.pop()
+        # Content at ``path`` is content under every target at or above it.
+        for key in _level_keys(path):
+            for target in by_key.get(key, ()):
+                if target not in filled and (
+                    path == target or path.startswith(target + "/")
+                ):
+                    fill(target)
+        # A target below it holds what the same place in its target could.
+        # Only an archive no file system could hold has a second link above
+        # a place, and there it is counted rather than followed.
+        source = _final_target(links, path)
+        i = next_untaken(bisect.bisect_left(ordered, path + "/"))
+        end = bisect.bisect_left(ordered, path + "0")
+        while i < end:
+            target = ordered[i]
+            if any(link != path for link in above.get(target, ())) or may_hold(
+                f"{source}{target[len(path):]}", path
+            ):
+                fill(target)
+            untaken[i] = i + 1
+            i = next_untaken(i + 1)
+    return held
 
 
 def extract_plugin_archive(
-    raw: bytes,
+    raw: bytes, *, subdir: str | None = None
 ) -> tuple[dict[str, bytes], list[Diagnostic]]:
     """Extract a plugin package to a path→bytes map, or raise PluginFatal.
 
@@ -450,13 +721,32 @@ def extract_plugin_archive(
     question, not extraction's — marketplace repos keep theirs in
     subdirectories. The diagnostics report links that pointed outside the
     archive, so a file that silently went missing says so.
+
+    With ``subdir``, the one package that will be read, only the links it can
+    see are expanded. A forge archive is the whole repository, and mirrors
+    elsewhere in it would otherwise count against the package's member cap.
     """
     if raw[:4] in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"):
         files, links = _extract_zip(raw)
     else:
         files, links = _extract_tar(raw)
-    unresolved = _resolve_links(files, links)
-    prefix = _single_root_prefix(files)
+    holding = _links_holding_content(files, links)
+    # Decided before any link is expanded, so the chooser, which expands them
+    # all, and a package read with only the links it can see agree on where
+    # the package's folder is. A link that can hold nothing never becomes
+    # content, so it cannot make a second root, and a link to a directory
+    # becomes one.
+    prefix = _single_root_prefix(
+        files.keys()
+        | {
+            path if _final_target(links, path) in files else path + "/"
+            for path in holding
+        }
+    )
+    only = None
+    if subdir and subdir.strip("/"):
+        only = _links_seen_from(links, prefix + subdir.strip("/"))
+    unresolved = _resolve_links(files, links, holding, only)
     if prefix:
         files = {
             path[len(prefix):]: content
@@ -465,7 +755,9 @@ def extract_plugin_archive(
         }
     diagnostics = []
     for path, target in unresolved:
-        shown = path[len(prefix):] if path.startswith(prefix) else path
+        if not path.startswith(prefix):
+            continue  # Outside the wrapper, so in no package.
+        shown = path[len(prefix):]
         diagnostics.append(
             Diagnostic(
                 level="warning",

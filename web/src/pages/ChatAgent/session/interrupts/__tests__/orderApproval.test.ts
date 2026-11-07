@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A stopped order is answered by name, not by where it sat.
  *
@@ -9,11 +10,11 @@
  * keeps, what the resume sends, and what a replay reads back.
  */
 import { describe, it, expect, vi } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 import type { ActionRequest, OrderProposal } from '@/types/sse';
 import { projectLiveInterrupt } from '../fromLiveEvent';
 import type { StreamRuntime } from '../../runtime';
-import type { MessageRecord, SSEEvent, StreamProcessorRefs } from '../../types';
+import type { SSEEvent, StreamProcessorRefs } from '../../types';
 import {
   buildToolApprovalState,
   isToolApprovalRequest,
@@ -64,12 +65,12 @@ describe('the card an order interrupt builds', () => {
   });
 
   // The order gate raises its own interrupt, so its requests need not be named
-  // the way a directly bound MCP tool is. One that fell through would render a
-  // plan-approval card over a live order.
+  // the way a directly bound MCP tool is. One that fell through would get no
+  // card, leaving a live order waiting with nothing to answer it.
   it('recognizes a keyed request whatever it is named', () => {
     expect(isToolApprovalRequest({ name: 'place_equity_order', attempt_id: 'a-1' })).toBe(true);
     expect(isToolApprovalRequest({ name: 'place_equity_order', order: ORDER })).toBe(true);
-    expect(isToolApprovalRequest({ name: 'SubmitPlan', args: { plan: 'x' } })).toBe(false);
+    expect(isToolApprovalRequest({ name: 'web_search', args: { query: 'x' } })).toBe(false);
     expect(isToolApprovalRequest(undefined)).toBe(false);
   });
 
@@ -152,25 +153,24 @@ describe('the verdict a replay reads back', () => {
 
 describe('the live projection of an order interrupt', () => {
   function build() {
-    let current: MessageRecord[] = [
-      { id: 'a-1', role: 'assistant', content: '', contentSegments: [] } as unknown as MessageRecord,
+    let current: ChatMessage[] = [
+      { id: 'a-1', role: 'assistant', content: '', contentSegments: [] } as unknown as ChatMessage,
     ];
     const rt = {
-      setMessages: ((updater: (prev: MessageRecord[]) => MessageRecord[]) => {
+      setMessages: ((updater: (prev: ChatMessage[]) => ChatMessage[]) => {
         current = updater(current);
       }) as StreamRuntime['setMessages'],
       setPendingInterrupt: vi.fn(),
       pendingInterruptIdsRef: { current: new Set<string>() },
       renderedInterruptIdsRef: { current: new Set<string>() },
-      currentPlanModeRef: { current: false },
     } as unknown as StreamRuntime;
     const refs = { contentOrderCounterRef: { current: 0 } } as unknown as StreamProcessorRefs;
     return { rt, refs, read: () => current };
   }
 
   // The gate raises its own interrupt, so its requests need not be named the
-  // way a directly bound MCP tool is. Falling through here would draw a plan
-  // card over a live order and leave the resume with nothing to answer it.
+  // way a directly bound MCP tool is. Falling through here would draw no card
+  // and leave the resume with nothing to answer it.
   it('draws approval cards for a request the direct-name test would miss', () => {
     const { rt, refs, read } = build();
     projectLiveInterrupt(
@@ -186,7 +186,6 @@ describe('the live projection of an order interrupt', () => {
     );
 
     const msg = read()[0] as AssistantMessage;
-    expect(msg.planApprovals).toBeUndefined();
     expect(msg.toolApprovals?.['int-1']).toMatchObject({
       status: 'pending',
       attemptId: 'attempt-1',

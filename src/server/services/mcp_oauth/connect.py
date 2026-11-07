@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -49,9 +50,10 @@ from mcp.shared.auth import (
 
 from src.config.env import MCP_CLIENT_METADATA_URL
 from src.server.database.egress_grants import apply_consent_to_active_grants
+from src.server.database.mcp_config_version import bump_user_workspaces_mcp_version
+from src.server.database.mcp_descriptions import drop_descriptions
 from src.server.database.mcp_oauth import Secrets, get_connection, upsert_connection
 from src.server.database.mcp_servers import (
-    bump_user_workspaces_mcp_version,
     get_catalog_server,
     list_catalog_servers,
 )
@@ -63,8 +65,20 @@ from src.server.services.brokerage_capabilities import (
     required_groups,
     vendor_for_url,
 )
+from src.server.services import mcp_saves
 from src.server.services.brokerages import Brokerage, brokerage_for_url
+from src.server.services.mcp_apply import schedule_proactive_apply
 from src.server.services.mcp_config import same_consented_url
+from src.server.services.mcp_descriptions.jobs import own_description_scope
+from src.server.services.mcp_probe import _scrub_url
+from src.server.services.mcp_oauth.finish import (
+    CallbackFailed,
+    CallbackFinish,
+    PreparedSignIn,
+    StoreConnection,
+    discard,
+    park,
+)
 from src.server.services.mcp_oauth.http import (
     OAuthHopBlocked,
     oauth_http_client,
@@ -193,6 +207,11 @@ class ConnectState(BaseModel):
     # not whatever a concurrent edit left on the row meanwhile. Defaulted so an
     # older-shaped record still validates.
     granted_capabilities: list[str] | None = None
+    # Set when the server is saved by this sign-in rather than already a row:
+    # what the save needs is parked in Postgres under this state (see
+    # ``services.mcp_saves``). A build without the field reads such a record as
+    # a reconnect, finds no row, and answers SERVER_CHANGED, writing nothing.
+    pending: bool = False
 
 
 def _cache_client():
@@ -208,14 +227,22 @@ async def _try_hop(client, url: str) -> httpx2.Response | None:
     """One discovery GET; None when that URL is simply absent or unusable.
 
     A blocked hop is not a miss — it aborts discovery rather than falling
-    through to the next candidate.
+    through to the next candidate. Its message quotes the URL dialled, the
+    row's own on the first hop and one built from its path after that, so it
+    leaves here cut to the host: the start route shows it to the user.
     """
     try:
         return await pinned_request(client, "GET", url, headers=_PROBE_HEADERS)
-    except OAuthHopBlocked:
-        raise
+    except OAuthHopBlocked as e:
+        raise OAuthHopBlocked(
+            _scrub_url(str(e), url), request_sent=e.request_sent
+        ) from None
     except Exception as e:
-        logger.info("[mcp_oauth] discovery hop %s failed: %s", url, e)
+        # Host only: the row's URL may carry a credential in its query.
+        logger.info(
+            "[mcp_oauth] discovery hop to %s failed: %s",
+            _scrub_url(url, url), _scrub_url(str(e), url),
+        )
         return None
 
 
@@ -544,7 +571,7 @@ async def _register_client(
     request = create_client_registration_request(
         as_metadata, client_metadata, auth_base_url
     )
-    response = await pinned_send(client, request)
+    response = await _send_registration(client, request, server_name)
     if response.status_code not in (200, 201) and await _rejected_our_metadata(response):
         logger.info(
             "[mcp_oauth] %s refused the full registration metadata (%s); "
@@ -555,8 +582,83 @@ async def _register_client(
         request = _minimal_registration_request(
             as_metadata, client_metadata, auth_base_url
         )
-        response = await pinned_send(client, request)
-    return _Registration(await handle_registration_response(response))
+        response = await _send_registration(client, request, server_name)
+    if response.status_code not in (200, 201):
+        raise await _registration_refused(server_name, response)
+    try:
+        return _Registration(await handle_registration_response(response))
+    except OAuthFlowError:
+        # Not chained: the SDK's message quotes the parse failure, which on a
+        # 2xx can carry the client_secret the AS just issued.
+        logger.info(
+            "[mcp_oauth] %s answered its registration (%s) with a client that "
+            "does not parse",
+            server_name,
+            response.status_code,
+        )
+        raise McpOAuthError(
+            f"{_SIGN_IN_NOT_SET_UP}: its authorization server's answer to "
+            "registering this app could not be read."
+        ) from None
+
+
+# Leads every registration refusal, which the page shows as sent.
+_SIGN_IN_NOT_SET_UP = "This server's sign-in could not be set up"
+
+# An RFC 7591 ``error`` is a short code; anything else in that member is prose
+# the AS wrote, and is not shown.
+_REGISTRATION_ERROR_CODE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+async def _send_registration(
+    client, request: httpx2.Request, server_name: str
+) -> httpx2.Response:
+    """One registration POST, a failed hop refused in words the page can show."""
+    try:
+        return await pinned_send(client, request)
+    except (OAuthHopBlocked, httpx2.HTTPError) as e:
+        logger.info(
+            "[mcp_oauth] registering with %s for %s failed: %s",
+            request.url.host,
+            server_name,
+            e,
+        )
+        raise McpOAuthError(
+            f"{_SIGN_IN_NOT_SET_UP}: registering this app with its "
+            "authorization server failed."
+        ) from e
+
+
+async def _registration_refused(server_name: str, response) -> McpOAuthError:
+    """A registration the AS did not grant, as one line with its status.
+
+    Never the body. An AS that advertises a registration endpoint it does not
+    serve answers with its HTML error page, and the SDK's error embeds that
+    page whole; the route shows the message verbatim. The AS's RFC 7591
+    ``error`` code is kept when it sent a well-formed one, since it names what
+    was rejected.
+    """
+    error = _registration_error(await response.aread())
+    code = (
+        error
+        if isinstance(error, str) and _REGISTRATION_ERROR_CODE.fullmatch(error)
+        else None
+    )
+    status = f"HTTP {response.status_code}" + (f", {code}" if code else "")
+    logger.info("[mcp_oauth] registration for %s refused (%s)", server_name, status)
+    return McpOAuthError(
+        f"{_SIGN_IN_NOT_SET_UP}: its authorization server did not register "
+        f"this app ({status})."
+    )
+
+
+def _registration_error(body: bytes) -> Any:
+    """The ``error`` member of a registration answer's JSON body, or None."""
+    try:
+        parsed = json.loads(body or b"")
+    except ValueError:
+        return None
+    return parsed.get("error") if isinstance(parsed, dict) else None
 
 
 def _is_metadata_document_id(client_id: str | None) -> bool:
@@ -588,9 +690,8 @@ async def _rejected_our_metadata(response) -> bool:
     non-2xx meant a 429 was answered by immediately spending a second request
     against the limit that produced it, and a 5xx that had already created the
     client created a second one and orphaned the first. Neither is fixed by
-    sending different metadata, and both are reported honestly by letting the
-    response fall through to ``handle_registration_response``, which raises
-    carrying the real status.
+    sending different metadata, and both are reported honestly by
+    ``_registration_refused``, which carries the real status.
 
     A 400 with no parseable error still retries: RFC 7591 names the codes
     below, but a server that refuses our optional members with an empty 400 is
@@ -606,11 +707,7 @@ async def _rejected_our_metadata(response) -> bool:
     body = await response.aread()
     if response.status_code not in (400, 422):
         return False
-    try:
-        parsed = json.loads(body or b"")
-    except ValueError:
-        parsed = None
-    error = parsed.get("error") if isinstance(parsed, dict) else None
+    error = _registration_error(body)
     if error is None:
         return response.status_code == 400
     return error == "invalid_client_metadata"
@@ -674,10 +771,27 @@ async def _supersede_inflight(user_id: str, scope: str, state: str) -> None:
     if not previous:
         return
     superseded = previous.decode() if isinstance(previous, bytes) else previous
-    if await redis.delete(f"{_STATE_KEY_PREFIX}{superseded}"):
-        logger.info(
-            "[mcp_oauth] superseded an in-flight connect user=%s scope=%s",
-            user_id, scope,
+    state_key = f"{_STATE_KEY_PREFIX}{superseded}"
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.get(state_key)
+        pipe.delete(state_key)
+        retired, _ = await pipe.execute()
+    if not retired:
+        return
+    logger.info(
+        "[mcp_oauth] superseded an in-flight connect user=%s scope=%s",
+        user_id, scope,
+    )
+    # A retired flow that was saving a server leaves its payload behind, and
+    # that payload can hold secret values; the sweep would reach it only once
+    # it expired. Best effort, like the retirement itself.
+    try:
+        if json.loads(retired).get("pending"):
+            await discard(superseded)
+    except Exception:
+        logger.warning(
+            "[mcp_oauth] could not drop a superseded sign-in's payload user=%s",
+            user_id, exc_info=True,
         )
 
 
@@ -837,7 +951,59 @@ async def start_connect(
         raise McpServerMoved(
             "This server's address changed since the page was loaded"
         )
+    return await _start(
+        user_id,
+        server_name,
+        server_url,
+        return_to=return_to,
+        web_origin=web_origin,
+        loopback_redirect=loopback_redirect,
+        granted_capabilities=granted_capabilities,
+    )
 
+
+async def start_pending_connect(
+    user_id: str,
+    prepared: PreparedSignIn,
+    *,
+    return_to: str | None = None,
+    web_origin: str | None = None,
+    loopback_redirect: str | None = None,
+    granted_capabilities: Sequence[str] | None = None,
+) -> StartedConnect:
+    """Phase 1 for a server the sign-in itself saves (see ``services.mcp_saves``).
+
+    There is no row to read: ``prepared`` names the server and its address,
+    and carries what the callback writes once the user has signed in.
+    """
+    return await _start(
+        user_id,
+        prepared.server,
+        prepared.url,
+        return_to=return_to,
+        web_origin=web_origin,
+        loopback_redirect=loopback_redirect,
+        granted_capabilities=granted_capabilities,
+        pending=prepared,
+    )
+
+
+# The payload outlives its state record by this much, so a callback that
+# claims the state in its last second still finds what it is to save.
+_PENDING_GRACE_SECONDS = 60
+
+
+async def _start(
+    user_id: str,
+    server_name: str,
+    server_url: str,
+    *,
+    return_to: str | None,
+    web_origin: str | None,
+    loopback_redirect: str | None,
+    granted_capabilities: Sequence[str] | None,
+    pending: PreparedSignIn | None = None,
+) -> StartedConnect:
     # Before the first packet leaves, not at the end beside the record it
     # feeds. This raises for a caller that named no selection, and raising it
     # after ``_register_client`` meant an older page or a script posting
@@ -852,9 +1018,13 @@ async def start_connect(
     # exchange in phase 2 reads it back from that record.
     redirect_uri = sanitize_loopback_redirect(loopback_redirect) or callback_uri()
     async with oauth_http_client() as client:
-        prm, as_metadata, auth_server_url, www_scope = await _discover(
-            client, server_url
-        )
+        try:
+            prm, as_metadata, auth_server_url, www_scope = await _discover(
+                client, server_url
+            )
+        except OAuthHopBlocked as e:
+            logger.info("[mcp_oauth] discovery for %s refused: %s", server_name, e)
+            raise McpOAuthError(f"{_SIGN_IN_NOT_SET_UP}: {e}") from e
 
         # Passing the grant types is what makes the SDK append ``offline_access``
         # (SEP-2207). Without it, an AS that gates refresh tokens on that scope
@@ -957,7 +1127,17 @@ async def start_connect(
         browser_nonce=browser_nonce,
         client_secret=client_info.client_secret or "",
         granted_capabilities=consented,
+        pending=pending is not None,
     )
+    if pending is not None:
+        # Before the state record, so no callback can claim a state whose
+        # payload is not there yet.
+        await park(
+            state,
+            user_id=user_id,
+            prepared=pending,
+            ttl_seconds=STATE_TTL_SECONDS + _PENDING_GRACE_SECONDS,
+        )
     redis = _cache_client()
     stored = await redis.set(
         f"{_STATE_KEY_PREFIX}{state}",
@@ -966,6 +1146,8 @@ async def start_connect(
         ex=STATE_TTL_SECONDS,
     )
     if not stored:
+        if pending is not None:
+            await discard(state)
         raise McpOAuthError("state collision — retry the connect")
     # Only now, with the new flow's record parked: an error on the way here
     # leaves an older connect intact rather than retiring it for one that turned
@@ -985,8 +1167,8 @@ async def start_connect(
         endpoint_parts.fragment,
     ))
     logger.info(
-        "[mcp_oauth] connect started user=%s server=%s issuer=%s",
-        user_id, server_name, record.issuer,
+        "[mcp_oauth] connect started user=%s server=%s issuer=%s pending=%s",
+        user_id, server_name, record.issuer, pending.kind if pending else "",
     )
     return StartedConnect(
         authorize_url=authorize_url,
@@ -1023,6 +1205,63 @@ async def _claim_state(state: str) -> ConnectState | None:
         return None
 
 
+class _ReconnectFinish:
+    """A connect for a row that already exists, which only the connection
+    is written for. A reconnect that lands switches the row back on."""
+
+    plugin = None
+
+    def __init__(self, record: ConnectState) -> None:
+        self.record = record
+        self.row: dict[str, Any] | None = None
+
+    async def before_exchange(self) -> None:
+        return None
+
+    async def after_exchange(self, bearer: str) -> None:
+        # The catalog row was validated in phase 1, up to STATE_TTL_SECONDS
+        # ago, long enough for the user to delete or re-point the server
+        # mid-consent. Persisting anyway would resurrect a connection with no
+        # catalog row behind it: invisible to the UI, refreshed forever by
+        # the sweeper, and silently inherited by a same-name recreate. The
+        # freshly exchanged token is dropped on the floor here; it simply
+        # expires.
+        row = await get_catalog_server(self.record.user_id, self.record.server_name)
+        if row is None or not same_consented_url(
+            row.get("url"), self.record.server_url
+        ):
+            raise CallbackFailed(CallbackError.SERVER_CHANGED)
+        self.row = row
+
+    async def write(self, store: StoreConnection) -> None:
+        try:
+            await store()
+        except Exception:
+            logger.exception(
+                "[mcp_oauth] could not settle consent for user=%s server=%s; "
+                "neither the connection nor its grant policy was written",
+                self.record.user_id, self.record.server_name,
+            )
+            raise CallbackFailed(CallbackError.INTERNAL) from None
+
+    async def after_connect(self) -> None:
+        if self.row is not None and self.row.get("enabled") is False:
+            # Connecting is how a user makes a server work, and their
+            # Disconnect is what switched it off, so a reconnect that lands
+            # brings it back.
+            await mcp_saves.switch_on(self.record.user_id, self.record.server_name)
+
+
+# A failure's sentence rides the redirect URL into a banner; past this it is
+# a log line, not something the user reads.
+_DETAIL_LIMIT = 200
+
+
+def _short(detail: str) -> str:
+    text = " ".join(detail.split())
+    return text if len(text) <= _DETAIL_LIMIT else text[: _DETAIL_LIMIT - 1] + "…"
+
+
 async def _resync_live_sandboxes(user_id: str) -> None:
     """Re-apply the config on the user's running workspaces after a connect.
 
@@ -1034,12 +1273,8 @@ async def _resync_live_sandboxes(user_id: str) -> None:
     failure here delays convergence to the next turn.
     """
     try:
-        # Lazy: the scheduler lives in a router, and a service must not import
-        # an app module at import time.
-        from src.server.app.mcp_servers import _schedule_proactive_apply
-
         for workspace_id in await get_running_workspace_ids_for_user(user_id):
-            _schedule_proactive_apply(workspace_id, user_id)
+            schedule_proactive_apply(workspace_id, user_id)
     except Exception:
         logger.warning(
             "[mcp_oauth] post-connect sandbox resync failed for user=%s",
@@ -1065,27 +1300,43 @@ async def complete_callback(
     ``browser_nonce`` is the value from the initiating browser's HttpOnly
     cookie; it must match the one minted into the state record, so a callback
     replayed in a different browser (which carries no such cookie) is refused.
+
+    What is written around the connection is the ``CallbackFinish``'s. A
+    reconnect writes the connection alone. A record marked ``pending`` saves
+    its server here (``services.mcp_saves``): the parked save is claimed with
+    the state, refused again before the code is spent, checked with the new
+    token, and only then written around the connection. Any failure leaves
+    none of it behind.
     """
     if not state:
         return redirect_to(mcp_error=CallbackError.MISSING_STATE)
     record = await _claim_state(state)
     if record is None:
+        # A payload whose state expired first; the sweep would reach it too,
+        # but it can hold secret values, so not later than now.
+        await discard(state)
         # Unknown, expired, or already used — uniform answer, no oracle.
         return redirect_to(mcp_error=CallbackError.INVALID_STATE)
 
     server_name = record.server_name
+    finish: CallbackFinish = _ReconnectFinish(record)
 
-    def _fail(reason: CallbackError) -> str:
+    def _fail(reason: CallbackError, detail: str | None = None) -> str:
         logger.warning(
-            "[mcp_oauth] callback failed user=%s server=%s reason=%s",
-            record.user_id, server_name, reason,
+            "[mcp_oauth] callback failed user=%s server=%s reason=%s detail=%s",
+            record.user_id, server_name, reason, detail or "",
         )
+        extra: dict[str, str] = {}
+        if finish.plugin:
+            extra["plugin"] = finish.plugin
+        if detail:
+            extra["mcp_detail"] = _short(detail)
         # Absolute when the start request carried a browser Origin (split-port
         # dev: the callback's own origin is the API, which has no UI routes);
         # relative otherwise, resolving on the unified proxy/prod origin.
         return redirect_to(
             record.return_to, record.web_origin,
-            mcp_error=reason, server=server_name,
+            mcp_error=reason, server=server_name, **extra,
         )
 
     # Everything past here can still fail in a way nothing above it planned
@@ -1098,10 +1349,18 @@ async def complete_callback(
     # visit. So the promise in the docstring above is kept here rather than
     # left to the caller.
     async def _settle() -> str:
+        nonlocal finish
         # Recomputed rather than carried on the record: the URL it reads is the
         # consented one, pinned at phase 1, so both halves of the flow ask the
         # same question of the same address.
         scope = _inflight_scope(server_name, record.server_url)
+
+        # First, so the payload is spent with the state whatever happens next.
+        if record.pending:
+            try:
+                finish = await mcp_saves.claim(state, record.user_id, server_name)
+            except CallbackFailed as e:
+                return _fail(e.reason, e.detail)
 
         # CSRF binding: the state is single-use and now claimed, so a mismatch here
         # spends it (no retry oracle). An older-shaped record has an empty nonce and
@@ -1152,6 +1411,14 @@ async def complete_callback(
         except Exception:
             return _fail(CallbackError.ISSUER_MISMATCH)
 
+        # A save that can no longer land is refused while the code is unspent:
+        # spending it at a vendor that allows one connected platform per account
+        # costs the user their other one, for a server we then would not save.
+        try:
+            await finish.before_exchange()
+        except CallbackFailed as e:
+            return _fail(e.reason, e.detail)
+
         client_info = OAuthClientInformationFull.model_validate(record.client_info)
         # Re-attach the out-of-band secret (stripped from the blob at persist) so a
         # confidential client authenticates its token exchange below.
@@ -1185,17 +1452,14 @@ async def complete_callback(
             logger.exception("[mcp_oauth] token exchange errored for %s", server_name)
             return _fail(CallbackError.TOKEN_EXCHANGE_FAILED)
 
-        # The catalog row was validated in phase 1, up to STATE_TTL_SECONDS ago —
-        # long enough for the user to delete or re-point the server mid-consent.
-        # Persisting anyway would resurrect a connection with no catalog row behind
-        # it: invisible to the UI, refreshed forever by the sweeper, and silently
-        # inherited by a same-name recreate. The freshly exchanged token is dropped
-        # on the floor here; it simply expires.
-        catalog_row = await get_catalog_server(record.user_id, server_name)
-        if catalog_row is None or not same_consented_url(
-            catalog_row.get("url"), record.server_url
-        ):
-            return _fail(CallbackError.SERVER_CHANGED)
+        # Asked again across the exchange's round trip: a reconnect's row must
+        # still be the one consented to, and a save's server is checked with the
+        # token it just issued, so a sign-in the server does not accept saves
+        # nothing, the same rule every other save meets.
+        try:
+            await finish.after_exchange(token.access_token)
+        except CallbackFailed as e:
+            return _fail(e.reason, e.detail)
 
         # Asked once more, with nothing but local statements left between here and
         # the write. The read above happened before the token exchange, which is a
@@ -1225,7 +1489,7 @@ async def complete_callback(
         # already succeeded and the user authorizes again. That is the
         # recoverable half of the trade; a withdrawn permission left live is
         # not.
-        try:
+        async def store() -> None:
             async with get_db_connection() as db, db.transaction():
                 connection_id = await upsert_connection(
                     record.user_id,
@@ -1248,19 +1512,38 @@ async def complete_callback(
                 await refuse_attempts_on_connection_change(
                     record.user_id, server_name, conn=db
                 )
-        except Exception:
-            logger.exception(
-                "[mcp_oauth] could not settle consent for user=%s server=%s; "
-                "neither the connection nor its grant policy was written",
+                # So might the description: the one written for the account
+                # before is dropped, and the rediscovery below queues the next.
+                await drop_descriptions(
+                    await own_description_scope(record.user_id, server_name, conn=db),
+                    conn=db,
+                )
+            logger.info(
+                "[mcp_oauth] connected user=%s server=%s connection=%s "
+                "has_refresh=%s",
                 record.user_id, server_name,
+                connection_id, token.refresh_token is not None,
             )
-            return _fail(CallbackError.INTERNAL)
 
-        logger.info(
-            "[mcp_oauth] connected user=%s server=%s connection=%s has_refresh=%s",
-            record.user_id, server_name,
-            connection_id, token.refresh_token is not None,
-        )
+        # A save writes its row around the connection, and takes the row back
+        # if the connection does not land.
+        try:
+            await finish.write(store)
+        except CallbackFailed as e:
+            return _fail(e.reason, e.detail)
+
+        # The connection is stored, and a save's row with it. Every step from
+        # here only makes it show up sooner, so each is best effort and none
+        # stops the next. Reported as a failure, a save that worked would send
+        # the user to retry, and a retry meets its own row as a name already
+        # taken.
+        try:
+            await finish.after_connect()
+        except Exception:
+            logger.warning(
+                "[mcp_oauth] post-connect step of the save failed for %s",
+                server_name, exc_info=True,
+            )
 
         # Before the bump below rather than after it, so a session re-resolving
         # on this row going live already sees whatever this grant cost the user
@@ -1283,8 +1566,15 @@ async def complete_callback(
                     server_name, vendor.name, exc_info=True,
                 )
 
-        # Sessions must re-resolve: the server is now relay-bound.
-        await bump_user_workspaces_mcp_version(record.user_id)
+        # Sessions must re-resolve: the server is now relay-bound. A bump
+        # that fails leaves warm sessions on the old config until the next.
+        try:
+            await bump_user_workspaces_mcp_version(record.user_id)
+        except Exception:
+            logger.warning(
+                "[mcp_oauth] post-connect version bump failed for user=%s",
+                record.user_id, exc_info=True,
+            )
 
         # Best-effort host-side discovery so tools show up immediately; failure
         # leaves a pending/error schema row, never a broken connection.
@@ -1306,9 +1596,10 @@ async def complete_callback(
         # warm sandbox would otherwise never learn it is relay-bound.
         await _resync_live_sandboxes(record.user_id)
 
-        return redirect_to(
-            record.return_to, record.web_origin, mcp_connected=server_name
-        )
+        done: dict[str, str] = {"mcp_connected": server_name}
+        if finish.plugin:
+            done["plugin"] = finish.plugin
+        return redirect_to(record.return_to, record.web_origin, **done)
 
     try:
         return await _settle()

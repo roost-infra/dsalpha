@@ -70,9 +70,10 @@ const inBrowser = () => {
   beginMcpOAuth.mockResolvedValue(undefined);
 };
 
-const { startMcpOauth, LoopbackRequiredError } = await import('../mcp');
+const { startMcpOauth, startPendingMcpOauth, LoopbackRequiredError } = await import('../mcpOauth');
 
 const body = () => (post.mock.calls.at(-1)?.[1] ?? {}) as Record<string, unknown>;
+const url = () => post.mock.calls.at(-1)?.[0];
 
 // Before, not after: defaults set on the way out leave the first test of the
 // run holding bare mocks, so a single `it.only` or a -t filter fails on a
@@ -365,5 +366,246 @@ describe('startMcpOauth', () => {
 
     expect(started?.authorize_url).toBe('https://vendor.test/authorize');
     expect(cancelMcpOAuth).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The sign-in that saves what it signs in for. Nothing exists before the
+ * callback, so this request carries the whole body the ordinary save would
+ * have taken, and the backend refuses here whatever it can without a token.
+ * Each kind maps onto the backend's snake_case shape; a field the backend
+ * would read as an answer (an empty secrets map, an empty grant) is sent only
+ * where it means one.
+ */
+describe('startPendingMcpOauth', () => {
+  const server = {
+    name: 'alpha',
+    transport: 'http' as const,
+    url: 'https://mcp.alpha.test/mcp',
+  };
+
+  beforeEach(() => {
+    answer = {
+      authorize_url: 'https://vendor.test/authorize',
+      state: 'st-1',
+      redirect_uri: LOOPBACK,
+    };
+  });
+
+  it('sends an account server as the body the save would have taken', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth({ kind: 'server', server }, '/plugins?tab=mcp');
+
+    expect(url()).toBe('/api/v1/mcp/oauth/start-pending');
+    expect(body()).toEqual({ kind: 'server', server, return_to: '/plugins?tab=mcp' });
+  });
+
+  it('names the workspace of a workspace server in snake_case', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth(
+      { kind: 'workspace_server', workspaceId: 'ws-1', server },
+      '/chat/ws-1',
+    );
+
+    expect(body()).toEqual({
+      kind: 'workspace_server',
+      workspace_id: 'ws-1',
+      server,
+      return_to: '/chat/ws-1',
+    });
+  });
+
+  it('sends an edit with the row it edits and the address it was opened on', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth(
+      {
+        kind: 'server_edit',
+        name: 'alpha-old',
+        server,
+        workspaceId: 'ws-1',
+        expectedUrl: 'https://mcp.alpha.test/old',
+      },
+      '/plugins?tab=mcp',
+    );
+
+    expect(body()).toEqual({
+      kind: 'server_edit',
+      name: 'alpha-old',
+      server,
+      workspace_id: 'ws-1',
+      expected_url: 'https://mcp.alpha.test/old',
+      return_to: '/plugins?tab=mcp',
+    });
+  });
+
+  it('leaves out the optional fields of an edit that has none', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth(
+      { kind: 'server_edit', name: 'alpha', server, expectedUrl: null },
+      '/plugins?tab=mcp',
+    );
+
+    expect(body()).toEqual({
+      kind: 'server_edit',
+      name: 'alpha',
+      server,
+      return_to: '/plugins?tab=mcp',
+    });
+  });
+
+  // A brokerage is refused without a selection, and a connect nobody asked
+  // about granted nothing -- so the default is the empty grant, never the
+  // absent key the backend would read as "no policy".
+  it('grants a brokerage nothing unless the caller says otherwise', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth({ kind: 'brokerage', name: 'moomoo' }, '/plugins?tab=brokerages');
+
+    expect(body()).toEqual({
+      kind: 'brokerage',
+      name: 'moomoo',
+      return_to: '/plugins?tab=brokerages',
+      granted_capabilities: [],
+    });
+  });
+
+  it('sends the selection a brokerage was given', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth({ kind: 'brokerage', name: 'moomoo' }, '/plugins', {
+      grantedCapabilities: ['market_data'],
+    });
+
+    expect(body().granted_capabilities).toEqual(['market_data']);
+  });
+
+  it('sends a plugin by its source, with the keys the user entered', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth(
+      {
+        kind: 'plugin',
+        sourceUrl: 'https://github.com/acme/plugins',
+        subdir: 'market',
+        secrets: { ALPHA_KEY: 'k-1' },
+      },
+      '/plugins?tab=discover',
+    );
+
+    expect(body()).toEqual({
+      kind: 'plugin',
+      source_url: 'https://github.com/acme/plugins',
+      subdir: 'market',
+      secrets: { ALPHA_KEY: 'k-1' },
+      return_to: '/plugins?tab=discover',
+    });
+  });
+
+  it('omits empty keys and no subdir rather than sending them blank', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth(
+      { kind: 'plugin', sourceUrl: 'https://github.com/acme/plugins', subdir: null, secrets: {} },
+      '/plugins',
+    );
+
+    expect(body()).toEqual({
+      kind: 'plugin',
+      source_url: 'https://github.com/acme/plugins',
+      return_to: '/plugins',
+    });
+    // A plugin is not a brokerage: no grant is implied for it.
+    expect('granted_capabilities' in body()).toBe(false);
+  });
+
+  // The browser writes the multipart boundary, so the call must not name a
+  // Content-Type of its own; and the form has no nested values, so the keys
+  // travel as one JSON string field.
+  it('posts an uploaded plugin as multipart, with its keys as a JSON field', async () => {
+    inShell(flow);
+    const file = new File(['zip-bytes'], 'plugin.zip', { type: 'application/zip' });
+
+    await startPendingMcpOauth(
+      { kind: 'plugin_upload', file, subdir: 'market', secrets: { ALPHA_KEY: 'k-1' } },
+      '/plugins?tab=discover',
+    );
+
+    const call = post.mock.calls.at(-1) as unknown[];
+    expect(call[0]).toBe('/api/v1/mcp/oauth/start-pending/upload');
+    expect(call[2]).toBeUndefined();
+    const form = call[1] as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    expect((form.get('file') as File).name).toBe('plugin.zip');
+    expect(form.get('subdir')).toBe('market');
+    expect(form.get('secrets')).toBe(JSON.stringify({ ALPHA_KEY: 'k-1' }));
+    expect(form.get('return_to')).toBe('/plugins?tab=discover');
+    expect(form.get('redirect_uri')).toBe(LOOPBACK);
+    expect(form.has('granted_capabilities')).toBe(false);
+    expect(form.has('kind')).toBe(false);
+  });
+
+  it('leaves the optional upload fields out when there is nothing to send', async () => {
+    inBrowser();
+    const file = new File(['zip-bytes'], 'plugin.zip', { type: 'application/zip' });
+
+    await startPendingMcpOauth({ kind: 'plugin_upload', file, secrets: {} }, '/plugins');
+
+    const form = post.mock.calls.at(-1)?.[1] as FormData;
+    expect([...form.keys()].sort()).toEqual(['file', 'return_to']);
+  });
+
+  it('defaults where the callback lands to the plugins page', async () => {
+    inBrowser();
+
+    await startPendingMcpOauth({ kind: 'server', server });
+
+    expect(body().return_to).toBe('/plugins');
+  });
+
+  // The same arming as a reconnect: the listener's URI travels with the
+  // request, the flow is bound to the state, and the answer comes back whole.
+  it('routes through the shell listener and hands back what it will save', async () => {
+    inShell(flow);
+    post.mockImplementation(async () => ({
+      data: { ...answer, server: 'alpha', kind: 'plugin', plugin: 'market-tools' },
+    }));
+
+    const started = await startPendingMcpOauth(
+      { kind: 'plugin', sourceUrl: 'https://github.com/acme/plugins' },
+      '/plugins',
+    );
+
+    expect(body().redirect_uri).toBe(LOOPBACK);
+    expect(bindMcpOAuth).toHaveBeenCalledWith('flow-1', 'st-1');
+    expect(started).toMatchObject({
+      authorize_url: 'https://vendor.test/authorize',
+      server: 'alpha',
+      plugin: 'market-tools',
+    });
+  });
+
+  it('gives the listener back when the save is refused before any sign-in', async () => {
+    inShell(flow);
+    post.mockRejectedValueOnce(new Error('mcp_check_failed'));
+
+    await expect(
+      startPendingMcpOauth({ kind: 'server', server }, '/plugins'),
+    ).rejects.toThrow('mcp_check_failed');
+    expect(cancelMcpOAuth).toHaveBeenCalledWith('flow-1');
+  });
+
+  it('answers a caller that changed its mind with null', async () => {
+    inShell(flow);
+
+    const started = await startPendingMcpOauth({ kind: 'brokerage', name: 'moomoo' }, '/plugins', {
+      stillWanted: () => false,
+    });
+
+    expect(started).toBeNull();
+    expect(cancelMcpOAuth).toHaveBeenCalledWith('flow-1');
   });
 });

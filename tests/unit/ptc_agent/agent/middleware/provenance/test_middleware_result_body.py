@@ -318,7 +318,7 @@ def test_market_data_body_shared_across_symbols(middleware):
 
 
 # ---------------------------------------------------------------------------
-# result_body NEVER rides the SSE event (sse_events gains 0 bytes).
+# result_body NEVER rides the SSE event (the stream gains 0 bytes).
 # ---------------------------------------------------------------------------
 
 

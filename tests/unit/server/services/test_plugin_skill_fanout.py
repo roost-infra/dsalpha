@@ -135,7 +135,7 @@ async def test_each_rejection_keeps_its_component_and_diagnostic():
     def _validate(raw):
         name = raw.decode()
         if name == "bad-zip":
-            raise SkillValidationError("SKILL.md is missing")
+            raise SkillValidationError("SKILL.md is missing", code="layout")
         if name == "mismatched":
             return _validated("declares-something-else")
         return _validated(name)

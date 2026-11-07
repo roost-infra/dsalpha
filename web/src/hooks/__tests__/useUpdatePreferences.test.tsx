@@ -15,12 +15,14 @@ import { modelPrefs } from '@/lib/modelPreferences';
 
 vi.mock('@/pages/Dashboard/utils/api', () => ({
   updatePreferences: vi.fn(),
+  clearPreferences: vi.fn(),
 }));
 
-import { updatePreferences } from '@/pages/Dashboard/utils/api';
-import { useUpdatePreferences } from '../useUpdatePreferences';
+import { clearPreferences, updatePreferences } from '@/pages/Dashboard/utils/api';
+import { useClearPreferences, useUpdatePreferences } from '../useUpdatePreferences';
 
 const mockUpdate = updatePreferences as unknown as ReturnType<typeof vi.fn>;
+const mockClear = clearPreferences as unknown as ReturnType<typeof vi.fn>;
 
 /** A write that never answers, so what is asserted is the prediction alone. */
 function inFlight() {
@@ -96,5 +98,98 @@ describe('useUpdatePreferences optimistic merge', () => {
     });
 
     expect(queryClient.getQueryData(queryKeys.user.preferences())).toEqual(previous);
+  });
+});
+
+describe('useUpdatePreferences one-shot fields', () => {
+  beforeEach(() => {
+    mockUpdate.mockReset();
+  });
+
+  it('never predicts a default change answer into the cached row', async () => {
+    inFlight();
+    const queryClient = seeded({ model_preference: { preferred_model: 'old' } });
+    const { result } = renderHookWithProviders(() => useUpdatePreferences(), { queryClient });
+
+    await act(async () => {
+      result.current.mutate({
+        model_preference: { preferred_model: 'new' },
+        apply_default_to: 'existing_threads',
+      });
+    });
+
+    const row = queryClient.getQueryData(queryKeys.user.preferences()) as Record<string, unknown>;
+    expect(modelPrefs(row).preferred_model).toBe('new');
+    expect(row).not.toHaveProperty('apply_default_to');
+  });
+});
+
+describe('useUpdatePreferences moved threads', () => {
+  beforeEach(() => {
+    mockUpdate.mockReset();
+  });
+
+  it('rereads the threads a write moved, whichever surface made it', async () => {
+    // Each open thread reads its model back from its row, and a stale row
+    // would name the old model on its next send and move the thread back.
+    const queryClient = seeded({ model_preference: { preferred_model: 'old' } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHookWithProviders(() => useUpdatePreferences(), { queryClient });
+
+    mockUpdate.mockResolvedValue({ threads_reassigned: 0 });
+    await act(async () => { await result.current.mutateAsync({ model_preference: { preferred_model: 'new' } }); });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.threads.all });
+
+    mockUpdate.mockResolvedValue({ threads_reassigned: 2 });
+    await act(async () => { await result.current.mutateAsync({ model_preference: { preferred_model: null } }); });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.all });
+  });
+
+  it('rereads them after a failed write, which may have committed with its answer lost', async () => {
+    const queryClient = seeded({ model_preference: { preferred_model: 'old' } });
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHookWithProviders(() => useUpdatePreferences(), { queryClient });
+
+    mockUpdate.mockRejectedValue(new Error('Network Error'));
+    await act(async () => {
+      await result.current
+        .mutateAsync({ model_preference: { preferred_model: 'new' }, apply_default_to: 'existing_threads' })
+        .catch(() => {});
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.threads.all });
+  });
+});
+
+describe('useClearPreferences', () => {
+  beforeEach(() => {
+    mockUpdate.mockReset();
+    mockClear.mockReset();
+  });
+
+  it('deletes the row only once a write issued before it has landed', async () => {
+    // Sent past the write, the delete could reach the server first, and the
+    // write would then insert a fresh row holding its keys.
+    let land!: (row: unknown) => void;
+    mockUpdate.mockImplementation(() => new Promise((resolve) => { land = resolve; }));
+    mockClear.mockResolvedValue({ success: true });
+    const queryClient = seeded({ other_preference: {} });
+    const { result } = renderHookWithProviders(
+      () => ({ update: useUpdatePreferences(), clear: useClearPreferences() }),
+      { queryClient },
+    );
+
+    let cleared!: Promise<unknown>;
+    await act(async () => {
+      result.current.update.mutate({ other_preference: { theme: 'dark' } });
+      cleared = result.current.clear.mutateAsync();
+    });
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(mockClear).not.toHaveBeenCalled();
+
+    await act(async () => {
+      land({});
+      await cleared;
+    });
+    expect(mockClear).toHaveBeenCalledTimes(1);
   });
 });

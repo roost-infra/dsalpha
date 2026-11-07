@@ -12,6 +12,7 @@ import pytest
 
 from src.server.services.user_skills.validate import (
     SkillValidationError,
+    peek_frontmatter,
     validate_skill_archive,
 )
 
@@ -62,3 +63,14 @@ def test_broken_yaml_still_gets_the_named_syntax_error():
     fm = "name: demo\ndescription: [unclosed\n"
     with pytest.raises(SkillValidationError, match="frontmatter"):
         validate_skill_archive(_zip_with_frontmatter(fm))
+
+
+def test_frontmatter_nested_past_the_stack_is_a_refusal_not_a_crash():
+    # About 1 KB: PyYAML composes recursively, so the stack runs out long
+    # before the byte cap. A plugin install reads the name first, so the peek
+    # has to survive it too.
+    fm = "name: demo\ndescription: a test skill\nz: " + "[" * 500 + "]" * 500 + "\n"
+    with pytest.raises(SkillValidationError) as excinfo:
+        validate_skill_archive(_zip_with_frontmatter(fm))
+    assert excinfo.value.code == "bad_frontmatter"
+    assert peek_frontmatter(f"---\n{fm}---\n".encode()) == {}

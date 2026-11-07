@@ -6,20 +6,25 @@ is called, who wrote it, and which servers and skills it owns. They are read
 from disk rather than installed -- nothing fetches them, they occupy none of a
 user's plugin slots, and uninstall has nothing to remove.
 
-A bundle's components are its files: the servers ``mcp.json`` names, and the
-directories under its own ``skills/``. Nothing here reads a skill declaration,
-so a package cannot claim a skill it does not carry.
+A bundle's components are its files: the servers ``mcp.json`` names, the
+directories under its own ``skills/`` and the files under its ``agents/``.
+Nothing here reads a skill declaration, so a package cannot claim a skill it
+does not carry.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
-from ptc_agent.config.plugins import Bundle, bundles
+from ptc_agent.config.plugins import BUNDLES_DIR, Bundle, bundles
 from src.server.models.plugin import PluginComponentRef, PluginInfo
+from src.server.services.plugins.agents import AGENTS_DIR, AgentPlan, collect_agents
+from src.server.services.icon_urls import source_icon_url
+from src.server.services.plugins.icons import icon_value
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +106,54 @@ def _components(bundle: Bundle) -> list[PluginComponentRef]:
         PluginComponentRef(kind="skill", name=name, key=name)
         for name in skills
         if name in listed
+    ] + [
+        PluginComponentRef(kind="subagent", name=plan.name, key=plan.name)
+        for plan in _agent_plans(bundle)
+        if plan.skip_code is None
     ]
+
+
+def _agent_plans(bundle: Bundle) -> list[AgentPlan]:
+    """The bundle's ``agents/*.md``, read as an upload's are. Never raises."""
+    agents_dir = bundle.path / AGENTS_DIR.rstrip("/")
+    if not agents_dir.is_dir():
+        return []
+    try:
+        files = {
+            f"{AGENTS_DIR}{p.name}": p.read_bytes()
+            for p in sorted(agents_dir.iterdir())
+            if p.is_file() and p.suffix == ".md"
+        }
+    except OSError as e:
+        logger.error("bundled plugin: cannot read %s: %s", agents_dir, e)
+        return []
+    plans, _ = collect_agents(files)
+    for plan in plans:
+        if plan.skip_code is not None:
+            logger.warning(
+                "bundled plugin: %s/%s.md is not a subagent: %s",
+                agents_dir, plan.name, plan.skip_reason,
+            )
+    return plans
+
+
+@functools.lru_cache(maxsize=1)
+def bundled_agent_plans() -> tuple[tuple[str, AgentPlan], ...]:
+    """Every bundle's subagents that read, as (bundle name, plan), in bundle order.
+
+    Read once per process, unlike ``bundles()``: every turn asks, and
+    ``plugins/`` is an image layer nothing writes while the server runs, which
+    is why the server set the bundles ship is composed once at startup too.
+    """
+    if not any(BUNDLES_DIR.glob(f"*/{AGENTS_DIR}")):
+        return ()  # no manifest needs reading without the folder
+    out: list[tuple[str, AgentPlan]] = []
+    for bundle in bundles():
+        name = _name(bundle)
+        if name is None:
+            continue
+        out += [(name, plan) for plan in _agent_plans(bundle) if plan.skip_code is None]
+    return tuple(out)
 
 
 class BundleOwnershipUnavailable(RuntimeError):
@@ -233,12 +285,19 @@ def enforcement_owners() -> ComponentOwners:
     return setup.bundle_owners or component_owners()
 
 
-def _icon_site(bundle: Bundle) -> str | None:
-    site = bundle.namespace.get("icon")
-    return site if isinstance(site, str) and site.strip() else None
+def _bundle_mark(bundle: Bundle) -> str | None:
+    """The site or image a wrapper bundle names for its mark.
+
+    Ours name none: their logo ships with the frontend, because fetching our
+    own mark from our own site would put a network hop and a cache in front
+    of a file already in the bundle, and fail outright on an air-gapped host.
+    """
+    return icon_value(bundle.namespace.get("icon"))
 
 
-def _info(bundle: Bundle, disabled: Collection[str]) -> PluginInfo | None:
+def _info(
+    bundle: Bundle, disabled: Collection[str], icon_url: str | None
+) -> PluginInfo | None:
     manifest: dict[str, Any] = bundle.manifest
     name = _name(bundle)
     if name is None:
@@ -255,7 +314,7 @@ def _info(bundle: Bundle, disabled: Collection[str]) -> PluginInfo | None:
         source_type=SOURCE_TYPE,
         source_ref=None,
         enabled=name not in disabled,
-        icon_url=f"/api/v1/plugins/{name}/icon" if _icon_site(bundle) else None,
+        icon_url=icon_url,
         repository=_text(manifest.get("repository")),
         license=_text(manifest.get("license")),
         keywords=[
@@ -265,7 +324,7 @@ def _info(bundle: Bundle, disabled: Collection[str]) -> PluginInfo | None:
     )
 
 
-def list_bundled(disabled: Collection[str] = ()) -> list[PluginInfo]:
+async def list_bundled(disabled: Collection[str] = ()) -> list[PluginInfo]:
     """Every bundle under ``plugins/``, name-ordered. Never raises.
 
     ``disabled`` is the caller's own switched-off set; a bundle absent from it
@@ -279,7 +338,7 @@ def list_bundled(disabled: Collection[str] = ()) -> list[PluginInfo]:
     out: list[PluginInfo] = []
     for bundle in bundles():
         try:
-            info = _info(bundle, disabled)
+            info = _info(bundle, disabled, await source_icon_url(_bundle_mark(bundle)))
         except (TypeError, ValueError) as e:  # pydantic's error is a ValueError
             logger.warning("bundled plugin: %s is unusable: %s", bundle.path, e)
             continue
@@ -288,22 +347,15 @@ def list_bundled(disabled: Collection[str] = ()) -> list[PluginInfo]:
     return out
 
 
-def icon_site_for(name: str) -> str | None:
-    """The site a bundle names as the owner of its mark, if it names one.
-
-    Only a wrapper bundle needs this. Ours ship their logo with the frontend,
-    because fetching our own mark from our own marketing site would put a
-    network hop and a cache in front of a file that is already in the bundle,
-    and would fail outright on an air-gapped self-host.
-
-    ``name`` is looked up among the bundles actually on disk and is never
-    joined onto a path: this feeds an unauthenticated route, and a name is the
-    only input it has. ``tests/unit/server/services/test_bundled_plugins.py``
-    holds that property down.
-    """
+def server_icon_source(name: str, server: str) -> str | None:
+    """The mark a server bundle ``name`` ships wears: its own ``icon``, else
+    the bundle's. None for ours, which the frontend draws itself."""
     for bundle in bundles():
         if _name(bundle) == name:
-            return _icon_site(bundle)
+            servers = bundle.namespace.get("servers")
+            meta = servers.get(server) if isinstance(servers, dict) else None
+            icon = meta.get("icon") if isinstance(meta, dict) else None
+            return icon_value(icon) or _bundle_mark(bundle)
     return None
 
 

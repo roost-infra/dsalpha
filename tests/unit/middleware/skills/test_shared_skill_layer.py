@@ -49,7 +49,7 @@ def test_layer_survives_its_own_disable():
     """The switch that takes the layer away is the dependent's, not its own."""
     assert resolve_disabled_skills({LAYER}) == frozenset()
 
-    registry = build_effective_skill_registry("ptc", disabled_skills={LAYER})
+    registry = build_effective_skill_registry(disabled_skills={LAYER})
     assert LAYER in registry
     assert "comps-analysis" in registry
 
@@ -57,13 +57,11 @@ def test_layer_survives_its_own_disable():
 def test_layer_goes_when_every_dependent_is_off():
     disabled = {LAYER, *_dependents()}
     assert resolve_disabled_skills(disabled) == frozenset(disabled)
-    assert LAYER not in build_effective_skill_registry("ptc", disabled_skills=disabled)
+    assert LAYER not in build_effective_skill_registry(disabled_skills=disabled)
 
 
 def test_disabling_a_dependent_keeps_the_layer():
-    registry = build_effective_skill_registry(
-        "ptc", disabled_skills={"comps-analysis"}
-    )
+    registry = build_effective_skill_registry(disabled_skills={"comps-analysis"})
     assert "comps-analysis" not in registry
     assert LAYER in registry
 

@@ -1,11 +1,11 @@
 /**
- * Names and orders for the four settings a model profile can override.
+ * Names and orders for the settings a model profile can override.
  *
  * The composer menu and the Settings matrix both render these, and a level that
  * reads "High" in one place and "high" in the other looks like two different
  * settings — so the vocabulary lives here rather than beside either surface.
  */
-import type { CompactionProfileName } from '@/hooks/useAllModels';
+import type { CompactionProfileName, NativeCompactionKind } from '@/hooks/useAllModels';
 
 export const EFFORT_LABELS: Record<string, string> = {
   none: 'chat.modelSelector.effortNone',
@@ -34,6 +34,17 @@ export function effortLabelFor(t: (key: string) => string, level: string | null)
   return level && EFFORT_LABELS[level] ? t(EFFORT_LABELS[level]) : null;
 }
 
+/** The levels the composer's effort menu lists: those it has a word for. */
+export function tuningMenuLevels(efforts: readonly string[]): string[] {
+  return efforts.filter((level) => EFFORT_LABELS[level]);
+}
+
+/** Whether the composer shows its effort pill: a level to pick, or a Codex
+ *  model's speed. The pill and the toolbar's room for it ask the same thing. */
+export function hasTuningMenu(efforts: readonly string[], isCodexModel: boolean): boolean {
+  return tuningMenuLevels(efforts).length > 0 || isCodexModel;
+}
+
 /**
  * The level a model actually runs when asked for one it does not offer.
  *
@@ -52,11 +63,26 @@ export function resolveEffort(requested: string, offered: readonly string[]): st
   return atOrBelow.length > 0 ? atOrBelow[atOrBelow.length - 1] : ladder[0];
 }
 
+/** The levels an effort control lists, weakest first. A stored level the
+ *  ladder no longer offers stays listed, or the setting could not be cleared. */
+export function effortOptions(efforts: readonly string[], stored: string): string[] {
+  return EFFORT_ORDER.filter((lv) => (efforts.includes(lv) || lv === stored) && EFFORT_LABELS[lv]);
+}
+
+/** Whether an effort control has anything to offer for this ladder. */
+export function hasEffortOptions(efforts: readonly string[], stored: string): boolean {
+  return effortOptions(efforts, stored).length > 0;
+}
+
 export const COMPACTION_PROFILE_ORDER: CompactionProfileName[] = [
   'aggressive',
   'moderate',
   'extended',
+  'economy',
   'relaxed',
+  'spacious',
+  'expansive',
+  'maximal',
 ];
 
 export const GUIDANCE_LEVELS = ['lean', 'detailed'] as const;
@@ -80,19 +106,30 @@ export function isGuidanceLevel(value: unknown): value is GuidanceLevel {
 }
 
 /**
- * The four settings a user may set per account or per model.
+ * The settings a user may set per model, and per account beneath them.
  *
- * The typed twin of `Tuning` in `src/llms/preferences.py`. `null` is the wire
- * value that deletes an override, so every field admits it.
+ * The typed twin of `PROFILE_FIELDS` in `src/llms/preferences.py`. `null` is the
+ * wire value that deletes an override, so every field admits it.
  */
 export interface ModelProfile {
   prompt_guidance?: GuidanceLevel | null;
   compaction_profile?: CompactionProfileName | null;
   reasoning_effort?: string | null;
   fast_mode?: boolean | null;
+  native_compaction?: boolean | null;
 }
 
-export type TuningField = keyof ModelProfile;
+/** The account's settings: a profile's, and those it holds for every model
+ *  (`ACCOUNT_FIELDS` on the Python side), which no profile sets. */
+export interface AccountTuning extends ModelProfile {
+  /** Summarize a long thread before the first send after a break. Absent or
+   *  null is on. */
+  cold_compaction?: boolean | null;
+}
+
+export type TuningField = keyof AccountTuning;
+
+const ACCOUNT_FIELDS: ReadonlySet<TuningField> = new Set(['cold_compaction']);
 
 /** Same order as `TUNING_FIELDS` on the Python side. */
 export const TUNING_FIELDS: readonly TuningField[] = [
@@ -100,6 +137,8 @@ export const TUNING_FIELDS: readonly TuningField[] = [
   'compaction_profile',
   'reasoning_effort',
   'fast_mode',
+  'native_compaction',
+  'cold_compaction',
 ];
 
 /** What the server runs when neither the account nor the model declares a
@@ -121,6 +160,9 @@ export interface InheritedTuning {
   compaction_profile: string | null;
   reasoning_effort: string | null;
   fast_mode: boolean;
+  /** Null where the model's provider cannot compact for it, so there is
+   *  nothing to choose. */
+  native_compaction: boolean | null;
 }
 
 export interface EffectiveTuning {
@@ -150,14 +192,14 @@ function text(value: string | null | undefined): string | null {
  * subagent role models). Presence, not truthiness: a field the profile carries
  * wins even when its value is empty, because clearing a field deletes the key
  * rather than storing a blank. The two are pinned together by
- * `tests/fixtures/tuning_precedence.json`.
+ * `__tests__/__fixtures__/tuning_precedence.json`.
  */
 export function resolveTuningField<K extends TuningField>(
-  account: ModelProfile,
+  account: AccountTuning,
   profile: ModelProfile,
   field: K,
-): ModelProfile[K] {
-  return field in profile ? profile[field] : account[field];
+): AccountTuning[K] {
+  return field in profile && !ACCOUNT_FIELDS.has(field) ? (profile as AccountTuning)[field] : account[field];
 }
 
 /**
@@ -166,7 +208,7 @@ export function resolveTuningField<K extends TuningField>(
  * The twin of `resolve_tuning` in `src/llms/preferences.py`, which owns the
  * same precedence for the turns this UI never starts (schedules, automations,
  * subagent role models). The two are pinned together by
- * `tests/fixtures/tuning_precedence.json`. `inherited` is the extra layer the
+ * `__tests__/__fixtures__/tuning_precedence.json`. `inherited` is the extra layer the
  * server applies at resolve time rather than storing, so a control can name
  * what "Default" will actually do instead of saying only "Default".
  *
@@ -176,13 +218,14 @@ export function resolveTuningField<K extends TuningField>(
  * with a level no turn will ever run.
  */
 export function resolveTuning(
-  account: ModelProfile,
+  account: AccountTuning,
   profile: ModelProfile,
   meta?: {
     reasoning_efforts?: string[];
     reasoning_effort_default?: string;
     prompt_guidance?: string;
     compaction_profile?: string;
+    native_compaction?: NativeCompactionKind | null;
   } | null,
   pinnedGuidance?: string | null,
 ): EffectiveTuning {
@@ -202,11 +245,15 @@ export function resolveTuning(
       ? resolveEffort(accountEffort, efforts)
       : meta?.reasoning_effort_default ?? null,
     fast_mode: account.fast_mode ?? false,
+    // Mirrors `apply_compaction`: on wherever it is offered, until someone
+    // turns it off.
+    native_compaction: meta?.native_compaction ? account.native_compaction ?? true : null,
   };
   const guidance = resolveTuningField(account, profile, 'prompt_guidance');
   const compaction = resolveTuningField(account, profile, 'compaction_profile');
   const effort = text(resolveTuningField(account, profile, 'reasoning_effort'));
   const fast = resolveTuningField(account, profile, 'fast_mode');
+  const native = resolveTuningField(account, profile, 'native_compaction');
   return {
     profile,
     efforts,
@@ -216,6 +263,8 @@ export function resolveTuning(
       compaction_profile: compaction || inherited.compaction_profile,
       reasoning_effort: effort ?? inherited.reasoning_effort,
       fast_mode: fast ?? inherited.fast_mode,
+      native_compaction:
+        inherited.native_compaction === null ? null : native ?? inherited.native_compaction,
     },
   };
 }

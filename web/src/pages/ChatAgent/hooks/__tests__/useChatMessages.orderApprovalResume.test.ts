@@ -83,7 +83,7 @@ describe('useChatMessages: answering an interrupt that keyed an order', () => {
     mockStatus.mockReset();
     mockStatus.mockResolvedValue({ can_reconnect: false, status: 'completed' });
     mockSend.mockImplementation(async (...args: unknown[]) => {
-      const onEvent = args[5] as (e: Record<string, unknown>) => void;
+      const onEvent = (args[3] as { onEvent: (e: Record<string, unknown>) => void }).onEvent;
       onEvent(mixedInterrupt);
       return { disconnected: false };
     });
@@ -94,7 +94,7 @@ describe('useChatMessages: answering an interrupt that keyed an order', () => {
     await waitFor(() => expect(mockReplay).toHaveBeenCalled());
     await settleMountEffect();
     await act(async () => {
-      await result.current.handleSendMessage('buy one AAPL and quote MSFT', false);
+      await result.current.handleSendMessage('buy one AAPL and quote MSFT');
     });
 
     await waitFor(() => expect(cardsOf(result.current.messages)).toHaveLength(2));
@@ -127,7 +127,7 @@ describe('useChatMessages: answering an interrupt that keyed an order', () => {
     });
 
     await waitFor(() => expect(mockSendHitl).toHaveBeenCalledTimes(1));
-    expect(mockSendHitl.mock.calls[0][2]).toEqual({
+    expect(mockSendHitl.mock.calls[0][0]).toEqual({
       [INTERRUPT_ID]: {
         decisions: [{ type: 'approve' }, { type: 'reject', message: 'not now' }],
         order_decisions: { 'attempt-aapl': { type: 'approve' } },

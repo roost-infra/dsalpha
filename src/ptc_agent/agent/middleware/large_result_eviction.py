@@ -17,19 +17,26 @@ from deepagents.backends.utils import (
     format_content_with_line_numbers,
     sanitize_tool_call_id,
 )
+from ptc_agent.core.paths import WorkspaceLayout
 from src.llms.attachment_payload import has_attachment
 
 # Approximate number of characters per token for truncation calculations.
 # Using 4 chars per token as a conservative approximation (actual ratio varies by content)
 NUM_CHARS_PER_TOKEN = 4
 
+# Evicted results are backed up with the workspace, and a strict backup aborts
+# on any file its transfer path cannot store (100 MiB inline, 256 MiB relayed).
+# Half the smallest leaves headroom and is still far past anything a model
+# reads in slices.
+MAX_EVICTED_BYTES = 50 * 1024 * 1024
+
 # Tools excluded from eviction (PascalCase versions of the original snake_case tools)
 # These either have built-in truncation or are problematic to evict.
-# Glob is deliberately NOT excluded: it self-caps (GLOB_MATCH_LIMIT) for the common
-# case, but eviction is kept as a backstop so a pathological result can never reach
-# the model — the same protection Bash already relies on.
+# Glob and Grep are deliberately NOT excluded: Glob self-caps (GLOB_MATCH_LIMIT) and
+# Grep cuts each long line (GREP_LINE_CHARS), but neither bounds how many results
+# come back. Eviction stays as the backstop that keeps a pathological result from
+# reaching the model, the same protection Bash already relies on.
 TOOLS_EXCLUDED_FROM_EVICTION = (
-    "Grep",  # Has built-in truncation (ripgrep + head_limit)
     "Read",  # Problematic truncation behavior (single long lines)
     "Write",  # Returns minimal confirmation
     "Edit",  # Returns minimal confirmation
@@ -49,7 +56,7 @@ indicate omitted lines in the middle of the content):
 """
 
 
-def _create_content_preview(
+def content_preview(
     content_str: str, *, head_lines: int = 5, tail_lines: int = 5
 ) -> str:
     """Create a preview of content showing head and tail with truncation marker.
@@ -84,7 +91,17 @@ def _create_content_preview(
     return head_sample + truncation_notice + tail_sample
 
 
-def _detect_extension(content_str: str) -> str:
+def _cap_evicted(content_str: str) -> tuple[str, int | None]:
+    """The part of an evicted result that is kept, and its full size if cut."""
+    if len(content_str) * 4 <= MAX_EVICTED_BYTES:
+        return content_str, None
+    raw = content_str.encode()
+    if len(raw) <= MAX_EVICTED_BYTES:
+        return content_str, None
+    return raw[:MAX_EVICTED_BYTES].decode(errors="ignore"), len(raw)
+
+
+def detect_extension(content_str: str) -> str:
     """Detect file extension based on content.
 
     Returns '.json' if content looks like JSON (starts with '{' or '['),
@@ -116,7 +133,7 @@ class LargeResultEvictionMiddleware(AgentMiddleware):
         *,
         backend: BackendProtocol,
         tool_token_limit_before_evict: int = 40000,
-        eviction_dir: str = ".agents/large_tool_results",
+        eviction_dir: str = WorkspaceLayout.LARGE_TOOL_RESULTS_DIR,
     ) -> None:
         """Initialize the large result eviction middleware.
 
@@ -173,20 +190,26 @@ class LargeResultEvictionMiddleware(AgentMiddleware):
 
         # Write content to filesystem using async method
         sanitized_id = sanitize_tool_call_id(message.tool_call_id)
-        file_path = f"{self._eviction_dir}/{sanitized_id}{_detect_extension(content_str)}"
+        file_path = f"{self._eviction_dir}/{sanitized_id}{detect_extension(content_str)}"
         # Middleware rewrites by-id paths (same tool_call_id retries overwrite prior eviction);
         # opt out of protocol's create-only default.
-        result = await self.backend.awrite(file_path, content_str, overwrite=True)
+        kept, full_size = _cap_evicted(content_str)
+        result = await self.backend.awrite(file_path, kept, overwrite=True)
         if result is None or result.error:
             return message
 
         # Create preview showing head and tail of the result
-        content_sample = _create_content_preview(content_str)
+        content_sample = content_preview(content_str)
         replacement_text = TOO_LARGE_TOOL_MSG.format(
             tool_call_id=message.tool_call_id,
             file_path=file_path,
             content_sample=content_sample,
         )
+        if full_size is not None:
+            replacement_text += (
+                f"\nThe file holds only the first {MAX_EVICTED_BYTES // 2**20} MiB "
+                f"of this {full_size / 2**20:.0f} MiB result.\n"
+            )
 
         # Preserve artifact from content_and_artifact tools
         # The eviction rebuilds the message, so anything not copied here is

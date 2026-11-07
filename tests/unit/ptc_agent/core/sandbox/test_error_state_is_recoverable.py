@@ -1,10 +1,11 @@
-"""An error-state sandbox is transient, because ``reconnect`` still revives it.
+"""An error-state sandbox is transient, because ``reconnect`` decides its fate.
 
-``reconnect`` answers state ``error`` with a recovery ``start`` rather than
-giving up. If this module called that state absence instead, the caller would
-act on ``SandboxGoneError`` by building a replacement and restoring from the
-last backup, destroying a sandbox a ``start`` would have brought back and losing
-every write since that backup. The two paths have to agree on what is fatal.
+``reconnect`` answers state ``error`` by asking the runtime to recover it, and
+only the provider can say a sandbox will not come back. If this module called
+that state absence instead, the caller would act on ``SandboxGoneError`` by
+building a replacement and restoring from the last backup, abandoning a sandbox
+a recovery would have brought back and losing every write since that backup.
+The two paths have to agree on what is fatal.
 
 ``reconnect`` used to disagree: it gave a sandbox about 20s to leave ``starting``
 (10s for ``stopping``) and then raised ``SandboxGoneError``, so a slow but live
@@ -26,6 +27,7 @@ from ptc_agent.config.core import (
     SandboxConfig,
     SecurityConfig,
 )
+from ptc_agent.core.sandbox.attach_only import SandboxNotRunning, attach_only
 from ptc_agent.core.sandbox.files import _classify_by_liveness
 from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
 from ptc_agent.core.sandbox.runtime import (
@@ -75,6 +77,7 @@ async def test_error_state_is_transient_not_gone():
         RuntimeState.STOPPED,
         RuntimeState.STOPPING,
         RuntimeState.ARCHIVED,
+        RuntimeState.ARCHIVING,
         RuntimeState.ERROR,
     ],
 )
@@ -116,6 +119,9 @@ def _stuck_provider(state: RuntimeState):
         async def get(self, sandbox_id, **kwargs):
             return _Runtime()
 
+        async def prepare_reconnect(self, runtime, *, tier=None):
+            pass
+
         def is_transient_error(self, exc):  # consulted by the retry wrapper
             return False
 
@@ -149,3 +155,17 @@ async def test_a_transition_that_times_out_is_transient_not_gone(state, expected
 
     assert not isinstance(excinfo.value, SandboxGoneError)
     assert expected_word in str(excinfo.value).lower()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", [RuntimeState.STOPPED, RuntimeState.STARTING, RuntimeState.ARCHIVED])
+async def test_an_attach_only_reconnect_never_brings_a_sandbox_up(state):
+    """A reader nobody waits on uses a sandbox only while it runs."""
+    sandbox = PTCSandbox(_config(), None)
+    sandbox.provider = _stuck_provider(state)
+
+    with attach_only(), patch("asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(SandboxNotRunning):
+            await sandbox.reconnect("sbx-stuck")
+

@@ -34,6 +34,10 @@ class LeakDetectionMiddleware(AgentMiddleware):
 
     # Matches sandbox access tokens (gxsa_...) and refresh tokens (gxsr_...)
     _SANDBOX_TOKEN_RE = re.compile(r"gxs[ar]_[A-Za-z0-9_.\-]+")
+    # Matches Claude Code setup tokens (sk-ant-oat01-...), the shape the CLI
+    # signs in with, wherever a tool printed one: a token file on the user's
+    # own computer is readable by any command there.
+    _SETUP_TOKEN_RE = re.compile(r"sk-ant-oat\d+-[A-Za-z0-9_-]+")
 
     def __init__(
         self,
@@ -46,8 +50,9 @@ class LeakDetectionMiddleware(AgentMiddleware):
             mcp_servers: List of MCPServerConfig objects. Each server's
                 env dict is scanned for ${VAR} placeholders, which are
                 resolved from os.environ to get the actual secret values.
-            vault_secrets: Per-workspace user vault secrets (name→value).
-                Merged into the redaction list alongside MCP secrets.
+            vault_secrets: The owner's whole vault (name→value), which every
+                workspace on their computers can read. Merged into the
+                redaction list alongside MCP secrets.
         """
         secrets: dict[str, str] = {}
 
@@ -88,18 +93,9 @@ class LeakDetectionMiddleware(AgentMiddleware):
                 if len(value) >= 8:
                     secrets[f"{server.name}:{key}"] = value
 
-        # Also check for GITHUB_TOKEN (injected separately by _build_sandbox_env_vars).
-        # Use get_nested_config to match sandbox.py's resolution logic.
-        from src.config.settings import get_nested_config
-
-        if get_nested_config("github.enabled", False):
-            token_env = get_nested_config("github.token_env", "GITHUB_BOT_TOKEN")
-            gh_token = os.environ.get(token_env)
-            if gh_token and len(gh_token) >= 8:
-                secrets["GITHUB_TOKEN"] = gh_token
-
-        # Merge vault secrets (user-provided API keys stored per-workspace)
-        # Use same >=8 threshold as MCP secrets to avoid false-positive redaction
+        # Merge the owner's vault secrets (user-provided API keys, one vault
+        # for all of their workspaces). Same >=8 threshold as MCP secrets to
+        # avoid false-positive redaction.
         for name, value in (vault_secrets or {}).items():
             if value and len(value) >= 8:
                 secrets[name] = value
@@ -132,6 +128,7 @@ class LeakDetectionMiddleware(AgentMiddleware):
                 content = content.replace(value, f"[REDACTED:{name}]")
         # Pattern-based redaction for prefixed sandbox tokens (catches refreshed tokens)
         content = self._SANDBOX_TOKEN_RE.sub("[REDACTED:SANDBOX_TOKEN]", content)
+        content = self._SETUP_TOKEN_RE.sub("[REDACTED:CLAUDE_SETUP_TOKEN]", content)
         return content
 
     def wrap_tool_call(self, request, handler):

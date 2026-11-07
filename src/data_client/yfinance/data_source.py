@@ -9,14 +9,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-import yfinance as yf
+import numpy as np
 
-from src.data_client.normalize import build_series, minor_unit_scale, scale_snapshot_prices
-from src.market_protocol import InstrumentRef, Series
+from src.data_client.base import IntervalNotSupported
+from src.data_client.normalize import (
+    build_series,
+    change_from,
+    minor_unit_places,
+    scale_snapshot_prices,
+    symbol_timezone,
+)
+from market_protocol import InstrumentRef, Series, to_canonical, to_major_units
+from market_protocol.calendars import get_calendar, session_bounds
+from market_protocol.enums import AssetClass
+from market_protocol.symbology import ALWAYS_24_7, FUTURES_MIC, WEEKDAYS_24_5
+from src.utils.market_hours import interval_seconds
+
+from .yahoo import yahoo_symbol, yahoo_ticker
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +95,22 @@ def _finite(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
-def _normalize_bar(idx, row: Any, scale: float = 1.0) -> dict[str, Any]:
+def _quoted(value: float) -> float:
+    """*value* as Yahoo quoted it.
+
+    Yahoo's chart series carry float32 prices, which widen to digits nobody
+    quoted (4.62e-06 arrives as 4.619999799615471e-06). The shortest float32
+    spelling restores the quote with no fixed number of places, so a sub-cent
+    coin keeps its digits; a value float32 cannot hold exactly passes as is.
+    """
+    narrow = np.float32(value)
+    return float(str(narrow)) if float(narrow) == value else value
+
+
+def _normalize_bar(idx, row: Any, places: int = 0) -> dict[str, Any]:
     """Convert a yfinance history row to the standard OHLCV bar shape.
 
-    ``scale`` is the minor-unit factor (0.01 for GBX/pence venues, else 1.0);
+    ``places`` is the minor-unit shift (2 for GBX/pence venues, else 0);
     OHLC prices are scaled, volume (a share count) is not.
     """
     if hasattr(idx, "timestamp"):
@@ -94,10 +119,10 @@ def _normalize_bar(idx, row: Any, scale: float = 1.0) -> dict[str, Any]:
         t = 0
     return {
         "time": t,
-        "open": round(float(row["Open"]) * scale, 4),
-        "high": round(float(row["High"]) * scale, 4),
-        "low": round(float(row["Low"]) * scale, 4),
-        "close": round(float(row["Close"]) * scale, 4),
+        "open": to_major_units(_quoted(float(row["Open"])), places),
+        "high": to_major_units(_quoted(float(row["High"])), places),
+        "low": to_major_units(_quoted(float(row["Low"])), places),
+        "close": to_major_units(_quoted(float(row["Close"])), places),
         # NaN != NaN: index/sparse rows carry NaN volume and int(NaN) raises,
         # killing the whole fetch for one bad row.
         "volume": int(row["Volume"]) if row["Volume"] == row["Volume"] else 0,
@@ -109,10 +134,16 @@ def _fetch_history(
     interval: str,
     start: str | None,
     end: str | None,
-    scale: float = 1.0,
+    places: int = 0,
+    day_tz: ZoneInfo | None = None,
 ) -> list[dict[str, Any]]:
-    """Synchronous helper — called via ``asyncio.to_thread``."""
-    ticker = yf.Ticker(symbol)
+    """Synchronous helper — called via ``asyncio.to_thread``.
+
+    *day_tz* restamps each daily bar at midnight there: Yahoo stamps a day at
+    midnight in its own exchange zone, London for FX, which in summer is the
+    previous evening in the UTC an FX date is read in.
+    """
+    ticker = yahoo_ticker(symbol)
 
     # auto_adjust=False: Yahoo's Close is split-adjusted only (dividends live
     # in Adj Close, which we don't read) — the whole provider chain declares
@@ -134,42 +165,154 @@ def _fetch_history(
     # A NaN-priced row (halted session, yfinance gap padding) would propagate
     # NaN into the cache and render as "nan" downstream — drop it here.
     df = df.copy().dropna(subset=["Open", "High", "Low", "Close"])
-    return [_normalize_bar(idx, row, scale) for idx, row in df.iterrows()]
+    if day_tz is not None:
+        df.index = [datetime.combine(i.date(), time(), day_tz) for i in df.index]
+    return [_normalize_bar(idx, row, places) for idx, row in df.iterrows()]
+
+
+def _place_in_sessions(
+    bars: list[dict[str, Any]], symbol: str, is_index: bool, interval: str,
+) -> list[dict[str, Any]]:
+    """Fit Yahoo's intraday grid around a venue's midday break.
+
+    Yahoo pads the A-share 11:30-13:00 break with flat zero-volume bars, and
+    its hourly grid, anchored at the open, starts a bar at 12:30 inside both
+    the Shanghai and the Hong Kong break. A bar wholly inside a break carries no
+    trading and is dropped; one that starts in it holds the reopen's trades, so
+    it starts at the reopen.
+    """
+    try:
+        ref = to_canonical(symbol, asset_class=AssetClass.INDEX if is_index else None)
+        tz = get_calendar(ref.calendar_id).tz
+    except Exception:
+        return bars
+    span_ms = interval_seconds(interval) * 1000
+    breaks: dict[date, tuple[int, int] | None] = {}
+    placed = []
+    for bar in bars:
+        day = datetime.fromtimestamp(bar["time"] / 1000, tz).date()
+        if day not in breaks:
+            bounds = session_bounds(ref.calendar_id, day.isoformat())
+            breaks[day] = (bounds[2], bounds[3]) if bounds and bounds[2] is not None else None
+        brk = breaks[day]
+        if brk is None or not brk[0] <= bar["time"] < brk[1]:
+            placed.append(bar)
+        elif bar["time"] + span_ms > brk[1]:
+            placed.append({**bar, "time": brk[1]})
+    return placed
+
+
+def _print_time_ms(meta: dict[str, Any]) -> int | None:
+    """The quote's print time, from the chart metadata the quote came with.
+    Without it a row printed in the previous session cannot be told from
+    today's."""
+    t = meta.get("regularMarketTime")
+    if isinstance(t, datetime):  # yfinance formats it as a pandas Timestamp
+        return int(t.timestamp() * 1000)
+    if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0:
+        return int(t) * 1000
+    return None
+
+
+def _bar_field(bar: Any, field: str) -> float | None:
+    value = _finite(bar[field]) if bar is not None else None
+    return _quoted(value) if value is not None else None
+
+
+def _sessions(
+    ref: InstrumentRef | None, printed_ms: int | None, zone: str | None, dates: list[date],
+) -> tuple[date | None, date | None]:
+    """The trading date of the quote's last print, and the session before it.
+
+    The venue's calendar answers when it is the one Yahoo quotes from (a
+    futures evening already trades tomorrow). A venue the symbology has no
+    calendar for gets the print's exchange-local date and the newest bar
+    before it.
+    """
+    if printed_ms is None or not zone:
+        return None, None
+    at = datetime.fromtimestamp(printed_ms / 1000, ZoneInfo(zone))
+    if ref is not None:
+        cal = get_calendar(ref.calendar_id)
+        if ref.mic == FUTURES_MIC or cal.tz.key == zone:
+            session = cal.latest_trading_date(at)
+            return session, cal.previous_session(session)
+    session = at.date()
+    return session, max((d for d in dates if d < session), default=None)
 
 
 def _fetch_single_snapshot(sym: str) -> dict[str, Any] | None:
-    """Fetch snapshot for a single symbol. Returns None on failure."""
+    """Fetch snapshot for a single symbol. Returns None on failure.
+
+    The previous close is the daily bar of the session before the quote's:
+    its close is the official one (a closing auction, a futures settlement).
+    Yahoo's daily series has holes for some A-share listings, so a missing bar
+    falls back to a one-day chart's ``chartPreviousClose``, which is right
+    there but runs a session stale on others (399001.SZ). A market that never
+    closes takes the chart's day boundary, as other vendors quote it, where
+    Yahoo's daily bar closes elsewhere (USD-JPY) or flat and rounded (a
+    sub-cent coin). yfinance's ``fast_info`` takes the last hourly bar,
+    extended hours included, of the previous calendar day: no session's close.
+    """
     try:
-        ticker = yf.Ticker(sym)
-        fi = ticker.fast_info
+        ref = to_canonical(sym)
+    except ValueError:
+        ref = None  # a spelling the protocol refuses still gets to ask Yahoo
+    continuous = ref is not None and ref.calendar_id in (ALWAYS_24_7, WEEKDAYS_24_5)
+    # Yahoo's running volume for an A-share index reads 2x to 10x low through
+    # the day, and its intraday bars double-count the afternoon reopen, so no
+    # count it publishes is the session's.
+    a_share_index = (
+        ref is not None and ref.asset_class is AssetClass.INDEX and ref.mic in ("XSHG", "XSHE")
+    )
+    try:
+        ticker = yahoo_ticker(sym)
+        days = ticker.history(period="1d" if continuous else "5d", interval="1d", auto_adjust=False)
+        # A live view that the next history() call replaces, and copying it
+        # would fetch its lazy tradingPeriods: read what the quote needs now.
+        meta = ticker.history_metadata
         # NaN is truthy, so `nan or 0` stays NaN — route every numeric field
         # through _finite() so a snapshot can never carry non-finite floats.
         # No finite last price means no quote: a None snapshot beats a $0.00
         # phantom; missing optional fields stay None rather than becoming 0.
-        price = _finite(fi.get("lastPrice"))
+        price = _finite(meta.get("regularMarketPrice"))
         if price is None:
+            # Yahoo has no such symbol, or yfinance swallowed the request's own
+            # failure; either can be an outage, so it stays a warning.
+            logger.warning("yfinance.snapshot.no_chart | symbol=%s", sym)
             return None
-        prev = _finite(fi.get("previousClose"))
-        change = price - prev if prev else 0.0
-        change_pct = (change / prev * 100) if prev else 0.0
-        open_ = _finite(fi.get("open"))
-        high = _finite(fi.get("dayHigh"))
-        low = _finite(fi.get("dayLow"))
-        volume = _finite(fi.get("lastVolume"))
+        printed = _print_time_ms(meta)
+        if continuous:
+            bar = days.iloc[-1] if not days.empty else None
+            prev = _finite(meta.get("chartPreviousClose"))
+        else:
+            by_date = {idx.date(): row for idx, row in days.iterrows()}
+            session, prior = _sessions(ref, printed, meta.get("exchangeTimezoneName"), list(by_date))
+            bar = by_date.get(session)
+            prev = _bar_field(by_date.get(prior), "Close")
+            if prev is None:
+                ticker.history(period="1d", interval="1d", auto_adjust=False)
+                prev = _finite(ticker.history_metadata.get("chartPreviousClose"))
+        volume = _finite(bar["Volume"]) if bar is not None and not a_share_index else None
+        change, change_pct = change_from(price, prev)
         return {
             "symbol": sym,
             "name": None,
-            "price": round(price, 4),
-            "change": round(change, 4),
-            "change_percent": round(change_pct, 4),
-            "previous_close": round(prev, 4) if prev is not None else None,
-            "open": round(open_, 4) if open_ is not None else None,
-            "high": round(high, 4) if high is not None else None,
-            "low": round(low, 4) if low is not None else None,
+            "price": price,
+            "change": change,
+            "change_percent": change_pct,
+            "previous_close": prev,
+            "open": _bar_field(bar, "Open"),
+            "high": _bar_field(bar, "High"),
+            "low": _bar_field(bar, "Low"),
             "volume": int(volume) if volume is not None else 0,
             "market_status": None,
             "early_trading_change_percent": None,
             "late_trading_change_percent": None,
+            # regularMarketTime: the regular session's last print, which
+            # stands through the extended hours that follow.
+            "as_of": printed,
+            "regular_only": True,
         }
     except Exception:
         logger.warning("yfinance.snapshot.failed | symbol=%s", sym, exc_info=True)
@@ -181,10 +324,7 @@ class YFinanceDataSource:
 
     @staticmethod
     def _api_symbol(symbol: str, is_index: bool) -> str:
-        # Suffixed index symbols (000300.SS) are already valid — never caret them.
-        if not is_index or symbol.startswith("^") or "." in symbol:
-            return symbol
-        return f"^{symbol}"
+        return yahoo_symbol(symbol, is_index=is_index)
 
     async def get_intraday(
         self,
@@ -197,14 +337,15 @@ class YFinanceDataSource:
     ) -> list[dict[str, Any]]:
         yf_interval = _INTERVAL_MAP.get(interval)
         if yf_interval is None:
-            raise ValueError(
+            raise IntervalNotSupported(
                 f"Interval '{interval}' is not supported by yfinance"
             )
         api_symbol = self._api_symbol(symbol, is_index)
-        scale = minor_unit_scale(symbol)
-        return await asyncio.to_thread(
-            _fetch_history, api_symbol, yf_interval, from_date, to_date, scale
+        places = minor_unit_places(symbol)
+        bars = await asyncio.to_thread(
+            _fetch_history, api_symbol, yf_interval, from_date, to_date, places
         )
+        return _place_in_sessions(bars, symbol, is_index, interval)
 
     async def get_daily(
         self,
@@ -215,9 +356,9 @@ class YFinanceDataSource:
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         api_symbol = self._api_symbol(symbol, is_index)
-        scale = minor_unit_scale(symbol)
+        places = minor_unit_places(symbol)
         return await asyncio.to_thread(
-            _fetch_history, api_symbol, "1d", from_date, to_date, scale
+            _fetch_history, api_symbol, "1d", from_date, to_date, places, symbol_timezone(symbol)
         )
 
     async def get_snapshots(
@@ -226,26 +367,34 @@ class YFinanceDataSource:
         asset_type: str = "stocks",
         user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        prepared = [
-            self._api_symbol(s, is_index=(asset_type == "indices")) for s in symbols
-        ]
+        prepared: list[tuple[str, str]] = []  # (as requested, as Yahoo spells it)
+        refused: ValueError | None = None
+        for s in symbols:
+            try:
+                prepared.append((s, self._api_symbol(s, is_index=(asset_type == "indices"))))
+            except ValueError as exc:
+                # A symbol Yahoo cannot be asked for is a miss like any other,
+                # not a failure of the whole batch.
+                refused = refused or exc
         if not prepared:
+            if refused is not None:
+                raise refused
             return []
         results = await asyncio.gather(
-            *(asyncio.to_thread(_fetch_single_snapshot, s) for s in prepared)
+            *(asyncio.to_thread(_fetch_single_snapshot, api) for _, api in prepared)
         )
-        # gather preserves order, so results[i] maps back to symbols[i]. Restore
+        # gather preserves order, so results[i] maps back to prepared[i]. Restore
         # the originally-requested (bare) symbol — the caret was only for the
         # Yahoo query — so the provider chain matches on the requested ticker
         # instead of dropping "^GSPC" as unrequested. Keeps yfinance consistent
         # with FMP/ginlix-data, which already return bare index symbols.
         out: list[dict[str, Any]] = []
-        for original, snap in zip(symbols, results):
+        for (original, _), snap in zip(prepared, results):
             if snap is None:
                 continue
             snap["symbol"] = original
-            # Scale price-like fields per the requested symbol (GBX → ×0.01).
-            scale_snapshot_prices(snap, minor_unit_scale(original))
+            # Scale price-like fields per the requested symbol (GBX → pounds).
+            scale_snapshot_prices(snap, minor_unit_places(original))
             out.append(snap)
         return out
 

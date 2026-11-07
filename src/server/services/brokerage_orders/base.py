@@ -54,14 +54,25 @@ class ListingIncomplete(Exception):
 
 @dataclass(frozen=True)
 class StatusQuery:
-    """One read call that reports what the vendor has done with an order."""
+    """One read call that reports what the vendor has done with an order.
+
+    ``carry`` is never sent. It holds what :meth:`OrderAdapter.next_page` needs
+    when the read that names the order can only be built from an earlier
+    answer, such as an account the vendor spells two ways. It is part of the
+    key, so two such reads that share their first call stay two reads.
+    """
 
     tool: str
     args: dict[str, Any] = field(default_factory=dict)
+    carry: dict[str, Any] = field(default_factory=dict)
 
     def key(self) -> tuple:
         """Identity for de-duplication, so one read serves every attempt it covers."""
-        return (self.tool, tuple(sorted((k, str(v)) for k, v in self.args.items())))
+        return (
+            self.tool,
+            tuple(sorted((k, str(v)) for k, v in self.args.items())),
+            tuple(sorted((k, str(v)) for k, v in self.carry.items())),
+        )
 
 
 @dataclass(frozen=True)
@@ -207,6 +218,19 @@ class OrderAdapter(ABC):
         """
         return None
 
+    def absent_status(self, action: str | None) -> AttemptStatus | None:
+        """The state an open attempt reaches by leaving a complete listing, or None.
+
+        None keeps it open, which is right wherever a list keeps an order after
+        it ends: one missing from it is unexplained, and settling it would state
+        an outcome nobody reported. A vendor whose list carries only what is
+        still pending drops an attempt when it ends there, sent on, deleted or
+        expired, without saying which, and names here the state that records
+        that much. ``action`` is the attempt's own, since a vendor can list one
+        action's orders this way and not another's.
+        """
+        return None
+
     @abstractmethod
     def match_key(self, order: BrokerOrder | None) -> MatchKey | None:
         """The field map of an order we sent, comparable with a listed one.
@@ -236,6 +260,7 @@ def adapter_for(vendor: str) -> OrderAdapter | None:
     from src.server.services.brokerage_orders.ibkr import IbkrOrderAdapter
     from src.server.services.brokerage_orders.moomoo import MoomooOrderAdapter
     from src.server.services.brokerage_orders.robinhood import RobinhoodOrderAdapter
+    from src.server.services.brokerage_orders.webull import WebullOrderAdapter
 
     match (vendor or "").strip().casefold():
         case "moomoo":
@@ -244,6 +269,8 @@ def adapter_for(vendor: str) -> OrderAdapter | None:
             return RobinhoodOrderAdapter()
         case "ibkr":
             return IbkrOrderAdapter()
+        case "webull":
+            return WebullOrderAdapter()
         case _:
             return None
 

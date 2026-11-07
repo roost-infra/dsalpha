@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from collections.abc import Iterable
+from typing import Any, TypedDict
 
 
 class EditTextResult(TypedDict, total=False):
@@ -18,3 +19,26 @@ class EditTextResult(TypedDict, total=False):
     message: str
     occurrences: int
     size: int
+
+
+class WriteTextResult(TypedDict, total=False):
+    """What a route's ``awrite_text`` may report instead of a bare ``True``.
+
+    A DB-backed file applies a write as changes to rows, and ``message`` says
+    which ones (created, updated, deleted), so the agent learns the effect of
+    its write without re-reading the file. The Write tool shows it in place
+    of the byte count.
+    """
+
+    success: bool
+    message: str
+
+
+class GrepAnswer(list):
+    """A Grep answer with ``notes`` for whoever reads it, each saying what the
+    search left out, such as files a route stopped before. A plain list
+    answer has none."""
+
+    def __init__(self, entries: Iterable[Any] = (), notes: Iterable[str] = ()) -> None:
+        super().__init__(entries)
+        self.notes = tuple(notes)

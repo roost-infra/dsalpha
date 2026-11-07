@@ -19,12 +19,12 @@ from typing import Annotated, Any, List, Optional
 
 from langchain_core.tools import StructuredTool
 
-from src.config.core import find_config_file, load_yaml_config
 from src.llms import LLM, format_llm_content, make_api_call, maybe_disable_streaming
 from src.tools.web.inhouse.sitemap import get_sitemap_summary
 from src.tools.decorators import log_io
 from src.tools.web.router import FetchRouter
-from src.observability import stamp_run
+from src.observability import stamp_run, stamp_tool_provider
+from src.tools.web.providers._shared import empty_content_error, mark_web_outcome
 from src.tools.web.types import (
     FetchAttempt,
     FetchRequest,
@@ -192,15 +192,15 @@ def reset_fetch_service() -> None:
 
 def _get_extraction_model() -> str:
     """Get the configured extraction model.
-    Priority: context override (user pref) > agent_config.yaml llm.fetch > llm.flash > llm.name.
+    Priority: context override (user pref) > agent_config.yaml llm.fetch > llm.background > llm.name.
     """
     override = fetch_model_override.get()
     if override:
         return override
-    path = find_config_file("agent_config.yaml")
-    config = load_yaml_config(str(path)) if path else {}
-    llm = config.get("llm", {})
-    return llm.get("fetch") or llm.get("flash") or llm.get("name", "")
+    from src.config.tool_settings import _get_agent_config_dict
+
+    llm = _get_agent_config_dict().get("llm") or {}
+    return llm.get("fetch") or llm.get("background") or llm.get("name", "")
 
 
 def _with_sitemap_suggestions(message: str, sitemap_summary: str) -> str:
@@ -285,7 +285,6 @@ async def _extract_with_llm(
             llm=llm,
             system_prompt=EXTRACTION_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            disable_tracing=True,
         ),
         timeout=EXTRACTION_TIMEOUT,
     )
@@ -311,7 +310,7 @@ async def web_fetch(
     Args:
         url: The URL to fetch content from
         prompt: The prompt to run on the fetched content
-        model: LLM model to use for extraction (default: from agent_config.yaml llm.flash)
+        model: LLM model to use for extraction (default: from agent_config.yaml llm.fetch, else llm.background)
         use_cache: Whether to use Redis cache (default: True)
         include_sitemap: Include site structure for URL suggestions (default: True)
 
@@ -369,6 +368,12 @@ async def web_fetch(
             if result.error is not None:
                 kind = result.error.type.value
                 artifact["error"] = kind
+                # A failed URL's error came from the last provider to try it;
+                # the response names a provider only when one succeeded.
+                mark_web_outcome(
+                    result.error,
+                    response.attempts[-1].provider if response.attempts else None,
+                )
                 return _with_sitemap_suggestions(
                     f"[{kind}] Failed to fetch {url}: {result.error.message}",
                     await _sitemap(),
@@ -385,6 +390,7 @@ async def web_fetch(
             markdown = result.markdown
             if not markdown or len(markdown.strip()) < 50:
                 artifact["error"] = "empty"
+                mark_web_outcome(empty_content_error())
                 sitemap_summary = await _sitemap()
                 if sitemap_summary:
                     return _with_sitemap_suggestions(
@@ -408,6 +414,7 @@ async def web_fetch(
         logger.error(f"Failed to process {url}. Error: {repr(e)}")
         short_error = str(e).split('\n')[0][:100]
         artifact["error"] = "exception"
+        mark_web_outcome(e)
         return f"Failed to process {url}: {short_error}", artifact
 
 
@@ -431,6 +438,7 @@ async def _web_fetch_tool_impl(
         fetch_source=artifact.get("source"),
         fetch_error=artifact.get("error"),
     )
+    stamp_tool_provider(provider)
     return content, artifact
 
 

@@ -7,17 +7,90 @@ portfolio holdings in PostgreSQL.
 
 import logging
 from datetime import datetime
-from decimal import Decimal
+from decimal import Context, Decimal
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from market_protocol import AssetClass, to_canonical
+from market_protocol.symbology import MINOR_UNIT_PLACES
 from psycopg.rows import dict_row
 from psycopg.types.json import Json
 
 from src.server.database.pool import get_db_connection
+from src.server.database.user_lock import lock_user_profile
+from src.server.models.user import normalize_symbol
 from src.server.utils.db import UpdateQueryBuilder
 
 logger = logging.getLogger(__name__)
+
+
+class HoldingCurrencyMismatch(ValueError):
+    """A write named a currency the holding's average cost is not in.
+
+    Merging would average two costs in different currencies, and relabeling a
+    holding as pence without its cost would read the stored pounds as pence,
+    so the write is refused. A distinct type so a caller answers it as a
+    conflict without reading every ValueError as one.
+    """
+
+
+# The holding types the protocol reads as something other than a listed
+# security: BTC-EUR held as crypto is priced in euros, not a US ticker in
+# dollars. Every other type is a listed security, and the equity hint keeps a
+# ticker such as HSI from reading as the index.
+_ASSET_CLASS_OF_TYPE = {
+    "index": AssetClass.INDEX,
+    "crypto": AssetClass.CRYPTO,
+    "currency": AssetClass.FX,
+}
+
+
+# Search labels London listings in pence, but every quote the app serves for
+# them is in pounds. Pence is GBX in any case, or GBp, where case is all that
+# tells it from GBP: upper-cased, a pence cost used to pass for a pounds one.
+_MAJOR_OF_MINOR = {"GBX": "GBP"}
+
+# A weighted average rarely terminates. Twelve significant digits keep a
+# sub-cent cost (0.00001234) exact to a part in 10^12 and keep the 28-digit
+# expansion out of the unconstrained column and everything that prints it.
+_MERGED_COST = Context(prec=12)
+
+
+def _minor_unit(currency: str) -> Optional[str]:
+    code = currency.strip()
+    unit = "GBX" if code == "GBp" else code.upper()
+    return unit if unit in _MAJOR_OF_MINOR else None
+
+
+def canonical_holding_cost(
+    currency: Optional[str], average_cost: Optional[Decimal]
+) -> tuple[Optional[str], Optional[Decimal]]:
+    """The currency and average cost a holding is stored in.
+
+    A cost in pence is stored in pounds, the unit its quotes are read in, so
+    two costs in one holding always compare. Every writer of a holding passes
+    its currency through here, so the merge guard can compare codes exactly.
+    """
+    if currency is None:
+        return None, average_cost
+    unit = _minor_unit(currency)
+    if unit:
+        places = MINOR_UNIT_PLACES[unit]
+        return _MAJOR_OF_MINOR[unit], None if average_cost is None else average_cost.scaleb(-places)
+    return currency.strip().upper() or None, average_cost
+
+
+def default_holding_currency(symbol: str, instrument_type: str) -> str:
+    """The currency a holding is written in when the writer names none.
+
+    The one its quotes are in, since the average cost is read against them. A
+    symbol the protocol cannot read is still stored, in USD as before.
+    """
+    hint = _ASSET_CLASS_OF_TYPE.get(instrument_type, AssetClass.EQUITY)
+    try:
+        return to_canonical(symbol, asset_class=hint).price_currency
+    except ValueError:
+        return "USD"
 
 
 async def get_user_portfolio(user_id: str) -> List[Dict[str, Any]]:
@@ -106,7 +179,20 @@ async def update_portfolio_holding(
 
     Returns:
         Updated portfolio holding dict or None if not found
+
+    Raises:
+        HoldingCurrencyMismatch: ``currency`` is a pence code without an
+            ``average_cost`` to convert to pounds, on a holding the caller owns.
     """
+    if currency is not None and average_cost is None and _minor_unit(currency):
+        if not await get_portfolio_holding(user_portfolio_id, user_id):
+            return None
+        raise HoldingCurrencyMismatch(
+            f"{currency.strip()} is a cost in pence, which is stored in GBP. Give the "
+            f"average cost in the same write, or set the currency to GBP."
+        )
+    currency, average_cost = canonical_holding_cost(currency, average_cost)
+
     builder = UpdateQueryBuilder()
     builder.add_field("name", name)
     builder.add_field("quantity", quantity)
@@ -133,8 +219,9 @@ async def update_portfolio_holding(
         returning_columns=returning_columns,
     )
 
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor(row_factory=dict_row) as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute(query, params)
 
             result = await cur.fetchone()
@@ -154,7 +241,7 @@ async def upsert_portfolio_holding(
     exchange: Optional[str] = None,
     name: Optional[str] = None,
     average_cost: Optional[Decimal] = None,
-    currency: str = "USD",
+    currency: Optional[str] = None,
     account_name: Optional[str] = None,
     notes: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -174,7 +261,9 @@ async def upsert_portfolio_holding(
         exchange: Exchange name
         name: Full instrument name
         average_cost: Average cost per unit
-        currency: Currency code
+        currency: Currency code, stored as ``canonical_holding_cost`` reads it.
+            Omitted, a new holding takes its listing's
+            (``default_holding_currency``) and a merge keeps the holding's.
         account_name: Account name (e.g., 'Robinhood')
         notes: User notes
         metadata: Additional metadata
@@ -184,6 +273,10 @@ async def upsert_portfolio_holding(
         Tuple of (holding dict, merge_details dict or None).
         merge_details is None for fresh creates, or a dict with previous/added/result
         when an existing position was merged.
+
+    Raises:
+        HoldingCurrencyMismatch: ``currency`` names another currency than the
+            existing holding's.
     """
     _returning = """
         RETURNING
@@ -191,11 +284,14 @@ async def upsert_portfolio_holding(
             name, quantity, average_cost, currency, account_name,
             notes, metadata, first_purchased_at, created_at, updated_at
     """
+    symbol = normalize_symbol(symbol)
+    currency, average_cost = canonical_holding_cost(currency, average_cost)
 
     async with get_db_connection() as conn:
         # Explicit transaction for atomicity (autocommit is ON by default)
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
+                await lock_user_profile(cur, user_id)
                 # FOR UPDATE locks the row to prevent concurrent merge races
                 await cur.execute("""
                     SELECT
@@ -211,6 +307,15 @@ async def upsert_portfolio_holding(
                 existing = await cur.fetchone()
 
                 if existing:
+                    held_in = existing["currency"]
+                    if currency and held_in and currency != held_in:
+                        where = f" ({account_name})" if account_name else ""
+                        raise HoldingCurrencyMismatch(
+                            f"{symbol}{where} is held in {held_in}, so a cost in "
+                            f"{currency} cannot be averaged into it. Give the cost "
+                            f"in {held_in}, or change the holding's currency first."
+                        )
+
                     existing_qty = existing["quantity"] or Decimal("0")
                     total_qty = existing_qty + quantity
 
@@ -219,9 +324,10 @@ async def upsert_portfolio_holding(
                     if total_qty == 0:
                         merged_avg_cost = None
                     elif existing_cost is not None and average_cost is not None:
-                        merged_avg_cost = (
-                            existing_qty * existing_cost + quantity * average_cost
-                        ) / total_qty
+                        merged_avg_cost = _MERGED_COST.divide(
+                            existing_qty * existing_cost + quantity * average_cost,
+                            total_qty,
+                        )
                     elif average_cost is not None:
                         merged_avg_cost = average_cost
                     elif existing_cost is not None:
@@ -277,6 +383,7 @@ async def upsert_portfolio_holding(
 
                 else:
                     user_portfolio_id = str(uuid4())
+                    currency = currency or default_holding_currency(symbol, instrument_type)
                     await cur.execute(f"""
                         INSERT INTO user_portfolios (
                             user_portfolio_id, user_id, symbol, instrument_type, exchange,
@@ -312,8 +419,9 @@ async def delete_portfolio_holding(user_portfolio_id: str, user_id: str) -> bool
     Returns:
         True if holding was deleted, False if not found
     """
-    async with get_db_connection() as conn:
+    async with get_db_connection() as conn, conn.transaction():
         async with conn.cursor() as cur:
+            await lock_user_profile(cur, user_id)
             await cur.execute("""
                 DELETE FROM user_portfolios
                 WHERE user_portfolio_id = %s AND user_id = %s

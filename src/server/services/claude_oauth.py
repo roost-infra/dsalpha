@@ -1,5 +1,5 @@
 """
-Claude OAuth service — PKCE authorization code flow, token exchange, refresh with Redis lock.
+Claude OAuth service: PKCE authorization code flow, token exchange and refresh.
 
 Handles the OAuth 2.0 PKCE flow for connecting Claude models via users'
 existing Anthropic subscriptions. Unlike Codex (device code flow), Anthropic
@@ -9,26 +9,27 @@ Protocol details (discovered from @mariozechner/pi-ai 0.58.0):
 - Authorize URL: https://claude.ai/oauth/authorize
 - Token URL: https://platform.claude.com/v1/oauth/token
 - Redirect URI: https://platform.claude.com/oauth/code/callback (hosted)
-- PKCE: S256, state = verifier
+- PKCE: S256, with a random state: the callback page shows the state in the
+  code the user pastes, so it must not be the verifier
 - Token exchange: Content-Type: application/json (not form-urlencoded)
 - Extra authorize param: code=true
+
+A Claude Code setup token is the same grant asked for the way
+``claude setup-token`` asks: inference scope only, on the CLI's authorize
+host, for a year (``authorize_setup_token``, ``mint_setup_token``).
 """
 
-import asyncio
 import base64
 import hashlib
 import logging
 import secrets
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
-from src.server.database.oauth_tokens import (
-    get_oauth_tokens,
-    invalidate_oauth_active_cache,
-    upsert_oauth_tokens,
-)
+from src.server.services.oauth_protocol import TokenSet, upstream_error_code
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,14 @@ CLAUDE_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLAUDE_REDIRECT_URI = "https://platform.claude.com/oauth/code/callback"
 CLAUDE_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+#: Where ``claude setup-token`` sends the user, and the one scope it asks for.
+SETUP_TOKEN_AUTHORIZE_URL = "https://claude.com/cai/oauth/authorize"
+SETUP_TOKEN_SCOPE = "user:inference"
+#: The lifetime ``claude setup-token`` asks for: a year.
+SETUP_TOKEN_LIFETIME_S = 31_536_000
+#: Shorter than this and the grant is not the one asked for: the token would
+#: lapse long before the user is told to sign in again.
+SETUP_TOKEN_MIN_LIFETIME_S = 360 * 86_400
 
 
 # --- PKCE ---
@@ -56,35 +65,30 @@ def generate_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def build_authorize_url(verifier: str, challenge: str) -> str:
-    """Build the Anthropic OAuth authorize URL.
-
-    Anthropic's convention: state = verifier.
+def generate_authorize_url(
+    authorize_url: str = CLAUDE_AUTHORIZE_URL, scope: str = CLAUDE_SCOPES
+) -> tuple[str, str, str]:
+    """A sign-in: its authorize URL, and the verifier and state to keep
+    server-side. The params and their order are the CLI's.
     """
-    from urllib.parse import urlencode
-
+    verifier, challenge = generate_pkce_pair()
+    state = secrets.token_urlsafe(32)
     params = {
         "code": "true",
         "client_id": CLAUDE_CLIENT_ID,
         "response_type": "code",
         "redirect_uri": CLAUDE_REDIRECT_URI,
-        "scope": CLAUDE_SCOPES,
+        "scope": scope,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
-        "state": verifier,
+        "state": state,
     }
-    return f"{CLAUDE_AUTHORIZE_URL}?{urlencode(params)}"
+    return f"{authorize_url}?{urlencode(params)}", verifier, state
 
 
-def generate_authorize_url() -> tuple[str, str]:
-    """Generate PKCE pair and build authorize URL.
-
-    Returns:
-        (authorize_url, verifier) — verifier must be stored server-side.
-    """
-    verifier, challenge = generate_pkce_pair()
-    url = build_authorize_url(verifier, challenge)
-    return url, verifier
+def authorize_setup_token() -> tuple[str, str, str]:
+    """A sign-in for a Claude Code setup token, as ``claude setup-token`` starts one."""
+    return generate_authorize_url(SETUP_TOKEN_AUTHORIZE_URL, SETUP_TOKEN_SCOPE)
 
 
 # --- Callback input parsing ---
@@ -144,134 +148,82 @@ def parse_callback_input(raw: str) -> tuple[str, str]:
 
 # --- Token exchange ---
 
-async def exchange_code(
-    code: str,
-    state: str,
-    code_verifier: str,
-) -> dict:
-    """Exchange authorization code for tokens.
-
-    Anthropic uses JSON body (not form-urlencoded).
-
-    Returns:
-        {access_token, refresh_token, expires_in}
-    """
+async def _token_request(body: dict) -> dict:
+    # Anthropic takes a JSON body, not form-urlencoded.
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            CLAUDE_TOKEN_URL,
-            json={
-                "grant_type": "authorization_code",
-                "client_id": CLAUDE_CLIENT_ID,
-                "code": code,
-                "state": state,
-                "redirect_uri": CLAUDE_REDIRECT_URI,
-                "code_verifier": code_verifier,
-            },
+        resp = await client.post(CLAUDE_TOKEN_URL, json={**body, "client_id": CLAUDE_CLIENT_ID})
+    if resp.status_code >= 400:
+        # The code only: the body is provider text that may quote the grant.
+        logger.error(
+            f"[claude_oauth] {body['grant_type']} failed: status={resp.status_code} "
+            f"code={upstream_error_code(resp)}"
         )
-        if resp.status_code >= 400:
-            logger.error(
-                f"[claude_oauth] Token exchange failed: status={resp.status_code} body={resp.text}"
-            )
-        resp.raise_for_status()
-        data = resp.json()
-        return {
-            "access_token": data["access_token"],
-            "refresh_token": data["refresh_token"],
-            "expires_in": data.get("expires_in", 3600),
-        }
+    resp.raise_for_status()
+    return resp.json()
 
 
-async def refresh_tokens(refresh_token: str) -> dict:
-    """Use refresh token to get new tokens.
+async def _exchange(code: str, state: str, code_verifier: str, **extra) -> dict:
+    return await _token_request({
+        "grant_type": "authorization_code",
+        "code": code,
+        "state": state,
+        "redirect_uri": CLAUDE_REDIRECT_URI,
+        "code_verifier": code_verifier,
+        **extra,
+    })
 
-    Returns:
-        {access_token, refresh_token, expires_in}
-    """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            CLAUDE_TOKEN_URL,
-            json={
-                "grant_type": "refresh_token",
-                "client_id": CLAUDE_CLIENT_ID,
-                "refresh_token": refresh_token,
-            },
+
+async def exchange_code(code: str, state: str, code_verifier: str) -> TokenSet:
+    return token_set(await _exchange(code, state, code_verifier))
+
+
+async def refresh_tokens(refresh_token: str) -> TokenSet:
+    return token_set(await _token_request({"grant_type": "refresh_token", "refresh_token": refresh_token}))
+
+
+class UnexpectedGrant(ValueError):
+    """The token endpoint answered a setup-token exchange with some other grant."""
+
+
+@dataclass(frozen=True)
+class SetupToken:
+    """A minted setup token and what the UI and logs know it by: its uuid,
+    never the token. The grant's refresh token is dropped, as
+    ``claude setup-token`` drops it: the user signs in again after a year."""
+
+    access_token: str = field(repr=False)
+    expires_at: datetime
+    token_uuid: str
+    email: str | None
+
+
+async def mint_setup_token(code: str, state: str, code_verifier: str) -> SetupToken:
+    """Exchange a setup-token sign-in's code, as the CLI does: a year asked
+    for, and no scope, which the authorize step fixed."""
+    data = await _exchange(code, state, code_verifier, expires_in=SETUP_TOKEN_LIFETIME_S)
+    lifetime, token, account = data.get("expires_in"), data.get("access_token"), data.get("account") or {}
+    if (
+        data.get("scope") != SETUP_TOKEN_SCOPE or not isinstance(lifetime, int) or lifetime < SETUP_TOKEN_MIN_LIFETIME_S
+        or not isinstance(token, str) or not token or not isinstance(account, dict)
+    ):
+        raise UnexpectedGrant(
+            f"scope={data.get('scope')!r} expires_in={lifetime!r} "
+            f"access_token={type(token).__name__} account={type(account).__name__}"
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return {
-            "access_token": data["access_token"],
-            "refresh_token": data["refresh_token"],
-            "expires_in": data.get("expires_in", 3600),
-        }
+    email = account.get("email_address")
+    return SetupToken(
+        access_token=token,
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=lifetime),
+        token_uuid=str(data.get("token_uuid") or ""),
+        email=email if isinstance(email, str) else None,
+    )
 
 
-# --- Orchestrator with refresh-lock ---
-
-async def get_valid_token(user_id: str) -> dict | None:
-    """
-    Get a valid access_token, refreshing if needed.
-
-    Uses Redis SETNX lock to prevent concurrent refresh.
-    Returns None if user hasn't connected.
-    """
-    tokens = await get_oauth_tokens(user_id, CLAUDE_PROVIDER)
-    if not tokens:
-        return None
-
-    now = datetime.now(timezone.utc)
-    expires_at = tokens["expires_at"]
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    # Token still valid (with 5-min buffer)
-    if expires_at > now + timedelta(minutes=5):
-        return {"access_token": tokens["access_token"], "plan_type": tokens.get("plan_type")}
-
-    # Need to refresh — acquire Redis lock
-    from src.utils.cache.redis_cache import get_cache_client
-
-    cache = get_cache_client()
-    lock_key = f"oauth:refresh:{user_id}:{CLAUDE_PROVIDER}"
-
-    if cache.enabled and cache.client:
-        acquired = await cache.client.set(lock_key, "1", nx=True, ex=35)
-        if not acquired:
-            # Another request is refreshing — wait briefly and re-read
-            await asyncio.sleep(1)
-            tokens = await get_oauth_tokens(user_id, CLAUDE_PROVIDER)
-            if tokens:
-                return {"access_token": tokens["access_token"], "plan_type": tokens.get("plan_type")}
-            return None
-
-    try:
-        new = await refresh_tokens(tokens["refresh_token"])
-
-        new_expires = now + timedelta(seconds=new.get("expires_in", 3600))
-
-        await upsert_oauth_tokens(
-            user_id=user_id,
-            provider=CLAUDE_PROVIDER,
-            access_token=new["access_token"],
-            refresh_token=new["refresh_token"],
-            account_id=tokens.get("account_id", ""),
-            email=tokens.get("email"),
-            plan_type=tokens.get("plan_type"),
-            expires_at=new_expires,
-        )
-
-        try:
-            await invalidate_oauth_active_cache(user_id)
-        except Exception:
-            pass
-
-        logger.debug(f"[claude_oauth] Refreshed tokens for user_id={user_id}")
-        return {"access_token": new["access_token"], "plan_type": tokens.get("plan_type")}
-    except Exception as e:
-        logger.error(f"[claude_oauth] Token refresh failed for user_id={user_id}: {e}")
-        return None
-    finally:
-        if cache.enabled and cache.client:
-            try:
-                await cache.client.delete(lock_key)
-            except Exception:
-                pass
+def token_set(data: dict) -> TokenSet:
+    """A token endpoint answer as stored. Anthropic's tokens name no account
+    or plan, so the identity stays empty."""
+    return TokenSet(
+        access_token=data["access_token"],
+        refresh_token=data["refresh_token"],
+        expires_at=datetime.now(timezone.utc) + timedelta(seconds=data.get("expires_in", 3600)),
+    )

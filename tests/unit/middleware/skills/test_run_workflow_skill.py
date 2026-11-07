@@ -16,10 +16,10 @@ import ptc_agent.agent.middleware.skills.registry as registry
 from ptc_agent.agent.middleware.skills.middleware import SkillsMiddleware
 from ptc_agent.agent.middleware.skills.registry import (
     SKILL_REGISTRY,
-    get_sandbox_skill_names,
     get_skill,
     get_skill_registry,
     list_skills,
+    skills_outside_sandbox,
 )
 
 SKILL_NAME = "run-workflow"
@@ -47,17 +47,15 @@ def _tool_names(request):
     return [t.name for t in request.tools]
 
 
-def test_skill_registered_as_name_gated_ptc_skill():
+def test_skill_registered_as_name_gated_skill():
     skill = SKILL_REGISTRY[SKILL_NAME]
     assert skill.name == SKILL_NAME
-    assert skill.tools == []
     assert skill.tool_names == (TOOL_NAME,)
-    assert skill.get_tool_names() == [TOOL_NAME]
+    assert skill.tool_names == (TOOL_NAME,)
     assert skill.skill_md_path == f"skills/{SKILL_NAME}/SKILL.md"
-    assert skill.exposure == "ptc"
-    assert SKILL_NAME in get_skill_registry("ptc")
-    assert SKILL_NAME not in get_skill_registry("flash")
-    assert SKILL_NAME in get_sandbox_skill_names()
+    assert not skill.hidden
+    assert SKILL_NAME in get_skill_registry()
+    assert SKILL_NAME not in skills_outside_sandbox()
 
 
 def test_skill_md_frontmatter_matches_registry(shipped_skill_md):
@@ -73,7 +71,7 @@ def test_skill_md_frontmatter_matches_registry(shipped_skill_md):
 
 
 def test_tool_hidden_until_skill_loaded():
-    middleware = SkillsMiddleware(mode="ptc")
+    middleware = SkillsMiddleware()
     assert middleware._tool_to_skills[TOOL_NAME] == {SKILL_NAME}
 
     run_workflow = SimpleNamespace(name=TOOL_NAME)
@@ -94,14 +92,14 @@ def test_tool_hidden_until_skill_loaded():
 
 
 def test_manifest_advertises_skill_and_gated_tool():
-    middleware = SkillsMiddleware(mode="ptc")
+    middleware = SkillsMiddleware()
     manifest = middleware.build_manifest({})
     assert f"**{SKILL_NAME}**" in manifest
     assert f"(tools: {TOOL_NAME})" in manifest
 
 
 def test_read_of_skill_md_autoloads():
-    middleware = SkillsMiddleware(mode="ptc")
+    middleware = SkillsMiddleware()
     matched = middleware._match_skill_from_read(
         "Read", {"file_path": f".agents/skills/{SKILL_NAME}/SKILL.md"}
     )
@@ -111,9 +109,9 @@ def test_read_of_skill_md_autoloads():
 def test_build_gate_drop_ungates_nothing():
     """agent.py pops the skill on a build that registers no RunWorkflow tool
     (the recursion gate) — no gate entry remains."""
-    build_registry = get_skill_registry("ptc")
+    build_registry = get_skill_registry()
     build_registry.pop(SKILL_NAME, None)
-    middleware = SkillsMiddleware(skill_registry=build_registry, mode="ptc")
+    middleware = SkillsMiddleware(skill_registry=build_registry)
     assert TOOL_NAME not in middleware._tool_to_skills
     manifest = middleware.build_manifest({})
     assert f"**{SKILL_NAME}**" not in manifest
@@ -129,11 +127,11 @@ def test_kill_switch_drops_the_skill_from_every_accessor(monkeypatch):
     )
 
     assert get_skill(SKILL_NAME) is None
-    assert get_skill(SKILL_NAME, mode="ptc") is None
-    assert SKILL_NAME not in get_skill_registry("ptc")
-    assert SKILL_NAME not in get_sandbox_skill_names()
-    assert SKILL_NAME not in {s["name"] for s in list_skills("ptc")}
-    assert "pdf" in get_sandbox_skill_names()
+    assert SKILL_NAME not in get_skill_registry()
+    assert SKILL_NAME in skills_outside_sandbox()
+    assert SKILL_NAME not in {s["name"] for s in list_skills()}
+    assert "pdf" in SKILL_REGISTRY
+    assert "pdf" not in skills_outside_sandbox()
 
 
 @pytest.mark.asyncio
@@ -146,11 +144,10 @@ async def test_gated_skill_is_not_rediscovered_from_the_sandbox(monkeypatch):
 
     monkeypatch.setattr(middleware_module, "adiscover_skills", _fake_discover)
 
-    build_registry = get_skill_registry("ptc")
+    build_registry = get_skill_registry()
     build_registry.pop(SKILL_NAME, None)
     middleware = SkillsMiddleware(
         skill_registry=build_registry,
-        mode="ptc",
         backend=MagicMock(),
         sources=[".agents/skills/"],
     )

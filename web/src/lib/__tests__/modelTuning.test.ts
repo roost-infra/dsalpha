@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +20,7 @@ type ClampContract = {
   cases: { ladder: string[]; requested: string; expected: string | null }[];
 };
 
-const FIXTURES = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../tests/fixtures');
+const FIXTURES = resolve(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
 const read = <T,>(name: string): T => JSON.parse(readFileSync(resolve(FIXTURES, name), 'utf-8'));
 
 const contract: ClampContract = read('reasoning_clamp.json');
@@ -57,7 +58,7 @@ type PrecedenceContract = {
 const precedence: PrecedenceContract = read('tuning_precedence.json');
 
 describe('resolveTuningField honors the shared precedence contract', () => {
-  it('covers the same four fields Tuning declares', () => {
+  it('covers the same fields Tuning declares', () => {
     expect([...TUNING_FIELDS].sort()).toEqual([...precedence.fields].sort());
   });
 
@@ -81,6 +82,7 @@ describe('resolveTuning layers the manifest under the two stored ones', () => {
       compaction_profile: 'relaxed',
       reasoning_effort: 'low',
       fast_mode: false,
+      native_compaction: null,
     });
   });
 
@@ -124,5 +126,22 @@ describe('resolveTuning layers the manifest under the two stored ones', () => {
     expect(resolveTuning({ reasoning_effort: 'high' }, {}, meta)
       .effective.reasoning_effort).toBe('high');
     expect(resolveTuning({}, {}, meta).effective.reasoning_effort).toBe('low');
+  });
+
+  // Mirrors `apply_compaction`: on wherever it is offered until someone turns
+  // it off, and a model whose provider cannot compact has nothing to choose.
+  it('keeps provider compaction on until someone turns it off', () => {
+    expect(resolveTuning({}, {}, { native_compaction: 'anthropic' }).effective.native_compaction).toBe(true);
+    expect(resolveTuning({}, {}, { native_compaction: 'openai' }).effective.native_compaction).toBe(true);
+    expect(resolveTuning({ native_compaction: false }, {}, { native_compaction: 'openai' })
+      .effective.native_compaction).toBe(false);
+    expect(resolveTuning({ native_compaction: false }, { native_compaction: true }, { native_compaction: 'openai' })
+      .effective.native_compaction).toBe(true);
+  });
+
+  it('has no provider compaction to resolve where the provider offers none', () => {
+    const { inherited, effective } = resolveTuning({ native_compaction: true }, { native_compaction: true }, meta);
+    expect(inherited.native_compaction).toBeNull();
+    expect(effective.native_compaction).toBeNull();
   });
 });

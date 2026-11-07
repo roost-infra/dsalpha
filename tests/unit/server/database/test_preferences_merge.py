@@ -24,7 +24,9 @@ def executed():
     calls: list[tuple[str, list]] = []
 
     async def _execute(sql, params):
-        calls.append((sql, list(params)))
+        # The profile lock goes first; these tests read the upsert.
+        if "pg_advisory_xact_lock" not in sql:
+            calls.append((sql, list(params)))
 
     cursor = AsyncMock()
     cursor.execute = _execute
@@ -38,7 +40,13 @@ def executed():
     conn.cursor = _cursor
 
     @asynccontextmanager
-    async def _conn():
+    async def _transaction():
+        yield
+
+    conn.transaction = _transaction
+
+    @asynccontextmanager
+    async def _conn(_caller=None):
         yield conn
 
     with patch("src.server.database.user.get_db_connection", new=_conn):

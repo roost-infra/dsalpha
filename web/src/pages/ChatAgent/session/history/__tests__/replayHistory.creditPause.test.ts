@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * A credit pause that was resumed must replay as resolved.
  *
@@ -11,7 +12,7 @@
  * that already resumed and completed.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AssistantMessage } from '@/types/chat';
+import type { AssistantMessage, ChatMessage } from '@/types/chat';
 
 const api = vi.hoisted(() => ({ replayThreadHistory: vi.fn() }));
 
@@ -20,7 +21,6 @@ vi.mock('../../../utils/api', () => ({
 }));
 
 import { loadConversationHistory } from '../replayHistory';
-import type { MessageRecord } from '../../types';
 import { buildRuntime, makeDeps, replayOf } from './replayHarness';
 
 /** Turn 0 asks a question and ends on a credit-pause interrupt. */
@@ -50,7 +50,7 @@ const RESUME_TURN = [
   },
 ];
 
-function pauseOn(messages: MessageRecord[]) {
+function pauseOn(messages: ChatMessage[]) {
   const bubble = messages.find((m) => m.id === 'history-assistant-0') as unknown as AssistantMessage;
   return bubble?.creditPauses?.['int-1'];
 }

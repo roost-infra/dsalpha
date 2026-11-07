@@ -11,6 +11,7 @@ import type {
   McpToolSummary,
 } from '@/pages/ChatAgent/utils/api';
 import type { Brokerage } from '../brokerages';
+import { getTradingPermission } from '@/api/tradingPermission';
 
 /**
  * What the detail panel writes when someone changes how the agent reaches a
@@ -109,6 +110,13 @@ const TOOLS: McpToolSummary[] = [
 let tools: McpToolSummary[] = TOOLS;
 let modes: McpOrderMode[] = ['live', 'paper'];
 
+// Mocked so a read of the level on its own is countable: the switches must not
+// make one.
+vi.mock('@/api/tradingPermission', () => ({
+  getTradingPermission: vi.fn(),
+  updateTradingPermission: vi.fn(),
+}));
+
 const patch = vi.fn().mockResolvedValue({});
 vi.mock('@/hooks/useMcpServers', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useMcpServers')>();
@@ -134,17 +142,24 @@ function row(over: Partial<CatalogServer> = {}): CatalogServer {
     tool_binding: { existing_tool: 'direct' },
     binding_preset: null,
     order_approval: { live: true, paper: false, staged: true },
+    // A level that lets orders through, so the live and staged switches are
+    // the row's own to flip; the block on the trading permission covers the
+    // levels that hold them.
+    trading_permission: 'plan_first',
     ...over,
   });
 }
 
 async function renderDetail(over: Partial<CatalogServer> = {}) {
   const { ServerDetail } = await import('../components/ServerDetail');
+  const { DetailPageProvider } = await import('../components/DetailPage');
   return renderWithProviders(
-    <ServerDetail
-      data={{ origin: 'brokerage', brokerage: VENDOR, server: row(over) }}
-      onClose={() => {}}
-    />,
+    <DetailPageProvider value={{ section: 'Connectors' }}>
+      <ServerDetail
+        data={{ origin: 'brokerage', brokerage: VENDOR, server: row(over) }}
+        onClose={() => {}}
+      />
+    </DetailPageProvider>,
   );
 }
 
@@ -160,6 +175,7 @@ beforeEach(() => {
   patch.mockResolvedValue({});
   tools = TOOLS;
   modes = ['live', 'paper'];
+  vi.mocked(getTradingPermission).mockClear();
 });
 
 describe('the tool access section', () => {
@@ -241,7 +257,9 @@ describe('the tool access section', () => {
   it('draws a switch per order kind the vendor has, live first', async () => {
     modes = ['paper', 'live'];
     await renderDetail();
-    const labels = screen
+    // The section's own switches: the page's aside carries a workspaces one too.
+    const section = screen.getByRole('heading', { name: 'Tool access' }).closest('section') as HTMLElement;
+    const labels = within(section)
       .getAllByRole('switch')
       .map((el) => el.getAttribute('aria-label'));
 
@@ -340,7 +358,8 @@ describe('the tool access section', () => {
     expect(segment('trading_order_place', 'Both')).toBeDisabled();
     expect(segment('trading_order_place', 'Direct')).not.toBeDisabled();
     expect(
-      screen.getAllByText('Order tools run only as direct calls the app can show.').length,
+      screen.getAllByText('Pinned to Direct so each order is one call the app can show.')
+        .length,
     ).toBeGreaterThan(0);
   });
 
@@ -431,6 +450,88 @@ describe('the tool access section', () => {
         "'trading_order_place' places live orders, so it runs only as a direct call and cannot be bound from the sandbox",
       ),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Under the trading permission the live and staged gates can only tighten.
+ * The server refuses a `false` while the level asks, so the switch says where
+ * the real control is instead of offering a write that comes back as a 422.
+ */
+describe('the order gates under a trading permission', () => {
+  const NOTHING_ASKS = { live: false, paper: false, staged: false };
+
+  it('holds live and staged on under a level that asks, whatever is stored', async () => {
+    modes = ['live', 'paper', 'staged'];
+    await renderDetail({ trading_permission: 'approve_each', order_approval: NOTHING_ASKS });
+
+    for (const name of [/Ask before every live order/, /Ask before staging/]) {
+      const toggle = screen.getByRole('switch', { name });
+      expect(toggle).toHaveAttribute('aria-checked', 'true');
+      expect(toggle).toBeDisabled();
+    }
+    const paper = screen.getByRole('switch', { name: /Ask before every paper order/ });
+    expect(paper).toHaveAttribute('aria-checked', 'false');
+    expect(paper).not.toBeDisabled();
+    for (const link of screen.getAllByRole('link', { name: 'change your trading permission' })) {
+      expect(link).toHaveAttribute('href', '/settings?tab=trading#trading-permission');
+    }
+  });
+
+  it('lets a level that skips approval be tightened for one connection', async () => {
+    await renderDetail({ trading_permission: 'plan_first', order_approval: NOTHING_ASKS });
+    const toggle = screen.getByRole('switch', { name: /Ask before every live order/ });
+
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(
+      screen.getByText(/Your trading permission lets live orders go out without your approval/),
+    ).toBeInTheDocument();
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith({
+        name: 'moomoo',
+        body: { order_approval: { live: true } },
+      }),
+    );
+  });
+
+  // The level rides on the row, read together with the `order_approval` the
+  // server folded with it. A second read of the permission would leave the
+  // switch free until it answered (or forever, if it failed), and a click in
+  // that window comes back as a 422.
+  it('locks from the row on first paint, without reading the permission itself', async () => {
+    await renderDetail({ trading_permission: 'no_trading', order_approval: NOTHING_ASKS });
+
+    const live = screen.getByRole('switch', { name: /Ask before every live order/ });
+    expect(live).toHaveAttribute('aria-checked', 'true');
+    expect(live).toBeDisabled();
+    expect(getTradingPermission).not.toHaveBeenCalled();
+  });
+
+  // A backend from before the level sends rows without it, as while a deploy
+  // has landed the web first. That backend honors the stored map as written,
+  // so the switches read from it and nothing claims a gate that is not there.
+  it('reads a row without a level from the stored map, unlocked', async () => {
+    modes = ['live', 'paper', 'staged'];
+    await renderDetail({
+      trading_permission: undefined,
+      order_approval: { live: false, paper: false, staged: true },
+    });
+
+    const live = screen.getByRole('switch', { name: /Ask before every live order/ });
+    expect(live).toHaveAttribute('aria-checked', 'false');
+    expect(live).not.toBeDisabled();
+    const staged = screen.getByRole('switch', { name: /Ask before staging/ });
+    expect(staged).toHaveAttribute('aria-checked', 'true');
+    expect(staged).not.toBeDisabled();
+    expect(screen.queryByRole('link', { name: 'change your trading permission' })).toBeNull();
+    fireEvent.click(live);
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith({
+        name: 'moomoo',
+        body: { order_approval: { live: true } },
+      }),
+    );
   });
 });
 
