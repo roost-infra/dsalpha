@@ -258,7 +258,10 @@ async def read_log(
 
 
 def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    return (
+        f"event: {event}\n"
+        f"data: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+    )
 
 
 @router.get("/{room_id}/stream")

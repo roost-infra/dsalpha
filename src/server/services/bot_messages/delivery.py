@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 #: How long a delivery waits out a busy target before leaving the row queued.
 DELIVER_WAIT_CAP = 120.0
 
+#: Synthetic turns carry UUID request keys; one deterministic key per message
+#: makes a retried delivery adopt its run instead of starting a second turn.
+BOT_MESSAGE_REQUEST_NS = uuid.UUID("3f2c8e4a-9b52-5f3d-8c71-1a6d5e0b7c44")
+
 _LABELS = {
     "message": "Message",
     "request": "Request",
@@ -165,7 +169,9 @@ async def deliver_message(
         # push each hop to their phones.
         "suppress_push": True,
         # A retried delivery is the same message, not a second turn.
-        "request_key": f"botmsg:{message['message_id']}",
+        "request_key": str(
+            uuid.uuid5(BOT_MESSAGE_REQUEST_NS, str(message["message_id"]))
+        ),
         # Display only: history draws "Message from X" instead of a user
         # bubble for a message the user never typed.
         "bot_message_source": {

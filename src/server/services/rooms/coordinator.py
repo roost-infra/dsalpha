@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 
 SLOT_TIMEOUT_SECONDS = 300.0
 LEASE_SECONDS = 900
+#: Synthetic turns carry UUID request keys (the wire field is a UUID column);
+#: the namespace makes one deterministic per round slot, so a retried POST
+#: adopts the same run instead of starting a duplicate.
+ROOM_REQUEST_NS = uuid.UUID("6a1f0f16-5a0a-5b6e-9a8e-7d2b2b4f0e11")
+
 #: Extra turns a round may add through @mentions before it stops growing.
 MAX_EXTRA_TURNS = 4
 #: A member may speak this often in one round (the host, more).
@@ -272,7 +277,9 @@ async def _speak(
         "query_type": "system",
         # A round is one user action, not one notification per member.
         "suppress_push": True,
-        "request_key": f"room:{round_row['round_id']}:{index}",
+        "request_key": str(
+            uuid.uuid5(ROOM_REQUEST_NS, f"{round_row['round_id']}:{index}")
+        ),
     }
     from src.server.services.report_back.notify_turn import post_notification_turn
 

@@ -281,3 +281,37 @@ async def test_a_resumed_slot_adopts_the_reply_it_already_logged():
     body = posted.await_args.kwargs["body"]
     assert body["suppress_push"] is True
     assert body["messages"][0]["content"].startswith("<system-reminder>")
+    # The wire's request_key is a UUID column; a "room:..." string is a 422
+    # and the slot is dropped without a run.
+    import uuid as _uuid
+
+    from src.server.models.chat import ChatRequest
+
+    _uuid.UUID(body["request_key"])
+    ChatRequest(
+        messages=[{"role": "user", "content": "x"}],
+        request_key=body["request_key"],
+    )
+
+
+def test_a_log_row_stringifies_its_uuids_for_json():
+    import uuid as _uuid
+    from datetime import datetime, timezone
+
+    from src.server.database.rooms import _log_row
+
+    row = _log_row(
+        {
+            "seq": 4,
+            "room_id": _uuid.uuid4(),
+            "round_id": _uuid.uuid4(),
+            "sender_type": "user",
+            "sender_id": "u-1",
+            "kind": "message",
+            "content": "hi",
+            "created_at": datetime(2026, 11, 9, tzinfo=timezone.utc),
+        }
+    )
+    assert isinstance(row["room_id"], str)
+    assert isinstance(row["round_id"], str)
+    assert isinstance(row["created_at"], str)

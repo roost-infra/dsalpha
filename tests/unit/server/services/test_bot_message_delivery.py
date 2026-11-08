@@ -87,7 +87,16 @@ async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
     body = posted.call_args.kwargs["body"]
     assert body["workspace_id"] == WS
     assert body["messages"][0]["content"].startswith("[Request from Quant]")
-    assert body["request_key"] == "botmsg:m-1"
+    # The wire's request_key is a UUID column: a prefixed string is a 422.
+    import uuid as _uuid
+
+    from src.server.models.chat import ChatRequest
+
+    _uuid.UUID(body["request_key"])
+    ChatRequest(
+        messages=[{"role": "user", "content": "x"}],
+        request_key=body["request_key"],
+    )
     assert body["suppress_push"] is True
     # Display only: the thread draws "Request from Quant", not a user bubble.
     assert body["bot_message_source"] == {

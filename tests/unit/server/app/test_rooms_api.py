@@ -152,3 +152,16 @@ async def test_the_room_list_is_paginated():
         await list_rooms(PRINCIPAL, None, limit=50, offset=10)
     assert list_db.await_args.kwargs["limit"] == 50
     assert list_db.await_args.kwargs["offset"] == 10
+
+
+def test_the_sse_writer_survives_uuid_fields():
+    import uuid as _uuid
+
+    from src.server.app.rooms import _sse
+
+    frame = _sse(
+        "room_message",
+        {"seq": 1, "room_id": _uuid.uuid4(), "round_id": _uuid.uuid4()},
+    )
+    assert frame.startswith("event: room_message")
+    assert '"seq": 1' in frame

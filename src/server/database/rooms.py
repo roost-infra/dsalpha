@@ -67,8 +67,9 @@ def _room_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 def _log_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(row)
-    if out.get("round_id") is not None:
-        out["round_id"] = str(out["round_id"])
+    for key in ("room_id", "round_id"):
+        if out.get(key) is not None:
+            out[key] = str(out[key])
     if out.get("created_at") is not None and hasattr(out["created_at"], "isoformat"):
         out["created_at"] = out["created_at"].isoformat()
     return out
