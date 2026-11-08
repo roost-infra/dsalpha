@@ -50,40 +50,43 @@ def _home_ids(bind) -> list[str]:
 def upgrade() -> None:
     bind = op.get_bind()
     home_ids = _home_ids(bind)
-    if home_ids:
-        stale = bind.execute(
+    stale_ids = []
+    for home_id in home_ids:
+        # One execute per Home: a list of parameter sets is an executemany,
+        # whose SELECT result is closed and returns no rows.
+        rows = bind.execute(
             sa.text(
                 "SELECT bot_id FROM bots WHERE role = 'analyst' "
                 "AND workspace_id = CAST(:home AS uuid)"
             ),
-            [{"home": home_id} for home_id in home_ids],
+            {"home": home_id},
         ).fetchall()
-        for row in stale:
-            bot_id = row[0]
-            bind.execute(
-                sa.text(
-                    "UPDATE conversation_threads SET bot_id = NULL "
-                    "WHERE bot_id = :bot"
-                ),
-                {"bot": bot_id},
-            )
-            bind.execute(
-                sa.text("UPDATE automations SET bot_id = NULL WHERE bot_id = :bot"),
-                {"bot": bot_id},
-            )
-            bind.execute(
-                sa.text("DELETE FROM bot_threads WHERE bot_id = :bot"),
-                {"bot": bot_id},
-            )
-        if stale:
-            bind.execute(
-                sa.text(
-                    "UPDATE bots SET deleted_at = NOW(), status = 'paused' "
-                    "WHERE role = 'analyst' AND workspace_id = CAST(:home AS uuid) "
-                    "AND deleted_at IS NULL"
-                ),
-                [{"home": home_id} for home_id in home_ids],
-            )
+        stale_ids.extend(row[0] for row in rows)
+    for bot_id in stale_ids:
+        bind.execute(
+            sa.text(
+                "UPDATE conversation_threads SET bot_id = NULL "
+                "WHERE bot_id = :bot"
+            ),
+            {"bot": bot_id},
+        )
+        bind.execute(
+            sa.text("UPDATE automations SET bot_id = NULL WHERE bot_id = :bot"),
+            {"bot": bot_id},
+        )
+        bind.execute(
+            sa.text("DELETE FROM bot_threads WHERE bot_id = :bot"),
+            {"bot": bot_id},
+        )
+    if home_ids:
+        bind.execute(
+            sa.text(
+                "UPDATE bots SET deleted_at = NOW(), status = 'paused' "
+                "WHERE role = 'analyst' AND workspace_id = CAST(:home AS uuid) "
+                "AND deleted_at IS NULL"
+            ),
+            [{"home": home_id} for home_id in home_ids],
+        )
 
     # A private mapping is a bot's own conversation, never a user's shared or
     # archived chat the first cut may have adopted.
