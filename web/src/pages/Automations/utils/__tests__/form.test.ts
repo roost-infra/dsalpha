@@ -459,7 +459,7 @@ describe('formStateToUpdatePayload', () => {
 });
 
 describe('effectiveThreadStrategy', () => {
-  it("states continue for a bot-owned row whose control was not touched, whatever it opened with", () => {
+  it("states continue for a bot chosen on create, whose control was not touched", () => {
     // The server reads an unnamed strategy on a bot-owned automation as
     // continue; this form always names one, so it must state that itself.
     expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: 'bot-1', thread_strategy: 'new' }, false)).toBe('continue');
@@ -469,6 +469,19 @@ describe('effectiveThreadStrategy', () => {
   it("keeps the form's own value when no bot is picked", () => {
     expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: '', thread_strategy: 'new' }, false)).toBe('new');
     expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: '', thread_strategy: 'continue' }, false)).toBe('continue');
+  });
+
+  it('an edit leaves the stored strategy alone until the reader changes it', () => {
+    const opened = { bot_id: 'bot-1', thread_strategy: 'new' as const };
+    expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: 'bot-1', thread_strategy: 'new' }, false, opened)).toBe('new');
+    const openedContinue = { bot_id: 'bot-1', thread_strategy: 'continue' as const };
+    expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: 'bot-1', thread_strategy: 'continue' }, false, openedContinue)).toBe('continue');
+  });
+
+  it('an edit that changes the bot starts from that bot default, and clearing it keeps the form', () => {
+    const opened = { bot_id: 'bot-1', thread_strategy: 'new' as const };
+    expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: 'bot-2', thread_strategy: 'new' }, false, opened)).toBe('continue');
+    expect(effectiveThreadStrategy({ ...INITIAL_FORM, bot_id: '', thread_strategy: 'new' }, false, opened)).toBe('new');
   });
 });
 

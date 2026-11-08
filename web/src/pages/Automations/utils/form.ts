@@ -234,8 +234,19 @@ type Trigger = Pick<AutomationUpdatePayload, 'cron_expression' | 'next_run_at' |
 export function effectiveThreadStrategy(
   form: FormState,
   strategyTouched: boolean,
+  opened?: Pick<Automation, 'bot_id' | 'thread_strategy'> | null,
 ): Automation['thread_strategy'] {
-  return form.bot_id && !strategyTouched ? 'continue' : form.thread_strategy;
+  if (strategyTouched) return form.thread_strategy;
+  // An edit keeps what the row already stores: reopening a bot-owned row and
+  // saving an unrelated field must not rewrite its session strategy. Only a
+  // bot the reader just picked (create, or an edit that changed the bot)
+  // starts from the server's bot default.
+  if (opened) {
+    const openedBot = opened.bot_id ?? '';
+    if (form.bot_id === openedBot) return opened.thread_strategy;
+    return form.bot_id ? 'continue' : form.thread_strategy;
+  }
+  return form.bot_id ? 'continue' : form.thread_strategy;
 }
 
 /** What every save states, whatever starts the automation. `workspaceId` is

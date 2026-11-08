@@ -74,7 +74,7 @@ export default function AutomationInlineForm({
   const [strategyTouched, setStrategyTouched] = useState(false);
   const uid = useId();
   const ids = { name: `${uid}-name`, instruction: `${uid}-instruction` };
-  const threadStrategy = effectiveThreadStrategy(form, strategyTouched);
+  const threadStrategy = effectiveThreadStrategy(form, strategyTouched, opened.automation);
 
   const patch: FormPatch = (key, value) => {
     if (key === 'delivery_methods') setRefused([]);
@@ -109,9 +109,13 @@ export default function AutomationInlineForm({
         setPlacing(false);
       }
     }
-    // The strategy the control was left on: a bot-owned row states continue
-    // until the reader presses the control themselves.
-    const saveForm: FormState = { ...form, thread_strategy: effectiveThreadStrategy(form, strategyTouched) };
+    // The strategy the control was left on. An edit keeps the row's own value
+    // until the reader changes it or picks another bot; a create starts from
+    // the bot default.
+    const saveForm: FormState = {
+      ...form,
+      thread_strategy: effectiveThreadStrategy(form, strategyTouched, opened.automation),
+    };
     const submission: FormSubmission = opened.automation
       ? { kind: 'edit', payload: formStateToUpdatePayload(saveForm, opened.values, opened.automation, workspaceId) }
       : { kind: 'create', payload: formStateToPayload(saveForm, workspaceId) };
