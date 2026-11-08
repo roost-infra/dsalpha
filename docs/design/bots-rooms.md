@@ -16,14 +16,16 @@
 | P3 定时任务/routine 接线 | ✅ 后端（前端待做） | `automations.bot_id`；Bot 归属的 automation 默认 `continue` 并落 Bot 私聊/既定 routine 会话；executor 以 Bot 角色路由并加 `[Scheduled task]` 框；`scripts/automations_to_persistent.py`（dry-run/apply） |
 | P3 Bot 工具面 | ✅ | `tools_allow`/`tools_deny` 在构建期收窄主 agent 工具集（`tools/bots/scope.py`） |
 | P3 会话可见性 | ✅ | 线程响应带 `bot_id`（聊天头部可解析名字/头像）；rooms 行有 `updated_at` 并推 `room_updated` |
-| P3 待做 | ⏳ | `approval` 的执行映射（v2）、ds-bot 的 per-pair Exchange 抽屉（当前收到/发出已有行级显示） |
+| V1.1 review 修复 | ✅ | 见 §25（P0/P1/P2 修复清单与仍留 v2 的项） |
+| P3 待做 | ⏳ | `approval` 执行映射、`skills`/`memory_scopes` 生效、非默认 Bot 私聊、Exchange 抽屉（v2） |
 | Bot 消息页面显示 | ✅ | `bot_message_source`（history + live 首帧，含 frame-stripped body）；`BotMessageRow`（ds-bot EventLine 风格：发送者行 + 正文气泡、长文折叠、无用户操作）；发出方向工具行 "Messaging X · kind" / "Messaged X · status" |
 | Bot 头像（BotMark） | ✅ | `lib/botMark.ts`（FNV-1a 推导 8 色 × 4 形状 + 首字；image/emoji/mark/auto）+ `components/bots/BotMark.tsx`；替换 Chat 头部、Bot 消息行、Bots 列表/编辑、房间成员/日志/轮次、自动化选择器；Bots 编辑页可编辑；`--color-bot-1..8` 双主题实色 token |
 
 已知取舍：
 - Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
-- `GET /api/v1/bots` 无 workspace 过滤时确保 Home Bot 存在，让 Bots 页在任何 Home 轮次之前就能显示 CoS。
-- 一个 Bot 的私聊 thread 在首次收到消息时惰性创建并钉在 `bots.primary_thread_id`。
+- `GET /api/v1/bots`：交互用户的无过滤读取会确保 Home Bot 存在，让 Bots 页在任何 Home 轮次之前就能显示 CoS；computer token 的无过滤读取不创建 Home，且只返回本机可达的 Bot。
+- 一个 Bot 的私聊 thread 在首次需要时惰性创建（专用线程，不收养旧线程），钉在 `bots.primary_thread_id`。
+- 平台 Bot 的工具叫 `send_bot_message`；渠道消息仍是 `send_message`。
 
 ## 1. 目标与非目标
 
@@ -81,7 +83,7 @@ User
 | run 管线：admission → executor → coordinator → SSE → finalize | 完全复用 |
 | LangGraph checkpoint / replay 契约 | 不动；room 上下文只注入，不进 checkpoint 的历史结构 |
 | livefs / 文件备份 / workspace 记忆 / transcript | 不动 |
-| `hook_outbox` 投递模式 | 复用其 at-least-once/alert 机制 |
+| `hook_outbox` 投递模式 | v1 未复用（投递走 `post_notification_turn` + DB claim/lease）；outbox 事件（`bot.updated` 等）留 v2 |
 | workspace 表 | 不动（可选加 `default_bot_id`，v1 不加，用查询解析） |
 | chat wire 事件类型 | v1 不新增；Bot 消息作为普通 user 消息进入会话 |
 
@@ -247,14 +249,14 @@ ALTER TABLE automations ADD COLUMN bot_id UUID REFERENCES bots(bot_id) ON DELETE
 CREATE INDEX ix_automations_bot ON automations (bot_id);
 ```
 
-### 回填（同一迁移末尾，或独立数据迁移）
+### 回填（迁移 112 + 修复迁移 113）
 
-1. 每个用户：若 Home 工作区行不存在则创建（现有 `home_workspace` 逻辑），回填一个 `role='chief_of_staff'` 的 Bot，`model=NULL`。
-2. 每个 Workspace：回填一个 `role='analyst'` 的 Bot（`name` 用 workspace `name`；重名时加后缀），`model=NULL`。
-3. `conversation_threads.bot_id`：在 Home 工作区的线程 → Home Bot；其他 → 该 workspace 的默认 Bot。
-4. `automations.bot_id`：→ 该 automation `workspace_id` 的默认 Bot。
-5. `bot_threads`：为每个 Bot 的存量线程写映射（kind=`private`）。
-6. **不改** `automations.thread_strategy`（行为不变）；另提供显式脚本 `scripts/automations_to_persistent.py --dry-run` 给运维确认后批量切换。
+1. **Home 不回填 analyst**：Home 是派生的 Chief of Staff 的地盘，CoS 由 resolver 首次需要时创建；旧版 112 若已回填 Home analyst，由 113 解除 thread/automation 绑定并软删该 Bot。
+2. 每个非 Home 的 live Workspace：回填一个 `role='analyst'` 的 Bot（`name` 用 workspace `name`），`model=NULL`。
+3. `conversation_threads.bot_id` → 所在 workspace 的默认 Bot（Home 线程保持 NULL，等 resolver 首次 turn 时绑定 CoS）。
+4. `automations.bot_id` → 该 automation `workspace_id` 的默认 Bot（Home 保持 NULL）。
+5. `bot_threads`：旧版 112 的 "每条旧 thread 都是 private" 映射会被 113 清理；`ensure_private_thread` 只使用 `bots.primary_thread_id` 指向的专用线程，绝不收养用户旧聊天/共享/归档线程。
+6. **不改** `automations.thread_strategy`（行为不变）；提供显式脚本 `scripts/automations_to_persistent.py --dry-run/--apply` 给运维确认后批量切到 `continue`。
 
 ## 5. Bot 身份与生命周期
 
@@ -378,7 +380,7 @@ requested → working → done / failed / cancelled
 
 发送者框在 user 消息里（§7.1）。`persona` 变更走版本表 + 事件，不用重启。
 
-### 9.2 Room 成员（每次 slot，注入为 `<system-reminder>`）
+### 9.2 Room 成员（每次 slot，注入为 `<system-reminder>` 包裹的消息）
 
 复用 `inject_inline_reminders()` 通道，顺序固定：
 
@@ -393,7 +395,7 @@ requested → working → done / failed / cancelled
 
 ### 9.3 关键约束
 
-- **room 增量不进 checkpoint**：只作为本轮注入的 system-reminder；历史 replay 仍由 checkpoint 投影。
+- **room 上下文以 `<system-reminder>` 标记**：进入该成员本轮 synthetic turn 的消息（因此会随 checkpoint 投影），但被标记为上下文而非"用户原话"；成员随后用 `post_to_room` 把答复写回房间。
 - 私聊上下文不进群：成员要让群看到自己私聊内容，必须通过工具读取（`read_own_chat`），房间记录"它查了私聊"。
 - 大内容不搬运：消息是"指针"，大文件写工作区，消息里给路径 + 摘要；单条上限 64 KB。
 
@@ -408,20 +410,20 @@ requested → working → done / failed / cancelled
 ### 10.2 改造
 
 1. `automations.bot_id` 必填（回填）；`_turn_place()` 先解析 Bot → workspace/thread。
-2. Bot 归属的 automation 默认 `thread_strategy='persistent'`（落 `continue`）。
+2. Bot 归属的 automation 默认 `thread_strategy='continue'`（API 只接受 `new`/`continue`）。
 3. 会话目标（默认 **bot_primary**，可被 automation 覆盖）：
    - `bot_primary`：写进 Bot 私聊（默认；一个会话 = 一个 Bot）
    - `routine`：每个 automation 一条持续会话（`continue` 现状；日报/扫描互不污染）
    - `new`：一次性任务（保留）
 4. 触发消息加框：`[Scheduled task: <automation name>]`，作为 user 消息注入；run 的 metadata 记 `automation_id`/`execution_id`。
-5. 失败回退：钉住的会话被删/移走时，新建一条并重新钉住；新会话必须仍属于同一 Bot（`bot_id` 过滤），并写 `bot.thread_fallback` 事件。
+5. 失败回退：钉住的会话被删/移走时，新建一条并重新钉住；新会话必须仍属于同一 Bot（`bot_id` 过滤）。`bot.thread_fallback` 事件留 v2。
 6. Wakeup：保持 thread 级（已经是对的）；wake 的 turn 会自然带上 thread 的 `bot_id`。
 
 ### 10.3 存量切换
 
 - 不自动改 `new`（避免静默改变行为）；提供 `scripts/automations_to_persistent.py --dry-run`：
   - 列出候选（按 `new` + 近 30 天有运行 + 非一次性标记）
-  - 人工确认后批量 `PATCH {"thread_strategy":"persistent"}`
+  - 人工确认后批量 `PATCH {"thread_strategy":"continue"}`
 - UI 的「更多选项 → 持续会话 / 每轮新会话」保留。
 
 ## 11. Prompt 与工具面
@@ -456,7 +458,7 @@ POST   /api/v1/bots
 GET    /api/v1/bots/{bot_id}
 PATCH  /api/v1/bots/{bot_id}
 DELETE /api/v1/bots/{bot_id}            # 软删
-POST   /api/v1/bots/{bot_id}/messages   # 用户 → Bot 私聊（等价现有 thread POST，bot 由路径定）
+POST   /api/v1/bots/{bot_id}/messages   # v2：用户直连非默认 Bot 的私聊（v1 未实现，见 §25）
 
 # Rooms
 GET    /api/v1/rooms?workspace_id=
@@ -465,9 +467,9 @@ GET    /api/v1/rooms/{room_id}
 PATCH  /api/v1/rooms/{room_id}          # name/responder/bulletin
 POST   /api/v1/rooms/{room_id}/members  # {member_type, member_id}
 DELETE /api/v1/rooms/{room_id}/members/{member_type}/{member_id}
-POST   /api/v1/rooms/{room_id}/messages # 用户发一句 → 开 round
-GET    /api/v1/rooms/{room_id}/stream?last_seq=   # SSE：room 事件
-GET    /api/v1/rooms/{room_id}/log?before_seq=
+POST   /api/v1/rooms/{room_id}/messages # {content, request_key?} 用户发一句 → 开 round（幂等）
+GET    /api/v1/rooms/{room_id}/stream?last_seq=   # SSE：room_message / round_status / room_updated
+GET    /api/v1/rooms/{room_id}/log?since_seq=&limit=
 
 # Automations（现有接口扩展）
 PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conversation_thread_id}
@@ -480,24 +482,24 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 | 通道 | 来源 | 重放来源 |
 |---|---|---|
 | Bot 私聊 / routine / room 成员 run | 现有 `workflow:stream:{thread}:{run}`（不变） | checkpoint（不变） |
-| Room 页面 | `room:stream:{room_id}`（Redis Stream，XADD，MAXLEN） | `room_log` 表（table-sourced） |
+| Room 页面 | table-poll SSE（每 1.2s 查 `room_log`/`room_rounds`，keepalive 20s） | `room_log` 表（table-sourced） |
 
 - Room 事件（已实现）：`room_message`（每条日志）、`round_status`（轮次状态、slots、slot_cursor，每个 slot 推进时发）、`room_updated`（room 行变更，前端据此重取详情）。`slot_*` 的逐条事件 v1 折叠进 `round_status`。
-- 重连：`last_seq` 从 `room_log` 回放后 tail Redis；空洞 → `resync` 到 `room_log` 投影（同 chat 的 resync 语义）。
+- 重连：客户端带 `last_seq`，服务端从 `room_log` 回放后继续轮询；无 Redis Stream。
 - **不新增 chat wire 事件类型**（避免 `test_event_ledger.py` 的 replay home 债务）；如果未来要在私聊里渲染 room 卡片，必须先登记表和重放来源。
 
 ## 14. 多 worker 与失败恢复
 
 - 协调器：PARTIAL UNIQUE + CAS + lease（§8.3）；恢复扫描器每 worker 都跑，幂等。
 - 投递 worker：`bot_messages` `FOR UPDATE SKIP LOCKED` + 状态 CAS；`idem` 去重。
-- 房间成员 run 的终态：现有 `RunCoordinator.finalize_run`；slot 结果由 finalize hook 写 room_log（幂等：`(round_id, slot_index)`）。
+- 房间成员 run 的终态：协调器轮询 run 终态后写 room_log；幂等由 `(round_id, metadata.slot)` 唯一索引保证（不是 finalize hook）。
 - 服务重启：running round 由扫描器接管；`conversation_responses` 的 `in_progress` 行已有恢复扫描器。
-- 验收：`scripts/multiworker_gate/` 增加 room round 用例（两 worker 下 start/steer/超时/恢复）。
+- 验收：v1 只做了单 worker 单测；`scripts/multiworker_gate/` 的 room round 两 worker 用例列为 v2/待补。
 
 ## 15. 计费与配额
 
 - 每个 slot = 一次普通 run → 现有 credit gate / burst slot / 并发上限全部生效，无需新计量。
-- Room round 预算：`room_rounds.metadata.budget` 记录本轮最大 slot 数（默认 12），超限不再插 slot。
+- Room round 预算：成员上限 12 + 每轮 @ 追加上限 4（`MAX_EXTRA_TURNS`）；没有 `room_rounds.metadata.budget` 列，未实现的按根预算走 Bot 消息链（`MAX_ROOT_MESSAGES`）。
 - Bot 预算（v2）：按 bot 的日/月 token 上限，超限拒绝新轮次。
 - 计费口径：一轮群聊 = N 个 run 的费用；账单按 run 明细可查。
 
@@ -516,7 +518,7 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 1. `112_bots_rooms.py`：DDL + 回填 Bot + `threads.bot_id` + `automations.bot_id` + `bot_threads`。
 2. 回填幂等：`INSERT ... ON CONFLICT DO NOTHING`；thread 更新用 `WHERE bot_id IS NULL`。
 3. 旧客户端：不传 bot → 解析 thread.bot_id → workspace 默认 Bot；无 Bot 时按旧逻辑（role from workspace）。
-4. 回滚：DDL downgrade 删表/列；`automations.bot_id` 置空；不删回填 Bot（避免误删用户数据，需运维脚本）。
+4. 回滚：`113 → 112 → 111` 的 downgrade 会删表/列（包括 `bots`/`rooms`/`bot_*`，**数据会丢**），所以回滚前必须备份；只想回旧代码而不回 schema 时，停在 112/113 并 `alembic stamp` 到旧代码认识的头，避免旧代码 `upgrade head` 找不到新 revision。`automations.bot_id` 随列删除。
 5. 运行 `scripts/automations_to_persistent.py --dry-run` 供人工确认（不自动执行）。
 
 ## 18. UI
@@ -575,7 +577,7 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 - 新建 room：`responder='everyone'`，成员上限 12 个 Bot。
 - 用户在任何群/私聊发消息：用户消息入日志并开启一轮，用户不进入 slots。
 - 群聊上下文的记忆作用域 = 该 room 所属 workspace 的记忆。
-- 新建 automation 且归属某个 Bot：`thread_strategy='persistent'`，目标为 Bot 私聊。
+- 新建 automation 且归属某个 Bot：`thread_strategy='continue'`，目标为 Bot 私聊。
 
 ## 22. 代码改动清单
 
@@ -585,25 +587,28 @@ src/server/database/bots.py                           # 新增
 src/server/database/rooms.py                          # 新增
 src/server/database/bot_messages.py                   # 新增
 src/server/database/assignments.py                    # 新增
-src/server/services/bots/{lifecycle.py,resolver.py}   # 新增
-src/server/services/rooms/{coordinator.py,dispatch.py,context.py,stream.py}  # 新增
-src/server/services/bot_messages/{delivery.py,inbox.py}                      # 新增
+src/server/services/bots/resolver.py                  # 新增（lifecycle 逻辑在 database/bots.py + app/bots.py）
+src/server/services/rooms/{coordinator.py,sweeper.py,context.py,threads.py}  # 新增
+src/server/services/bot_messages/{delivery.py,sweeper.py}                    # 新增
 src/server/app/bots.py                                # 新增路由
 src/server/app/rooms.py                               # 新增路由
 src/server/app/threads/messaging.py                   # bot 解析 + 服务端 sender 字段
 src/server/services/turn_runtime.py                   # turn_route 接受 bot
 src/server/services/automations/{lifecycle.py,file.py} # bot_id + 会话策略
 src/server/services/automation_executor.py            # bot 归属 + 默认 persistent
-src/server/services/runs/finalization.py              # slot 终态 hook 写 room_log
 src/ptc_agent/agent/agent.py                          # <bot> prompt 块 + 工具
-src/tools/bots/*.py                                   # list_bots/send_message/... 工具
-src/tools/secretary/chief_of_staff.py                 # delegate 泛化
-scripts/automations_to_persistent.py                  # 存量切换（dry-run）
+src/tools/bots/tool.py                                # list_bots/send_bot_message/report_to/list_assignments
+src/tools/rooms/tool.py                               # read_room/post_to_room/read_own_chat
+src/tools/bots/scope.py                               # tools_allow/deny 收窄
+scripts/automations_to_persistent.py                  # 存量切换（dry-run/apply）
+scripts/bots_rooms_maintenance.py                     # lease/retry/retention/assignment 修复
 web/src/pages/Bots/**                                 # 新增
 web/src/pages/Rooms/**                                # 新增
 web/src/locales/{en-US,zh-CN}.json                    # i18n
-tests/unit/server/services/rooms/**                   # 新增
-tests/integration/test_rooms_round.py                 # 新增
+tests/unit/server/services/test_rooms.py              # 新增
+tests/unit/server/app/test_rooms_api.py               # 新增
+web/src/pages/Rooms/__tests__/RoomPanel.test.tsx      # 新增
+# 集成测试 tests/integration/test_rooms_round.py 未建（见 §25）
 ```
 
 ## 23. 与 roostbot 的差异
@@ -658,3 +663,35 @@ Bots 编辑弹窗提供：颜色（8 色块）、形状（4 选 1）、可选 gl
 ### 24.6 为什么不做 ds-bot 的卡通角色
 
 ds-bot 的 SVG 角色 + 表情动画是它产品性格的一部分；LangAlpha 是金融研究工作台，几何 mark 更安静、和现有 token 一致，也避免了角色系统长期维护成本。未来若要升级，只需替换 `BotMark` 的 mark 分支，调用点不变。
+
+## 25. V1.1：整体 review 修复记录（2026-11-08）
+
+对分支做了一次三线深审（后端、前端、端到端/运维）。本节记录已修项和仍明确留到 v2 的项，避免文档再次高估实现。
+
+### 25.1 已修（带提交）
+
+| 问题 | 修复 |
+|---|---|
+| Home 回合被解析成 analyst（P0） | resolver 识别 Home → CoS；迁移排除 Home analyst；113 修复已迁移库残留；新线程 stamp 身份 |
+| bots/rooms 路由缺 reach 鉴权（P0） | 路由取 Principal + `assert_reaches`；列表按 `computer_id` 过滤；computer token 不再顺手创建 Home |
+| Bot 互发无预算/环控（P0） | `bot_message_source` 带 root/depth；投递进 graph configurable；`send_bot_message` 深度 6 / 每链 64 条 / 每分钟 8 条上限 + `BOT_MESSAGING_ENABLED` kill switch |
+| 迁移 112 锁与部署顺序（P0） | `conversation_threads.bot_id`/`automations.bot_id` 的 ALTER 进 autocommit block，索引 `CONCURRENTLY`；113 补 Home 修复与所需索引；部署步骤见 §17/§26 |
+| 投递重试烧 attempts / 无 CAS（P1） | `delivering_until` lease + `claim_message`；`set_status` CAS；busy/interrupted 线程释放 attempt；`fail_exhausted_messages` |
+| 房间丢尾部消息/重复回复/seen 不推进（P1） | 最新 N 条窗口；PASS/missed 推进 seen；轮末为迟到用户消息补一轮；slot 回复 `(round_id, metadata.slot)` 幂等；lease 保存失败即停 |
+| 私有线程任意/共享（P1） | 只信 `primary_thread_id`，advisory lock 下铸造专用线程；113 清理旧 private 映射；`bind_thread_bot` 只在真正拿到线程时插映射 |
+| 删除默认 Bot 后无法重建（P1） | live-name 唯一索引改为 partial；删除后 resolver 强制重绑线程 |
+| automations 身份/paused/模型（P1） | `turn_bot` 进 turn；新线程 stamp；paused/deleted bot 的 firing 标记 `bot_unavailable` 跳过；移动 workspace 重新校验 bot；模型在 create/update 校验 |
+| assignment 幂等 / 大 evidence（P1） | `assignments.idem`；evidence 先校验再关闭；report 投递异常容错 |
+| 推送风暴 / 分享泄露（P2） | `suppress_push`（server-only，客户端伪造被清除）覆盖 room slot 与 bot 投递；`bot_message_source` 进 share 私有键 |
+| 前端错误文案/SSE/缓存/加载态/头像/UX/i18n | 见提交 `41d262288`：failureText、SSE 4xx 停止与重试、cursor/Cache 失效、deep link、avatar 回退、report 状态映射、i18n 等 |
+| 运维/可观测性 | delivery 终态日志；`scripts/bots_rooms_maintenance.py`（lease/retry/retention/stale assignment）。 |
+
+### 25.2 明确留到 v2（未做，不要再按已实现引用）
+
+- 用户直连非默认 Bot 的私聊（`POST /bots/{id}/messages` 与前端入口）。
+- `approval` 的执行映射；`skills`/`memory_scopes` 目前只存储/展示，未进入 agent 构建。
+- `bot.updated` / `bot.thread_fallback` 事件；`hook_outbox` 复用。
+- root 预算的 96/64 双阈值细节（v1 为 6 深 / 64 条 / 8 条每分钟）；`room_rounds.metadata.budget` 列。
+- `tests/integration/test_rooms_round.py`、多 worker gate 的 room 用例、Playwright e2e。
+- 房间列表分页、`room_log` 自动保留策略（脚本可手动执行）。`latest_run_reply` 仍按"最新终态 run"取答复，未按本次 run_id 锁定。
+- ds-bot 的 per-pair Exchange 抽屉、Bot 卡通角色头像（现为确定性几何 BotMark）。
