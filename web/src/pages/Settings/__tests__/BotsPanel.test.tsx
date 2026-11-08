@@ -154,11 +154,40 @@ describe('BotsPanel writes', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Macro strategist' } });
+    // The approval is stored and shown for now; the dialog says so.
+    expect(screen.getByText(/v1 does not auto-approve/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(h.update).toHaveBeenCalledWith({
       botId: 'bot-1',
       patch: { name: 'Macro strategist', persona: '', model: null, approval: 'ask' },
+    }));
+  });
+
+  it('edits the skill and tool lists and memory scopes, keeping a scope it does not show', async () => {
+    h.bots = [CHIEF, { ...ANALYST, memory_scopes: ['workspace', 'legacy'] }];
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.change(screen.getByLabelText('Skills'), { target: { value: 'macro, rates, macro' } });
+    fireEvent.change(screen.getByLabelText('Allowed tools'), { target: { value: ' web_search , quote ' } });
+    fireEvent.change(screen.getByLabelText('Blocked tools'), { target: { value: 'trading' } });
+    fireEvent.click(screen.getByLabelText('User memory'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: {
+        name: 'Macro analyst',
+        persona: '',
+        model: null,
+        approval: 'ask',
+        skills: ['macro', 'rates'],
+        tools_allow: ['web_search', 'quote'],
+        tools_deny: ['trading'],
+        // The scope this UI does not offer is carried through untouched.
+        memory_scopes: ['workspace', 'legacy', 'user'],
+      },
     }));
   });
 

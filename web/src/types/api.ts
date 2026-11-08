@@ -702,6 +702,10 @@ export interface Thread {
   archived_at?: string | null;
   /** The model this thread runs on; null follows the account default for its mode. */
   llm_model?: string | null;
+  /** The bot identity this thread answers as; null (or absent, from an older
+   *  server) is a row the resolver has not stamped, so the header keeps its
+   *  generic shape. */
+  bot_id?: string | null;
   /** Whether the agent may hand work to subagents; null (or absent, from an older
    *  server) follows the user's subagents default. */
   subagents_allowed?: boolean | null;

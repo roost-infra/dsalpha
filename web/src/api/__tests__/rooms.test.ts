@@ -207,15 +207,16 @@ describe('streamRoom', () => {
         ': keepalive\n\n',
         `event: room_message\ndata: ${JSON.stringify(ENTRY)}\n\n`,
         'event: round_status\ndata: {"round_id":"round-1","status":"running","slot_cursor":0,"slots":[{"bot_id":"bot-1","name":"Chief of Staff","state":"pending"}]}\n\n',
-        'event: room_updated\ndata: {"room_id":"room-1"}\n\n',
+        'event: room_updated\ndata: {"room_id":"room-1","updated_at":"2026-11-08T12:00:00Z"}\n\n',
       ]).response,
     );
     const onOpen = vi.fn();
     const onMessage = vi.fn();
     const onRoundStatus = vi.fn();
+    const onRoomUpdated = vi.fn();
     const onClose = vi.fn();
 
-    streamRoom('room-1', 3, { onOpen, onMessage, onRoundStatus, onClose });
+    streamRoom('room-1', 3, { onOpen, onMessage, onRoundStatus, onRoomUpdated, onClose });
 
     await waitFor(() => expect(onClose).toHaveBeenCalledWith(null));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -232,6 +233,12 @@ describe('streamRoom', () => {
       status: 'running',
       slot_cursor: 0,
       slots: [{ bot_id: 'bot-1', name: 'Chief of Staff', state: 'pending' }],
+    });
+    // The room row changed, so a reader holding its detail is told to read it
+    // again; the log itself needs no re-read.
+    expect(onRoomUpdated).toHaveBeenCalledWith({
+      room_id: 'room-1',
+      updated_at: '2026-11-08T12:00:00Z',
     });
   });
 

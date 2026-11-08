@@ -307,6 +307,7 @@ describe('useRoomStream', () => {
       onOpen: () => void;
       onMessage: (row: RoomLogEntry) => void;
       onRoundStatus: (round: RoomRoundStatus) => void;
+      onRoomUpdated: (update: { room_id: string; updated_at: string | null }) => void;
     };
     expect(mockStreamRoom).toHaveBeenCalledWith('room-1', 3, expect.any(Object));
 
@@ -322,6 +323,21 @@ describe('useRoomStream', () => {
 
     unmount();
     expect(abort).toHaveBeenCalled();
+  });
+
+  it('reads the room detail again when the room row changed, and leaves the log alone', () => {
+    mockStreamRoom.mockReturnValue(vi.fn());
+    const { queryClient, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0));
+    const handlers = mockStreamRoom.mock.calls[0][2] as {
+      onRoomUpdated: (update: { room_id: string; updated_at: string | null }) => void;
+    };
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    act(() => handlers.onRoomUpdated({ room_id: 'room-1', updated_at: '2026-11-08T12:00:00Z' }));
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.detail('room-1') });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.rooms.log('room-1') });
+    unmount();
   });
 
   it('does not open a tail until a room id is in hand', () => {

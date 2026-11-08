@@ -318,6 +318,11 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
         onRoundStatus: (status) => {
           setRoundState({ roomId, round: status });
         },
+        // The room row changed (name, responder, bulletin or members), so the
+        // detail read is stale. The log did not move, so it is not read again.
+        onRoomUpdated: (update) => {
+          queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(update.room_id) });
+        },
         onClose: () => {
           setLiveRoom((current) => (current === roomId ? null : current));
           if (closed) return;

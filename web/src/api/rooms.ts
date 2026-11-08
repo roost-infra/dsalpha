@@ -107,6 +107,14 @@ export interface RoomRoundStatus {
   slots: RoomRoundSlot[] | null;
 }
 
+/** The `room_updated` SSE frame: the room row itself changed (name, responder,
+ *  bulletin or members), so a reader holding its detail should read it again.
+ *  The log is untouched; this frame never asks for it. */
+export interface RoomUpdated {
+  room_id: string;
+  updated_at: string | null;
+}
+
 export interface RoomCreateInput {
   workspace_id: string;
   name: string;
@@ -209,6 +217,8 @@ export interface RoomStreamHandlers {
   onMessage: (entry: RoomLogEntry) => void;
   /** The round's state changed (or is being reported on reconnect). */
   onRoundStatus?: (status: RoomRoundStatus) => void;
+  /** The room row changed; a reader holding its detail should read it again. */
+  onRoomUpdated?: (update: RoomUpdated) => void;
   /**
    * The tail ended — the server closed it, the link died, or the caller
    * aborted. A caller that wants to keep following reopens with the last seq
@@ -232,7 +242,7 @@ function roomStreamUrl(roomId: string, lastSeq: number): string {
 function dispatchFrame(
   event: string,
   data: string,
-  handlers: Pick<RoomStreamHandlers, 'onMessage' | 'onRoundStatus'>,
+  handlers: Pick<RoomStreamHandlers, 'onMessage' | 'onRoundStatus' | 'onRoomUpdated'>,
 ): void {
   if (!data) return;
   let payload: unknown;
@@ -247,6 +257,8 @@ function dispatchFrame(
     handlers.onMessage(payload as RoomLogEntry);
   } else if (event === 'round_status' && payload && typeof payload === 'object') {
     handlers.onRoundStatus?.(payload as RoomRoundStatus);
+  } else if (event === 'room_updated' && payload && typeof payload === 'object') {
+    handlers.onRoomUpdated?.(payload as RoomUpdated);
   }
 }
 

@@ -5,6 +5,7 @@ import type { BotApproval, BotCreateInput, BotInfo, BotUpdateInput } from '@/api
 import { ApiError } from '@/api/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CheckboxChoice } from '@/components/ui/choice';
 import {
   Dialog,
   DialogContent,
@@ -33,6 +34,30 @@ const APPROVAL_KEY: Record<BotApproval, string> = {
   auto: 'bots.approval.auto',
   full: 'bots.approval.full',
 };
+
+/** The memory tiers this form offers. A scope the server adds later is kept in
+ *  the bot's list untouched, just not toggled here. */
+const MEMORY_SCOPES = ['workspace', 'user', 'room'] as const;
+
+const MEMORY_SCOPE_KEY: Record<(typeof MEMORY_SCOPES)[number], string> = {
+  workspace: 'bots.memoryScopeWorkspace',
+  user: 'bots.memoryScopeUser',
+  room: 'bots.memoryScopeRoom',
+};
+
+/** A comma-separated field as the array the API takes: order kept, blanks
+ *  dropped, so two spellings of the same set compare equal. */
+function splitList(text: string): string[] {
+  return [...new Set(text.split(',').map((value) => value.trim()).filter(Boolean))];
+}
+
+function joinList(values: readonly string[]): string {
+  return values.join(', ');
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
 
 /** A persona may run to 20k characters; the row shows its opening line only. */
 function personaPreview(persona: string): string {
@@ -168,9 +193,19 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
   const [provider, setProvider] = useState(bot?.provider ?? '');
   const [model, setModel] = useState(bot?.model ?? '');
   const [approval, setApproval] = useState<BotApproval>(bot?.approval ?? 'ask');
+  const [skillsText, setSkillsText] = useState(joinList(bot?.skills ?? []));
+  const [toolsAllowText, setToolsAllowText] = useState(joinList(bot?.tools_allow ?? []));
+  const [toolsDenyText, setToolsDenyText] = useState(joinList(bot?.tools_deny ?? []));
+  const [memoryScopes, setMemoryScopes] = useState<string[]>(bot?.memory_scopes ?? ['workspace']);
   const busy = createBot.isPending || updateBot.isPending;
   const trimmedName = name.trim();
   const canSubmit = !!trimmedName && (editing || !!workspaceId) && !busy;
+
+  const toggleScope = (scope: string) => {
+    setMemoryScopes((current) => (current.includes(scope)
+      ? current.filter((value) => value !== scope)
+      : [...current, scope]));
+  };
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -182,6 +217,15 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
           model: model.trim() || null,
           approval,
         };
+        // Only what changed: a list restated on every save would add a
+        // version row for a value nobody edited.
+        const skills = splitList(skillsText);
+        const toolsAllow = splitList(toolsAllowText);
+        const toolsDeny = splitList(toolsDenyText);
+        if (!sameList(skills, bot.skills)) patch.skills = skills;
+        if (!sameList(toolsAllow, bot.tools_allow)) patch.tools_allow = toolsAllow;
+        if (!sameList(toolsDeny, bot.tools_deny)) patch.tools_deny = toolsDeny;
+        if (!sameList(memoryScopes, bot.memory_scopes)) patch.memory_scopes = memoryScopes;
         await updateBot.mutateAsync({ botId: bot.bot_id, patch });
       } else {
         const input: BotCreateInput = {
@@ -255,6 +299,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                 <option key={level} value={level}>{t(APPROVAL_KEY[level])}</option>
               ))}
             </Select>
+            <p className="text-[0.6875rem] leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
+              {t('bots.approvalDeferredNote')}
+            </p>
           </FormField>
 
           <FormField label={t('bots.model')}>
@@ -275,6 +322,49 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                 placeholder={t('bots.providerPlaceholder')}
               />
             </FormField>
+          )}
+
+          {/* The rest of the identity the API stores. Only an edit shows it:
+              a create starts from the server's defaults and the reader can
+              narrow it afterwards. */}
+          {editing && (
+            <>
+              <FormField label={t('bots.skills')}>
+                <Input
+                  value={skillsText}
+                  onChange={(e) => setSkillsText(e.target.value)}
+                  placeholder={t('bots.skillsPlaceholder')}
+                />
+              </FormField>
+              <FormField label={t('bots.toolsAllow')}>
+                <Input
+                  value={toolsAllowText}
+                  onChange={(e) => setToolsAllowText(e.target.value)}
+                  placeholder={t('bots.toolsAllowPlaceholder')}
+                />
+              </FormField>
+              <FormField label={t('bots.toolsDeny')}>
+                <Input
+                  value={toolsDenyText}
+                  onChange={(e) => setToolsDenyText(e.target.value)}
+                  placeholder={t('bots.toolsDenyPlaceholder')}
+                />
+              </FormField>
+              <FormField label={t('bots.memoryScopes')}>
+                <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  {MEMORY_SCOPES.map((scope) => (
+                    <CheckboxChoice
+                      key={scope}
+                      checked={memoryScopes.includes(scope)}
+                      onCheckedChange={() => toggleScope(scope)}
+                      className="text-xs"
+                    >
+                      {t(MEMORY_SCOPE_KEY[scope])}
+                    </CheckboxChoice>
+                  ))}
+                </div>
+              </FormField>
+            </>
           )}
         </div>
 
