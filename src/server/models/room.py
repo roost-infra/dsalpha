@@ -61,6 +61,7 @@ class RoomInfo(BaseModel):
     bulletin: str = ""
     status: str = "active"
     created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class RoomView(RoomInfo):

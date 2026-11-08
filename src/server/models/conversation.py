@@ -53,6 +53,12 @@ class WorkspaceThreadListItem(BaseModel):
         description="The model this thread runs: the last one a client named "
         "for it. NULL = follows the account default for its mode.",
     )
+    bot_id: Optional[str] = Field(
+        None,
+        description="The bot identity the thread answers as (the client may "
+        "resolve its name/avatar from /api/v1/bots/{bot_id}). NULL on a row "
+        "the resolver has not stamped yet.",
+    )
     subagents_allowed: Optional[bool] = Field(
         None,
         description="Whether the thread's agent may start or direct subagents "

@@ -28,7 +28,7 @@ _RESPONDERS = ("everyone", "mentions")
 
 _ROOM_COLUMNS = """
     room_id, user_id, workspace_id, name, host_bot_id, responder, bulletin,
-    status, created_at
+    status, created_at, updated_at
 """
 _LOG_COLUMNS = """
     room_id, seq, round_id, sender_type, sender_id, kind, content, metadata,
@@ -59,8 +59,9 @@ def _room_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for key in ("room_id", "workspace_id", "host_bot_id"):
         if out.get(key) is not None:
             out[key] = str(out[key])
-    if out.get("created_at") is not None and hasattr(out["created_at"], "isoformat"):
-        out["created_at"] = out["created_at"].isoformat()
+    for key in ("created_at", "updated_at"):
+        if out.get(key) is not None and hasattr(out[key], "isoformat"):
+            out[key] = out[key].isoformat()
     return out
 
 
@@ -195,6 +196,7 @@ async def update_room(room_id: Any, changes: Dict[str, Any]) -> Optional[Dict[st
         return await get_room(cleaned)
     async with get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
+            sets.append("updated_at = NOW()")
             await cur.execute(
                 f"UPDATE rooms SET {', '.join(sets)} WHERE room_id = %s "
                 f"RETURNING {_ROOM_COLUMNS}",
@@ -230,6 +232,10 @@ async def add_member(
                     )
                 except UniqueViolation:
                     return False
+                await cur.execute(
+                    "UPDATE rooms SET updated_at = NOW() WHERE room_id = %s",
+                    (cleaned_room,),
+                )
                 return True
 
 
@@ -244,7 +250,13 @@ async def remove_member(room_id: Any, bot_id: Any) -> bool:
                 "AND member_type = 'bot' AND member_id = %s",
                 (cleaned_room, cleaned_bot),
             )
-            return cur.rowcount > 0
+            removed = cur.rowcount > 0
+            if removed:
+                await cur.execute(
+                    "UPDATE rooms SET updated_at = NOW() WHERE room_id = %s",
+                    (cleaned_room,),
+                )
+            return removed
 
 
 async def list_members_with_bots(room_id: Any) -> list[Dict[str, Any]]:

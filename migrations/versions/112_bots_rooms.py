@@ -145,6 +145,7 @@ def upgrade() -> None:
             status VARCHAR(16) NOT NULL DEFAULT 'active'
                 CHECK (status IN ('active', 'archived')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             UNIQUE (workspace_id, name)
         )
         """
