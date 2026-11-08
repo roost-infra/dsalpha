@@ -248,8 +248,17 @@ async def send_bot_message(
 
     from src.server.services.bot_messages.delivery import deliver_message
 
+    claimed = await msg_db.claim_message(message["message_id"])
+    if claimed is None:
+        # A retried tool call on a message already delivered (or one another
+        # worker is posting) is not a second turn.
+        fresh = await msg_db.get_message(message["message_id"])
+        state = (fresh or {}).get("status") or "queued"
+        if state == "delivered":
+            return f"delivered to {target['name']} (already delivered)"
+        return f"queued for {target['name']} (a delivery is already in progress)"
     try:
-        sent = await deliver_message(message["message_id"])
+        sent = await deliver_message(message["message_id"], attempts=claimed)
     except Exception as exc:  # delivery trouble must not fail the turn
         logger.warning("[BOT_TOOL] delivery of %s failed: %s", message["message_id"], exc)
         sent = {"status": "queued", "outcome": "error"}
@@ -340,7 +349,10 @@ async def report_to(
         await msg_db.set_message_root(message["message_id"], message["message_id"])
     from src.server.services.bot_messages.delivery import deliver_message
 
-    sent = await deliver_message(message["message_id"])
+    claimed = await msg_db.claim_message(message["message_id"])
+    if claimed is None:
+        return f"reported to {requester['name']} (a delivery is already in progress)"
+    sent = await deliver_message(message["message_id"], attempts=claimed)
     return f"reported to {requester['name']} ({sent['status']})"
 
 

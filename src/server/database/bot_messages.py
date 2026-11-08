@@ -29,7 +29,7 @@ STATUSES = ("queued", "delivered", "consumed", "failed")
 _MESSAGE_COLUMNS = """
     message_id, user_id, from_type, from_id, to_bot_id, kind, content,
     payload, idem, status, thread_id, in_reply_to, root_id, attempts,
-    last_attempt_at, created_at, delivered_at
+    last_attempt_at, delivering_until, created_at, delivered_at
 """
 
 
@@ -150,6 +150,76 @@ async def count_recent_from(from_id: Any, *, seconds: int = 60) -> int:
             return int((await cur.fetchone())[0])
 
 
+async def claim_message(message_id: Any, *, lease_seconds: int = 180) -> Optional[int]:
+    """Claim one queued message for delivery; its attempt count, or None.
+
+    The lease (``delivering_until``) is what keeps a second sweeper, or an
+    inline tool call racing one, from posting the same message; a worker that
+    dies mid-post leaves the row claimable again once the lease lapses.
+    """
+    cleaned = normalize_uuid(str(message_id)) if message_id else None
+    if cleaned is None:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE bot_messages SET attempts = attempts + 1, "
+                "last_attempt_at = NOW(), "
+                "delivering_until = NOW() + make_interval(secs => %s) "
+                "WHERE message_id = %s AND status = 'queued' "
+                "AND (delivering_until IS NULL OR delivering_until < NOW()) "
+                "RETURNING attempts",
+                (int(lease_seconds), cleaned),
+            )
+            row = await cur.fetchone()
+            return int(row[0]) if row else None
+
+
+async def release_message(message_id: Any, *, decrement_attempt: bool = True) -> None:
+    """Give a claimed row back without spending its attempt (thread busy)."""
+    cleaned = normalize_uuid(str(message_id)) if message_id else None
+    if cleaned is None:
+        return
+    attempt_sql = "GREATEST(attempts - 1, 0)" if decrement_attempt else "attempts"
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"UPDATE bot_messages SET delivering_until = NULL, "
+                f"last_attempt_at = NULL, attempts = {attempt_sql} "
+                "WHERE message_id = %s AND status = 'queued'",
+                (cleaned,),
+            )
+
+
+async def end_attempt(message_id: Any) -> None:
+    """A finished attempt that left the row queued: drop the lease, keep the
+    attempt count (the next claim waits the retry interval)."""
+    cleaned = normalize_uuid(str(message_id)) if message_id else None
+    if cleaned is None:
+        return
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE bot_messages SET delivering_until = NULL "
+                "WHERE message_id = %s AND status = 'queued'",
+                (cleaned,),
+            )
+
+
+async def fail_exhausted_messages() -> int:
+    """Fail queued rows that spent their attempts (a crashed final attempt)."""
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE bot_messages SET status = 'failed', "
+                "delivering_until = NULL "
+                "WHERE status = 'queued' AND attempts >= %s "
+                "AND (delivering_until IS NULL OR delivering_until < NOW())",
+                (5,),
+            )
+            return int(cur.rowcount)
+
+
 async def set_message_root(message_id: Any, root_id: Any) -> None:
     """The first message of a chain is its own root, known only after insert."""
     cleaned_message = normalize_uuid(str(message_id)) if message_id else None
@@ -205,25 +275,45 @@ async def set_status(
     *,
     thread_id: Optional[str] = None,
     conn=None,
+    expected_status: str = "queued",
 ) -> bool:
-    """Move a message's status. ``delivered`` also stamps the thread posted to."""
+    """Move a message's status under a compare-and-set.
+
+    A stale inline delivery and a sweeper can both be mid-attempt on one row;
+    the expected status makes the first terminal write win and the loser's
+    write a no-op (False). A terminal move also drops the delivery lease.
+    """
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}")
     cleaned = normalize_uuid(str(message_id)) if message_id else None
     if cleaned is None:
         return False
+    final = status != "queued"
     async with get_db_connection(conn) as db:
         async with db.cursor() as cur:
             if status == "delivered":
                 await cur.execute(
                     "UPDATE bot_messages SET status = %s, thread_id = %s, "
-                    "delivered_at = NOW() WHERE message_id = %s",
-                    (status, normalize_uuid(str(thread_id)) if thread_id else None, cleaned),
+                    "delivered_at = NOW(), delivering_until = NULL "
+                    "WHERE message_id = %s AND status = %s",
+                    (
+                        status,
+                        normalize_uuid(str(thread_id)) if thread_id else None,
+                        cleaned,
+                        expected_status,
+                    ),
+                )
+            elif final:
+                await cur.execute(
+                    "UPDATE bot_messages SET status = %s, delivering_until = NULL "
+                    "WHERE message_id = %s AND status = %s",
+                    (status, cleaned, expected_status),
                 )
             else:
                 await cur.execute(
-                    "UPDATE bot_messages SET status = %s WHERE message_id = %s",
-                    (status, cleaned),
+                    "UPDATE bot_messages SET status = %s "
+                    "WHERE message_id = %s AND status = %s",
+                    (status, cleaned, expected_status),
                 )
             return cur.rowcount > 0
 

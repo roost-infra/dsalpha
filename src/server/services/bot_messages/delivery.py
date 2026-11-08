@@ -77,11 +77,15 @@ async def _sender_name(message: Dict[str, Any]) -> str:
     return (sender or {}).get("name") or "another bot"
 
 
-async def deliver_message(message_id: Any) -> Dict[str, Any]:
-    """Deliver one queued message. Returns ``{status, thread_id, outcome}``.
+async def deliver_message(
+    message_id: Any, *, attempts: Optional[int] = None
+) -> Dict[str, Any]:
+    """Deliver one claimed queued message. Returns ``{status, thread_id, outcome}``.
 
-    ``queued`` means the target was busy or unreachable within the wait; the
-    row stays queued for a later attempt rather than being lost.
+    ``attempts`` is the count the claim stamped (the inline tool path and the
+    sweeper both claim before calling); when it reaches the retry ceiling the
+    row is failed instead of circling. ``queued`` means the target was busy or
+    unreachable within the wait; the row stays queued for a later attempt.
     """
     message = await msg_db.get_message(message_id)
     if message is None:
@@ -102,6 +106,20 @@ async def deliver_message(message_id: Any) -> Dict[str, Any]:
         return {"status": "failed", "thread_id": None, "outcome": "target_paused"}
 
     thread_id = await ensure_private_thread(bot)
+    # A live turn would take this message as a steer, and a POST into an
+    # interrupted one would collide with its pending HITL card: leave the row
+    # queued and release the attempt rather than counting a busy thread.
+    from src.server.database.runs import lifecycle as run_db
+    from src.server.services.report_back.notify_turn import _holds_notifications
+
+    latest = await run_db.get_latest_attempt(thread_id)
+    if await _holds_notifications(thread_id, latest):
+        await msg_db.release_message(message["message_id"])
+        logger.info(
+            "[BOT_MESSAGE] %s stays queued: its thread is busy or interrupted",
+            message["message_id"],
+        )
+        return {"status": "queued", "thread_id": thread_id, "outcome": "busy"}
     payload = message.get("payload") or {}
     if payload.get("assignment_id"):
         from src.server.database import assignments as assign_db
@@ -147,12 +165,14 @@ async def deliver_message(message_id: Any) -> Dict[str, Any]:
     if outcome in ("drop", "deleted", "refused", "taken"):
         await msg_db.set_status(message["message_id"], "failed")
         return {"status": "failed", "thread_id": thread_id, "outcome": outcome}
-    # cap / lost / superseded / busy: the row is still the record; the sweeper
-    # retries it, and the request key keeps that one turn. A message that has
-    # used its attempts fails instead of circling forever.
+    # cap / lost / superseded: the row is still the record; the sweeper retries
+    # it, and the request key keeps that one turn. A message that spent its
+    # attempts fails instead of circling forever.
     from src.server.services.bot_messages.sweeper import MAX_ATTEMPTS
 
-    if int(message.get("attempts") or 0) >= MAX_ATTEMPTS:
+    spent = attempts if attempts is not None else int(message.get("attempts") or 0)
+    if spent >= MAX_ATTEMPTS:
         await msg_db.set_status(message["message_id"], "failed")
         return {"status": "failed", "thread_id": thread_id, "outcome": "attempts_exhausted"}
+    await msg_db.end_attempt(message["message_id"])
     return {"status": "queued", "thread_id": thread_id, "outcome": outcome}

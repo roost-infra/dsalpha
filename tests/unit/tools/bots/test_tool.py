@@ -33,6 +33,13 @@ def _no_budget_reads():
         AsyncMock(return_value=0),
     ), patch(
         "src.server.database.bot_messages.set_message_root", AsyncMock()
+    ), patch(
+        "src.server.database.bot_messages.claim_message", AsyncMock(return_value=1)
+    ), patch(
+        "src.server.database.bot_messages.get_message",
+        AsyncMock(return_value={"message_id": "m-1", "status": "delivered"}),
+    ), patch(
+        "src.server.database.bot_messages.end_attempt", AsyncMock()
     ):
         yield
 

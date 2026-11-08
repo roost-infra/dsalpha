@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 RETRY_AFTER_SECONDS = 30
 #: How many attempts before the row is failed rather than retried forever.
 MAX_ATTEMPTS = 5
+#: A claimed row is nobody else's until this passes (a delivery can wait out
+#: a busy target for DELIVER_WAIT_CAP, so the lease outlives that).
+DELIVERY_LEASE_SECONDS = 180
 #: Rows claimed per sweep.
 BATCH = 20
 #: How often each worker scans.
@@ -46,6 +49,10 @@ async def claim_due(limit: int = BATCH) -> list[Dict[str, Any]]:
                         WHERE status = 'queued'
                           AND attempts < %s
                           AND (
+                              delivering_until IS NULL
+                              OR delivering_until < NOW()
+                          )
+                          AND (
                               last_attempt_at IS NULL
                               OR last_attempt_at < NOW() - make_interval(secs => %s)
                           )
@@ -54,12 +61,19 @@ async def claim_due(limit: int = BATCH) -> list[Dict[str, Any]]:
                         FOR UPDATE SKIP LOCKED
                     )
                     UPDATE bot_messages m
-                    SET attempts = m.attempts + 1, last_attempt_at = NOW()
+                    SET attempts = m.attempts + 1,
+                        last_attempt_at = NOW(),
+                        delivering_until = NOW() + make_interval(secs => %s)
                     FROM due
                     WHERE m.message_id = due.message_id
-                    RETURNING m.message_id
+                    RETURNING m.message_id, m.attempts
                     """,
-                    (MAX_ATTEMPTS, RETRY_AFTER_SECONDS, max(1, min(limit, 100))),
+                    (
+                        MAX_ATTEMPTS,
+                        RETRY_AFTER_SECONDS,
+                        max(1, min(limit, 100)),
+                        DELIVERY_LEASE_SECONDS,
+                    ),
                 )
                 return [dict(r) for r in await cur.fetchall()]
 
@@ -112,14 +126,28 @@ class BotMessageDelivery:
                 logger.warning("[BOT_MESSAGE] sweep failed: %s", exc)
 
     async def sweep_once(self) -> int:
+        from src.server.database import bot_messages as msg_db
         from src.server.services.bot_messages.delivery import deliver_message
 
         rows = await claim_due()
         for row in rows:
             try:
-                await deliver_message(row["message_id"])
+                await deliver_message(
+                    row["message_id"], attempts=int(row.get("attempts") or 0)
+                )
             except Exception as exc:
                 logger.warning(
                     "[BOT_MESSAGE] retry of %s failed: %s", row["message_id"], exc
                 )
+        # A worker that died on its final attempt leaves the row queued with
+        # its attempts spent and no lease; fail those rather than keep them.
+        try:
+            failed = await msg_db.fail_exhausted_messages()
+            if failed:
+                logger.warning(
+                    "[BOT_MESSAGE] failed %s queued message(s) out of attempts",
+                    failed,
+                )
+        except Exception as exc:
+            logger.warning("[BOT_MESSAGE] exhausted reconciliation failed: %s", exc)
         return len(rows)

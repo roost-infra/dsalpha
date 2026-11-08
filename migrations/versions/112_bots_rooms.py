@@ -104,18 +104,26 @@ def upgrade() -> None:
         "ON bot_versions (bot_id, created_at)"
     )
 
-    # The identity layer's one change to the conversation table.
-    op.execute(
-        """
-        ALTER TABLE conversation_threads
-        ADD COLUMN IF NOT EXISTS bot_id UUID
-            REFERENCES bots(bot_id) ON DELETE SET NULL
-        """
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_conversation_threads_bot "
-        "ON conversation_threads (bot_id)"
-    )
+    # The identity layer's one change to the conversation table. A chat-wide
+    # table must not be locked for the rest of the migration: the ALTER runs
+    # in its own autocommit block (lock_timeout bounds only acquiring it), and
+    # the index is built CONCURRENTLY, so turns keep reading and writing while
+    # the backfill below runs.
+    with op.get_context().autocommit_block():
+        op.execute("SET lock_timeout = '5s'")
+        op.execute(
+            """
+            ALTER TABLE conversation_threads
+            ADD COLUMN IF NOT EXISTS bot_id UUID
+                REFERENCES bots(bot_id) ON DELETE SET NULL
+            """
+        )
+        op.execute("RESET lock_timeout")
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_conversation_threads_bot "
+            "ON conversation_threads (bot_id)"
+        )
 
     op.execute(
         """
@@ -293,16 +301,21 @@ def upgrade() -> None:
         "ON assignments (to_bot_id, status)"
     )
 
-    op.execute(
-        """
-        ALTER TABLE automations
-        ADD COLUMN IF NOT EXISTS bot_id UUID
-            REFERENCES bots(bot_id) ON DELETE SET NULL
-        """
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_automations_bot ON automations (bot_id)"
-    )
+    with op.get_context().autocommit_block():
+        op.execute("SET lock_timeout = '5s'")
+        op.execute(
+            """
+            ALTER TABLE automations
+            ADD COLUMN IF NOT EXISTS bot_id UUID
+                REFERENCES bots(bot_id) ON DELETE SET NULL
+            """
+        )
+        op.execute("RESET lock_timeout")
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_automations_bot "
+            "ON automations (bot_id)"
+        )
 
     # --- Backfill: one analyst bot per live workspace, then point the rows
     # that already have a workspace at it. Idempotent by the unique key.

@@ -62,13 +62,25 @@ def _world(*, target=TARGET, outcome="dispatched"):
             "src.server.database.bot_messages.set_status",
             AsyncMock(return_value=True),
         ),
+        patch(
+            "src.server.database.bot_messages.end_attempt",
+            AsyncMock(),
+        ),
+        patch(
+            "src.server.database.runs.lifecycle.get_latest_attempt",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "src.server.services.report_back.notify_turn._holds_notifications",
+            AsyncMock(return_value=False),
+        ),
     )
 
 
 @pytest.mark.asyncio
 async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
-    get, bots_get, thread, post, status = _world()
-    with get, bots_get, thread, post as posted, status as mark:
+    get, bots_get, thread, post, status, end, latest, holds = _world()
+    with get, bots_get, thread, post as posted, status as mark, end, latest, holds:
         result = await deliver_message("m-1")
     assert result["status"] == "delivered"
     mark.assert_awaited_once_with("m-1", "delivered", thread_id=THREAD)
@@ -91,17 +103,18 @@ async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
 
 @pytest.mark.asyncio
 async def test_a_busy_target_leaves_the_message_queued():
-    get, bots_get, thread, post, status = _world(outcome="cap")
-    with get, bots_get, thread, post, status as mark:
+    get, bots_get, thread, post, status, end, latest, holds = _world(outcome="cap")
+    with get, bots_get, thread, post, status as mark, end as finish, latest, holds:
         result = await deliver_message("m-1")
     assert result["status"] == "queued"
     mark.assert_not_awaited()
+    finish.assert_awaited_once_with("m-1")
 
 
 @pytest.mark.asyncio
 async def test_a_dropped_message_fails_rather_than_circling():
-    get, bots_get, thread, post, status = _world(outcome="drop")
-    with get, bots_get, thread, post, status as mark:
+    get, bots_get, thread, post, status, end, latest, holds = _world(outcome="drop")
+    with get, bots_get, thread, post, status as mark, end, latest, holds:
         result = await deliver_message("m-1")
     assert result["status"] == "failed"
     mark.assert_awaited_once_with("m-1", "failed")
@@ -110,8 +123,8 @@ async def test_a_dropped_message_fails_rather_than_circling():
 @pytest.mark.asyncio
 async def test_a_paused_target_is_not_delivered():
     paused = {**TARGET, "status": "paused"}
-    get, bots_get, thread, post, status = _world(target=paused)
-    with get, bots_get, thread, post, status as mark:
+    get, bots_get, thread, post, status, end, latest, holds = _world(target=paused)
+    with get, bots_get, thread, post, status as mark, end, latest, holds:
         result = await deliver_message("m-1")
     assert result == {"status": "failed", "thread_id": None, "outcome": "target_paused"}
     mark.assert_awaited_once_with("m-1", "failed")
@@ -129,3 +142,33 @@ async def test_a_retried_message_that_is_no_longer_queued_is_not_posted_again():
         result = await deliver_message("m-1")
     assert result["status"] == "delivered"
     assert result["outcome"] == "already"
+
+
+@pytest.mark.asyncio
+async def test_a_thread_holding_a_card_keeps_the_message_queued_without_spending_an_attempt():
+    from src.server.database.bot_messages import release_message
+
+    get, bots_get, thread, post, status, end, latest, holds = _world()
+    with get, bots_get, thread, post, status as mark, end, latest, patch(
+        "src.server.services.report_back.notify_turn._holds_notifications",
+        AsyncMock(return_value=True),
+    ), patch(
+        "src.server.database.bot_messages.release_message",
+        AsyncMock(),
+    ) as released:
+        result = await deliver_message("m-1")
+    assert result == {"status": "queued", "thread_id": THREAD, "outcome": "busy"}
+    mark.assert_not_awaited()
+    released.assert_awaited_once_with("m-1")
+    del release_message
+
+
+@pytest.mark.asyncio
+async def test_an_attempt_past_the_retry_ceiling_fails_the_row():
+    get, bots_get, thread, post, status, end, latest, holds = _world(outcome="cap")
+    with get, bots_get, thread, post, status as mark, end as finish, latest, holds:
+        result = await deliver_message("m-1", attempts=5)
+    assert result["status"] == "failed"
+    assert result["outcome"] == "attempts_exhausted"
+    mark.assert_awaited_once_with("m-1", "failed")
+    finish.assert_not_awaited()
