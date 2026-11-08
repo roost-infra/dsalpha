@@ -438,7 +438,9 @@ requested → working → done / failed / cancelled
 | `report_to(assignment_id, outcome, evidence)` | 完成/失败上报，并给发起方发一条 framed report |
 | `list_assignments` | 自己参与的 assignment 及状态 |
 | `read_room` / `post_to_room` | 房间读写（成员在轮次之外查看/留言；轮次的 `@Name` 追加由协调器处理） |
-| `create_room(name, bots)` | v2，受每日配额限制 |
+| `create_bot(name, persona?, model?, skills?, tools_allow?, tools_deny?, approval?)` | 在本 workspace 建一个 analyst Bot；Home 内拒绝，重名/超上限拒绝，模型在创建前校验 |
+| `create_room(name, members, responder?, bulletin?, host?)` | 拉本 workspace 的 Bot 建群（成员 1–12、必须 active、host 默认第一个）；用户在群里发消息才开始 round |
+| `list_rooms` | 列出本 workspace 的房间（名称、room_id、成员、responder），建群前查重用 |
 | `read_own_chat` | 让群里能引用自己的私聊（记录到 room log） |
 
 - 工具描述遵循 `src/tools/AGENTS.md`（每句话改变决策）。

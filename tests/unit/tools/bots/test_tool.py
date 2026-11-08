@@ -11,7 +11,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.tools.bots.tool import list_assignments, list_bots, report_to, send_bot_message
+from src.tools.bots.tool import (
+    create_bot,
+    list_assignments,
+    list_bots,
+    report_to,
+    send_bot_message,
+)
 
 USER = "user-1"
 WS = "22222222-2222-2222-2222-222222222222"
@@ -345,3 +351,76 @@ async def test_oversized_report_evidence_is_refused_before_closing():
         )
     assert "over 60 KB" in out
     close.assert_not_awaited()
+
+
+# --- creating a bot -------------------------------------------------------
+
+NEW_BOT = {"bot_id": "b-new", "name": "Macro", "workspace_id": WS, "status": "active"}
+
+
+@pytest.mark.asyncio
+async def test_the_agent_creates_a_bot_in_its_workspace():
+    with _ctx(), patch(
+        "src.server.database.bots.create_bot", AsyncMock(return_value=NEW_BOT)
+    ) as create:
+        out = await _invoke(
+            create_bot,
+            {
+                "name": "Macro",
+                "persona": "macro analyst",
+                "skills": "macro, rates",
+                "tools_deny": "trade",
+            },
+        )
+    assert "created bot Macro" in out and "b-new" in out
+    kwargs = create.await_args.kwargs
+    assert kwargs["skills"] == ["macro", "rates"]
+    assert kwargs["tools_deny"] == ["trade"]
+    assert kwargs["role"] == "analyst"
+
+
+@pytest.mark.asyncio
+async def test_a_bot_cannot_be_created_in_home():
+    from src.server.database.home_workspace import get_home_workspace_id
+
+    home_config = {
+        "configurable": {
+            **CONFIG["configurable"],
+            "workspace_id": get_home_workspace_id(USER),
+        }
+    }
+    result = await create_bot.ainvoke(
+        {
+            "name": "create_bot",
+            "args": {"name": "Second"},
+            "id": "call_1",
+            "type": "tool_call",
+        },
+        config=home_config,
+    )
+    assert "Home holds the Chief of Staff" in result.content
+
+
+@pytest.mark.asyncio
+async def test_a_taken_bot_name_is_refused():
+    from src.server.database.bots import BotNameTaken
+
+    with _ctx(), patch(
+        "src.server.database.bots.create_bot",
+        AsyncMock(side_effect=BotNameTaken("Macro")),
+    ):
+        out = await _invoke(create_bot, {"name": "Macro"})
+    assert out.startswith("refused")
+
+
+@pytest.mark.asyncio
+async def test_an_unselectable_bot_model_is_refused():
+    from fastapi import HTTPException
+
+    with _ctx(), patch(
+        "src.server.services.llm.thread_model.require_selectable_model",
+        AsyncMock(side_effect=HTTPException(status_code=400, detail="Model unavailable")),
+    ) as check:
+        out = await _invoke(create_bot, {"name": "Macro", "model": "nope"})
+    assert "Model unavailable" in out
+    check.assert_awaited_once()

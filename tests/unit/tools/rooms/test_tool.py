@@ -99,3 +99,91 @@ async def test_reading_own_chat_records_the_look_in_the_room():
     assert "private findings" in out
     log.assert_awaited_once()
     assert "consulted its own chat" in log.await_args.kwargs["content"]
+
+
+# --- creating a room ------------------------------------------------------
+
+BOTS = [
+    {"bot_id": "b-1", "name": "Quant", "workspace_id": WS, "status": "active"},
+    {"bot_id": "b-2", "name": "Scout", "workspace_id": WS, "status": "active"},
+    {"bot_id": "b-p", "name": "Sleepy", "workspace_id": WS, "status": "paused"},
+]
+CREATED = {"room_id": "r-new", "name": "Trading desk"}
+
+
+@pytest.mark.asyncio
+async def test_the_agent_creates_a_room_with_bots():
+    from src.tools.rooms.tool import create_room
+
+    with patch(
+        "src.server.database.bots.list_bots", AsyncMock(return_value=BOTS)
+    ), patch(
+        "src.server.database.rooms.create_room", AsyncMock(return_value=CREATED)
+    ) as create:
+        out = await _say(
+            create_room,
+            {"name": "Trading desk", "members": "Scout, b-1", "bulletin": "be brief"},
+        )
+    assert "created room Trading desk" in out and "r-new" in out
+    kwargs = create.await_args.kwargs
+    assert kwargs["member_bot_ids"] == ["b-2", "b-1"]
+    assert kwargs["host_bot_id"] == "b-2"
+    assert kwargs["bulletin"] == "be brief"
+
+
+@pytest.mark.asyncio
+async def test_a_room_member_must_resolve_and_be_active():
+    from src.tools.rooms.tool import create_room
+
+    with patch("src.server.database.bots.list_bots", AsyncMock(return_value=BOTS)):
+        unknown = await _say(create_room, {"name": "R", "members": "Nobody"})
+        paused = await _say(create_room, {"name": "R", "members": "Sleepy"})
+        empty = await _say(create_room, {"name": "R", "members": " "})
+    assert "no bot named or identified" in unknown
+    assert "paused" in paused
+    assert "at least one bot" in empty
+
+
+@pytest.mark.asyncio
+async def test_a_single_responder_is_a_member():
+    from src.tools.rooms.tool import create_room
+
+    with patch(
+        "src.server.database.bots.list_bots", AsyncMock(return_value=BOTS)
+    ), patch(
+        "src.server.database.rooms.create_room", AsyncMock(return_value=CREATED)
+    ) as create:
+        await _say(
+            create_room,
+            {
+                "name": "R",
+                "members": "Quant, Scout",
+                "responder": "member:Quant",
+            },
+        )
+    assert create.await_args.kwargs["responder"] == "member:b-1"
+
+
+@pytest.mark.asyncio
+async def test_listing_rooms_names_members_and_ids():
+    from src.tools.rooms.tool import list_rooms
+
+    with patch(
+        "src.server.database.rooms.list_rooms",
+        AsyncMock(
+            return_value=[
+                {
+                    "room_id": "r-1",
+                    "name": "Research",
+                    "status": "active",
+                    "responder": "everyone",
+                }
+            ]
+        ),
+    ), patch(
+        "src.server.database.rooms.list_members_with_bots",
+        AsyncMock(return_value=MEMBERS),
+    ):
+        out = await _say(list_rooms, {})
+    assert "Research" in out and "r-1" in out
+    assert "Quant" in out and "Scout" in out

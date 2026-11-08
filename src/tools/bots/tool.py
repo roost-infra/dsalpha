@@ -278,6 +278,89 @@ async def send_bot_message(
     return f"refused: could not deliver to {target['name']} ({sent.get('outcome')})"
 
 
+@tool("create_bot")
+async def create_bot(
+    name: str,
+    config: RunnableConfig,
+    persona: str = "",
+    model: str = "",
+    skills: str = "",
+    tools_allow: str = "",
+    tools_deny: str = "",
+    approval: str = "ask",
+) -> str:
+    """Create a new analyst bot in this workspace.
+
+    Use it when the user wants a new teammate with its own name, persona,
+    model or tool surface. The bot is created paused-looking only until the
+    user opens it: it can be messaged with ``send_bot_message`` and added to a
+    group with ``create_room`` right away. Names are unique per workspace;
+    lists are comma-separated.
+
+    Args:
+        name: The bot's display name (1-64 characters, unique in the
+            workspace).
+        persona: Who it is and how it should work, in its own words.
+        model: A selectable model name; empty follows the thread's model.
+        skills: Comma-separated skill names the bot prefers (stored for v2).
+        tools_allow: Comma-separated tool whitelist; empty means every tool.
+        tools_deny: Comma-separated tool blacklist.
+        approval: ask | edits | auto | full (stored; v1 does not auto-approve).
+
+    Returns:
+        A one-line result naming the new bot and its bot_id, or a refusal.
+    """
+    user_id, workspace_id, _thread_id = _where(config)
+    from src.server.database.home_workspace import is_home_id
+
+    if is_home_id(user_id, workspace_id):
+        return "refused: Home holds the Chief of Staff; create bots in a workspace"
+    cleaned = (name or "").strip()
+    if not cleaned:
+        return "refused: the bot needs a name"
+    if len(cleaned) > 64:
+        return "refused: the name is over 64 characters"
+    if (approval or "").strip() not in ("ask", "edits", "auto", "full"):
+        return "refused: approval must be ask, edits, auto or full"
+    if (model or "").strip():
+        from fastapi import HTTPException
+
+        from src.server.services.llm.thread_model import require_selectable_model
+
+        try:
+            await require_selectable_model(user_id, model.strip())
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, str) else "model unavailable"
+            return f"refused: {detail}"
+
+    def _list(raw: str) -> list[str]:
+        return [part.strip() for part in (raw or "").split(",") if part.strip()]
+
+    try:
+        bot = await bot_db.create_bot(
+            user_id,
+            workspace_id,
+            cleaned,
+            role="analyst",
+            persona=(persona or "").strip(),
+            model=(model or "").strip() or None,
+            skills=_list(skills),
+            tools_allow=_list(tools_allow),
+            tools_deny=_list(tools_deny),
+            approval=(approval or "ask").strip(),
+            created_by=user_id,
+        )
+    except bot_db.BotNameTaken:
+        return f"refused: this workspace already has a bot named {cleaned!r}"
+    except ValueError as exc:
+        return f"refused: {exc}"
+    return (
+        f"created bot {bot['name']} (bot_id: {bot['bot_id']}) in this "
+        "workspace; message it with send_bot_message or add it to a room "
+        "with create_room"
+    )
+
+
 @tool("report_to")
 async def report_to(
     assignment_id: str,
@@ -398,4 +481,4 @@ async def list_assignments(config: RunnableConfig) -> str:
     return "\n".join(lines)
 
 
-BOT_TOOLS = [list_bots, send_bot_message, report_to, list_assignments]
+BOT_TOOLS = [list_bots, create_bot, send_bot_message, report_to, list_assignments]

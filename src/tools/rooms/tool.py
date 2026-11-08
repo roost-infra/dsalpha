@@ -47,6 +47,142 @@ async def _my_room(thread_id: str) -> tuple[str, str]:
     return room_id, bot_id
 
 
+@tool("create_room")
+async def create_room(
+    name: str,
+    members: str,
+    config: RunnableConfig,
+    responder: str = "everyone",
+    bulletin: str = "",
+    host: str = "",
+) -> str:
+    """Create a group chat (room) with bots of this workspace.
+
+    A room is a shared log: each user message opens a round, and the bots you
+    list answer it in turn. Use it when the user wants a team discussion, and
+    list the bots first with ``list_bots`` so the names resolve. The user (not
+    you) sends the messages that start rounds.
+
+    Args:
+        name: The room's name (1-64 characters, unique in this workspace).
+        members: Comma-separated bot names or bot_ids of this workspace.
+        responder: everyone (default, host first), mentions (only @named), or
+            member:<name-or-id> for a single responder.
+        bulletin: Optional pinned note for every member (max 2,000 chars).
+        host: A member's name/id to speak first; defaults to the first member.
+
+    Returns:
+        A one-line result naming the room and its members, or a refusal.
+    """
+    user_id, _thread_id, workspace_id = _context(config)
+    if not workspace_id:
+        return "refused: this turn has no workspace"
+    cleaned_name = (name or "").strip()
+    if not cleaned_name:
+        return "refused: the room needs a name"
+    if len(cleaned_name) > 64:
+        return "refused: the room name is over 64 characters"
+    if len(bulletin or "") > 2_000:
+        return "refused: the bulletin is over 2,000 characters"
+    from src.server.database import bots as bot_db
+
+    roster = await bot_db.list_bots(user_id, workspace_id=workspace_id)
+    if not roster:
+        return "refused: this workspace has no bots to put in a room"
+
+    def _resolve(token: str) -> dict | None:
+        wanted = (token or "").strip().lower()
+        if not wanted:
+            return None
+        for bot in roster:
+            if str(bot["bot_id"]) == wanted:
+                return bot
+        for bot in roster:
+            if str(bot.get("name") or "").lower() == wanted:
+                return bot
+        return None
+
+    tokens = [part.strip() for part in (members or "").split(",") if part.strip()]
+    if not tokens:
+        return "refused: name at least one bot for the room (comma-separated)"
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for token in tokens:
+        bot = _resolve(token)
+        if bot is None:
+            return f"refused: no bot named or identified by {token!r} in this workspace"
+        if bot["bot_id"] in seen:
+            continue
+        if bot.get("status") != "active":
+            return f"refused: {bot['name']} is paused; resume it before adding it"
+        seen.add(bot["bot_id"])
+        picked.append(bot)
+    if len(picked) > 12:
+        return "refused: a room holds at most 12 bots"
+    host_bot = _resolve(host) if (host or "").strip() else picked[0]
+    if host_bot is None or host_bot["bot_id"] not in seen:
+        return f"refused: host {host!r} is not one of the room's members"
+    responder = (responder or "everyone").strip()
+    responder_norm = responder
+    if responder.startswith("member:"):
+        responder_bot = _resolve(responder.split(":", 1)[1])
+        if responder_bot is None or responder_bot["bot_id"] not in seen:
+            return "refused: the single responder must be one of the room's members"
+        responder_norm = f"member:{responder_bot['bot_id']}"
+    elif responder not in ("everyone", "mentions"):
+        return "refused: responder must be everyone, mentions or member:<bot>"
+    try:
+        room = await room_db.create_room(
+            user_id,
+            workspace_id,
+            cleaned_name,
+            host_bot_id=str(host_bot["bot_id"]),
+            responder=responder_norm,
+            bulletin=(bulletin or "").strip(),
+            member_bot_ids=[str(bot["bot_id"]) for bot in picked],
+        )
+    except room_db.RoomMemberLimit as exc:
+        return f"refused: {exc}"
+    except ValueError as exc:
+        return f"refused: {exc}"
+    names = ", ".join(bot["name"] for bot in picked)
+    return (
+        f"created room {room['name']} (room_id: {room['room_id']}) with "
+        f"{names}; responder={responder_norm}. The user sends a message in "
+        "the room to start a round"
+    )
+
+
+@tool("list_rooms")
+async def list_rooms(config: RunnableConfig) -> str:
+    """List this workspace's group chats: name, id, members and responder.
+
+    Use it before creating a room (to avoid a duplicate name) and to report
+    which rooms the user can open.
+
+    Returns:
+        One line per room, or a line saying there are none.
+    """
+    user_id, _thread_id, workspace_id = _context(config)
+    if not workspace_id:
+        return "No rooms in this turn's place."
+    rooms = await room_db.list_rooms(
+        user_id, workspace_id, limit=50, offset=0
+    )
+    if not rooms:
+        return "No rooms in this workspace yet."
+    lines = []
+    for room in rooms:
+        members = await room_db.list_members_with_bots(room["room_id"])
+        names = ", ".join(m.get("name") or m["bot_id"] for m in members) or "no bots"
+        lines.append(
+            f"- {room['name']} (room_id: {room['room_id']}, "
+            f"status: {room.get('status')}, responder: {room.get('responder')})"
+            f" — {names}"
+        )
+    return "\n".join(lines)
+
+
 @tool("read_room")
 async def read_room(config: RunnableConfig) -> str:
     """Read the recent messages of the room this thread belongs to.
@@ -158,4 +294,4 @@ async def read_own_chat(config: RunnableConfig, turns: int = 3) -> str:
     return text.strip() or "No private turns yet."
 
 
-ROOM_TOOLS = [read_room, post_to_room, read_own_chat]
+ROOM_TOOLS = [create_room, list_rooms, read_room, post_to_room, read_own_chat]
