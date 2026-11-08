@@ -14,6 +14,7 @@ import logging
 import uuid
 from typing import Any, Dict, Optional
 
+from src.observability import metrics as obs_metrics
 from src.server.database import bots as bot_db
 from src.server.database import bot_messages as msg_db
 
@@ -144,6 +145,9 @@ async def deliver_message(
             "[BOT_MESSAGE] %s stays queued: its thread is busy or interrupted",
             message["message_id"],
         )
+        obs_metrics.bot_messages_counter.add(
+            1, {"status": "busy", "kind": message["kind"]}
+        )
         return {"status": "queued", "thread_id": thread_id, "outcome": "busy"}
     payload = message.get("payload") or {}
     if payload.get("assignment_id"):
@@ -195,6 +199,9 @@ async def deliver_message(
             bot["bot_id"],
             thread_id,
         )
+        obs_metrics.bot_messages_counter.add(
+            1, {"status": "delivered", "kind": message["kind"]}
+        )
         return {"status": "delivered", "thread_id": thread_id, "outcome": outcome}
     if outcome in ("drop", "deleted", "refused", "taken"):
         await msg_db.set_status(message["message_id"], "failed")
@@ -203,6 +210,9 @@ async def deliver_message(
             message["message_id"],
             bot["bot_id"],
             outcome,
+        )
+        obs_metrics.bot_messages_counter.add(
+            1, {"status": "failed", "kind": message["kind"]}
         )
         return {"status": "failed", "thread_id": thread_id, "outcome": outcome}
     # cap / lost / superseded: the row is still the record; the sweeper retries
@@ -215,4 +225,7 @@ async def deliver_message(
         await msg_db.set_status(message["message_id"], "failed")
         return {"status": "failed", "thread_id": thread_id, "outcome": "attempts_exhausted"}
     await msg_db.end_attempt(message["message_id"])
+    obs_metrics.bot_messages_counter.add(
+        1, {"status": "queued", "kind": message["kind"]}
+    )
     return {"status": "queued", "thread_id": thread_id, "outcome": outcome}

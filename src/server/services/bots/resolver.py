@@ -118,7 +118,3 @@ async def _default_bot(
     return await bot_db.ensure_workspace_bot(workspace)
 
 
-def bot_role(bot: Optional[Dict[str, Any]]) -> Optional[str]:
-    """The agent role a bot runs, or None to leave the routing to the place."""
-    role = (bot or {}).get("role")
-    return role if role in ("analyst", "chief_of_staff") else None

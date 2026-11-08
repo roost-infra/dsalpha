@@ -248,27 +248,6 @@ async def get_message(message_id: Any) -> Optional[Dict[str, Any]]:
             return _row_to_dict(await cur.fetchone())
 
 
-async def list_inbox(
-    user_id: str, to_bot_id: Any, *, status: Optional[str] = None, limit: int = 20
-) -> list[Dict[str, Any]]:
-    cleaned = normalize_uuid(str(to_bot_id)) if to_bot_id else None
-    if cleaned is None:
-        return []
-    where = ["user_id = %s", "to_bot_id = %s"]
-    params: list[Any] = [user_id, cleaned]
-    if status:
-        where.append("status = %s")
-        params.append(status)
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                f"SELECT {_MESSAGE_COLUMNS} FROM bot_messages "
-                f"WHERE {' AND '.join(where)} ORDER BY created_at LIMIT %s",
-                (*params, max(1, min(limit, 100))),
-            )
-            return [_row_to_dict(r) for r in await cur.fetchall()]
-
-
 async def set_status(
     message_id: Any,
     status: str,
@@ -318,17 +297,3 @@ async def set_status(
             return cur.rowcount > 0
 
 
-async def queued_for_thread(user_id: str, thread_id: Any) -> list[Dict[str, Any]]:
-    """Queued messages waiting on one thread (the target bot's private one)."""
-    cleaned = normalize_uuid(str(thread_id)) if thread_id else None
-    if cleaned is None:
-        return []
-    async with get_db_connection() as conn:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                f"SELECT {_MESSAGE_COLUMNS} FROM bot_messages "
-                "WHERE user_id = %s AND thread_id = %s AND status = 'queued' "
-                "ORDER BY created_at",
-                (user_id, cleaned),
-            )
-            return [_row_to_dict(r) for r in await cur.fetchall()]

@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Dict, Iterable, Optional
 
 from src.server.contracts.status import TERMINAL_STATUSES
+from src.observability import metrics as obs_metrics
 from src.server.database import rooms as room_db
 from src.server.services.background_starts import schedule_start
 from src.server.services.rooms.context import is_pass, render_member_context
@@ -357,6 +358,7 @@ async def drive_round(round_id: str) -> None:
     of writing over its slots.
     """
     owner = f"room:{uuid.uuid4().hex[:12]}"
+    started = asyncio.get_running_loop().time()
     if not await room_db.claim_round(round_id, owner=owner, lease_seconds=LEASE_SECONDS):
         return
     room: Optional[Dict[str, Any]] = None
@@ -378,6 +380,10 @@ async def drive_round(round_id: str) -> None:
             cursor = int(round_row.get("slot_cursor") or 0)
             if cursor >= len(slots):
                 await room_db.finish_round(round_id, owner=owner)
+                obs_metrics.room_rounds_counter.add(1, {"status": "finished"})
+                obs_metrics.room_round_duration_ms.record(
+                    int((asyncio.get_running_loop().time() - started) * 1000)
+                )
                 follow = await _open_follow_up_round(room, round_row)
                 if follow:
                     logger.info(
@@ -424,6 +430,9 @@ async def drive_round(round_id: str) -> None:
                 continue
 
             result, logged = await _speak(room, round_row, slots, cursor, member)
+            obs_metrics.room_round_slots_counter.add(
+                1, {"state": str(result.get("state") or "unknown")}
+            )
             slot.update(result)
             slots[cursor] = slot
             if result.get("state") in ("missed", "needs_input"):
@@ -469,3 +478,7 @@ async def drive_round(round_id: str) -> None:
             await room_db.finish_round(round_id, owner=owner, status="failed")
         except Exception:
             pass
+        obs_metrics.room_rounds_counter.add(1, {"status": "failed"})
+        obs_metrics.room_round_duration_ms.record(
+            int((asyncio.get_running_loop().time() - started) * 1000)
+        )

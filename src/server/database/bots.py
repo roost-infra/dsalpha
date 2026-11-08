@@ -145,25 +145,6 @@ async def get_bot_for_user(
             return _row_to_dict(await cur.fetchone())
 
 
-async def get_bot_thread_thread_id(
-    bot_id: Any, *, kind: str = "private", conn=None
-) -> Optional[str]:
-    """The bot's thread of ``kind``, if it already has one."""
-    cleaned = _clean_bot_id(bot_id)
-    if cleaned is None:
-        return None
-    async with get_db_connection(conn) as db:
-        async with db.cursor(row_factory=dict_row) as cur:
-            await cur.execute(
-                "SELECT thread_id FROM bot_threads "
-                "WHERE bot_id = %s AND kind = %s "
-                "ORDER BY created_at LIMIT 1",
-                (cleaned, kind),
-            )
-            row = await cur.fetchone()
-            return str(row["thread_id"]) if row else None
-
-
 async def get_workspace_bot(
     workspace_id: Any, *, role: str = "analyst", conn=None
 ) -> Optional[Dict[str, Any]]:

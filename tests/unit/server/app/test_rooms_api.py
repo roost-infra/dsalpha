@@ -141,3 +141,14 @@ def test_a_room_name_is_stripped_and_cannot_be_blank():
     assert RoomCreate(workspace_id=WS, name="  Research  ").name == "Research"
     with pytest.raises(ValueError):
         RoomCreate(workspace_id=WS, name="   ")
+
+
+@pytest.mark.asyncio
+async def test_the_room_list_is_paginated():
+    with patch(
+        "src.server.app.rooms.room_db.list_rooms",
+        AsyncMock(return_value=[]),
+    ) as list_db:
+        await list_rooms(PRINCIPAL, None, limit=50, offset=10)
+    assert list_db.await_args.kwargs["limit"] == 50
+    assert list_db.await_args.kwargs["offset"] == 10

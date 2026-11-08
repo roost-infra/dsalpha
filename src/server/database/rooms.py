@@ -164,6 +164,8 @@ async def list_rooms(
     workspace_id: Optional[str] = None,
     *,
     computer_id: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
 ) -> list[Dict[str, Any]]:
     where = ["user_id = %s"]
     params: list[Any] = [user_id]
@@ -183,8 +185,8 @@ async def list_rooms(
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_ROOM_COLUMNS} FROM rooms WHERE {' AND '.join(where)} "
-                "ORDER BY created_at",
-                params,
+                "ORDER BY created_at LIMIT %s OFFSET %s",
+                (*params, max(1, min(int(limit), 200)), max(0, int(offset))),
             )
             return [_room_row(r) for r in await cur.fetchall()]
 

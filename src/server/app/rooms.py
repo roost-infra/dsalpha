@@ -150,7 +150,10 @@ async def create_room(
 
 @router.get("", response_model=RoomListResponse)
 async def list_rooms(
-    principal: ReadPrincipal, workspace_id: Optional[str] = Query(default=None)
+    principal: ReadPrincipal,
+    workspace_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> RoomListResponse:
     user_id = principal.user_id
     if workspace_id:
@@ -159,7 +162,11 @@ async def list_rooms(
             principal, workspace_id=str(workspace["workspace_id"])
         )
     rooms = await room_db.list_rooms(
-        user_id, workspace_id, computer_id=principal.computer_id
+        user_id,
+        workspace_id,
+        computer_id=principal.computer_id,
+        limit=limit,
+        offset=offset,
     )
     return RoomListResponse(rooms=[_info(r) for r in rooms])
 
@@ -274,6 +281,7 @@ async def stream_room(
         sent_cursor: Optional[int] = None
         sent_room_at: Optional[str] = None
         idle = 0.0
+        ticks = 0
         while True:
             entries = await room_db.read_log(room["room_id"], since_seq=seq, limit=100)
             for entry in entries:
@@ -282,7 +290,13 @@ async def stream_room(
                 idle = 0.0
             # Membership/name/responder/bulletin edits are announced so an
             # open panel refetches instead of drawing a stale room.
-            fresh = await room_db.get_room(room["room_id"])
+            # The room row moves on membership/bulletin edits, not on every
+            # message; polling it every few beats keeps the tail light.
+            if ticks % 5 == 0:
+                fresh = await room_db.get_room(room["room_id"])
+            else:
+                fresh = None
+            ticks += 1
             if fresh is not None and fresh.get("updated_at") != sent_room_at:
                 sent_room_at = fresh.get("updated_at")
                 yield _sse(
