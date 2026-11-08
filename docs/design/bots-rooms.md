@@ -615,3 +615,45 @@ tests/integration/test_rooms_round.py                 # 新增
 | 会话 | DSH 长活 session | LangAlpha thread（checkpoint 为单位） |
 | 消息投递 | 控制面转发 | 现有 `wait_or_steer` + inbox |
 | 群聊日志 | events 表投影 | 新 `room_log`（不混 chat wire） |
+
+## 24. Bot 头像：确定性 BotMark
+
+Bot 的头像是**身份标识**，不是装饰：同一个 Bot 在 Chat 头部、消息行、Bots 列表、房间成员、自动化选择器里必须是同一张脸，且不设置头像也要有稳定可辨的身份。
+
+### 24.1 数据形态
+
+`bots.avatar` 仍是开放的 JSONB，UI 识别四种：
+
+```
+{ kind: "image", url }                                    // 上传/外链
+{ kind: "emoji", emoji }                                  // 快捷表情
+{ kind: "mark", shape, color, glyph? }                    // 程序化
+{} / 缺省                                                  // 渲染时按 bot_id 推导
+```
+
+旧数据里的 `{ url }` / `{ emoji }` 继续可用（等价于 image / emoji）。**不做 DB 回填**：缺省时渲染层推导，存量 Bot 立刻获得确定性头像。
+
+### 24.2 推导规则（`web/src/lib/botMark.ts`）
+
+- `fnv1a(bot_id)` → 颜色下标 `% 8`；`fnv1a(bot_id + ":shape")` → 形状下标 `% 4`
+- 形状：circle / squircle / hex / blob；glyph = 名字首字（CJK 保留、拉丁转大写、emoji 保留），缺失回退 `·`
+- 同一 bot_id 在任意尺寸/主题下推导结果一致
+
+### 24.3 视觉
+
+- 色板：品牌 8 色（amber / teal / blue / violet / rose / moss / clay / slate），实色填充，白色 glyph 对比度 ≥4.5:1；两套主题共用同一组实色
+- 形状：hex/blob 用内联 SVG，circle/squircle 用 CSS 圆角；不做动画
+- 尺寸：16（Chat 头部、房间日志）、20（房间成员 chips）、22（Bot 消息行）、36（Bots 列表与编辑预览）
+- a11y：`role="img"` + `aria-label=Bot 名字`，纯装饰时 `aria-hidden`
+
+### 24.4 使用点（全部走同一个 `BotMark`）
+
+Chat 头部（`ThreadBotChip`）、Bot 消息行（`BotMessageRow`）、Bots 列表与编辑预览、房间成员 chips 与日志发送者、自动化表单的 Bot 选择、房间轮次"正在发言"行。各处的本地头像实现删除，不再重复。
+
+### 24.5 编辑
+
+Bots 编辑弹窗提供：颜色（8 色块）、形状（4 选 1）、可选 glyph、emoji、图片 URL，以及"使用自动头像"重置；预览实时。只有用户改动过才 PATCH `avatar`，未改动时保留未知键与已有 image/emoji。
+
+### 24.6 为什么不做 ds-bot 的卡通角色
+
+ds-bot 的 SVG 角色 + 表情动画是它产品性格的一部分；LangAlpha 是金融研究工作台，几何 mark 更安静、和现有 token 一致，也避免了角色系统长期维护成本。未来若要升级，只需替换 `BotMark` 的 mark 分支，调用点不变。
