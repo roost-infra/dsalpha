@@ -16,7 +16,8 @@
 | P3 定时任务/routine 接线 | ✅ 后端（前端待做） | `automations.bot_id`；Bot 归属的 automation 默认 `continue` 并落 Bot 私聊/既定 routine 会话；executor 以 Bot 角色路由并加 `[Scheduled task]` 框；`scripts/automations_to_persistent.py`（dry-run/apply） |
 | P3 Bot 工具面 | ✅ | `tools_allow`/`tools_deny` 在构建期收窄主 agent 工具集（`tools/bots/scope.py`） |
 | P3 会话可见性 | ✅ | 线程响应带 `bot_id`（聊天头部可解析名字/头像）；rooms 行有 `updated_at` 并推 `room_updated` |
-| P3 待做 | ⏳ | 自动化表单的 Bot 选择器与目标会话文案、Bot skills/tools/memory 编辑、`approval` 的执行映射（v2） |
+| P3 待做 | ⏳ | `approval` 的执行映射（v2）、ds-bot 的 per-pair Exchange 抽屉（当前收到/发出已有行级显示） |
+| Bot 消息页面显示 | ✅ | `bot_message_source`（history + live 首帧，含 frame-stripped body）；`BotMessageRow`（ds-bot EventLine 风格：发送者行 + 正文气泡、长文折叠、无用户操作）；发出方向工具行 "Messaging X · kind" / "Messaged X · status" |
 
 已知取舍：
 - Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
