@@ -28,8 +28,8 @@ STATUSES = ("queued", "delivered", "consumed", "failed")
 
 _MESSAGE_COLUMNS = """
     message_id, user_id, from_type, from_id, to_bot_id, kind, content,
-    payload, idem, status, thread_id, in_reply_to, root_id, created_at,
-    delivered_at
+    payload, idem, status, thread_id, in_reply_to, root_id, attempts,
+    last_attempt_at, created_at, delivered_at
 """
 
 

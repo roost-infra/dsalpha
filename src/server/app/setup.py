@@ -150,6 +150,10 @@ _REDIS_BACKGROUND_SINGLETONS: tuple[tuple[str, str], ...] = (
     # Has a model describe MCP servers; a claim on each job's row under its
     # scope's advisory lock dedups it across workers.
     ("McpDescriptionWorker", "src.server.services.mcp_descriptions.worker"),
+    # Retries bot messages a busy target left queued; the claim marks each row
+    # before delivery, so a retry is one turn (the posted request key) and a
+    # worker dying mid-delivery only delays the next attempt.
+    ("BotMessageDelivery", "src.server.services.bot_messages.sweeper"),
 )
 
 

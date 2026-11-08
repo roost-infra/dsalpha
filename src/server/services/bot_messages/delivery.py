@@ -132,6 +132,12 @@ async def deliver_message(message_id: Any) -> Dict[str, Any]:
     if outcome in ("drop", "deleted", "refused", "taken"):
         await msg_db.set_status(message["message_id"], "failed")
         return {"status": "failed", "thread_id": thread_id, "outcome": outcome}
-    # cap / lost / superseded / busy: the row is still the record; a later
-    # attempt delivers it, and the request key keeps that one turn.
+    # cap / lost / superseded / busy: the row is still the record; the sweeper
+    # retries it, and the request key keeps that one turn. A message that has
+    # used its attempts fails instead of circling forever.
+    from src.server.services.bot_messages.sweeper import MAX_ATTEMPTS
+
+    if int(message.get("attempts") or 0) >= MAX_ATTEMPTS:
+        await msg_db.set_status(message["message_id"], "failed")
+        return {"status": "failed", "thread_id": thread_id, "outcome": "attempts_exhausted"}
     return {"status": "queued", "thread_id": thread_id, "outcome": outcome}

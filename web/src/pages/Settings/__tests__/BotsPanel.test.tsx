@@ -5,7 +5,7 @@
  * not about React Query again (that contract lives in useBots.test.tsx).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { screen, within, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import type { BotInfo } from '@/api/bots';
 import type { Workspace } from '@/types/api';

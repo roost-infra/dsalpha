@@ -234,6 +234,8 @@ def upgrade() -> None:
             in_reply_to UUID REFERENCES bot_messages(message_id)
                 ON DELETE SET NULL,
             root_id UUID,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             delivered_at TIMESTAMPTZ
         )
@@ -246,6 +248,11 @@ def upgrade() -> None:
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_bot_messages_inbox "
         "ON bot_messages (to_bot_id, status, created_at)"
+    )
+    # The delivery sweeper's scan: queued rows due for a retry.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_bot_messages_due "
+        "ON bot_messages (last_attempt_at, created_at) WHERE status = 'queued'"
     )
 
     op.execute(
