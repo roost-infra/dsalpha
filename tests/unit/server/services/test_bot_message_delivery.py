@@ -82,6 +82,7 @@ async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
         "from_bot_id": "b-1",
         "from_name": "Quant",
         "message_kind": "request",
+        "body": "check the filings",
     }
 
 

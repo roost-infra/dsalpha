@@ -411,6 +411,9 @@ class BotMessageSource(BaseModel):
     message_kind: Literal[
         "message", "request", "reply", "report", "question", "notice"
     ] = "message"
+    #: The sender's words without the frame, so a live-attached client draws
+    #: the row complete instead of a sender line until the next history load.
+    body: Optional[str] = None
 
 
 # What a report-back turn announces, kept on its query row for display only.

@@ -282,7 +282,8 @@ CREATE INDEX ix_automations_bot ON automations (bot_id);
 <body>
 ```
 - 元数据（from_bot、kind、idem、assignment_id）放 `conversation_queries.metadata` / `conversation_responses.metadata`，模型不可见。
-- 服务端字段（from、origin）只允许服务端写：`_client_body()` 清洗客户端输入，投递走 service token + `X-From-Bot` 头。
+- 服务端字段（from、origin）只允许服务端写：`_client_body()` 清洗客户端输入，投递走 service token。
+- **展示**：投递回合带 `bot_message_source`（sender id/name、`message_kind`、去掉发送者框的 `body`），history（query 行 metadata）与 live（SSE 首帧 metadata）都有；Chat 页把这条 user 行画成 ds-bot 风格的 `BotMessageRow`（发送者头像/名字 + 正文气泡），发出方向显示为工具活动 "Messaging X · kind" / "Messaged X · delivered"。客户端不能伪造该字段。
 
 ### 7.2 投递语义
 

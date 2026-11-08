@@ -9,7 +9,7 @@ import type {
   ProvenanceSourceType,
 } from './sse';
 import type { ErrorLinkSpec, StructuredError } from '@/utils/rateLimitError';
-import type { DispatchingAgent, ReportOutcome } from './api';
+import type { BotMessageKind, DispatchingAgent, ReportOutcome } from './api';
 import type { CommandFailureReason, CommandTool } from './commands';
 
 // --- Content Segments (discriminated union) ---
@@ -470,6 +470,13 @@ export type MessageProvenance =
   /** A subagent's instruction its main agent wrote: the spawn or resume
    *  prompt, or a follow-up. */
   | { kind: 'main_agent' }
+  /** A bot-to-bot message delivered into this thread. The turn's own message
+   *  is the framed text the sender wrote for the model, so it is drawn as an
+   *  event line over its body rather than as a user bubble. */
+  | {
+      kind: 'bot_message'; fromBotId: string | null; fromName: string;
+      messageKind: BotMessageKind; messageId?: string;
+    }
   /** The two report-backs. Each is drawn as its label alone: the turn's own
    *  message is written for the model. */
   | {

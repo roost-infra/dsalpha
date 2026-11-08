@@ -2278,6 +2278,16 @@
       "taskFailed": "已失败",
       "commandStoppedEarly": "已提前停止"
     },
+    "botMessage": {
+      "prefix": {
+        "message": "消息来自",
+        "request": "请求来自",
+        "reply": "回复来自",
+        "report": "汇报来自",
+        "question": "提问来自",
+        "notice": "通知来自"
+      }
+    },
     "taskCard": {
       "statusRunning": "运行中",
       "statusPausing": "完成当前步骤",
@@ -3731,6 +3741,8 @@
       "user": "账号",
       "sendMessage": "发送消息",
       "messageTargets": "发送目标",
+      "sendBotMessage": "给 Bot 发消息",
+      "reportTo": "汇报任务",
       "scheduleWakeup": "唤醒",
       "optionsChain": "期权链",
       "marketMovers": "市场异动"
@@ -3755,6 +3767,26 @@
       "updated_user": "已更新账号",
       "read_automations": "已读取自动化",
       "updated_automations": "已更新自动化"
+    },
+    "botMessage": {
+      "kind": {
+        "message": "消息",
+        "request": "请求",
+        "reply": "回复",
+        "report": "汇报",
+        "question": "提问",
+        "notice": "通知"
+      },
+      "messaging": "正在给 {{name}} 发{{kind}}",
+      "messagingBot": "正在给另一个 Bot 发{{kind}}",
+      "reporting": "正在汇报 · 汇报",
+      "messaged": "已给 {{name}} 发消息",
+      "messagedBot": "已给另一个 Bot 发消息",
+      "reported": "已向 {{name}} 汇报",
+      "reportedBack": "已汇报",
+      "delivered": "已送达",
+      "queued": "排队中",
+      "refused": "被拒绝"
     },
     "inProgress": {
       "callingServer": "正在调用 {{server}}...",

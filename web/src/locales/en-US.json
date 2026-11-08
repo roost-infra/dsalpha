@@ -2251,6 +2251,16 @@
       "taskFailed": "failed",
       "commandStoppedEarly": "stopped early"
     },
+    "botMessage": {
+      "prefix": {
+        "message": "Message from",
+        "request": "Request from",
+        "reply": "Reply from",
+        "report": "Report from",
+        "question": "Question from",
+        "notice": "Notice from"
+      }
+    },
     "taskCard": {
       "statusRunning": "Running",
       "statusPausing": "Finishing current step",
@@ -3732,6 +3742,8 @@
       "user": "Account",
       "sendMessage": "Send Message",
       "messageTargets": "Message Targets",
+      "sendBotMessage": "Message Bot",
+      "reportTo": "Report Back",
       "scheduleWakeup": "Wakeups",
       "optionsChain": "Options Chain",
       "marketMovers": "Market Movers"
@@ -3756,6 +3768,26 @@
       "updated_user": "Updated account",
       "read_automations": "Read automations",
       "updated_automations": "Updated automations"
+    },
+    "botMessage": {
+      "kind": {
+        "message": "message",
+        "request": "request",
+        "reply": "reply",
+        "report": "report",
+        "question": "question",
+        "notice": "notice"
+      },
+      "messaging": "Messaging {{name}} · {{kind}}",
+      "messagingBot": "Messaging another bot · {{kind}}",
+      "reporting": "Reporting back · report",
+      "messaged": "Messaged {{name}}",
+      "messagedBot": "Messaged another bot",
+      "reported": "Reported to {{name}}",
+      "reportedBack": "Reported back",
+      "delivered": "delivered",
+      "queued": "queued",
+      "refused": "refused"
     },
     "inProgress": {
       "callingServer": "calling {{server}}...",
