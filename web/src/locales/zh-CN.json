@@ -6554,6 +6554,36 @@
       "full": "完全自主"
     },
     "approvalDeferredNote": "仅保存并展示：v1 不会自动批准高风险操作。",
+    "avatar": {
+      "label": "头像",
+      "auto": "使用自动头像",
+      "mark": "几何标记",
+      "emoji": "表情",
+      "image": "图片",
+      "colorLabel": "颜色",
+      "colors": {
+        "amber": "琥珀",
+        "teal": "青绿",
+        "blue": "蓝色",
+        "violet": "紫色",
+        "rose": "玫红",
+        "moss": "苔绿",
+        "clay": "陶土",
+        "slate": "石板灰"
+      },
+      "shapeLabel": "形状",
+      "shapes": {
+        "circle": "圆形",
+        "squircle": "圆角方形",
+        "hex": "六边形",
+        "blob": "不规则圆"
+      },
+      "glyph": "字符（可选）",
+      "glyphHint": "留空则使用名字首字。",
+      "emojiPlaceholder": "例如 🦊",
+      "imageUrl": "图片链接",
+      "imagePlaceholder": "https://…"
+    },
     "model": "模型",
     "modelPlaceholder": "服务商的模型 ID；留空则跟随会话",
     "provider": "服务商",

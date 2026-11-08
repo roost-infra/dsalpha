@@ -11,6 +11,7 @@
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { BotMark } from '@/components/bots/BotMark';
 import { useBot } from '@/hooks/useBots';
 import { cn } from '@/lib/utils';
 import type { MessageProvenance } from '@/types/chat';
@@ -31,34 +32,6 @@ const PREFIX_KEY: Record<BotMessageProvenance['messageKind'], string> = {
 /** About six lines of chat text; the sender's words are not a report to read
  *  in full every time, and the rest is one press away. */
 const BODY_COLLAPSE_PX = 168;
-
-const MARK =
-  'flex h-[22px] w-[22px] shrink-0 items-center justify-center overflow-hidden rounded-full text-[10px] font-semibold';
-
-/** The sender's mark: its stored avatar when the bot resolves, else the
- *  initial of the name the delivery named. */
-function SenderMark({
-  avatar,
-  name,
-}: {
-  avatar: Record<string, unknown> | undefined;
-  name: string;
-}): React.ReactElement {
-  const url = typeof avatar?.url === 'string' && avatar.url.trim() ? avatar.url : null;
-  const emoji = typeof avatar?.emoji === 'string' && avatar.emoji.trim() ? avatar.emoji : null;
-  const initial = name.trim().charAt(0).toUpperCase() || '·';
-  return (
-    <span
-      aria-hidden
-      className={MARK}
-      style={{ backgroundColor: 'var(--color-bg-elevated)', color: 'var(--color-text-secondary)' }}
-    >
-      {url
-        ? <img src={url} alt="" className="h-full w-full object-cover" />
-        : emoji || initial}
-    </span>
-  );
-}
 
 export interface BotMessageRowProps {
   id: string;
@@ -89,7 +62,9 @@ export function BotMessageRow({ id, provenance, content, together }: BotMessageR
     >
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="mt-0.5 shrink-0">
-          <SenderMark avatar={bot?.avatar} name={sender} />
+          {/* The resolved bot draws its own mark; a sender with no row (or a
+              legacy one) still gets a deterministic mark from its name. */}
+          <BotMark bot={bot ?? { name: sender }} size={22} decorative />
         </span>
         <div className="flex min-w-0 max-w-[min(100%,42rem)] flex-col items-start gap-1">
           <div className="flex min-w-0 max-w-full items-center gap-1.5 text-xs leading-4">

@@ -57,6 +57,8 @@ export interface RoomMemberInfo {
   role: string;
   status: string;
   room_role: string;
+  /** The bot's avatar dict (`BotMark` reads it); absent on older servers. */
+  avatar?: Record<string, unknown>;
 }
 
 export interface RoomView extends RoomInfo {

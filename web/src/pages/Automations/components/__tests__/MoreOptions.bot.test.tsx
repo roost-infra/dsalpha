@@ -140,11 +140,15 @@ describe("an automation's target identity", () => {
 describe('the more-options bot picker', () => {
   it('offers the chosen workspace’s bots and describes the target thread', () => {
     const form = botForm({ thread_strategy: 'new' });
-    renderWithProviders(
+    const { container } = renderWithProviders(
       <MoreOptions form={form} patch={vi.fn()} open onOpenChange={vi.fn()} threadStrategy="continue" />,
     );
 
     expect(screen.getByText(label('automation.botTargetContinueNamed', { name: 'Macro analyst' }))).toBeInTheDocument();
+    // The selected bot wears the same mark it wears everywhere else.
+    const mark = container.querySelector('[data-bot-mark]') as HTMLElement;
+    expect(mark).not.toBeNull();
+    expect(mark).toHaveAttribute('data-mark-kind', 'mark');
     fireEvent.click(screen.getByRole('button', { name: /Macro analyst/ }));
     const options = screen.getAllByRole('option').map((option) => option.textContent);
     expect(options).toEqual([label('automation.workspaceAnalyst'), 'Macro analyst']);

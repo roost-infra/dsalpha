@@ -106,6 +106,8 @@ describe('BotsPanel list', () => {
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText('Read-only')).toBeInTheDocument();
     expect(within(row as HTMLElement).queryByRole('button')).toBeNull();
+    // Every row wears its BotMark, the derived one included.
+    expect((row as HTMLElement).querySelector('[data-bot-mark]')).not.toBeNull();
   });
 
   it('offers edit, pause and delete on an analyst row', () => {
@@ -188,6 +190,67 @@ describe('BotsPanel writes', () => {
         // The scope this UI does not offer is carried through untouched.
         memory_scopes: ['workspace', 'legacy', 'user'],
       },
+    }));
+  });
+
+  it('saves a chosen colour, shape and glyph as the avatar', async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mark' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Teal' }));
+    fireEvent.change(screen.getByLabelText('Shape'), { target: { value: 'hex' } });
+    fireEvent.change(screen.getByLabelText('Glyph (optional)'), { target: { value: 'Z' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: expect.objectContaining({
+        avatar: { kind: 'mark', shape: 'hex', color: 'teal', glyph: 'Z' },
+      }),
+    }));
+  });
+
+  it('leaves an untouched avatar out of the patch', async () => {
+    h.bots = [CHIEF, { ...ANALYST, avatar: { kind: 'image', url: 'https://example.com/a.png' } }];
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Renamed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalled());
+    const patch = (h.update.mock.calls[0][0] as { patch: Record<string, unknown> }).patch;
+    expect(patch).not.toHaveProperty('avatar');
+  });
+
+  it('keeps keys the avatar UI does not own when one of its fields changes', async () => {
+    h.bots = [CHIEF, { ...ANALYST, avatar: { kind: 'mark', shape: 'circle', color: 'blue', note: 'keep' } }];
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rose' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: expect.objectContaining({
+        avatar: { note: 'keep', kind: 'mark', shape: 'circle', color: 'rose' },
+      }),
+    }));
+  });
+
+  it('uses the automatic mark when asked to reset', async () => {
+    h.bots = [CHIEF, { ...ANALYST, avatar: { kind: 'emoji', emoji: '🦊' } }];
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use automatic mark' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: expect.objectContaining({ avatar: {} }),
     }));
   });
 

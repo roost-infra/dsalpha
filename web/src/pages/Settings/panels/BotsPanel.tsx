@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { BotMessageSquare, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { BotApproval, BotCreateInput, BotInfo, BotUpdateInput } from '@/api/bots';
 import { ApiError } from '@/api/client';
+import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CheckboxChoice } from '@/components/ui/choice';
@@ -22,6 +23,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots, useCreateBot, useDeleteBot, useUpdateBot } from '@/hooks/useBots';
 import type { Workspace } from '@/types/api';
+import { BotAvatarEditor } from './BotAvatarEditor';
 import { SettingsCardBody, SettingsGroup, SettingRow } from '../components/SettingsLayout';
 import { SETTINGS } from '../sections';
 
@@ -99,6 +101,7 @@ function BotRow({ bot, busy, onEdit, onDelete, onToggleStatus }: BotRowProps) {
     <SettingRow
       label={
         <span className="flex flex-wrap items-center gap-2">
+          <BotMark bot={bot} size={36} decorative />
           <span>{bot.name}</span>
           {isChief ? (
             <Badge variant="info">{t('bots.readOnly')}</Badge>
@@ -197,6 +200,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
   const [toolsAllowText, setToolsAllowText] = useState(joinList(bot?.tools_allow ?? []));
   const [toolsDenyText, setToolsDenyText] = useState(joinList(bot?.tools_deny ?? []));
   const [memoryScopes, setMemoryScopes] = useState<string[]>(bot?.memory_scopes ?? ['workspace']);
+  // Null until the reader changes the avatar: an untouched image/emoji is sent
+  // back only if edited, and its fields (and unknown keys) stay as they are.
+  const [avatarDraft, setAvatarDraft] = useState<Record<string, unknown> | null>(null);
   const busy = createBot.isPending || updateBot.isPending;
   const trimmedName = name.trim();
   const canSubmit = !!trimmedName && (editing || !!workspaceId) && !busy;
@@ -226,6 +232,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
         if (!sameList(toolsAllow, bot.tools_allow)) patch.tools_allow = toolsAllow;
         if (!sameList(toolsDeny, bot.tools_deny)) patch.tools_deny = toolsDeny;
         if (!sameList(memoryScopes, bot.memory_scopes)) patch.memory_scopes = memoryScopes;
+        // Only an avatar the reader changed goes in the patch: an untouched one
+        // keeps the image/emoji (and unknown keys) the server already holds.
+        if (avatarDraft !== null) patch.avatar = avatarDraft;
         await updateBot.mutateAsync({ botId: bot.bot_id, patch });
       } else {
         const input: BotCreateInput = {
@@ -282,6 +291,17 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
           )}
           {!editing && workspaces.length === 0 && (
             <p className="text-xs" style={{ color: 'var(--color-loss)' }}>{t('bots.noWorkspace')}</p>
+          )}
+
+          {/* The avatar is the bot's identity on every surface; the create
+              dialog stays compact and starts from the id-derived mark. */}
+          {editing && (
+            <BotAvatarEditor
+              botId={bot.bot_id}
+              name={trimmedName || bot.name}
+              value={avatarDraft ?? bot.avatar ?? {}}
+              onChange={setAvatarDraft}
+            />
           )}
 
           <FormField label={t('bots.persona')}>

@@ -55,9 +55,9 @@ const ROOM: RoomView = {
   status: 'active',
   created_at: null,
   members: [
-    { bot_id: 'bot-1', name: 'Chief of Staff', role: 'chief_of_staff', status: 'active', room_role: 'host' },
-    { bot_id: 'bot-2', name: 'Macro analyst', role: 'analyst', status: 'active', room_role: 'member' },
-    { bot_id: 'bot-3', name: 'Rates analyst', role: 'analyst', status: 'paused', room_role: 'member' },
+    { bot_id: 'bot-1', name: 'Chief of Staff', role: 'chief_of_staff', status: 'active', room_role: 'host', avatar: { emoji: '🧭' } },
+    { bot_id: 'bot-2', name: 'Macro analyst', role: 'analyst', status: 'active', room_role: 'member', avatar: { kind: 'mark', shape: 'hex', color: 'teal' } },
+    { bot_id: 'bot-3', name: 'Rates analyst', role: 'analyst', status: 'paused', room_role: 'member', avatar: {} },
   ],
 };
 
@@ -147,6 +147,44 @@ describe('RoomPanel', () => {
     expect(statusRow).toHaveClass('rooms-log__status');
     expect(statusRow).toHaveTextContent('Rates analyst was skipped: not an active member.');
     expect(statusRow).not.toHaveClass('rooms-log__row');
+  });
+
+  it('draws the member BotMark in its chip, its log line and the speaking line', async () => {
+    await renderPanel();
+
+    // The member strip wears each bot's mark.
+    const macroChips = screen.getAllByText('Macro analyst')
+      .map((node) => node.closest('.rooms-member'))
+      .filter((node): node is HTMLElement => node !== null);
+    expect(macroChips).toHaveLength(1);
+    const macroMark = macroChips[0].querySelector('[data-bot-mark]') as HTMLElement;
+    expect(macroMark).toHaveAttribute('data-mark-kind', 'mark');
+    expect(macroMark).toHaveAttribute('data-mark-shape', 'hex');
+    // The host's emoji avatar resolves too.
+    const cosChip = screen.getAllByText('Chief of Staff')
+      .map((node) => node.closest('.rooms-member'))
+      .find((node): node is HTMLElement => node !== null) as HTMLElement;
+    expect(cosChip.querySelector('[data-bot-mark]')).toHaveAttribute('data-mark-kind', 'emoji');
+
+    // The log's sender line carries the sender's mark, and the user's does not.
+    const messages = screen.getAllByTestId('room-log-message');
+    expect(messages[1].querySelector('[data-bot-mark]')).not.toBeNull();
+    expect(messages[0].querySelector('[data-bot-mark]')).toBeNull();
+
+    // The round line is the speaker's.
+    act(() => {
+      streamHandlers().onRoundStatus({
+        round_id: 'round-1',
+        status: 'running',
+        slot_cursor: 0,
+        slots: [{ bot_id: 'bot-2', name: 'Macro analyst', state: 'pending' }],
+      });
+    });
+    await waitFor(() => {
+      const line = screen.getByTestId('room-round-status');
+      expect(line).toHaveTextContent('Macro analyst is speaking…');
+      expect(line.querySelector('[data-bot-mark]')).not.toBeNull();
+    });
   });
 
   it('appends a live message and tracks who is speaking from round_status', async () => {

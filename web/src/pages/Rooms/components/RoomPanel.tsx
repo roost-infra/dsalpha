@@ -10,9 +10,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Archive, ArrowLeft, Info, Plus, Send, UsersRound, X } from 'lucide-react';
+import { Archive, ArrowLeft, Info, Plus, Send, X } from 'lucide-react';
 import { ApiError } from '@/api/client';
 import type { RoomLogEntry, RoomMemberInfo, RoomView } from '@/api/rooms';
+import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -69,9 +70,11 @@ function LogRow({
     );
   }
   const isUser = entry.sender_type === 'user';
+  // A member's own row: its mark is on the log line, as on its chip.
+  const member = isUser ? undefined : members.get(entry.sender_id);
   const sender = isUser
     ? t('rooms.you')
-    : (members.get(entry.sender_id)?.name ?? t('rooms.unknownSender'));
+    : (member?.name ?? t('rooms.unknownSender'));
   return (
     <div
       className={isUser ? 'rooms-log__row rooms-log__row--user' : 'rooms-log__row'}
@@ -79,7 +82,10 @@ function LogRow({
       data-sender-type={entry.sender_type}
       data-pending={entry.pending ? 'true' : undefined}
     >
-      <span className="rooms-log__sender">{sender}</span>
+      <span className="rooms-log__sender inline-flex items-center gap-1">
+        {!isUser && <BotMark bot={member ?? { name: sender }} size={16} decorative />}
+        <span>{sender}</span>
+      </span>
       <div className="rooms-log__bubble">{entry.content}</div>
     </div>
   );
@@ -108,7 +114,7 @@ function MemberChip({
       data-host={isHost || undefined}
       data-paused={paused || undefined}
     >
-      <UsersRound className="rooms-member__icon" aria-hidden />
+      <BotMark bot={member} size={20} decorative />
       <span className="rooms-member__name">{member.name}</span>
       <span className="rooms-member__role">
         {t(member.role === 'chief_of_staff' ? 'agents.chiefOfStaff' : 'agents.analyst')}
@@ -208,20 +214,21 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
     if (element) element.scrollTop = element.scrollHeight;
   }, [entryCount, roomId]);
 
-  const roundLine = useMemo(() => {
+  const roundLine = useMemo((): { text: string; member: RoomMemberInfo | null } | null => {
     if (!round) return null;
-    if (round.status === 'finished') return t('rooms.round.finished');
-    if (round.status === 'failed') return t('rooms.round.failed');
-    if (round.status === 'queued') return t('rooms.round.queued');
+    if (round.status === 'finished') return { text: t('rooms.round.finished'), member: null };
+    if (round.status === 'failed') return { text: t('rooms.round.failed'), member: null };
+    if (round.status === 'queued') return { text: t('rooms.round.queued'), member: null };
     const slots = round.slots ?? [];
     const cursor = round.slot_cursor ?? 0;
-    if (cursor >= slots.length) return t('rooms.round.wrapUp');
+    if (cursor >= slots.length) return { text: t('rooms.round.wrapUp'), member: null };
     const slot = slots[cursor];
+    const member = slot ? members.get(slot.bot_id) ?? null : null;
     const name =
       slot?.name ||
-      (slot ? members.get(slot.bot_id)?.name : undefined) ||
+      member?.name ||
       t('rooms.unknownSender');
-    return t('rooms.round.speaking', { name });
+    return { text: t('rooms.round.speaking', { name }), member };
   }, [round, members, t]);
 
   if (roomQuery.isLoading) {
@@ -443,8 +450,10 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
 
       {roundLine && (
         <div className="rooms-panel__round" role="status" aria-live="polite" data-testid="room-round-status">
-          <span className="rooms-panel__round-dot" aria-hidden />
-          {roundLine}
+          {roundLine.member
+            ? <BotMark bot={roundLine.member} size={16} decorative />
+            : <span className="rooms-panel__round-dot" aria-hidden />}
+          {roundLine.text}
         </div>
       )}
 

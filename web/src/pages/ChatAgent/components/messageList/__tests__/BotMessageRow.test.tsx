@@ -77,6 +77,8 @@ describe('BotMessageRow', () => {
     expect(screen.getByText('Request from')).toBeInTheDocument();
     expect(screen.getByText('Scout')).toBeInTheDocument();
     expect(screen.getByText('Deliver the filings by Friday.')).toBeInTheDocument();
+    // The sender line's face is the shared BotMark.
+    expect(screen.getByText('Scout').closest('[data-bot-message]')?.querySelector('[data-bot-mark]')).not.toBeNull();
   });
 
   it.each([

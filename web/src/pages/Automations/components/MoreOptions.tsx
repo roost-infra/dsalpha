@@ -12,6 +12,7 @@ import {
 import { Disclosure } from '@/components/ui/Disclosure';
 import { Input } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { BotMark } from '@/components/bots/BotMark';
 import { useBots } from '@/hooks/useBots';
 import { cn } from '@/lib/utils';
 import type { Automation, DeliveryAttempt } from '@/types/automation';
@@ -180,32 +181,36 @@ export default function MoreOptions({
         </FormRow>
 
         <FormRow label={t('automation.bot')} labelId={ids.bot}>
-          <Select
-            aria-label={t('automation.bot')}
-            selectedKey={form.bot_id || NO_BOT}
-            onSelectionChange={(key) => {
-              patch('bot_id', key == null || key === NO_BOT ? '' : String(key));
-            }}
-            isDisabled={!botWorkspaceId || botsQuery.isLoading}
-            className="max-w-sm"
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopover>
-              <SelectListBox>
-                <SelectItem id={NO_BOT}>{t('automation.workspaceAnalyst')}</SelectItem>
-                {bots.map((bot) => (
-                  <SelectItem key={bot.bot_id} id={bot.bot_id}>
-                    {bot.name}
-                  </SelectItem>
-                ))}
-                {staleBot && (
-                  <SelectItem id={form.bot_id}>{t('automation.botUnavailable')}</SelectItem>
-                )}
-              </SelectListBox>
-            </SelectPopover>
-          </Select>
+          <div className="flex min-w-0 items-center gap-2">
+            {/* The selected bot's face, as it is drawn everywhere else. */}
+            {selectedBot && <BotMark bot={selectedBot} size={16} decorative />}
+            <Select
+              aria-label={t('automation.bot')}
+              selectedKey={form.bot_id || NO_BOT}
+              onSelectionChange={(key) => {
+                patch('bot_id', key == null || key === NO_BOT ? '' : String(key));
+              }}
+              isDisabled={!botWorkspaceId || botsQuery.isLoading}
+              className="min-w-0 max-w-sm flex-1"
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopover>
+                <SelectListBox>
+                  <SelectItem id={NO_BOT}>{t('automation.workspaceAnalyst')}</SelectItem>
+                  {bots.map((bot) => (
+                    <SelectItem key={bot.bot_id} id={bot.bot_id}>
+                      {bot.name}
+                    </SelectItem>
+                  ))}
+                  {staleBot && (
+                    <SelectItem id={form.bot_id}>{t('automation.botUnavailable')}</SelectItem>
+                  )}
+                </SelectListBox>
+              </SelectPopover>
+            </Select>
+          </div>
           {targetDescription && <p className="automation-form-readout">{targetDescription}</p>}
         </FormRow>
 

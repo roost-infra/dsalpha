@@ -6642,6 +6642,36 @@
       "full": "Full autonomy"
     },
     "approvalDeferredNote": "Stored and shown only: v1 does not auto-approve risky actions.",
+    "avatar": {
+      "label": "Avatar",
+      "auto": "Use automatic mark",
+      "mark": "Mark",
+      "emoji": "Emoji",
+      "image": "Image",
+      "colorLabel": "Colour",
+      "colors": {
+        "amber": "Amber",
+        "teal": "Teal",
+        "blue": "Blue",
+        "violet": "Violet",
+        "rose": "Rose",
+        "moss": "Moss",
+        "clay": "Clay",
+        "slate": "Slate"
+      },
+      "shapeLabel": "Shape",
+      "shapes": {
+        "circle": "Circle",
+        "squircle": "Squircle",
+        "hex": "Hexagon",
+        "blob": "Blob"
+      },
+      "glyph": "Glyph (optional)",
+      "glyphHint": "Empty draws the name's first character.",
+      "emojiPlaceholder": "e.g. 🦊",
+      "imageUrl": "Image URL",
+      "imagePlaceholder": "https://…"
+    },
     "model": "Model",
     "modelPlaceholder": "The provider's model id; empty follows the thread",
     "provider": "Provider",

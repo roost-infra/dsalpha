@@ -72,6 +72,8 @@ describe('ThreadBotChip', () => {
     expect(await screen.findByTestId('thread-bot')).toHaveTextContent('Macro analyst');
     expect(h.getThread).toHaveBeenCalledWith('t-1');
     await waitFor(() => expect(h.useBot).toHaveBeenCalledWith('bot-1'));
+    // The header's face is the shared BotMark, not a local drawing.
+    expect(screen.getByTestId('thread-bot').querySelector('[data-bot-mark]')).not.toBeNull();
   });
 
   it("draws the bot's avatar when it stores a URL", async () => {
