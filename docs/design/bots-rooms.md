@@ -18,6 +18,7 @@
 | P3 会话可见性 | ✅ | 线程响应带 `bot_id`（聊天头部可解析名字/头像）；rooms 行有 `updated_at` 并推 `room_updated` |
 | P3 待做 | ⏳ | `approval` 的执行映射（v2）、ds-bot 的 per-pair Exchange 抽屉（当前收到/发出已有行级显示） |
 | Bot 消息页面显示 | ✅ | `bot_message_source`（history + live 首帧，含 frame-stripped body）；`BotMessageRow`（ds-bot EventLine 风格：发送者行 + 正文气泡、长文折叠、无用户操作）；发出方向工具行 "Messaging X · kind" / "Messaged X · status" |
+| Bot 头像（BotMark） | ✅ | `lib/botMark.ts`（FNV-1a 推导 8 色 × 4 形状 + 首字；image/emoji/mark/auto）+ `components/bots/BotMark.tsx`；替换 Chat 头部、Bot 消息行、Bots 列表/编辑、房间成员/日志/轮次、自动化选择器；Bots 编辑页可编辑；`--color-bot-1..8` 双主题实色 token |
 
 已知取舍：
 - Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
