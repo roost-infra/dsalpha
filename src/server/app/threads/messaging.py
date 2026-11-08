@@ -557,7 +557,20 @@ async def _handle_send_message(
         # Home. The workspace guard comes first: it pairs with the thread
         # guard above. Home is bound once the admission gates below pass.
         workspace = await requested_workspace(user_id, workspace_id)
-        route = turn_route(user_id, workspace)
+        # The bot the turn runs as: the thread's own identity, else the
+        # place's default (the workspace's analyst, or Home's Chief of Staff).
+        # A legacy thread is stamped here, once, so the bot is a property of
+        # the thread from this turn on; a paused bot is refused here, before
+        # any durable work.
+        from src.server.services.bots.resolver import resolve_turn_bot
+
+        turn_bot = await resolve_turn_bot(
+            user_id,
+            thread_id=thread_id,
+            thread_meta=thread_meta,
+            workspace=workspace,
+        )
+        route = turn_route(user_id, workspace, turn_bot)
 
         # A workspace left in error state is replaced here, not refused: a chat
         # app holds the thread's workspace id, so a refusal strands that
@@ -589,7 +602,10 @@ async def _handle_send_message(
             )
             await update_workspace_status(workspace_id, "deleted")
             workspace = new_workspace
-            route = turn_route(user_id, workspace)
+            turn_bot = await resolve_turn_bot(
+                user_id, thread_id=thread_id, workspace=workspace
+            )
+            route = turn_route(user_id, workspace, turn_bot)
             request = request.model_copy(
                 update={"workspace_id": str(workspace["workspace_id"])}
             )
