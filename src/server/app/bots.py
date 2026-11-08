@@ -59,9 +59,17 @@ async def list_bots(
     user_id: ReadUserId,
     workspace_id: Optional[str] = Query(default=None),
 ) -> BotListResponse:
-    """The caller's live bots, narrowed to one workspace when named."""
+    """The caller's live bots, narrowed to one workspace when named.
+
+    Unfiltered, the derived Chief of Staff is made first when it does not
+    exist yet: it belongs to every user's roster, and Home has no bot until a
+    Home turn or this read creates one. A filtered read makes nothing: the
+    caller asked for one workspace's roster, not their account's.
+    """
     if workspace_id:
         await _own_workspace(user_id, workspace_id)
+    else:
+        await bot_db.ensure_home_bot(user_id)
     rows = await bot_db.list_bots(user_id, workspace_id=workspace_id)
     return BotListResponse(bots=[_info(r) for r in rows])
 
