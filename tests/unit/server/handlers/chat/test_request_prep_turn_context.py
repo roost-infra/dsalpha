@@ -682,6 +682,26 @@ class TestProvenanceMetadata:
             },
         }
 
+    def test_a_bot_message_turn_names_its_sender(self):
+        from src.server.models.chat import BotMessageSource, ChatRequest
+
+        request = ChatRequest(
+            bot_message_source=BotMessageSource(
+                from_bot_id="b-1",
+                from_name="Quant",
+                message_kind="request",
+            )
+        )
+
+        assert provenance_metadata(request) == {
+            "bot_message_source": {
+                "kind": "bot_message",
+                "from_bot_id": "b-1",
+                "from_name": "Quant",
+                "message_kind": "request",
+            }
+        }
+
     def test_a_plain_user_turn_carries_none(self):
         from src.server.models.chat import ChatRequest
 

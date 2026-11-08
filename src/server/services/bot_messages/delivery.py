@@ -108,13 +108,25 @@ async def deliver_message(message_id: Any) -> Dict[str, Any]:
 
         await assign_db.update_assignment(payload["assignment_id"], thread_id=thread_id)
 
-    frame = sender_frame(await _sender_name(message), message["kind"])
+    sender_name = await _sender_name(message)
+    frame = sender_frame(sender_name, message["kind"])
     body = {
         "messages": [{"role": "user", "content": f"{frame}{message['content']}"}],
         "workspace_id": str(bot["workspace_id"]),
         "query_type": "system",
         # A retried delivery is the same message, not a second turn.
         "request_key": f"botmsg:{message['message_id']}",
+        # Display only: history draws "Message from X" instead of a user
+        # bubble for a message the user never typed.
+        "bot_message_source": {
+            "kind": "bot_message",
+            "message_id": message["message_id"],
+            "from_bot_id": (
+                message["from_id"] if message.get("from_type") == "bot" else None
+            ),
+            "from_name": sender_name,
+            "message_kind": message["kind"],
+        },
     }
     from src.server.services.report_back.notify_turn import post_notification_turn
 
