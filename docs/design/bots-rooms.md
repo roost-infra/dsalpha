@@ -443,6 +443,8 @@ requested → working → done / failed / cancelled
 
 - 工具描述遵循 `src/tools/AGENTS.md`（每句话改变决策）。
 - 工具白名单来自 `bots.tools_allow/deny`，在构建 agent 时过滤（`tools/bots/scope.py`）。
+- 防环预算（v1.1）：链深 6、每 root 64 条、每 Bot 每分钟 8 条；`BOT_MESSAGING_ENABLED=0` 是部署级 kill switch（关闭新消息，已在投递中的消息照常完成）。
+- 可观测性：`langalpha.bots.messages{status,kind}`、`langalpha.rooms.rounds{status}`、`langalpha.rooms.round.slots{state}`、`langalpha.rooms.round.duration_ms`；运维修复/保留脚本 `scripts/bots_rooms_maintenance.py`（默认 dry-run）。
 - **审批级别 v1 语义**：`approval` 入库并在 Bots 页展示；当前分析 Bot 的可用工具里没有会触发 HITL 卡的写操作（下单/交易是独立能力组），所以 v1 不扩展自动审批，`auto/full` 不会绕过任何现有卡片。等 v2 交易/写操作进入 Bot 工具面时再映射到 `StandingApprovalMiddleware`。
 
 ### 11.2 模型解析
@@ -463,7 +465,7 @@ POST   /api/v1/threads {workspace_id, bot_id?}  # 用户与指定 Bot 开对话�
 # 兼容别名 POST /api/v1/bots/{bot_id}/messages 未实现（v2）
 
 # Rooms
-GET    /api/v1/rooms?workspace_id=
+GET    /api/v1/rooms?workspace_id=&limit=100&offset=0
 POST   /api/v1/rooms
 GET    /api/v1/rooms/{room_id}
 PATCH  /api/v1/rooms/{room_id}          # name/responder/bulletin
@@ -553,7 +555,8 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 | 前端 | `tsc -b` exit 0；全量 vitest **925 文件 / 10,355 用例通过**；ESLint 0 error |
 | 迁移 | 迁移 112 在 scratch 库上 upgrade 111→112（含回填）→ downgrade 111 → upgrade head 幂等通过 |
 | request lock | 工具面每次变化后重新生成并全绿 |
-| 未包含 | 线上部署（迁移 112 未在部署环境执行）；Playwright e2e；多 worker 实机 gate（协调器已按 Postgres claim/lease 设计并单测覆盖） |
+| Review 修复（V1.1） | 后端 **28,384+ passed**（6 个既有 macOS 环境失败）、前端 **932 文件 / 10,469 用例**；迁移 112/113 在 scratch 库与真库集成测试上验证（含旧 112 残留修复与 111→head 循环） |
+| 未包含 | 线上部署；Playwright e2e；多 worker 实机 gate（协调器已按 Postgres claim/lease 设计并单测覆盖，gate 用例留 v2） |
 
 ## 20. 测试计划
 
@@ -694,6 +697,6 @@ ds-bot 的 SVG 角色 + 表情动画是它产品性格的一部分；LangAlpha �
 - `approval` 的执行映射；`skills`/`memory_scopes` 目前只存储/展示，未进入 agent 构建。
 - `bot.updated` / `bot.thread_fallback` 事件；`hook_outbox` 复用。
 - root 预算的 96/64 双阈值细节（v1 为 6 深 / 64 条 / 8 条每分钟）；`room_rounds.metadata.budget` 列。
-- `tests/integration/test_rooms_round.py`、多 worker gate 的 room 用例、Playwright e2e。
+- room round 的 live API 集成测试（现有的是 112/113 真库迁移测试 `tests/integration/test_112_bots_rooms_migration.py`）与多 worker gate 的 room 用例、Playwright e2e。
 - 房间列表分页、`room_log` 自动保留策略（脚本可手动执行）。`latest_run_reply` 仍按"最新终态 run"取答复，未按本次 run_id 锁定。
 - ds-bot 的 per-pair Exchange 抽屉、Bot 卡通角色头像（现为确定性几何 BotMark）。
