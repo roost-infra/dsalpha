@@ -15,7 +15,8 @@
 | P2 群聊 | ✅ 后端 + API + Rooms 页 | `database/rooms.py`、`services/rooms/{coordinator,sweeper,context,threads}.py`、`app/rooms.py`（REST + SSE）、`tools/rooms`（read_room/post_to_room/read_own_chat）、`web/src/pages/Rooms/**` |
 | P3 定时任务/routine 接线 | ✅ 后端（前端待做） | `automations.bot_id`；Bot 归属的 automation 默认 `continue` 并落 Bot 私聊/既定 routine 会话；executor 以 Bot 角色路由并加 `[Scheduled task]` 框；`scripts/automations_to_persistent.py`（dry-run/apply） |
 | P3 Bot 工具面 | ✅ | `tools_allow`/`tools_deny` 在构建期收窄主 agent 工具集（`tools/bots/scope.py`） |
-| P3 待做 | ⏳ | 自动化表单的 Bot 选择器、聊天头部显示 Bot、`bots.approval` 的 HITL 映射、Bot skills/memory 选择器、`room_updated` 事件 |
+| P3 会话可见性 | ✅ | 线程响应带 `bot_id`（聊天头部可解析名字/头像）；rooms 行有 `updated_at` 并推 `room_updated` |
+| P3 待做 | ⏳ | 自动化表单的 Bot 选择器与目标会话文案、Bot skills/tools/memory 编辑、`approval` 的执行映射（v2） |
 
 已知取舍：
 - Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
@@ -427,14 +428,15 @@ requested → working → done / failed / cancelled
 |---|---|
 | `list_bots` | 列出同 workspace 的 Bot（名字/角色/状态） |
 | `send_bot_message(to, content, kind)` | 给另一个 Bot 发消息；`kind=request` 时建 assignment。**不能叫 `send_message`**：那是发给聊天渠道（微信等）的既有工具（`src/tools/messaging/`），CoS 已绑定 |
-| `assign_to_bot(bot, brief)` | 建 assignment 并交办（CoS 的 `delegate_to_analyst` 泛化） |
-| `report_to(assignment, outcome, evidence)` | 完成/失败上报 |
-| `read_room(room, since_seq)` / `post_to_room(room, content)` | 房间读写；`@Name` 生效 |
+| `report_to(assignment_id, outcome, evidence)` | 完成/失败上报，并给发起方发一条 framed report |
+| `list_assignments` | 自己参与的 assignment 及状态 |
+| `read_room` / `post_to_room` | 房间读写（成员在轮次之外查看/留言；轮次的 `@Name` 追加由协调器处理） |
 | `create_room(name, bots)` | v2，受每日配额限制 |
 | `read_own_chat` | 让群里能引用自己的私聊（记录到 room log） |
 
 - 工具描述遵循 `src/tools/AGENTS.md`（每句话改变决策）。
-- 工具白名单来自 `bots.tools_allow/deny`，在构建 agent 时过滤；审批级别映射现有 HITL（`ask` 默认，`auto/full` 仅对内部只读工具开放）。
+- 工具白名单来自 `bots.tools_allow/deny`，在构建 agent 时过滤（`tools/bots/scope.py`）。
+- **审批级别 v1 语义**：`approval` 入库并在 Bots 页展示；当前分析 Bot 的可用工具里没有会触发 HITL 卡的写操作（下单/交易是独立能力组），所以 v1 不扩展自动审批，`auto/full` 不会绕过任何现有卡片。等 v2 交易/写操作进入 Bot 工具面时再映射到 `StandingApprovalMiddleware`。
 
 ### 11.2 模型解析
 
@@ -476,7 +478,7 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 | Bot 私聊 / routine / room 成员 run | 现有 `workflow:stream:{thread}:{run}`（不变） | checkpoint（不变） |
 | Room 页面 | `room:stream:{room_id}`（Redis Stream，XADD，MAXLEN） | `room_log` 表（table-sourced） |
 
-- Room 事件：`room_message`、`round_started`、`slot_started`、`slot_finished`、`round_finished`、`member_status`、`room_updated`。
+- Room 事件（已实现）：`room_message`（每条日志）、`round_status`（轮次状态、slots、slot_cursor，每个 slot 推进时发）、`room_updated`（room 行变更，前端据此重取详情）。`slot_*` 的逐条事件 v1 折叠进 `round_status`。
 - 重连：`last_seq` 从 `room_log` 回放后 tail Redis；空洞 → `resync` 到 `room_log` 投影（同 chat 的 resync 语义）。
 - **不新增 chat wire 事件类型**（避免 `test_event_ledger.py` 的 replay home 债务）；如果未来要在私聊里渲染 room 卡片，必须先登记表和重放来源。
 
