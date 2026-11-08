@@ -533,7 +533,20 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 | **P0** | 迁移 112 + 回填 + `threads.bot_id` + Bots API/页 + 私聊绑定（行为不变） | 3–4 天 |
 | **P1** | 点对点消息（`send_message` + inbox + steering/queue）+ assignments + 防环 + 测试 | 5–7 天 |
 | **P2** | Room：log/rounds/coordinator + 上下文注入 + @ 规则 + Room 页/SSE + 恢复扫描 | 10–15 天 |
-| **P3** | 定时任务 Bot 归属与会话策略 + routines + 预算 + 跨 workspace 授权 + UI 打磨 | 5–7 天 |
+| **P3** | 定时任务 Bot 归属与会话策略 + routines + 预算 + UI 打磨 | 5–7 天 |
+
+**V1 状态：P0–P3 全部完成**（跨 workspace 群聊、`auto` responder、Bot 自主建群、`approval` 执行映射按 §21 与各节标注留到 v2）。
+
+### 19.1 V1 验收记录（2026-11-08）
+
+| 项 | 结果 |
+|---|---|
+| 后端全量单测 | `pytest tests/unit` → **28,245 passed**, 165 skipped；6 failed 均为合并前既有的 macOS 环境类失败（`File name too long` / 超时不触发 / unreachable 分支），与本次改动无关 |
+| 后端定向套件 | server 16,279、llms+tools 2,979、ptc_agent/agent 5,415（同上 1 个既有失败） |
+| 前端 | `tsc -b` exit 0；全量 vitest **925 文件 / 10,355 用例通过**；ESLint 0 error |
+| 迁移 | 迁移 112 在 scratch 库上 upgrade 111→112（含回填）→ downgrade 111 → upgrade head 幂等通过 |
+| request lock | 工具面每次变化后重新生成并全绿 |
+| 未包含 | 线上部署（迁移 112 未在部署环境执行）；Playwright e2e；多 worker 实机 gate（协调器已按 Postgres claim/lease 设计并单测覆盖） |
 
 ## 20. 测试计划
 
