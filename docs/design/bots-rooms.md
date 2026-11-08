@@ -12,8 +12,10 @@
 | P0 Bot 模型/人设 | ✅ | `resolve_turn_config` 用 bot 的固定模型，人设进 system prompt |
 | P1 点对点消息 | ✅ | `bot_messages`/`assignments`、`services/bot_messages/{delivery,sweeper}.py`、`tools/bots`（`list_bots` / `send_bot_message`） |
 | P1 自动重试 | ✅ | 每 worker 的 `BotMessageDelivery` sweeper（claim、attempt 上限、request_key 幂等） |
-| P2 群聊 | ⏳ 未开始 | `rooms`/`room_log`/`room_rounds` 表已建，协调器与页面待做 |
-| P3 定时任务/routine 接线 | ⏳ 部分 | `automations.bot_id` 已回填；默认 persistent 与 Bot 主会话绑定待做 |
+| P2 群聊 | ✅ 后端 + API + Rooms 页 | `database/rooms.py`、`services/rooms/{coordinator,sweeper,context,threads}.py`、`app/rooms.py`（REST + SSE）、`tools/rooms`（read_room/post_to_room/read_own_chat）、`web/src/pages/Rooms/**` |
+| P3 定时任务/routine 接线 | ✅ 后端（前端待做） | `automations.bot_id`；Bot 归属的 automation 默认 `continue` 并落 Bot 私聊/既定 routine 会话；executor 以 Bot 角色路由并加 `[Scheduled task]` 框；`scripts/automations_to_persistent.py`（dry-run/apply） |
+| P3 Bot 工具面 | ✅ | `tools_allow`/`tools_deny` 在构建期收窄主 agent 工具集（`tools/bots/scope.py`） |
+| P3 待做 | ⏳ | 自动化表单的 Bot 选择器、聊天头部显示 Bot、`bots.approval` 的 HITL 映射、Bot skills/memory 选择器、`room_updated` 事件 |
 
 已知取舍：
 - Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
