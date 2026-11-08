@@ -4,6 +4,22 @@
 > 参考：`roostbot/docs/design/{bots,rooms,messaging,agent-collaboration,sandboxing}.md`。
 > 原则：**Workspace 概念不变**；在它上面加「Bot 身份层」和「Room 群聊层」，Thread/Turn/run 管线、checkpoint、livefs、记忆、transcript 都不动。
 
+## 实现状态（2026-11-08，分支 `feat/bots-rooms`）
+
+| 阶段 | 状态 | 落在哪 |
+|---|---|---|
+| P0 身份层 | ✅ 后端 + API + 前端 Bots 页 | 迁移 112、`database/bots.py`、`services/bots/resolver.py`、`app/bots.py`、`<bot_identity>` prompt 块、`web/src/pages/Settings/panels/BotsPanel.tsx` |
+| P0 Bot 模型/人设 | ✅ | `resolve_turn_config` 用 bot 的固定模型，人设进 system prompt |
+| P1 点对点消息 | ✅ | `bot_messages`/`assignments`、`services/bot_messages/{delivery,sweeper}.py`、`tools/bots`（`list_bots` / `send_bot_message`） |
+| P1 自动重试 | ✅ | 每 worker 的 `BotMessageDelivery` sweeper（claim、attempt 上限、request_key 幂等） |
+| P2 群聊 | ⏳ 未开始 | `rooms`/`room_log`/`room_rounds` 表已建，协调器与页面待做 |
+| P3 定时任务/routine 接线 | ⏳ 部分 | `automations.bot_id` 已回填；默认 persistent 与 Bot 主会话绑定待做 |
+
+已知取舍：
+- Bot 工具叫 `send_bot_message`（`send_message` 是既有聊天渠道工具）。
+- `GET /api/v1/bots` 无 workspace 过滤时确保 Home Bot 存在，让 Bots 页在任何 Home 轮次之前就能显示 CoS。
+- 一个 Bot 的私聊 thread 在首次收到消息时惰性创建并钉在 `bots.primary_thread_id`。
+
 ## 1. 目标与非目标
 
 ### 目标
