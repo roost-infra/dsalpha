@@ -6602,7 +6602,12 @@
     "summary_other": "{{count}} 个 Bot · {{workspaces}}",
     "workspaceCount_other": "{{count}} 个工作区",
     "memoryScopesDeferredNote": "仅保存并展示：v1 尚未按记忆范围限制访问。",
-    "loadFailed": "无法加载 Bot。"
+    "loadFailed": "无法加载 Bot。",
+    "chat": "对话",
+    "chatNamed": "与 {{name}} 对话",
+    "chatPaused": "恢复该 Bot 后才能对话",
+    "chatFailed": "无法打开该对话，请重试。",
+    "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。"
   },
   "rooms": {
     "title": "群聊",

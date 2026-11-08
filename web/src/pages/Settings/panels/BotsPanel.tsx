@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { BotMessageSquare, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { BotMessageSquare, MessageSquare, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { BotApproval, BotCreateInput, BotInfo, BotUpdateInput } from '@/api/bots';
 import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +23,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots, useCreateBot, useDeleteBot, useUpdateBot } from '@/hooks/useBots';
 import { failureText } from '@/lib/failureText';
+import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import type { Workspace } from '@/types/api';
 import { BotAvatarEditor } from './BotAvatarEditor';
 import { SettingsCardBody, SettingsGroup, SettingRow } from '../components/SettingsLayout';
@@ -81,14 +83,18 @@ function FormField({ label, children }: { label: string; children: ReactNode }) 
 interface BotRowProps {
   bot: BotInfo;
   busy: boolean;
+  /** This row's chat thread is being created. */
+  chatting: boolean;
+  onChat: (bot: BotInfo) => void;
   onEdit: (bot: BotInfo) => void;
   onDelete: (bot: BotInfo) => void;
   onToggleStatus: (bot: BotInfo) => void;
 }
 
-function BotRow({ bot, busy, onEdit, onDelete, onToggleStatus }: BotRowProps) {
+function BotRow({ bot, busy, chatting, onChat, onEdit, onDelete, onToggleStatus }: BotRowProps) {
   const { t } = useTranslation();
   const isChief = bot.role === 'chief_of_staff';
+  const paused = bot.status === 'paused';
   const persona = personaPreview(bot.persona);
 
   return (
@@ -119,46 +125,61 @@ function BotRow({ bot, busy, onEdit, onDelete, onToggleStatus }: BotRowProps) {
         )
       }
     >
-      {/* The Chief of Staff is derived from Home: nothing here may edit or
-          delete it, and the server refuses a delete of its own. */}
-      {!isChief && (
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={busy}
-            aria-label={
-              bot.status === 'paused'
-                ? t('bots.resumeNamed', { name: bot.name })
-                : t('bots.pauseNamed', { name: bot.name })
-            }
-            onClick={() => onToggleStatus(bot)}
-          >
-            {bot.status === 'paused' ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={busy}
-            aria-label={t('bots.editNamed', { name: bot.name })}
-            onClick={() => onEdit(bot)}
-          >
-            <Pencil className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
-            disabled={busy}
-            aria-label={t('bots.deleteNamed', { name: bot.name })}
-            onClick={() => onDelete(bot)}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      )}
+      {/* A row's own conversation. The derived Chief of Staff can be talked to
+          too; a paused bot cannot (the server would refuse the create). */}
+      <div className="flex items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          disabled={busy || chatting || paused}
+          aria-label={t('bots.chatNamed', { name: bot.name })}
+          title={paused ? t('bots.chatPaused') : t('bots.chat')}
+          onClick={() => onChat(bot)}
+        >
+          <MessageSquare className="h-4 w-4" />
+        </Button>
+        {/* The Chief of Staff is derived from Home: nothing else here may edit
+            or delete it, and the server refuses a delete of its own. */}
+        {!isChief && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={busy}
+              aria-label={
+                paused
+                  ? t('bots.resumeNamed', { name: bot.name })
+                  : t('bots.pauseNamed', { name: bot.name })
+              }
+              onClick={() => onToggleStatus(bot)}
+            >
+              {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={busy}
+              aria-label={t('bots.editNamed', { name: bot.name })}
+              onClick={() => onEdit(bot)}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              disabled={busy}
+              aria-label={t('bots.deleteNamed', { name: bot.name })}
+              onClick={() => onDelete(bot)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+      </div>
     </SettingRow>
   );
 }
@@ -356,6 +377,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                   placeholder={t('bots.skillsPlaceholder')}
                 />
               </FormField>
+              <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                {t('bots.skillsStoredNote')}
+              </p>
               <FormField label={t('bots.toolsAllow')}>
                 <Input
                   value={toolsAllowText}
@@ -443,6 +467,7 @@ function BotDeleteDialog({ bot, onClose }: { bot: BotInfo; onClose: () => void }
 export function BotsPanel() {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const { data, isLoading, isError, error, refetch } = useBots();
   const {
     data: workspacesData,
@@ -454,6 +479,10 @@ export function BotsPanel() {
   const { mutate: updateBot, isPending: isUpdating } = useUpdateBot();
   const [editor, setEditor] = useState<{ bot: BotInfo | null; workspaceId?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BotInfo | null>(null);
+  // The row whose conversation is being created, and the last refusal to open
+  // one (the server's sentence, with our fallback).
+  const [chattingBotId, setChattingBotId] = useState<string | null>(null);
+  const [chatFailure, setChatFailure] = useState<string | null>(null);
 
   const workspaces = workspacesData?.workspaces ?? [];
   const bots = data?.bots ?? [];
@@ -485,6 +514,32 @@ export function BotsPanel() {
         },
       },
     );
+  };
+
+  /**
+   * Open a conversation with one bot: the thread is created bound to it, then
+   * the normal chat route opens it. Nothing is navigated on a refusal, and the
+   * server's own sentence (paused 409, unknown 404) is what the reader sees.
+   */
+  const startChat = async (bot: BotInfo) => {
+    if (chattingBotId || bot.status === 'paused') return;
+    setChatFailure(null);
+    setChattingBotId(bot.bot_id);
+    try {
+      const created = await createThreadWithTitle({
+        workspaceId: bot.workspace_id,
+        firstQuery: '',
+        title: bot.name,
+        botId: bot.bot_id,
+      });
+      navigate(`/chat/t/${created.thread_id}`, {
+        state: { workspaceId: created.workspace_id },
+      });
+    } catch (error) {
+      setChatFailure(failureText(error, t('bots.chatFailed')));
+    } finally {
+      setChattingBotId(null);
+    }
   };
 
   return (
@@ -557,6 +612,11 @@ export function BotsPanel() {
                 workspaces: t('bots.workspaceCount', { count: groups.length }),
               })}
             </p>
+            {chatFailure && (
+              <div className="mt-2">
+                <ErrorBanner error={chatFailure} />
+              </div>
+            )}
           </SettingsCardBody>
         </SettingsGroup>
       )}
@@ -584,6 +644,8 @@ export function BotsPanel() {
               key={bot.bot_id}
               bot={bot}
               busy={isUpdating}
+              chatting={chattingBotId === bot.bot_id}
+              onChat={(target) => { void startChat(target); }}
               onEdit={(target) => setEditor({ bot: target })}
               onDelete={(target) => setDeleteTarget(target)}
               onToggleStatus={toggleStatus}

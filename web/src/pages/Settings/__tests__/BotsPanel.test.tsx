@@ -26,6 +26,17 @@ const h = vi.hoisted(() => ({
   workspacesError: null as unknown,
   workspacesFailed: false,
   workspacesRefetch: vi.fn(),
+  navigate: vi.fn(),
+  createThread: vi.fn(),
+}));
+
+vi.mock('react-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router')>()),
+  useNavigate: () => h.navigate,
+}));
+
+vi.mock('@/pages/ChatAgent/utils/api/threads', () => ({
+  createThreadWithTitle: h.createThread,
 }));
 
 vi.mock('@/hooks/useBots', async () => {
@@ -110,6 +121,8 @@ beforeEach(() => {
   h.workspacesError = null;
   h.workspacesFailed = false;
   h.workspacesRefetch.mockReset();
+  h.navigate.mockReset();
+  h.createThread.mockReset();
 });
 
 describe('BotsPanel list', () => {
@@ -129,7 +142,9 @@ describe('BotsPanel list', () => {
     const row = screen.getByText('Chief of Staff').closest('.settings-row');
     expect(row).not.toBeNull();
     expect(within(row as HTMLElement).getByText('Read-only')).toBeInTheDocument();
-    expect(within(row as HTMLElement).queryByRole('button')).toBeNull();
+    // The derived bot can be talked to, but not edited, paused or deleted here.
+    expect(within(row as HTMLElement).getByRole('button', { name: 'Chat with Chief of Staff' })).toBeInTheDocument();
+    expect(within(row as HTMLElement).queryByRole('button', { name: /Edit|Delete|Pause/ })).toBeNull();
     // Every row wears its BotMark, the derived one included.
     expect((row as HTMLElement).querySelector('[data-bot-mark]')).not.toBeNull();
   });
@@ -372,4 +387,61 @@ describe('BotsPanel writes', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('Loading');
     expect(screen.queryByText('No bots yet')).toBeNull();
+  });
+  it('opens a conversation bound to the bot the row names', async () => {
+    h.createThread.mockResolvedValue({ thread_id: 'thread-9', workspace_id: 'ws-research' });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat with Macro analyst' }));
+
+    await waitFor(() => expect(h.createThread).toHaveBeenCalledWith({
+      workspaceId: 'ws-research',
+      firstQuery: '',
+      title: 'Macro analyst',
+      botId: 'bot-1',
+    }));
+    expect(h.navigate).toHaveBeenCalledWith('/chat/t/thread-9', {
+      state: { workspaceId: 'ws-research' },
+    });
+  });
+
+  it('opens a conversation with the derived Chief of Staff too', async () => {
+    h.createThread.mockResolvedValue({ thread_id: 'thread-cos', workspace_id: 'ws-home' });
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat with Chief of Staff' }));
+
+    await waitFor(() => expect(h.createThread).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: 'ws-home',
+      botId: 'bot-cos',
+    })));
+    expect(h.navigate).toHaveBeenCalledWith('/chat/t/thread-cos', {
+      state: { workspaceId: 'ws-home' },
+    });
+  });
+
+  it('cannot chat with a paused bot', () => {
+    h.bots = [CHIEF, { ...ANALYST, status: 'paused' }];
+    renderPanel();
+
+    const chat = screen.getByRole('button', { name: 'Chat with Macro analyst' });
+    expect(chat).toBeDisabled();
+    fireEvent.click(chat);
+
+    expect(h.createThread).not.toHaveBeenCalled();
+    expect(h.navigate).not.toHaveBeenCalled();
+  });
+
+  it('shows the server\'s refusal and stays on the page when a chat cannot open', async () => {
+    h.createThread.mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'Resume the bot before starting a conversation.' } },
+      }),
+    );
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat with Macro analyst' }));
+
+    expect(await screen.findByText('Resume the bot before starting a conversation.')).toBeInTheDocument();
+    expect(h.navigate).not.toHaveBeenCalled();
   });});

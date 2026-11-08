@@ -6692,7 +6692,12 @@
     "workspaceCount_one": "{{count}} workspace",
     "workspaceCount_other": "{{count}} workspaces",
     "memoryScopesDeferredNote": "Stored and shown only: v1 does not enforce memory scopes yet.",
-    "loadFailed": "Couldn't load your bots."
+    "loadFailed": "Couldn't load your bots.",
+    "chat": "Chat",
+    "chatNamed": "Chat with {{name}}",
+    "chatPaused": "Resume this bot before chatting",
+    "chatFailed": "That conversation could not be opened. Try again.",
+    "skillsStoredNote": "Stored for v2: the bot does not yet restrict the skills a turn may load."
   },
   "rooms": {
     "title": "Rooms",
