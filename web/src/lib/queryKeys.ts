@@ -334,6 +334,18 @@ export const queryKeys = {
     details: () => [...queryKeys.bots.all, 'detail'],
     detail:  (botId: string) => [...queryKeys.bots.details(), botId],
   },
+  // The user's Rooms: shared logs whose members are bots. The list is one
+  // workspace's rooms (null = every room), and the log is its own family
+  // because a send appends to one room's log without touching the list.
+  rooms: {
+    all:     ['rooms'],
+    lists:   () => [...queryKeys.rooms.all, 'list'],
+    list:    (workspaceId: string | null) => [...queryKeys.rooms.lists(), workspaceId ?? 'all'],
+    details: () => [...queryKeys.rooms.all, 'detail'],
+    detail:  (roomId: string) => [...queryKeys.rooms.details(), roomId],
+    logs:    () => [...queryKeys.rooms.all, 'log'],
+    log:     (roomId: string) => [...queryKeys.rooms.logs(), roomId],
+  },
   // The user's order attempts. The list is paged by the server on a keyset
   // cursor, so a filter set is its own list rather than a client-side view of
   // one: the key carries the filters, and changing one starts a new page 1.

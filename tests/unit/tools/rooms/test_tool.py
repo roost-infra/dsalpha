@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.tools.rooms.tool import post_to_room, read_room
+from src.tools.rooms.tool import post_to_room, read_own_chat, read_room
 
 USER = "u-1"
 WS = "22222222-2222-2222-2222-222222222222"
@@ -76,3 +76,26 @@ async def test_a_thread_outside_a_room_is_refused():
         out = await _say(post_to_room, {"content": "a note"})
     assert out.startswith("refused")
     assert "not a room member" in out
+
+
+@pytest.mark.asyncio
+async def test_reading_own_chat_records_the_look_in_the_room():
+    with patch(
+        "src.server.database.bots.get_thread_bot_id", AsyncMock(return_value="b-1")
+    ), patch(
+        "src.server.database.bots.get_bot_thread_thread_id",
+        AsyncMock(return_value="th-private"),
+    ), patch(
+        "src.server.database.bots.get_bot", AsyncMock(return_value={"name": "Quant"})
+    ), patch(
+        "src.tools.secretary.utils.extract_text_from_thread",
+        AsyncMock(return_value={"text": "private findings"}),
+    ), patch(
+        "src.tools.rooms.tool.room_db.room_for_thread", AsyncMock(return_value="r-1")
+    ), patch(
+        "src.tools.rooms.tool.room_db.append_log", AsyncMock(return_value={"seq": 11})
+    ) as log:
+        out = await read_own_chat.ainvoke({}, config=CONFIG)
+    assert "private findings" in out
+    log.assert_awaited_once()
+    assert "consulted its own chat" in log.await_args.kwargs["content"]

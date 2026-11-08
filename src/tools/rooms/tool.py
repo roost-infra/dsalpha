@@ -107,4 +107,47 @@ async def post_to_room(
     return f"posted at seq {entry['seq']}"
 
 
-ROOM_TOOLS = [read_room, post_to_room]
+@tool("read_own_chat")
+async def read_own_chat(config: RunnableConfig, turns: int = 3) -> str:
+    """Read the last turns of your own private chat with the user.
+
+    Use it when the room needs what you already worked out with the user; the
+    room records that you looked, so a claim in the room is traceable to it.
+
+    Args:
+        turns: How many of your most recent turns to read (default 3).
+
+    Returns:
+        The turns, oldest first, with their run labels; empty when you have no
+        private turns yet.
+    """
+    _user_id, thread_id, _workspace_id = _context(config)
+    from src.server.database import bots as bot_db
+
+    bot_id = await bot_db.get_thread_bot_id(thread_id)
+    if bot_id is None:
+        return "refused: this thread has no bot identity"
+    private_thread = await bot_db.get_bot_thread_thread_id(bot_id, kind="private")
+    if not private_thread:
+        return "No private chat yet."
+    from src.tools.secretary.utils import extract_text_from_thread
+
+    conf = (config or {}).get("configurable") or {}
+    result = await extract_text_from_thread(
+        private_thread, max(1, min(int(turns), 10)), timezone=conf.get("timezone") or "UTC"
+    )
+    text = (result or {}).get("text") or ""
+    room_id = await room_db.room_for_thread(thread_id)
+    if room_id:
+        bot = await bot_db.get_bot(bot_id)
+        await room_db.append_log(
+            room_id,
+            sender_type="system",
+            sender_id="room",
+            kind="status",
+            content=f"{(bot or {}).get('name') or 'A member'} consulted its own chat.",
+        )
+    return text.strip() or "No private turns yet."
+
+
+ROOM_TOOLS = [read_room, post_to_room, read_own_chat]

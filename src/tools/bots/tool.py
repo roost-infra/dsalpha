@@ -198,4 +198,102 @@ async def send_bot_message(
     return f"refused: could not deliver to {target['name']} ({sent.get('outcome')})"
 
 
-BOT_TOOLS = [list_bots, send_bot_message]
+@tool("report_to")
+async def report_to(
+    assignment_id: str,
+    outcome: str,
+    config: RunnableConfig,
+    evidence: str = "",
+    tool_call_id: Annotated[str, InjectedToolCallId] = "",
+) -> str:
+    """Close an assignment you were given: report what came of it.
+
+    The requester reads your report as a framed message on its own thread; a
+    failed outcome is reported the same way rather than left silent, so work
+    it is waiting on never disappears. Use the assignment_id from the request
+    message.
+
+    Args:
+        assignment_id: The assignment being answered.
+        outcome: done | failed, with the result in evidence.
+        evidence: What backs it — file paths, run ids, or the result itself.
+
+    Returns:
+        A one-line outcome: reported, or refused with the reason.
+    """
+    user_id, workspace_id, thread_id = _where(config)
+    caller = await _caller_bot(user_id, workspace_id, thread_id)
+    if caller is None:
+        return "refused: this thread has no bot identity"
+    assignment = await assign_db.get_assignment(assignment_id)
+    if assignment is None or assignment["to_bot_id"] != caller["bot_id"]:
+        return "refused: no assignment you were given has that id"
+    if assignment["status"] in ("done", "failed", "cancelled"):
+        return f"refused: that assignment is already {assignment['status']}"
+    normalized = (outcome or "").strip().lower()
+    if normalized not in ("done", "failed"):
+        return "refused: outcome must be done or failed"
+    remaining = await assign_db.update_assignment(
+        assignment_id,
+        status=normalized,
+        outcome=normalized,
+        evidence=[evidence] if evidence.strip() else [],
+        thread_id=thread_id,
+    )
+    if remaining is None:
+        return "refused: that assignment no longer exists"
+    if not assignment.get("from_bot_id"):
+        return "reported (no requester to notify)"
+    requester = await bot_db.get_bot(assignment["from_bot_id"])
+    if requester is None:
+        return "reported (the requester bot is gone)"
+    body = evidence.strip() or f"The assignment is {normalized}."
+    payload_assignment = {"assignment_id": str(assignment["assignment_id"])}
+    try:
+        message, _created = await msg_db.create_message(
+            user_id,
+            from_type="bot",
+            from_id=caller["bot_id"],
+            to_bot_id=requester["bot_id"],
+            kind="report",
+            content=f"{outcome.strip().capitalize()}: {body}",
+            payload=payload_assignment,
+            idem=f"report:{assignment_id}",
+            in_reply_to=None,
+        )
+    except ValueError as exc:
+        return f"reported, but the report message was refused: {exc}"
+    from src.server.services.bot_messages.delivery import deliver_message
+
+    sent = await deliver_message(message["message_id"])
+    return f"reported to {requester['name']} ({sent['status']})"
+
+
+@tool("list_assignments")
+async def list_assignments(config: RunnableConfig) -> str:
+    """List the assignments you are a side of, newest first.
+
+    Use it to see what you asked another bot for and what is still open; a
+    closed one says how it ended. Reports come back as framed messages, so
+    this is for the state, not the text.
+
+    Returns:
+        One line per assignment: status, the other bot, and its id.
+    """
+    user_id, workspace_id, thread_id = _where(config)
+    caller = await _caller_bot(user_id, workspace_id, thread_id)
+    if caller is None:
+        return "refused: this thread has no bot identity"
+    rows = await assign_db.list_assignments(user_id, caller["bot_id"], limit=30)
+    if not rows:
+        return "No assignments."
+    lines = []
+    for row in rows:
+        asked = row.get("from_bot_id") == caller["bot_id"]
+        other = row.get("to_bot_id") if asked else row.get("from_bot_id")
+        who = "you →" if asked else "→ you"
+        lines.append(f"[{row['status']}] {who} {other}  ({row['assignment_id']})")
+    return "\n".join(lines)
+
+
+BOT_TOOLS = [list_bots, send_bot_message, report_to, list_assignments]

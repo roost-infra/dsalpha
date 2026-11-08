@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.tools.bots.tool import list_bots, send_bot_message
+from src.tools.bots.tool import list_assignments, list_bots, report_to, send_bot_message
 
 USER = "user-1"
 WS = "22222222-2222-2222-2222-222222222222"
@@ -32,10 +32,15 @@ def _call(args: dict) -> dict:
     }
 
 
-async def _say(args: dict) -> str:
+async def _invoke(tool, args: dict) -> str:
     """Invoke with a full tool call and return the text the model would read."""
-    result = await send_bot_message.ainvoke(_call(args), config=CONFIG)
+    call = {**_call(args), "name": tool.name}
+    result = await tool.ainvoke(call, config=CONFIG)
     return result.content if hasattr(result, "content") else str(result)
+
+
+async def _say(args: dict) -> str:
+    return await _invoke(send_bot_message, args)
 
 
 def _ctx():
@@ -146,3 +151,65 @@ async def test_a_paused_target_is_reported_not_silently_lost():
         out = await _say({"to": "Scout", "content": "hi"})
     assert out.startswith("refused")
     assert "target_paused" in out
+
+
+# --- closing the loop: report_to / list_assignments -----------------------
+
+ASSIGNMENT = {
+    "assignment_id": "a-1",
+    "from_bot_id": "b-2",
+    "to_bot_id": "b-1",
+    "thread_id": THREAD,
+    "status": "working",
+    "outcome": None,
+    "evidence": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_reporting_closes_the_assignment_and_notifies_the_requester():
+    with _ctx(), patch(
+        "src.server.database.assignments.get_assignment",
+        AsyncMock(return_value=dict(ASSIGNMENT)),
+    ), patch(
+        "src.server.database.assignments.update_assignment",
+        AsyncMock(return_value={"status": "done"}),
+    ) as close, patch(
+        "src.server.database.bot_messages.create_message",
+        AsyncMock(return_value=({"message_id": "m-2"}, True)),
+    ) as make, patch(
+        "src.server.services.bot_messages.delivery.deliver_message",
+        AsyncMock(return_value={"status": "delivered"}),
+    ):
+        out = await _invoke(
+            report_to, {"assignment_id": "a-1", "outcome": "done", "evidence": "report.pdf"}
+        )
+    assert out.startswith("reported")
+    close.assert_awaited_once()
+    assert close.await_args.kwargs["status"] == "done"
+    assert make.await_args.kwargs["kind"] == "report"
+
+
+@pytest.mark.asyncio
+async def test_an_assignment_you_were_not_given_is_refused():
+    with _ctx(), patch(
+        "src.server.database.assignments.get_assignment",
+        AsyncMock(return_value={**ASSIGNMENT, "to_bot_id": "someone-else"}),
+    ):
+        out = await _invoke(report_to, {"assignment_id": "a-1", "outcome": "done"})
+    assert out.startswith("refused")
+
+
+@pytest.mark.asyncio
+async def test_listing_assignments_marks_which_side_you_are():
+    rows = [
+        {**ASSIGNMENT, "assignment_id": "a-1"},
+        {**ASSIGNMENT, "assignment_id": "a-2", "from_bot_id": "b-1", "to_bot_id": "b-2"},
+    ]
+    with _ctx(), patch(
+        "src.server.database.assignments.list_assignments",
+        AsyncMock(return_value=rows),
+    ):
+        out = await _invoke(list_assignments, {})
+    assert "you →" in out
+    assert "→ you" in out
