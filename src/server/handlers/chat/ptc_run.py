@@ -190,6 +190,7 @@ async def astream_ptc_workflow(
     run_metadata: dict | None = None,
     extra_configurable: dict | None = None,
     named_model: NamedModel | None = None,
+    turn_bot: dict | None = None,
     setup_over: asyncio.Event | None = None,
 ):
     """Async generator that streams PTC agent workflow events.
@@ -744,6 +745,7 @@ async def astream_ptc_workflow(
                 turn_index=run_handle.turn_index,
             ),
             turn_context=turn_context,
+            bot=turn_bot,
             # A port, not a value: the switch can flip mid-turn from any
             # worker, so the agent re-reads the row on every call.
             subagent_switch=partial(read_thread_subagents_allowed, thread_id),

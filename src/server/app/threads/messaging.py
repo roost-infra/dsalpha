@@ -675,7 +675,10 @@ async def _handle_send_message(
         config = await thread_model.resolve_turn_config(
             user_id,
             thread_id,
-            named=requested_model,
+            # A bot's model is fixed at creation; a client naming a model for
+            # this send still wins, and a backfilled bot has none (None keeps
+            # the thread's own model).
+            named=requested_model or (turn_bot or {}).get("model"),
             held=held_model,
             fall_back=from_service,
             resolve=resolve,
@@ -737,6 +740,7 @@ async def _handle_send_message(
         dispatched=is_dispatch,
         from_server=is_internal,
         named_model=named_model,
+        turn_bot=turn_bot,
         # A report-back summary owes its pair's watch clear, so its finalize
         # must see the pair.
         run_metadata=(

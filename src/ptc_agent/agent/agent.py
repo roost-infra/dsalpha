@@ -214,6 +214,7 @@ class PTCAgent:
         role: AgentRole = "analyst",
         channels_enabled: bool = False,
         claude_code: bool = False,
+        bot: dict | None = None,
     ) -> str:
         """Build the static system prompt (excludes time/profile for cacheability).
 
@@ -256,6 +257,7 @@ class PTCAgent:
             role=role,
             channels_enabled=channels_enabled,
             claude_code=claude_code,
+            bot=bot,
         )
 
     def _get_tool_summary(self, mcp_registry: MCPRegistry) -> str:
@@ -291,6 +293,7 @@ class PTCAgent:
         turn_context: TurnContext | None = None,
         project: ProjectContext | None = None,
         role: AgentRole = "analyst",
+        bot: dict | None = None,
         harness_blocks: Mapping[str, str | None] | None = None,
         subagent_switch: SubagentSwitchReader | None = None,
         window_coverage: WindowCoverage | None = None,
@@ -849,6 +852,7 @@ class PTCAgent:
             role=role,
             channels_enabled=gates.channels,
             claude_code=claude_code,
+            bot=bot,
         )
         # Read once: the baseline freezes this value per epoch, and the
         # prompt is sent with the frozen one (FrozenPromptMiddleware).
