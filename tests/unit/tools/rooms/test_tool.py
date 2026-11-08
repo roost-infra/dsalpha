@@ -83,7 +83,7 @@ async def test_reading_own_chat_records_the_look_in_the_room():
     with patch(
         "src.server.database.bots.get_thread_bot_id", AsyncMock(return_value="b-1")
     ), patch(
-        "src.server.database.bots.get_bot_thread_thread_id",
+        "src.server.database.bots.get_private_thread",
         AsyncMock(return_value="th-private"),
     ), patch(
         "src.server.database.bots.get_bot", AsyncMock(return_value={"name": "Quant"})

@@ -309,3 +309,39 @@ async def test_a_new_chain_is_rooted_at_its_first_message():
         )
     assert make.await_args.kwargs["root_id"] is None
     root.assert_awaited_once_with("m-1", "m-1")
+
+
+@pytest.mark.asyncio
+async def test_a_retried_request_reuses_its_assignment():
+    with _ctx(), patch(
+        "src.server.database.assignments.open_assignment_targets",
+        AsyncMock(return_value=set()),
+    ), patch(
+        "src.server.database.assignments.create_assignment",
+        AsyncMock(return_value={"assignment_id": "a-1"}),
+    ) as create, patch(
+        "src.server.database.bot_messages.create_message",
+        AsyncMock(return_value=({"message_id": "m-1"}, True)),
+    ), patch(
+        "src.server.services.bot_messages.delivery.deliver_message",
+        AsyncMock(return_value={"status": "delivered"}),
+    ):
+        await _say({"to": "Scout", "content": "do it", "kind": "request"})
+    # The tool call id (injected above) is the idempotency key for both rows.
+    assert create.await_args.kwargs["idem"] == "toolcall:call_1"
+
+
+@pytest.mark.asyncio
+async def test_oversized_report_evidence_is_refused_before_closing():
+    with _ctx(), patch(
+        "src.server.database.assignments.get_assignment",
+        AsyncMock(return_value={**ASSIGNMENT, "status": "working"}),
+    ), patch(
+        "src.server.database.assignments.update_assignment", AsyncMock()
+    ) as close:
+        out = await _invoke(
+            report_to,
+            {"assignment_id": "a-1", "outcome": "done", "evidence": "x" * 70_000},
+        )
+    assert "over 60 KB" in out
+    close.assert_not_awaited()

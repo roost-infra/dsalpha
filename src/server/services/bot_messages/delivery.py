@@ -47,25 +47,50 @@ def sender_frame(sender_name: str, kind: str) -> str:
 
 
 async def ensure_private_thread(bot: Dict[str, Any]) -> str:
-    """The bot's private thread, created and pinned on first need."""
-    thread_id = await bot_db.get_bot_thread_thread_id(bot["bot_id"], kind="private")
-    if thread_id:
-        return thread_id
-    from src.server.database.conversation.threads_write import ensure_thread_exists
+    """The bot's dedicated private thread, minted and pinned on first need.
 
-    thread_id = str(uuid.uuid4())
-    await ensure_thread_exists(
-        workspace_id=str(bot["workspace_id"]),
-        conversation_thread_id=thread_id,
-        user_id=str(bot["user_id"]),
-        initial_query="",
-        initial_status="in_progress",
-        resume=False,
-    )
-    await bot_db.bind_thread_bot(thread_id, bot["bot_id"])
-    await bot_db.set_primary_thread(bot["bot_id"], thread_id)
-    logger.info("[BOT_MESSAGE] minted private thread %s for bot %s", thread_id, bot["bot_id"])
-    return thread_id
+    Never adopts a thread just because the first backfill mapped one as
+    private: it is the bot's own conversation, and a shared or archived user
+    chat must not become the place bot-to-bot messages land. The advisory lock
+    (keyed by bot) keeps two deliveries from minting two threads at once.
+    """
+    usable = await bot_db.get_private_thread(bot["bot_id"])
+    if usable:
+        return usable
+    from psycopg.rows import dict_row
+
+    from src.server.database.conversation.threads_write import ensure_thread_exists
+    from src.server.database.pool import get_db_connection
+
+    async with get_db_connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s)) AS held",
+                    (f"bot-private:{bot['bot_id']}",),
+                )
+            usable = await bot_db.get_private_thread(bot["bot_id"])
+            if usable:
+                return usable
+            thread_id = str(uuid.uuid4())
+            await ensure_thread_exists(
+                workspace_id=str(bot["workspace_id"]),
+                conversation_thread_id=thread_id,
+                user_id=str(bot["user_id"]),
+                initial_query="",
+                initial_status="in_progress",
+                resume=False,
+            )
+            await bot_db.bind_thread_bot(
+                thread_id, bot["bot_id"], kind="private", force=True
+            )
+            await bot_db.set_primary_thread(bot["bot_id"], thread_id)
+            logger.info(
+                "[BOT_MESSAGE] minted private thread %s for bot %s",
+                thread_id,
+                bot["bot_id"],
+            )
+            return thread_id
 
 
 async def _sender_name(message: Dict[str, Any]) -> str:

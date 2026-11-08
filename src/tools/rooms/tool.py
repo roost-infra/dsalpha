@@ -21,6 +21,9 @@ from src.server.services.rooms.context import sender_label
 logger = logging.getLogger(__name__)
 
 _READ_LIMIT = 30
+#: One room entry can be a full message (64 KB); the model needs its point,
+#: not its whole body, and thirty of those would blow the context window.
+_ENTRY_CHARS = 1500
 
 
 def _context(config: RunnableConfig) -> tuple[str, str, str]:
@@ -61,14 +64,19 @@ async def read_room(config: RunnableConfig) -> str:
         return f"refused: {exc}"
     room = await room_db.get_room(room_id)
     members = await room_db.list_members_with_bots(room_id)
-    entries = await room_db.read_log(room_id, since_seq=0, limit=_READ_LIMIT)
+    # The newest entries, not the room's first page: this is the gap since the
+    # member's last slot, and one entry may be a full message's worth of text.
+    entries = await room_db.read_recent_log(room_id, limit=_READ_LIMIT)
     header = f'[Room "{room.get("name") if room else room_id}"]'
     if not entries:
         return f"{header}\nNo messages yet."
     lines = [header]
     for entry in entries:
         label = sender_label(entry, members)
-        lines.append(f"[{entry['seq']}] {label}: {entry['content']}")
+        text = str(entry.get("content") or "")
+        if len(text) > _ENTRY_CHARS:
+            text = text[:_ENTRY_CHARS] + " …"
+        lines.append(f"[{entry['seq']}] {label}: {text}")
     return "\n".join(lines)
 
 
@@ -127,7 +135,7 @@ async def read_own_chat(config: RunnableConfig, turns: int = 3) -> str:
     bot_id = await bot_db.get_thread_bot_id(thread_id)
     if bot_id is None:
         return "refused: this thread has no bot identity"
-    private_thread = await bot_db.get_bot_thread_thread_id(bot_id, kind="private")
+    private_thread = await bot_db.get_private_thread(bot_id)
     if not private_thread:
         return "No private chat yet."
     from src.tools.secretary.utils import extract_text_from_thread

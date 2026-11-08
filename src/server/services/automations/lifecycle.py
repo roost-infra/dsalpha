@@ -567,6 +567,13 @@ async def update_automation(
         if runs_in is None:
             raise AutomationRefusal(_NO_WORKSPACE, field="bot_id")
         await _require_bot_in(user_id, update_kwargs["bot_id"], runs_in, conn)
+    elif "workspace_id" in update.model_fields_set and current.get("bot_id"):
+        # Moving the automation without naming a bot leaves the stored one
+        # behind in the old workspace; validate it against the new place so
+        # the edit cannot silently fall back to a different identity.
+        await _require_bot_in(
+            user_id, str(current["bot_id"]), update_kwargs["workspace_id"], conn
+        )
     # Only a new name is checked: a stored one the user can no longer run
     # must not block an edit to anything else.
     if update.llm_model and update.llm_model != current.get("llm_model"):

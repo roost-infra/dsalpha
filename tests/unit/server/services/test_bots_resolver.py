@@ -66,7 +66,7 @@ async def test_a_legacy_thread_is_stamped_with_the_place_default_once():
         )
     assert bot == ANALYST
     ensure_workspace.assert_awaited_once()
-    bind_mock.assert_awaited_once_with("t-1", "b-1")
+    bind_mock.assert_awaited_once_with("t-1", "b-1", force=True)
 
 
 @pytest.mark.asyncio
@@ -89,6 +89,30 @@ async def test_a_bot_from_another_workspace_does_not_drag_into_this_one():
         )
     assert bot["workspace_id"] == "ws-1"
     ensure_workspace.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_thread_whose_bot_is_gone_is_rebound_to_the_default():
+    get, ws_default, home_default, bind = _patched(place_default=ANALYST)
+    with get, ws_default, home_default, bind as bind_mock:
+        bot = await resolve_turn_bot(
+            USER, thread_id="t-1", thread_meta={"bot_id": "b-gone"}, workspace=WORKSPACE
+        )
+    assert bot == ANALYST
+    bind_mock.assert_awaited_once_with("t-1", "b-1", force=True)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_whose_bot_moved_is_rebound_to_this_place():
+    get, ws_default, home_default, bind = _patched(
+        carried={**ANALYST, "workspace_id": "ws-old"}, place_default=ANALYST
+    )
+    with get, ws_default, home_default, bind as bind_mock:
+        bot = await resolve_turn_bot(
+            USER, thread_id="t-1", thread_meta={"bot_id": "b-1"}, workspace=WORKSPACE
+        )
+    assert bot["workspace_id"] == "ws-1"
+    bind_mock.assert_awaited_once_with("t-1", "b-1", force=True)
 
 
 @pytest.mark.asyncio

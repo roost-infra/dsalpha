@@ -111,6 +111,12 @@ async def create_bot(principal: WorkspaceWritePrincipal, body: BotCreate) -> Bot
             status_code=400,
             detail="Home holds the Chief of Staff; create bots in a workspace.",
         )
+    if body.model:
+        from src.server.services.llm.thread_model import require_selectable_model
+
+        # A model the account cannot run fails every turn of this bot; refuse
+        # it at the pick instead, where the user can change it.
+        await require_selectable_model(user_id, body.model)
     try:
         row = await bot_db.create_bot(
             user_id,
@@ -155,6 +161,10 @@ async def update_bot(
         return _info(current)
     if "name" in changes:
         changes["name"] = changes["name"].strip()
+    if changes.get("model"):
+        from src.server.services.llm.thread_model import require_selectable_model
+
+        await require_selectable_model(user_id, changes["model"])
     try:
         updated = await bot_db.update_bot(user_id, bot_id, changes)
     except bot_db.BotNameTaken:

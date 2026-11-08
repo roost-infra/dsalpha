@@ -96,13 +96,28 @@ def upgrade() -> None:
           AND (t.is_shared OR t.archived_at IS NOT NULL)
         """
     )
+    # A mapping must name the bot the thread actually belongs to; a row the
+    # first cut wrote against another bot's thread is not private to anyone.
+    op.execute(
+        """
+        DELETE FROM bot_threads bt
+        USING conversation_threads t
+        WHERE bt.kind = 'private'
+          AND t.conversation_thread_id = bt.thread_id
+          AND t.bot_id IS DISTINCT FROM bt.bot_id
+        """
+    )
     op.execute(
         """
         UPDATE bots b
         SET primary_thread_id = NULL, updated_at = NOW()
         FROM conversation_threads t
         WHERE b.primary_thread_id = t.conversation_thread_id
-          AND (t.is_shared OR t.archived_at IS NOT NULL)
+          AND (
+              t.is_shared
+              OR t.archived_at IS NOT NULL
+              OR t.bot_id IS DISTINCT FROM b.bot_id
+          )
         """
     )
 
@@ -112,6 +127,17 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE bot_messages "
         "ADD COLUMN IF NOT EXISTS delivering_until TIMESTAMPTZ"
+    )
+
+    # A retried tool call must not leave a second assignment (which would keep
+    # blocking the target as "waiting on you").
+    op.execute(
+        "ALTER TABLE assignments "
+        "ADD COLUMN IF NOT EXISTS idem VARCHAR(128)"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_assignments_idem "
+        "ON assignments (user_id, idem) WHERE idem IS NOT NULL"
     )
 
     # A deleted bot must not keep its name hostage: only live rows are unique.
@@ -131,12 +157,28 @@ def upgrade() -> None:
         "ON room_rounds (status, lease_until) "
         "WHERE status IN ('queued', 'running')"
     )
+    # A slot's reply is appended once, even when a resumed round re-adopts the
+    # same run; a user send's request key makes a client retry one message.
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_room_log_round_slot "
+        "ON room_log (round_id, ((metadata->>'slot')::int)) "
+        "WHERE metadata ? 'slot'"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_room_log_request_key "
+        "ON room_log (room_id, (metadata->>'request_key')) "
+        "WHERE metadata ? 'request_key'"
+    )
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX IF EXISTS ix_assignments_idem")
+    op.execute("ALTER TABLE assignments DROP COLUMN IF EXISTS idem")
     op.execute(
         "ALTER TABLE bot_messages DROP COLUMN IF EXISTS delivering_until"
     )
+    op.execute("DROP INDEX IF EXISTS ix_room_log_request_key")
+    op.execute("DROP INDEX IF EXISTS ix_room_log_round_slot")
     op.execute("DROP INDEX IF EXISTS ix_room_rounds_due")
     op.execute("DROP INDEX IF EXISTS ix_bots_user")
     op.execute("DROP INDEX IF EXISTS ix_bots_live_name")

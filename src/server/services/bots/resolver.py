@@ -38,10 +38,14 @@ async def resolve_turn_bot(
     from src.server.database import bots as bot_db
 
     bot: Optional[Dict[str, Any]] = None
+    rebind = False
     carried = (thread_meta or {}).get("bot_id")
     if carried:
         bot = await bot_db.get_bot_for_user(user_id, carried)
         if bot is None:
+            # The bot a thread carried is gone (deleted, or another account's):
+            # the thread must be rebound, not left pointing at nothing.
+            rebind = True
             logger.warning(
                 "[BOTS] thread %s carries bot %s, which this user no longer has; "
                 "falling back to the place's default",
@@ -50,19 +54,8 @@ async def resolve_turn_bot(
             )
 
     if bot is None:
+        rebind = True
         bot = await _default_bot(user_id, workspace)
-        if bot is not None and thread_id and thread_meta is not None:
-            # Legacy thread: stamp it once, so a bot's private chat is a
-            # property of the thread from here on, not a guess each turn.
-            try:
-                await bot_db.bind_thread_bot(thread_id, bot["bot_id"])
-            except Exception as exc:  # never fail a turn over a provenance write
-                logger.warning(
-                    "[BOTS] could not stamp thread %s with bot %s: %s",
-                    thread_id,
-                    bot.get("bot_id"),
-                    exc,
-                )
 
     if bot is None:
         return None
@@ -79,9 +72,22 @@ async def resolve_turn_bot(
             workspace.get("workspace_id"),
         )
         bot = await _default_bot(user_id, workspace)
+        rebind = True
 
     if bot is None:
         return None
+    if thread_id and thread_meta is not None and rebind:
+        # Stamp the identity the thread will answer as from here on: a legacy
+        # row (no bot), or one whose bot no longer resolves.
+        try:
+            await bot_db.bind_thread_bot(thread_id, bot["bot_id"], force=True)
+        except Exception as exc:  # never fail a turn over a provenance write
+            logger.warning(
+                "[BOTS] could not stamp thread %s with bot %s: %s",
+                thread_id,
+                bot.get("bot_id"),
+                exc,
+            )
     if bot.get("status") == "paused":
         raise HTTPException(
             status_code=409,

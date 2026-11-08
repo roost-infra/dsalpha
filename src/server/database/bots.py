@@ -434,29 +434,91 @@ async def ensure_home_bot(user_id: str, *, conn=None) -> Dict[str, Any]:
 
 
 async def bind_thread_bot(
-    thread_id: Any, bot_id: Any, *, kind: str = "private", conn=None
-) -> None:
+    thread_id: Any,
+    bot_id: Any,
+    *,
+    kind: str = "private",
+    conn=None,
+    force: bool = False,
+) -> bool:
     """Stamp the thread's bot once, and record the mapping.
 
     A thread may already carry another bot (a moved thread, a legacy row a
-    resolver filled in); the existing owner wins, so this never rewrites.
+    resolver filled in); the existing owner wins, so this never rewrites — an
+    insert only lands after the UPDATE claimed the row (or the row already
+    names this bot). ``force`` is for an owner that no longer resolves (a
+    deleted bot, a mismatch): it rebinds the thread and replaces the mapping.
     """
     thread = normalize_uuid(str(thread_id)) if thread_id else None
     bot = _clean_bot_id(bot_id)
     if thread is None or bot is None:
-        return
+        return False
     async with get_db_connection(conn) as db:
-        async with db.cursor() as cur:
-            await cur.execute(
-                "UPDATE conversation_threads SET bot_id = %s "
-                "WHERE conversation_thread_id = %s AND bot_id IS NULL",
-                (bot, thread),
-            )
+        async with db.cursor(row_factory=dict_row) as cur:
+            if force:
+                await cur.execute(
+                    "UPDATE conversation_threads SET bot_id = %s "
+                    "WHERE conversation_thread_id = %s",
+                    (bot, thread),
+                )
+            else:
+                await cur.execute(
+                    "UPDATE conversation_threads SET bot_id = %s "
+                    "WHERE conversation_thread_id = %s AND bot_id IS NULL",
+                    (bot, thread),
+                )
+            if not force and cur.rowcount == 0:
+                await cur.execute(
+                    "SELECT bot_id FROM conversation_threads "
+                    "WHERE conversation_thread_id = %s",
+                    (thread,),
+                )
+                owner = await cur.fetchone()
+                if owner is None or str(owner["bot_id"]) != bot:
+                    return False
+            if force:
+                await cur.execute(
+                    "DELETE FROM bot_threads WHERE thread_id = %s", (thread,)
+                )
             await cur.execute(
                 "INSERT INTO bot_threads (bot_id, thread_id, kind) "
                 "VALUES (%s, %s, %s) ON CONFLICT (bot_id, thread_id) DO NOTHING",
                 (bot, thread, kind),
             )
+            return True
+
+
+async def get_private_thread(bot_id: Any, *, conn=None) -> Optional[str]:
+    """The bot's dedicated private thread, if it still has a usable one.
+
+    ``primary_thread_id`` is the pointer (written once); a missing, shared or
+    archived target is not usable, and the caller mints a new one rather than
+    adopting an arbitrary old chat the first backfill may have mapped.
+    """
+    bot = _clean_bot_id(bot_id)
+    if bot is None:
+        return None
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT b.primary_thread_id, t.is_shared, t.archived_at "
+                "FROM bots b "
+                "LEFT JOIN conversation_threads t "
+                "  ON t.conversation_thread_id = b.primary_thread_id "
+                "WHERE b.bot_id = %s AND b.deleted_at IS NULL",
+                (bot,),
+            )
+            row = await cur.fetchone()
+            if row is None or row.get("primary_thread_id") is None:
+                return None
+            if row.get("is_shared") is None and row.get("archived_at") is None:
+                # LEFT JOIN found no thread row at all (the column is NULL
+                # both when absent and when unset); treat as missing.
+                if row.get("is_shared") is None:
+                    return None
+            if row.get("is_shared") or row.get("archived_at") is not None:
+                return None
+            return str(row["primary_thread_id"])
 
 
 async def get_thread_bot_id(thread_id: Any, *, conn=None) -> Optional[str]:

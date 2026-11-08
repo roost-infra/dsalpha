@@ -141,3 +141,19 @@ async def test_a_bot_off_its_computer_is_refused_on_read():
         with pytest.raises(HTTPException) as caught:
             await get_bot(computer, "b-1")
     assert caught.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_bot_model_the_account_cannot_run_is_refused_at_the_pick():
+    body = BotCreate(workspace_id=WS, name="Quant", model="no-such-model")
+    workspace = {"workspace_id": WS, "user_id": USER}
+    refused = HTTPException(status_code=400, detail="Model not available")
+    with patch(
+        "src.server.app.bots._own_workspace", AsyncMock(return_value=workspace)
+    ), patch(
+        "src.server.services.llm.thread_model.require_selectable_model",
+        AsyncMock(side_effect=refused),
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await _create(PRINCIPAL, body)
+    assert caught.value.status_code == 400

@@ -219,6 +219,9 @@ async def send_bot_message(
             to_bot_id=target["bot_id"],
             depth=next_depth,
             root_id=root,
+            # The same call id makes the message and its assignment one pair,
+            # so a retried tool call leaves no orphan request behind.
+            idem=idem,
         )
     try:
         message, created = await msg_db.create_message(
@@ -310,6 +313,10 @@ async def report_to(
     normalized = (outcome or "").strip().lower()
     if normalized not in ("done", "failed"):
         return "refused: outcome must be done or failed"
+    if len(evidence or "") > 60_000:
+        # The report message caps at 64 KB; refuse before closing, so an
+        # oversized evidence cannot mark the assignment done without a report.
+        return "refused: evidence is over 60 KB; put it in a file and send the path"
     remaining = await assign_db.update_assignment(
         assignment_id,
         status=normalized,
@@ -352,7 +359,15 @@ async def report_to(
     claimed = await msg_db.claim_message(message["message_id"])
     if claimed is None:
         return f"reported to {requester['name']} (a delivery is already in progress)"
-    sent = await deliver_message(message["message_id"], attempts=claimed)
+    try:
+        sent = await deliver_message(message["message_id"], attempts=claimed)
+    except Exception as exc:  # the assignment is closed; delivery keeps its row
+        logger.warning(
+            "[BOT_TOOL] report delivery of %s failed: %s",
+            message["message_id"],
+            exc,
+        )
+        return f"reported to {requester['name']} (delivery queued)"
     return f"reported to {requester['name']} ({sent['status']})"
 
 

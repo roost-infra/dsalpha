@@ -979,6 +979,24 @@ class AutomationExecutor:
             # ─── Resolve workspace + thread ───────────────────────
             place = await _turn_place(firing.automation)
             firing.bot = place.bot
+            if firing.automation.get("bot_id") and place.bot is None:
+                # The named bot is paused, deleted, or no longer of this
+                # workspace. Running as the analyst instead would spend the
+                # user's credit as an identity they did not choose; skip the
+                # firing and let the history say why.
+                logger.warning(
+                    "[AUTOMATION_EXEC] Skipping execution %s: bot %s is not "
+                    "available to run it",
+                    execution_id,
+                    firing.automation.get("bot_id"),
+                )
+                await settle(
+                    firing.automation,
+                    execution_id,
+                    Outcome.SKIPPED,
+                    skip_reason="bot_unavailable",
+                )
+                return
             route = turn_route(user_id, place.workspace, place.bot)
             await route.bind(user_id, place.workspace)
             firing.route = route
