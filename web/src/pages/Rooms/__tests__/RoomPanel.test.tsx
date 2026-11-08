@@ -1,0 +1,230 @@
+/**
+ * The room panel: the member strip, the shared log (messages vs the room's own
+ * status rows), the composer's optimistic send, and the live tail's two frames.
+ *
+ * The hooks are the real ones; only the api module is stubbed, so a row that
+ * appears here is a row the SSE handler actually appended, and a send that
+ * appears before its answer is the log cache's optimistic entry.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { renderWithProviders } from '@/test/utils';
+import type { RoomLogEntry, RoomRoundStatus, RoomView } from '@/api/rooms';
+
+vi.mock('@/api/rooms', () => ({
+  getRooms: vi.fn(),
+  getRoom: vi.fn(),
+  createRoom: vi.fn(),
+  updateRoom: vi.fn(),
+  addRoomMember: vi.fn(),
+  removeRoomMember: vi.fn(),
+  sendRoomMessage: vi.fn(),
+  getRoomLog: vi.fn(),
+  streamRoom: vi.fn(),
+}));
+
+vi.mock('@/hooks/useBots', () => ({
+  useBots: () => ({ data: { bots: [], max_bots: 12 }, isLoading: false, isError: false }),
+}));
+
+import {
+  getRoom,
+  getRoomLog,
+  removeRoomMember,
+  sendRoomMessage,
+  streamRoom,
+  updateRoom,
+} from '@/api/rooms';
+import RoomPanel from '../components/RoomPanel';
+
+const mockGetRoom = getRoom as unknown as ReturnType<typeof vi.fn>;
+const mockGetRoomLog = getRoomLog as unknown as ReturnType<typeof vi.fn>;
+const mockSendMessage = sendRoomMessage as unknown as ReturnType<typeof vi.fn>;
+const mockStreamRoom = streamRoom as unknown as ReturnType<typeof vi.fn>;
+const mockUpdateRoom = updateRoom as unknown as ReturnType<typeof vi.fn>;
+const mockRemoveMember = removeRoomMember as unknown as ReturnType<typeof vi.fn>;
+
+const ROOM: RoomView = {
+  room_id: 'room-1',
+  workspace_id: 'ws-1',
+  name: 'Morning desk',
+  host_bot_id: 'bot-1',
+  responder: 'everyone',
+  bulletin: 'Keep it brief.',
+  status: 'active',
+  created_at: null,
+  members: [
+    { bot_id: 'bot-1', name: 'Chief of Staff', role: 'chief_of_staff', status: 'active', room_role: 'host' },
+    { bot_id: 'bot-2', name: 'Macro analyst', role: 'analyst', status: 'active', room_role: 'member' },
+    { bot_id: 'bot-3', name: 'Rates analyst', role: 'analyst', status: 'paused', room_role: 'member' },
+  ],
+};
+
+const LOG: RoomLogEntry[] = [
+  {
+    seq: 1,
+    room_id: 'room-1',
+    round_id: 'round-0',
+    sender_type: 'user',
+    sender_id: 'user-1',
+    kind: 'message',
+    content: 'What moved?',
+    created_at: null,
+  },
+  {
+    seq: 2,
+    room_id: 'room-1',
+    round_id: 'round-0',
+    sender_type: 'bot',
+    sender_id: 'bot-2',
+    kind: 'message',
+    content: 'Rates are quiet.',
+    created_at: null,
+  },
+  {
+    seq: 3,
+    room_id: 'room-1',
+    round_id: 'round-0',
+    sender_type: 'system',
+    sender_id: 'room',
+    kind: 'status',
+    content: 'Rates analyst was skipped: not an active member.',
+    created_at: null,
+  },
+];
+
+function streamHandlers() {
+  const call = mockStreamRoom.mock.calls.at(-1);
+  return call?.[2] as {
+    onMessage: (entry: RoomLogEntry) => void;
+    onRoundStatus: (status: RoomRoundStatus) => void;
+  };
+}
+
+async function renderPanel() {
+  const view = renderWithProviders(<RoomPanel roomId="room-1" onClose={vi.fn()} />);
+  expect(await screen.findByText('Morning desk')).toBeInTheDocument();
+  await waitFor(() => expect(mockStreamRoom).toHaveBeenCalled());
+  return view;
+}
+
+beforeEach(() => {
+  mockGetRoom.mockReset().mockResolvedValue(ROOM);
+  mockGetRoomLog.mockReset().mockResolvedValue({ entries: LOG, latest_seq: 3 });
+  mockSendMessage.mockReset();
+  mockUpdateRoom.mockReset().mockResolvedValue({ ...ROOM, status: 'archived' });
+  mockRemoveMember.mockReset().mockResolvedValue({ ok: true, bot_id: 'bot-2' });
+  mockStreamRoom.mockReset().mockReturnValue(vi.fn());
+});
+
+describe('RoomPanel', () => {
+  it('draws members with their roles, host and paused state', async () => {
+    await renderPanel();
+
+    expect(screen.getAllByText('Chief of Staff').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Macro analyst').length).toBeGreaterThan(0);
+    expect(screen.getByText('Rates analyst')).toBeInTheDocument();
+    expect(screen.getByText('Host')).toBeInTheDocument();
+    expect(screen.getByText('Paused')).toBeInTheDocument();
+    // The host has no remove control; the other members do.
+    expect(screen.queryByRole('button', { name: 'Remove Chief of Staff' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove Macro analyst' })).toBeInTheDocument();
+    expect(screen.getByText('Keep it brief.')).toBeInTheDocument();
+  });
+
+  it('names the speakers in the log and gives the room\'s status rows their own shape', async () => {
+    await renderPanel();
+
+    const messages = screen.getAllByTestId('room-log-message');
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toHaveTextContent('You');
+    expect(messages[0]).toHaveTextContent('What moved?');
+    expect(messages[1]).toHaveTextContent('Macro analyst');
+    expect(messages[1]).toHaveTextContent('Rates are quiet.');
+
+    const statusRow = screen.getByTestId('room-log-status');
+    expect(statusRow).toHaveClass('rooms-log__status');
+    expect(statusRow).toHaveTextContent('Rates analyst was skipped: not an active member.');
+    expect(statusRow).not.toHaveClass('rooms-log__row');
+  });
+
+  it('appends a live message and tracks who is speaking from round_status', async () => {
+    await renderPanel();
+    const handlers = streamHandlers();
+
+    act(() => {
+      handlers.onMessage({
+        seq: 4,
+        room_id: 'room-1',
+        round_id: 'round-1',
+        sender_type: 'bot',
+        sender_id: 'bot-1',
+        kind: 'message',
+        content: 'Fresh take from the desk.',
+        created_at: null,
+      });
+    });
+    expect(screen.getByText('Fresh take from the desk.')).toBeInTheDocument();
+    expect(screen.getAllByTestId('room-log-message')).toHaveLength(3);
+
+    act(() => {
+      handlers.onRoundStatus({
+        round_id: 'round-1',
+        status: 'running',
+        slot_cursor: 0,
+        slots: [{ bot_id: 'bot-1', name: 'Chief of Staff', state: 'pending' }],
+      });
+    });
+    expect(screen.getByTestId('room-round-status')).toHaveTextContent('Chief of Staff is speaking…');
+
+    act(() => {
+      handlers.onRoundStatus({
+        round_id: 'round-1',
+        status: 'finished',
+        slot_cursor: 1,
+        slots: [],
+      });
+    });
+    expect(screen.getByTestId('room-round-status')).toHaveTextContent('Round finished');
+  });
+
+  it('sends the composer text optimistically, then with the API', async () => {
+    let resolveSend: ((answer: unknown) => void) | null = null;
+    mockSendMessage.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    await renderPanel();
+
+    fireEvent.change(screen.getByLabelText('Message the room…'), {
+      target: { value: 'What about credit?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(mockSendMessage).toHaveBeenCalledWith('room-1', 'What about credit?'),
+    );
+    // Drawn before the server answers, so the message never looks lost.
+    expect(await screen.findByText('What about credit?')).toBeInTheDocument();
+    expect(screen.getByLabelText('Message the room…')).toHaveValue('');
+
+    await act(async () => {
+      resolveSend?.({ message_seq: 4, round_id: 'round-1', round_status: 'queued' });
+      await Promise.resolve();
+    });
+    expect(screen.getByText('What about credit?')).toBeInTheDocument();
+  });
+
+  it('removes a member and archives the room through their writes', async () => {
+    await renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Macro analyst' }));
+    await waitFor(() => expect(mockRemoveMember).toHaveBeenCalledWith('room-1', 'bot-2'));
+    await waitFor(() => expect(screen.queryByText('Macro analyst')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive room' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive' }));
+
+    await waitFor(() => expect(mockUpdateRoom).toHaveBeenCalledWith('room-1', { status: 'archived' }));
+    expect(await screen.findByText(/This room is archived/)).toBeInTheDocument();
+  });
+});

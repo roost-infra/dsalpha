@@ -1225,6 +1225,10 @@ class PTCAgent:
         tools = [*tools, *BOT_TOOLS, *ROOM_TOOLS]
         if direct_tools:
             tools = [*tools, *direct_tools]
+        # A bot may narrow its own surface; the build binds what is left.
+        from src.tools.bots.scope import narrow_tools
+
+        tools = narrow_tools(tools, bot)
 
         agent: Any = create_agent(
             turn.client,

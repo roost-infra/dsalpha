@@ -1,4 +1,4 @@
-import { Blocks, ChartCandlestick, FlaskConical, LayoutDashboard, MessagesSquare, Receipt, Settings, Timer } from 'lucide-react';
+import { Blocks, ChartCandlestick, FlaskConical, LayoutDashboard, MessagesSquare, Receipt, Settings, Timer, UsersRound } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -23,6 +23,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { key: '/dashboard', icon: LayoutDashboard, labelKey: 'sidebar.dashboard', match: 'exact-or-sub' },
   { key: '/chat', icon: MessagesSquare, labelKey: 'sidebar.chatAgent', match: 'prefix' },
+  { key: '/rooms', icon: UsersRound, labelKey: 'nav.rooms', match: 'exact-or-sub' },
   { key: '/market', icon: ChartCandlestick, labelKey: 'sidebar.marketView', match: 'exact-or-sub' },
   { key: '/factors', icon: FlaskConical, labelKey: 'sidebar.factors', match: 'exact-or-sub' },
   { key: '/automations', icon: Timer, labelKey: 'sidebar.automations', match: 'exact-or-sub' },

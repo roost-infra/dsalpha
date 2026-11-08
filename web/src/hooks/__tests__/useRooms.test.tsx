@@ -1,0 +1,321 @@
+/**
+ * The Rooms hooks: query keys, the log's optimistic append and merge, and the
+ * SSE hook's cache append / reconnect contract. The wire contract itself lives
+ * in api/__tests__/rooms.test.ts; here the api module is stubbed so the
+ * assertions are about what the hooks put in the cache.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { act, waitFor } from '@testing-library/react';
+import { renderHookWithProviders } from '@/test/utils';
+import { queryKeys } from '@/lib/queryKeys';
+import type { RoomLogEntry, RoomRoundStatus, RoomView } from '@/api/rooms';
+
+vi.mock('@/api/rooms', () => ({
+  getRooms: vi.fn(),
+  getRoom: vi.fn(),
+  createRoom: vi.fn(),
+  updateRoom: vi.fn(),
+  addRoomMember: vi.fn(),
+  removeRoomMember: vi.fn(),
+  sendRoomMessage: vi.fn(),
+  getRoomLog: vi.fn(),
+  streamRoom: vi.fn(),
+}));
+
+import {
+  addRoomMember,
+  createRoom,
+  getRoom,
+  getRoomLog,
+  getRooms,
+  removeRoomMember,
+  sendRoomMessage,
+  streamRoom,
+  updateRoom,
+} from '@/api/rooms';
+import {
+  useAddRoomMember,
+  useCreateRoom,
+  useRemoveRoomMember,
+  useRoom,
+  useRoomLog,
+  useRooms,
+  useRoomStream,
+  useSendRoomMessage,
+  useUpdateRoom,
+} from '../useRooms';
+
+const mockGetRooms = getRooms as unknown as ReturnType<typeof vi.fn>;
+const mockGetRoom = getRoom as unknown as ReturnType<typeof vi.fn>;
+const mockCreateRoom = createRoom as unknown as ReturnType<typeof vi.fn>;
+const mockUpdateRoom = updateRoom as unknown as ReturnType<typeof vi.fn>;
+const mockAddMember = addRoomMember as unknown as ReturnType<typeof vi.fn>;
+const mockRemoveMember = removeRoomMember as unknown as ReturnType<typeof vi.fn>;
+const mockSendMessage = sendRoomMessage as unknown as ReturnType<typeof vi.fn>;
+const mockGetRoomLog = getRoomLog as unknown as ReturnType<typeof vi.fn>;
+const mockStreamRoom = streamRoom as unknown as ReturnType<typeof vi.fn>;
+
+const ROOM: RoomView = {
+  room_id: 'room-1',
+  workspace_id: 'ws-1',
+  name: 'Morning desk',
+  host_bot_id: 'bot-1',
+  responder: 'everyone',
+  bulletin: '',
+  status: 'active',
+  created_at: null,
+  members: [
+    { bot_id: 'bot-1', name: 'Chief of Staff', role: 'chief_of_staff', status: 'active', room_role: 'host' },
+    { bot_id: 'bot-2', name: 'Macro analyst', role: 'analyst', status: 'active', room_role: 'member' },
+  ],
+};
+
+function entry(overrides: Partial<RoomLogEntry> & Pick<RoomLogEntry, 'seq' | 'sender_type' | 'content'>): RoomLogEntry {
+  return {
+    room_id: 'room-1',
+    round_id: null,
+    sender_id: 'user-1',
+    kind: 'message',
+    created_at: null,
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  for (const mock of [
+    mockGetRooms,
+    mockGetRoom,
+    mockCreateRoom,
+    mockUpdateRoom,
+    mockAddMember,
+    mockRemoveMember,
+    mockSendMessage,
+    mockGetRoomLog,
+    mockStreamRoom,
+  ]) {
+    mock.mockReset();
+  }
+  mockStreamRoom.mockReturnValue(vi.fn());
+  mockGetRoomLog.mockResolvedValue({ entries: [], latest_seq: 0 });
+});
+
+describe('useRooms', () => {
+  it('reads every room under the shared "all" key', async () => {
+    mockGetRooms.mockResolvedValue({ rooms: [ROOM], max_bots: 12 });
+    const { result, queryClient } = renderHookWithProviders(() => useRooms());
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGetRooms).toHaveBeenCalledWith(null);
+    expect(result.current.data?.rooms).toEqual([ROOM]);
+    expect(queryKeys.rooms.list(null)).toEqual(['rooms', 'list', 'all']);
+    expect(queryClient.getQueryData(queryKeys.rooms.list(null))).toEqual({ rooms: [ROOM], max_bots: 12 });
+  });
+
+  it('keys a workspace-scoped read apart', async () => {
+    mockGetRooms.mockResolvedValue({ rooms: [], max_bots: 12 });
+    const { result } = renderHookWithProviders(() => useRooms('ws-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGetRooms).toHaveBeenCalledWith('ws-1');
+    expect(queryKeys.rooms.list('ws-1')).toEqual(['rooms', 'list', 'ws-1']);
+  });
+});
+
+describe('useRoom', () => {
+  it('reads one room with its members', async () => {
+    mockGetRoom.mockResolvedValue(ROOM);
+    const { result } = renderHookWithProviders(() => useRoom('room-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(ROOM);
+    expect(mockGetRoom).toHaveBeenCalledWith('room-1');
+    expect(queryKeys.rooms.detail('room-1')).toEqual(['rooms', 'detail', 'room-1']);
+  });
+
+  it('does not fetch until an id is in hand', () => {
+    const { result } = renderHookWithProviders(() => useRoom(null));
+
+    expect(result.current.isFetching).toBe(false);
+    expect(mockGetRoom).not.toHaveBeenCalled();
+  });
+});
+
+describe('useRoomLog', () => {
+  it('reads the first page when the room is younger than one', async () => {
+    mockGetRoomLog.mockResolvedValue({ entries: [entry({ seq: 1, sender_type: 'user', content: 'Hi' })], latest_seq: 1 });
+    const { result } = renderHookWithProviders(() => useRoomLog('room-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGetRoomLog).toHaveBeenCalledTimes(1);
+    expect(mockGetRoomLog).toHaveBeenCalledWith('room-1', 0, 200);
+    expect(result.current.data).toHaveLength(1);
+  });
+
+  it('reads the tail of an older room through latest_seq', async () => {
+    const old = Array.from({ length: 200 }, (_, i) => entry({ seq: i + 1, sender_type: 'bot', content: `old ${i}` }));
+    const tail = Array.from({ length: 200 }, (_, i) => entry({ seq: 201 + i, sender_type: 'bot', content: `new ${i}` }));
+    mockGetRoomLog
+      .mockResolvedValueOnce({ entries: old, latest_seq: 400 })
+      .mockResolvedValueOnce({ entries: tail, latest_seq: 400 });
+    const { result } = renderHookWithProviders(() => useRoomLog('room-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockGetRoomLog).toHaveBeenNthCalledWith(1, 'room-1', 0, 200);
+    expect(mockGetRoomLog).toHaveBeenNthCalledWith(2, 'room-1', 200, 200);
+    expect(result.current.data?.map((row) => row.content)[0]).toBe('new 0');
+  });
+
+  it('keeps rows the SSE tail appended when a refetch lands', async () => {
+    const first = entry({ seq: 1, sender_type: 'user', content: 'Hi' });
+    const streamed = entry({ seq: 2, sender_type: 'bot', content: 'Streamed', sender_id: 'bot-1' });
+    mockGetRoomLog.mockResolvedValue({ entries: [first], latest_seq: 1 });
+    const { result, queryClient } = renderHookWithProviders(() => useRoomLog('room-1'));
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    queryClient.setQueryData(queryKeys.rooms.log('room-1'), [first, streamed]);
+    mockGetRoomLog.mockResolvedValue({ entries: [first], latest_seq: 2 });
+    await act(async () => {
+      await result.current.refetch();
+    });
+
+    expect(result.current.data?.map((row) => row.seq)).toEqual([1, 2]);
+  });
+});
+
+describe('room writes', () => {
+  it('creates a room, seeds its detail and reads the list again', async () => {
+    mockCreateRoom.mockResolvedValue(ROOM);
+    const { result, queryClient } = renderHookWithProviders(() => useCreateRoom());
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await result.current.mutateAsync({
+      workspace_id: 'ws-1',
+      name: 'Morning desk',
+      member_bot_ids: ['bot-1'],
+    });
+
+    expect(mockCreateRoom).toHaveBeenCalledWith({
+      workspace_id: 'ws-1',
+      name: 'Morning desk',
+      member_bot_ids: ['bot-1'],
+    });
+    expect(queryClient.getQueryData(queryKeys.rooms.detail('room-1'))).toEqual(ROOM);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
+  });
+
+  it('merges an update into the room\'s members instead of emptying them', async () => {
+    mockUpdateRoom.mockResolvedValue({ ...ROOM, name: 'Renamed', members: undefined });
+    const { result, queryClient } = renderHookWithProviders(() => useUpdateRoom());
+    queryClient.setQueryData(queryKeys.rooms.detail('room-1'), ROOM);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await result.current.mutateAsync({ roomId: 'room-1', patch: { name: 'Renamed' } });
+
+    const cached = queryClient.getQueryData<RoomView>(queryKeys.rooms.detail('room-1'));
+    expect(cached?.name).toBe('Renamed');
+    expect(cached?.members).toHaveLength(2);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
+  });
+
+  it('lands the room view an add returns', async () => {
+    const added = { ...ROOM, members: [...ROOM.members, { bot_id: 'bot-3', name: 'Rates analyst', role: 'analyst', status: 'active', room_role: 'member' }] };
+    mockAddMember.mockResolvedValue(added);
+    const { result, queryClient } = renderHookWithProviders(() => useAddRoomMember());
+
+    await result.current.mutateAsync({ roomId: 'room-1', botId: 'bot-3' });
+
+    expect(mockAddMember).toHaveBeenCalledWith('room-1', 'bot-3');
+    expect(queryClient.getQueryData<RoomView>(queryKeys.rooms.detail('room-1'))?.members).toHaveLength(3);
+  });
+
+  it('drops a removed member from the cached room', async () => {
+    mockRemoveMember.mockResolvedValue({ ok: true, bot_id: 'bot-2' });
+    const { result, queryClient } = renderHookWithProviders(() => useRemoveRoomMember());
+    queryClient.setQueryData(queryKeys.rooms.detail('room-1'), ROOM);
+
+    await result.current.mutateAsync({ roomId: 'room-1', botId: 'bot-2' });
+
+    const cached = queryClient.getQueryData<RoomView>(queryKeys.rooms.detail('room-1'));
+    expect(cached?.members.map((member) => member.bot_id)).toEqual(['bot-1']);
+  });
+
+  it('appends a sent message before the server answers, then turns it real', async () => {
+    let resolveSend: ((answer: unknown) => void) | null = null;
+    mockSendMessage.mockImplementation(
+      () => new Promise((resolve) => { resolveSend = resolve; }),
+    );
+    const { result, queryClient } = renderHookWithProviders(() => useSendRoomMessage());
+    const logKey = queryKeys.rooms.log('room-1');
+    queryClient.setQueryData(logKey, [entry({ seq: 1, sender_type: 'user', content: 'Earlier' })]);
+
+    const sending = result.current.mutateAsync({ roomId: 'room-1', content: 'What moved?' });
+    await waitFor(() => expect(queryClient.getQueryData<RoomLogEntry[]>(logKey)).toHaveLength(2));
+    const optimistic = queryClient.getQueryData<RoomLogEntry[]>(logKey)![1];
+    expect(optimistic.content).toBe('What moved?');
+    expect(optimistic.seq).toBeLessThan(0);
+
+    await act(async () => {
+      resolveSend?.({ message_seq: 2, round_id: 'round-1', round_status: 'queued' });
+      await sending;
+    });
+
+    const landed = queryClient.getQueryData<RoomLogEntry[]>(logKey)![1];
+    expect(landed.seq).toBe(2);
+    expect(landed.round_id).toBe('round-1');
+  });
+
+  it('takes the optimistic row back out when the send is refused', async () => {
+    mockSendMessage.mockRejectedValue(new Error('Room is archived'));
+    const { result, queryClient } = renderHookWithProviders(() => useSendRoomMessage());
+    const logKey = queryKeys.rooms.log('room-1');
+    queryClient.setQueryData(logKey, []);
+
+    await act(async () => {
+      await result.current
+        .mutateAsync({ roomId: 'room-1', content: 'Too late?' })
+        .catch(() => undefined);
+    });
+
+    expect(queryClient.getQueryData<RoomLogEntry[]>(logKey)).toEqual([]);
+  });
+});
+
+describe('useRoomStream', () => {
+  const status: RoomRoundStatus = {
+    round_id: 'round-1',
+    status: 'running',
+    slot_cursor: 0,
+    slots: [{ bot_id: 'bot-1', name: 'Chief of Staff', state: 'pending' }],
+  };
+
+  it('opens the tail from the cursor and appends messages into the log cache', async () => {
+    const abort = vi.fn();
+    mockStreamRoom.mockReturnValue(abort);
+    const { result, queryClient, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 3));
+    const handlers = mockStreamRoom.mock.calls[0][2] as {
+      onOpen: () => void;
+      onMessage: (row: RoomLogEntry) => void;
+      onRoundStatus: (round: RoomRoundStatus) => void;
+    };
+    expect(mockStreamRoom).toHaveBeenCalledWith('room-1', 3, expect.any(Object));
+
+    act(() => handlers.onOpen());
+    expect(result.current.live).toBe(true);
+
+    const streamed = entry({ seq: 4, sender_type: 'bot', content: 'Streamed', sender_id: 'bot-1' });
+    act(() => handlers.onMessage(streamed));
+    expect(queryClient.getQueryData(queryKeys.rooms.log('room-1'))).toEqual([streamed]);
+
+    act(() => handlers.onRoundStatus(status));
+    expect(result.current.round).toEqual(status);
+
+    unmount();
+    expect(abort).toHaveBeenCalled();
+  });
+
+  it('does not open a tail until a room id is in hand', () => {
+    renderHookWithProviders(() => useRoomStream(null, 0));
+
+    expect(mockStreamRoom).not.toHaveBeenCalled();
+  });
+});
