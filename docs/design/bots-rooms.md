@@ -307,7 +307,7 @@ requested → working → done / failed / cancelled
 
 ```
 用户消息 → room_log(seq) → 开 round
-  ├─ responder 生成 slots：member:<id> | everyone（host 先）| mentions（默认 lead）
+  ├─ responder 生成 slots：everyone（默认，host 先）| mentions（默认 lead）| member:<id>
   ├─ 逐个 slot：
   │   1. 装配该成员上下文（§9）
   │   2. 向它的 room-thread 注入消息；空闲跑 run，忙则 steer/排队（按 round 策略：默认等）
@@ -386,8 +386,8 @@ requested → working → done / failed / cancelled
 
 1. `automations.bot_id` 必填（回填）；`_turn_place()` 先解析 Bot → workspace/thread。
 2. Bot 归属的 automation 默认 `thread_strategy='persistent'`（落 `continue`）。
-3. 会话目标三选一（Bot 设置页 / automation 覆盖）：
-   - `bot_primary`：写进 Bot 私聊（默认，一个会话=一个 Bot，用户打开就能看到定时产出）
+3. 会话目标（默认 **bot_primary**，可被 automation 覆盖）：
+   - `bot_primary`：写进 Bot 私聊（默认；一个会话 = 一个 Bot）
    - `routine`：每个 automation 一条持续会话（`continue` 现状；日报/扫描互不污染）
    - `new`：一次性任务（保留）
 4. 触发消息加框：`[Scheduled task: <automation name>]`，作为 user 消息注入；run 的 metadata 记 `automation_id`/`execution_id`。
@@ -522,14 +522,23 @@ PATCH  /api/v1/automations/{id}         # 接受 {bot_id, thread_strategy, conve
 - **流式**：room SSE 回放/空洞 resync。
 - **e2e**：建 2 Bot → 私聊互发 → 建群 → 用户一句 → 两 Bot 按 slots 各回一条 → room_log 有序。
 
-## 21. 开放问题（需要拍板）
+## 21. 已拍板的决定（2026-11-08）
 
-1. Room 成员作用域：同一 workspace（推荐 v1）还是 user 级跨 workspace？
-2. 人是否作为 room 成员占 slot？（v1：用户是主持人，不占 slot）
-3. Bot 记忆作用域：v1 继承 workspace 记忆；是否新增 bot 级命名空间？
-4. 群聊一轮的默认 responder：`everyone` 还是 `mentions`（推荐 `everyone` + host 先，符合"群聊"直觉）？
-5. 房间上限与 Bot 上限（建议 room 12 人、每 workspace 20 Bot）。
-6. 定时任务默认写 Bot 私聊还是独立 routine 会话？（推荐私聊，`routine` 为高级选项）
+| # | 问题 | 决定 |
+|---|---|---|
+| 1 | Room 成员作用域 | **同一个 workspace**；跨 workspace 留到 v2 显式授权 |
+| 2 | 用户是否占 slot | **用户是主持人**，不占 slot；用户发言 = 开一轮 |
+| 3 | Bot 记忆作用域 | **继承 workspace 记忆**，v1 不新增 bot 级命名空间 |
+| 4 | 群聊 responder | **可配置**：`everyone`（默认，host 先）/ `mentions` / `member:<botId>` |
+| 5 | 房间上限 | **12 个 Bot**（另加主持人用户） |
+| 6 | 定时任务默认目标 | **Bot 私聊**（`bot_primary`）；`routine` / `new` 为 per-automation 覆盖 |
+
+由此确定的行为默认值：
+
+- 新建 room：`responder='everyone'`，成员上限 12 个 Bot。
+- 用户在任何群/私聊发消息：用户消息入日志并开启一轮，用户不进入 slots。
+- 群聊上下文的记忆作用域 = 该 room 所属 workspace 的记忆。
+- 新建 automation 且归属某个 Bot：`thread_strategy='persistent'`，目标为 Bot 私聊。
 
 ## 22. 代码改动清单
 
