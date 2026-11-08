@@ -299,6 +299,7 @@ def _is_service_request(raw_request: Request | None) -> bool:
 # a native channel.
 _SERVER_ONLY_FIELDS = (
     "query_type",
+    "suppress_push",
     *ANNOUNCED_KEYS,
     "report_back_ptc_thread_id",
     ORIGIN_THREAD_META,
@@ -321,7 +322,13 @@ def _client_body(request: ChatRequest, raw_request: Request) -> ChatRequest:
     """
     if _is_service_request(raw_request):
         return request
-    cleared = {name: None for name in _SERVER_ONLY_FIELDS if getattr(request, name)}
+    cleared = {}
+    for name in _SERVER_ONLY_FIELDS:
+        value = getattr(request, name, None)
+        if value:
+            # A server-only flag is cleared to False, the type its field
+            # validates; the rest are optional and cleared to null.
+            cleared[name] = False if isinstance(value, bool) else None
     return request.model_copy(update=cleared) if cleared else request
 
 

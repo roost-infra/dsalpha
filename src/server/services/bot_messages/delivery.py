@@ -157,6 +157,9 @@ async def deliver_message(
         "messages": [{"role": "user", "content": f"{frame}{message['content']}"}],
         "workspace_id": str(bot["workspace_id"]),
         "query_type": "system",
+        # A bot-to-bot message is not the user's conversation; it must not
+        # push each hop to their phones.
+        "suppress_push": True,
         # A retried delivery is the same message, not a second turn.
         "request_key": f"botmsg:{message['message_id']}",
         # Display only: history draws "Message from X" instead of a user
@@ -186,9 +189,21 @@ async def deliver_message(
     )
     if outcome == "dispatched":
         await msg_db.set_status(message["message_id"], "delivered", thread_id=thread_id)
+        logger.info(
+            "[BOT_MESSAGE] delivered %s to bot %s (thread %s)",
+            message["message_id"],
+            bot["bot_id"],
+            thread_id,
+        )
         return {"status": "delivered", "thread_id": thread_id, "outcome": outcome}
     if outcome in ("drop", "deleted", "refused", "taken"):
         await msg_db.set_status(message["message_id"], "failed")
+        logger.warning(
+            "[BOT_MESSAGE] failed %s to bot %s: %s",
+            message["message_id"],
+            bot["bot_id"],
+            outcome,
+        )
         return {"status": "failed", "thread_id": thread_id, "outcome": outcome}
     # cap / lost / superseded: the row is still the record; the sweeper retries
     # it, and the request key keeps that one turn. A message that spent its

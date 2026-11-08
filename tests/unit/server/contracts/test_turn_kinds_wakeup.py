@@ -82,6 +82,13 @@ def test_the_server_keeps_the_bot_message_it_posts():
         assert messaging._client_body(request, object()) is request
 
 
+def test_a_client_cannot_suppress_its_push():
+    request = ChatRequest(suppress_push=True)
+    with patch.object(messaging, "_is_service_request", return_value=False):
+        cleared = messaging._client_body(request, object())
+    assert cleared.suppress_push is False
+
+
 def test_the_wake_trigger_is_a_steering_trigger_so_compaction_drops_it():
     assert is_steering_trigger(WAKE_TRIGGER)
     assert WAKE_TRIGGER == "A wakeup arrived."

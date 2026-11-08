@@ -110,19 +110,50 @@ def _initial_slots(
 
 
 async def start_round(
-    room: Dict[str, Any], content: str, *, user_id: str
+    room: Dict[str, Any],
+    content: str,
+    *,
+    user_id: str,
+    request_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Append the user's message and make sure a round is walking the room.
 
     A message sent while a round is already running joins that round: the
     members' next slot reads the log, so the message is in their increments.
+    A retried send (same ``request_key``) returns the message and round it
+    already opened instead of appending a second one.
     """
+    if request_key:
+        existing = await room_db.get_log_by_request_key(
+            room["room_id"], request_key
+        )
+        if existing is not None:
+            return {
+                "message": existing,
+                "round": await room_db.round_for_start(
+                    room["room_id"], int(existing["seq"])
+                ),
+            }
     message = await room_db.append_log(
         room["room_id"],
         sender_type="user",
         sender_id=user_id,
         content=content,
+        metadata={"request_key": request_key} if request_key else None,
+        ignore_conflict=bool(request_key),
     )
+    if message is None:
+        existing = await room_db.get_log_by_request_key(
+            room["room_id"], request_key
+        )
+        if existing is None:
+            raise ValueError("the message was not appended")
+        return {
+            "message": existing,
+            "round": await room_db.round_for_start(
+                room["room_id"], int(existing["seq"])
+            ),
+        }
     running = await room_db.active_round(room["room_id"])
     if running is None:
         members = await room_db.list_members_with_bots(room["room_id"])
@@ -158,6 +189,14 @@ async def _append_status(room_id: str, round_id: str, text: str) -> None:
         logger.warning("[ROOM] status row failed for %s: %s", round_id, exc)
 
 
+async def _advance_seen(room_id: str, bot_id: str, seq: int) -> None:
+    """Move a member's read cursor; the log stays the record if this fails."""
+    try:
+        await room_db.set_seen(room_id, bot_id, int(seq))
+    except Exception as exc:
+        logger.warning("[ROOM] could not advance seen for %s: %s", bot_id, exc)
+
+
 async def _wait_terminal(run_id: str, timeout: float) -> Optional[str]:
     """The run's terminal status, or None when it outlasted the slot."""
     from src.server.database.runs import lifecycle as run_db
@@ -190,9 +229,16 @@ async def _speak(
     bot = member
     thread_id = await ensure_room_thread(room, bot)
     seen = await room_db.seen_seq(room["room_id"], bot["bot_id"])
+    latest = await room_db.latest_seq(room["room_id"])
+    # The window is the newest entries since the cursor, not the oldest: a
+    # member far behind (a pass, a skip, a new arrival) must see the question
+    # being answered, even when the room has run for pages.
+    window_start = max(seen, latest - (50 - 1)) if latest > seen else seen
     increments = [
         row
-        for row in await room_db.read_log(room["room_id"], since_seq=seen, limit=50)
+        for row in await room_db.read_log(
+            room["room_id"], since_seq=window_start, limit=50
+        )
         if not (
             row.get("sender_type") == "bot"
             and str(row.get("sender_id")) == str(bot["bot_id"])
@@ -212,6 +258,8 @@ async def _speak(
         "messages": [{"role": "user", "content": context}],
         "workspace_id": str(bot["workspace_id"]),
         "query_type": "system",
+        # A round is one user action, not one notification per member.
+        "suppress_push": True,
         "request_key": f"room:{round_row['round_id']}:{index}",
     }
     from src.server.services.report_back.notify_turn import post_notification_turn
@@ -225,18 +273,24 @@ async def _speak(
         subject=f"{room.get('name')} slot {index}",
     )
     if outcome != "dispatched" or not run_id:
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "missed", "run_id": None, "reason": outcome}, None
     status = await _wait_terminal(run_id, SLOT_TIMEOUT_SECONDS)
     if status is None:
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "missed", "run_id": run_id, "reason": "timeout"}, None
     if status == "interrupted":
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "needs_input", "run_id": run_id}, None
     if status in ("error", "cancelled"):
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "missed", "run_id": run_id, "reason": status}, None
     reply = (await latest_run_reply(thread_id)).get("text") or ""
     if is_pass(reply):
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "passed", "run_id": run_id}, None
     if not reply.strip():
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "missed", "run_id": run_id, "reason": "empty"}, None
     logged = await room_db.append_log(
         room["room_id"],
@@ -244,16 +298,61 @@ async def _speak(
         sender_id=str(bot["bot_id"]),
         content=reply.strip(),
         round_id=round_row["round_id"],
+        metadata={"slot": index},
+        ignore_conflict=True,
     )
+    if logged is None:
+        # This slot's reply was already appended before a restart; a resumed
+        # driver adopts it instead of double-posting the same words.
+        logged = await room_db.get_slot_reply(round_row["round_id"], index)
+    if logged is None:
+        await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
+        return {"state": "missed", "run_id": run_id, "reason": "empty"}, None
     return {"state": "done", "run_id": run_id, "seq": logged["seq"]}, logged
 
 
+async def _open_follow_up_round(
+    room: Dict[str, Any], round_row: Dict[str, Any]
+) -> Optional[str]:
+    """A user message that arrived after this round opened and was never
+    answered gets its own round rather than waiting for the next send."""
+    newest = await room_db.latest_user_entry(room["room_id"])
+    if newest is None:
+        return None
+    if int(newest["seq"]) <= int(round_row.get("start_seq") or 0):
+        return None
+    members = await room_db.list_members_with_bots(room["room_id"])
+    slots = _initial_slots(room, members, str(newest.get("content") or ""))
+    if not slots:
+        return None
+    try:
+        created = await room_db.create_round(
+            room["room_id"],
+            started_by=str(room.get("user_id") or "system"),
+            start_seq=int(newest["seq"]),
+            slots=slots,
+        )
+        return str(created["round_id"])
+    except room_db.RoomBusy:
+        active = await room_db.active_round(room["room_id"])
+        return str(active["round_id"]) if active else None
+
+
 async def drive_round(round_id: str) -> None:
-    """Walk a round's slots from its saved cursor to its end."""
+    """Walk a round's slots from its saved cursor to its end.
+
+    Progress saves are fenced on the lease: a save that no longer matches the
+    owner means a sweeper took the round over, and this driver stops instead
+    of writing over its slots.
+    """
     owner = f"room:{uuid.uuid4().hex[:12]}"
     if not await room_db.claim_round(round_id, owner=owner, lease_seconds=LEASE_SECONDS):
         return
     room: Optional[Dict[str, Any]] = None
+
+    async def save(**kwargs) -> bool:
+        return await room_db.save_round_progress(round_id, owner=owner, **kwargs)
+
     try:
         while True:
             round_row = await room_db.get_round(round_id)
@@ -268,12 +367,21 @@ async def drive_round(round_id: str) -> None:
             cursor = int(round_row.get("slot_cursor") or 0)
             if cursor >= len(slots):
                 await room_db.finish_round(round_id, owner=owner)
+                follow = await _open_follow_up_round(room, round_row)
+                if follow:
+                    logger.info(
+                        "[ROOM] round %s left a late message; opening %s",
+                        round_id,
+                        follow,
+                    )
+                    schedule_start(
+                        f"room-round:{follow}", lambda rid=follow: drive_round(rid)
+                    )
                 return
             slot = dict(slots[cursor])
             if slot.get("state", "pending") != "pending":
-                await room_db.save_round_progress(
-                    round_id, slot_cursor=cursor + 1, owner=owner
-                )
+                if not await save(slot_cursor=cursor + 1):
+                    return
                 continue
 
             members = await room_db.list_members_with_bots(room["room_id"])
@@ -288,18 +396,20 @@ async def drive_round(round_id: str) -> None:
                     round_id,
                     f"{slot.get('name')} was skipped: not an active member.",
                 )
-                await room_db.save_round_progress(
-                    round_id, slots=slots, slot_cursor=cursor + 1, owner=owner
-                )
+                if not await save(slots=slots, slot_cursor=cursor + 1):
+                    return
                 continue
 
-            spoken = sum(1 for s in slots[:cursor] if s.get("bot_id") == slot["bot_id"] and s.get("state") == "done")
+            spoken = sum(
+                1
+                for s in slots[:cursor]
+                if s.get("bot_id") == slot["bot_id"] and s.get("state") == "done"
+            )
             if spoken >= _turn_cap(member):
                 slot["state"] = "skipped"
                 slots[cursor] = slot
-                await room_db.save_round_progress(
-                    round_id, slots=slots, slot_cursor=cursor + 1, owner=owner
-                )
+                if not await save(slots=slots, slot_cursor=cursor + 1):
+                    return
                 continue
 
             result, logged = await _speak(room, round_row, slots, cursor, member)
@@ -313,7 +423,7 @@ async def drive_round(round_id: str) -> None:
                     f"{slot.get('name')} could not answer this round ({reason}).",
                 )
             if logged is not None:
-                await room_db.set_seen(
+                await _advance_seen(
                     room["room_id"], slot["bot_id"], int(logged["seq"])
                 )
                 # A reply may call on a member that has not spoken yet; it
@@ -326,7 +436,9 @@ async def drive_round(round_id: str) -> None:
                 for bot_id in mentioned:
                     if added >= MAX_EXTRA_TURNS:
                         break
-                    target = next((m for m in members if str(m["bot_id"]) == bot_id), None)
+                    target = next(
+                        (m for m in members if str(m["bot_id"]) == bot_id), None
+                    )
                     if target is None:
                         continue
                     slots.insert(
@@ -338,12 +450,8 @@ async def drive_round(round_id: str) -> None:
                         },
                     )
                     added += 1
-            await room_db.save_round_progress(
-                round_id,
-                slots=slots,
-                slot_cursor=cursor + 1,
-                owner=owner,
-            )
+            if not await save(slots=slots, slot_cursor=cursor + 1):
+                return
     except Exception as exc:
         logger.warning("[ROOM] round %s failed: %s", round_id, exc)
         try:

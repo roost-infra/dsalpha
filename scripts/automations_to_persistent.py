@@ -83,6 +83,9 @@ async def main(args: argparse.Namespace) -> int:
 def _parse() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="write the change")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="list only (the default)"
+    )
     parser.add_argument("--user-id", default=None, help="only this user's rows")
     parser.add_argument(
         "--include-paused", action="store_true", help="also convert paused rows"

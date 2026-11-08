@@ -88,6 +88,7 @@ async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
     assert body["workspace_id"] == WS
     assert body["messages"][0]["content"].startswith("[Request from Quant]")
     assert body["request_key"] == "botmsg:m-1"
+    assert body["suppress_push"] is True
     # Display only: the thread draws "Request from Quant", not a user bubble.
     assert body["bot_message_source"] == {
         "kind": "bot_message",

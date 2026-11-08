@@ -525,6 +525,7 @@ async def astream_ptc_workflow(
                 is_checkpoint_replay=is_checkpoint_replay,
                 extra_run_metadata={
                     **origin_meta,
+                    **({"suppress_push": True} if request.suppress_push else {}),
                     **carried,
                     **surface_stamp(
                         request,

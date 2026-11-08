@@ -662,6 +662,14 @@ class ChatRequest(BaseModel):
         description="The bot message this turn delivers. Internal use only.",
     )
 
+    # Internal: this synthetic turn must not reach the user's phones. Room
+    # slots and bot-to-bot deliveries happen without the user, and pushing
+    # each one would turn a round into a dozen notifications.
+    suppress_push: bool = Field(
+        default=False,
+        description="Do not push this turn's settle. Internal use only.",
+    )
+
     # Internal: build this turn's agent without the subagent machinery
     # (no Task/TaskOutput tools). Task report-back turns deliberately do
     # NOT set it — TaskOutput is their retrieval path; re-announce
