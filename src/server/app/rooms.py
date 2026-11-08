@@ -216,7 +216,12 @@ async def send_message(
     room = await _reach_room(principal, room_id)
     if room.get("status") != "active":
         raise HTTPException(status_code=409, detail="Room is archived")
-    result = await start_round(room, body.content.strip(), user_id=user_id)
+    result = await start_round(
+        room,
+        body.content.strip(),
+        user_id=user_id,
+        request_key=body.request_key,
+    )
     round_row = result.get("round") or {}
     return RoomSendResponse(
         message_seq=int(result["message"]["seq"]),

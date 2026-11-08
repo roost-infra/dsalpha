@@ -161,6 +161,10 @@ async def test_a_round_walks_its_slots_logs_answers_and_finishes():
          patch.object(coordinator.room_db, "finish_round", AsyncMock()) as finish, \
          patch.object(coordinator, "_wait_terminal", AsyncMock(return_value="completed")), \
          patch.object(coordinator, "latest_run_reply", AsyncMock(side_effect=[{"text": "answer one"}, {"text": "[PASS]"}])), \
+         patch.object(coordinator.room_db, "latest_seq", AsyncMock(return_value=0)), \
+         patch.object(coordinator.room_db, "get_slot_reply", AsyncMock(return_value=None)), \
+         patch.object(coordinator.room_db, "latest_user_entry", AsyncMock(return_value=None)), \
+         patch.object(coordinator.room_db, "round_for_start", AsyncMock(return_value=None)), \
          patch("src.server.services.report_back.notify_turn.post_notification_turn", AsyncMock(return_value=("dispatched", "run-1"))):
         await coordinator.drive_round("r-1")
 
@@ -170,7 +174,7 @@ async def test_a_round_walks_its_slots_logs_answers_and_finishes():
     ), "the answer must reach the shared log"
     finish.assert_awaited_once()
     assert save.await_count >= 2
-    assert seen.await_count == 1
+    assert seen.await_count >= 2  # a reply and a pass each advance the cursor
 
 
 _SEQ = {"n": 10}
@@ -179,3 +183,98 @@ _SEQ = {"n": 10}
 def random_seq() -> int:
     _SEQ["n"] += 1
     return _SEQ["n"]
+
+
+@pytest.mark.asyncio
+async def test_a_late_message_opens_a_follow_up_round():
+    """A user message that arrived after the round opened was never covered by
+    any slot; finishing the round must open one that answers it."""
+    from src.server.services.rooms import coordinator
+
+    room = {"room_id": "r-1", "user_id": "u-1", "name": "R", "responder": "everyone"}
+    round_row = {"round_id": "r-1", "start_seq": 3}
+    with patch.object(
+        coordinator.room_db,
+        "latest_user_entry",
+        AsyncMock(return_value={"seq": 7, "content": "and this?", "sender_type": "user"}),
+    ), patch.object(
+        coordinator.room_db, "list_members_with_bots", AsyncMock(return_value=[HOST, A])
+    ), patch.object(
+        coordinator.room_db,
+        "create_round",
+        AsyncMock(return_value={"round_id": "r-2"}),
+    ) as create:
+        follow = await coordinator._open_follow_up_round(room, round_row)
+    assert follow == "r-2"
+    assert create.await_args.kwargs["start_seq"] == 7
+
+
+@pytest.mark.asyncio
+async def test_the_message_that_opened_the_round_is_not_replayed():
+    from src.server.services.rooms import coordinator
+
+    round_row = {"round_id": "r-1", "start_seq": 3}
+    with patch.object(
+        coordinator.room_db,
+        "latest_user_entry",
+        AsyncMock(return_value={"seq": 3, "content": "the question"}),
+    ), patch.object(coordinator.room_db, "create_round", AsyncMock()) as create:
+        follow = await coordinator._open_follow_up_round(
+            {"room_id": "r-1", "user_id": "u-1"}, round_row
+        )
+    assert follow is None
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_retried_room_send_returns_the_message_it_already_opened():
+    from src.server.services.rooms import coordinator
+
+    room = {"room_id": "r-1", "user_id": "u-1", "responder": "everyone"}
+    existing = {"seq": 5, "content": "hello"}
+    with patch.object(
+        coordinator.room_db,
+        "get_log_by_request_key",
+        AsyncMock(return_value=existing),
+    ), patch.object(
+        coordinator.room_db,
+        "round_for_start",
+        AsyncMock(return_value={"round_id": "r-9"}),
+    ), patch.object(
+        coordinator.room_db, "append_log", AsyncMock()
+    ) as append:
+        result = await start_round(room, "hello", user_id="u-1", request_key="k-1")
+    assert result["message"] == existing
+    assert result["round"] == {"round_id": "r-9"}
+    append.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_slot_adopts_the_reply_it_already_logged():
+    from src.server.services.rooms import coordinator
+
+    round_row = {"round_id": "r-1", "start_seq": 1}
+    bot = {
+        "bot_id": "b-a",
+        "name": "数据官",
+        "status": "active",
+        "workspace_id": "ws",
+        "user_id": "u-1",
+    }
+    with patch.object(coordinator.room_db, "seen_seq", AsyncMock(return_value=0)), \
+         patch.object(coordinator, "ensure_room_thread", AsyncMock(return_value="th-1")), \
+         patch.object(coordinator.room_db, "latest_seq", AsyncMock(return_value=4)), \
+         patch.object(coordinator.room_db, "read_log", AsyncMock(return_value=[])), \
+         patch.object(coordinator.room_db, "read_log_before", AsyncMock(return_value=[])), \
+         patch.object(coordinator, "render_member_context", lambda *a, **k: "context"), \
+         patch("src.server.services.report_back.notify_turn.post_notification_turn", AsyncMock(return_value=("dispatched", "run-1"))), \
+         patch.object(coordinator, "_wait_terminal", AsyncMock(return_value="completed")), \
+         patch.object(coordinator, "latest_run_reply", AsyncMock(return_value={"text": "same answer"})), \
+         patch.object(coordinator.room_db, "append_log", AsyncMock(return_value=None)), \
+         patch.object(coordinator.room_db, "get_slot_reply", AsyncMock(return_value={"seq": 11})):
+        result, logged = await coordinator._speak(
+            {"room_id": "r-1", "user_id": "u-1"}, round_row, [bot], 0, bot
+        )
+    assert result["state"] == "done"
+    assert result["seq"] == 11
+    assert logged["seq"] == 11

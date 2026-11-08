@@ -33,7 +33,19 @@ async def ensure_room_thread(room: Dict[str, Any], bot: Dict[str, Any]) -> str:
         initial_status="in_progress",
         resume=False,
     )
-    await room_db.bind_room_thread(room["room_id"], bot["bot_id"], thread_id)
+    bound = await room_db.bind_room_thread(
+        room["room_id"], bot["bot_id"], thread_id
+    )
+    if bound and bound != thread_id:
+        # Another dispatch minted the member's room thread first; answer
+        # there, and leave this race's unused thread to history.
+        logger.info(
+            "[ROOM] bot %s already answers room %s in %s",
+            bot["bot_id"],
+            room["room_id"],
+            bound,
+        )
+        return bound
     await bot_db.bind_thread_bot(thread_id, bot["bot_id"], kind="room")
     logger.info(
         "[ROOM] minted thread %s for bot %s in room %s",

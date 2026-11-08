@@ -224,6 +224,14 @@ async def add_member(
     async with get_db_connection() as conn:
         async with conn.transaction():
             async with conn.cursor(row_factory=dict_row) as cur:
+                # The room row is the lock that serialises cap checks: two
+                # concurrent adds cannot both see room for one member.
+                await cur.execute(
+                    "SELECT 1 AS held FROM rooms WHERE room_id = %s FOR UPDATE",
+                    (cleaned_room,),
+                )
+                if await cur.fetchone() is None:
+                    return False
                 await cur.execute(
                     "SELECT COUNT(*) AS n FROM room_members "
                     "WHERE room_id = %s AND member_type = 'bot'",
@@ -253,19 +261,65 @@ async def remove_member(room_id: Any, bot_id: Any) -> bool:
     if cleaned_room is None or cleaned_bot is None:
         return False
     async with get_db_connection() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "DELETE FROM room_members WHERE room_id = %s "
-                "AND member_type = 'bot' AND member_id = %s",
-                (cleaned_room, cleaned_bot),
-            )
-            removed = cur.rowcount > 0
-            if removed:
+        async with conn.transaction():
+            async with conn.cursor(row_factory=dict_row) as cur:
                 await cur.execute(
-                    "UPDATE rooms SET updated_at = NOW() WHERE room_id = %s",
+                    "SELECT 1 AS held FROM rooms WHERE room_id = %s FOR UPDATE",
                     (cleaned_room,),
                 )
-            return removed
+                if await cur.fetchone() is None:
+                    return False
+                await cur.execute(
+                    "SELECT role FROM room_members WHERE room_id = %s "
+                    "AND member_type = 'bot' AND member_id = %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                member = await cur.fetchone()
+                if member is None:
+                    return False
+                await cur.execute(
+                    "DELETE FROM room_members WHERE room_id = %s "
+                    "AND member_type = 'bot' AND member_id = %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                # A bot that left the room cannot read or post in it any more;
+                # its room thread mapping goes with the membership.
+                await cur.execute(
+                    "DELETE FROM bot_threads WHERE room_id = %s AND bot_id = %s",
+                    (cleaned_room, _str(cleaned_bot)),
+                )
+                if member["role"] == "host":
+                    # The host seat survives a removal: the earliest remaining
+                    # bot takes it, or the room has no host (the next add can).
+                    await cur.execute(
+                        "SELECT member_id FROM room_members WHERE room_id = %s "
+                        "AND member_type = 'bot' ORDER BY joined_at LIMIT 1",
+                        (cleaned_room,),
+                    )
+                    successor = await cur.fetchone()
+                    if successor is None:
+                        await cur.execute(
+                            "UPDATE rooms SET host_bot_id = NULL, "
+                            "updated_at = NOW() WHERE room_id = %s",
+                            (cleaned_room,),
+                        )
+                    else:
+                        await cur.execute(
+                            "UPDATE room_members SET role = 'host' WHERE room_id = %s "
+                            "AND member_type = 'bot' AND member_id = %s",
+                            (cleaned_room, successor["member_id"]),
+                        )
+                        await cur.execute(
+                            "UPDATE rooms SET host_bot_id = %s::uuid, "
+                            "updated_at = NOW() WHERE room_id = %s",
+                            (successor["member_id"], cleaned_room),
+                        )
+                else:
+                    await cur.execute(
+                        "UPDATE rooms SET updated_at = NOW() WHERE room_id = %s",
+                        (cleaned_room,),
+                    )
+                return True
 
 
 async def list_members_with_bots(room_id: Any) -> list[Dict[str, Any]]:
@@ -283,6 +337,7 @@ async def list_members_with_bots(room_id: Any) -> list[Dict[str, Any]]:
                 FROM room_members m
                 JOIN bots b ON b.bot_id = m.member_id::uuid
                 WHERE m.room_id = %s AND m.member_type = 'bot'
+                  AND b.deleted_at IS NULL
                 ORDER BY (m.role = 'host') DESC, m.joined_at
                 """,
                 (cleaned,),
@@ -305,10 +360,12 @@ async def append_log(
     kind: str = "message",
     round_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    ignore_conflict: bool = False,
 ) -> Optional[Dict[str, Any]]:
     cleaned = _str(room_id)
     if cleaned is None:
         return None
+    conflict = " ON CONFLICT DO NOTHING" if ignore_conflict else ""
     async with get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -316,7 +373,7 @@ async def append_log(
                 INSERT INTO room_log (
                     room_id, round_id, sender_type, sender_id, kind, content,
                     metadata
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s){conflict}
                 RETURNING {_LOG_COLUMNS}
                 """,
                 (
@@ -433,7 +490,12 @@ async def save_round_progress(
     slots: Optional[list[Dict[str, Any]]] = None,
     slot_cursor: Optional[int] = None,
     owner: str,
-) -> None:
+) -> bool:
+    """Persist progress if this owner still holds the round's lease.
+
+    False means the lease was lost (a sweeper took over): the caller must stop
+    driving rather than write over the new owner's slots.
+    """
     sets = ["lease_until = NOW() + make_interval(secs => 600)"]
     params: list[Any] = []
     if slots is not None:
@@ -449,6 +511,7 @@ async def save_round_progress(
                 "WHERE round_id = %s AND lease_owner = %s",
                 (*params, _str(round_id), owner),
             )
+            return cur.rowcount > 0
 
 
 async def finish_round(
@@ -524,22 +587,32 @@ async def get_room_thread(room_id: Any, bot_id: Any) -> Optional[str]:
 
 async def bind_room_thread(
     room_id: Any, bot_id: Any, thread_id: Any
-) -> None:
-    """Record the thread a member answers this room in."""
+) -> Optional[str]:
+    """Record the thread a member answers this room in.
+
+    Returns the thread the member actually holds: when two dispatches raced to
+    mint one, the unique ``(bot_id, room_id)`` index lets the first win and
+    this answers that thread, so the loser does not fail its round.
+    """
     cleaned_room, cleaned_bot, cleaned_thread = (
         _str(room_id),
         _str(bot_id),
         _str(thread_id),
     )
     if not all((cleaned_room, cleaned_bot, cleaned_thread)):
-        return
+        return None
     async with get_db_connection() as conn:
         async with conn.cursor() as cur:
-            await cur.execute(
-                "INSERT INTO bot_threads (bot_id, thread_id, kind, room_id) "
-                "VALUES (%s, %s, 'room', %s) ON CONFLICT (bot_id, thread_id) DO NOTHING",
-                (cleaned_bot, cleaned_thread, cleaned_room),
-            )
+            try:
+                await cur.execute(
+                    "INSERT INTO bot_threads (bot_id, thread_id, kind, room_id) "
+                    "VALUES (%s, %s, 'room', %s) "
+                    "ON CONFLICT (bot_id, thread_id) DO NOTHING",
+                    (cleaned_bot, cleaned_thread, cleaned_room),
+                )
+            except UniqueViolation:
+                pass
+    return await get_room_thread(cleaned_room, cleaned_bot) or cleaned_thread
 
 
 async def active_round(room_id: Any) -> Optional[Dict[str, Any]]:
@@ -556,6 +629,96 @@ async def active_round(room_id: Any) -> Optional[Dict[str, Any]]:
                 (cleaned,),
             )
             return _round_row(await cur.fetchone())
+
+
+async def read_recent_log(room_id: Any, limit: int = 30) -> list[Dict[str, Any]]:
+    """The newest ``limit`` entries, oldest first (the read window's last page)."""
+    cleaned = _str(room_id)
+    if cleaned is None:
+        return []
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_LOG_COLUMNS} FROM ("
+                f"SELECT {_LOG_COLUMNS} FROM room_log WHERE room_id = %s "
+                "ORDER BY seq DESC LIMIT %s"
+                ") recent ORDER BY seq",
+                (cleaned, max(1, min(limit, 200))),
+            )
+            return [_log_row(r) for r in await cur.fetchall()]
+
+
+async def get_slot_reply(
+    round_id: Any, slot: int
+) -> Optional[Dict[str, Any]]:
+    """The reply a round slot already logged, if a resumed driver re-ran it."""
+    cleaned = _str(round_id)
+    if cleaned is None:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_LOG_COLUMNS} FROM room_log "
+                "WHERE round_id = %s AND metadata->>'slot' = %s "
+                "ORDER BY seq LIMIT 1",
+                (cleaned, str(int(slot))),
+            )
+            row = await cur.fetchone()
+            return _log_row(row) if row else None
+
+
+async def get_log_by_request_key(
+    room_id: Any, request_key: str
+) -> Optional[Dict[str, Any]]:
+    """The message a retried send already appended, if it was."""
+    cleaned = _str(room_id)
+    if cleaned is None or not request_key:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_LOG_COLUMNS} FROM room_log "
+                "WHERE room_id = %s AND metadata->>'request_key' = %s "
+                "ORDER BY seq LIMIT 1",
+                (cleaned, str(request_key)),
+            )
+            row = await cur.fetchone()
+            return _log_row(row) if row else None
+
+
+async def round_for_start(
+    room_id: Any, start_seq: int
+) -> Optional[Dict[str, Any]]:
+    """The round a user message opened (its start_seq is the message seq)."""
+    cleaned = _str(room_id)
+    if cleaned is None:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_ROUND_COLUMNS} FROM room_rounds "
+                "WHERE room_id = %s AND start_seq = %s ORDER BY created_at LIMIT 1",
+                (cleaned, int(start_seq)),
+            )
+            row = await cur.fetchone()
+            return _round_row(row) if row else None
+
+
+async def latest_user_entry(room_id: Any) -> Optional[Dict[str, Any]]:
+    """The newest user message in the room (what a follow-up round opens on)."""
+    cleaned = _str(room_id)
+    if cleaned is None:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_LOG_COLUMNS} FROM room_log "
+                "WHERE room_id = %s AND sender_type = 'user' "
+                "ORDER BY seq DESC LIMIT 1",
+                (cleaned,),
+            )
+            row = await cur.fetchone()
+            return _log_row(row) if row else None
 
 
 async def read_log_before(
