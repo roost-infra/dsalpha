@@ -44,7 +44,7 @@ async def test_reading_the_room_shows_senders_and_seq():
         "src.tools.rooms.tool.room_db.list_members_with_bots",
         AsyncMock(return_value=MEMBERS),
     ), patch(
-        "src.tools.rooms.tool.room_db.read_log", AsyncMock(return_value=ENTRIES)
+        "src.tools.rooms.tool.room_db.read_recent_log", AsyncMock(return_value=ENTRIES)
     ):
         out = await read_room.ainvoke({}, config=CONFIG)
     assert '[Room "Research"]' in out
