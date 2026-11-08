@@ -255,7 +255,18 @@ async def _speak(
         order_total=len(slots),
     )
     body = {
-        "messages": [{"role": "user", "content": context}],
+        # The room state is context, not something the user said: it rides a
+        # system-reminder inside the turn rather than reading as the user's
+        # own words (a member's reply must not be trusted as the user's).
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    f"<system-reminder>\n{context}\n</system-reminder>\n\n"
+                    "Post your reply in the room now."
+                ),
+            }
+        ],
         "workspace_id": str(bot["workspace_id"]),
         "query_type": "system",
         # A round is one user action, not one notification per member.

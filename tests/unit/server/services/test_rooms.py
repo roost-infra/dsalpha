@@ -267,7 +267,7 @@ async def test_a_resumed_slot_adopts_the_reply_it_already_logged():
          patch.object(coordinator.room_db, "read_log", AsyncMock(return_value=[])), \
          patch.object(coordinator.room_db, "read_log_before", AsyncMock(return_value=[])), \
          patch.object(coordinator, "render_member_context", lambda *a, **k: "context"), \
-         patch("src.server.services.report_back.notify_turn.post_notification_turn", AsyncMock(return_value=("dispatched", "run-1"))), \
+         patch("src.server.services.report_back.notify_turn.post_notification_turn", AsyncMock(return_value=("dispatched", "run-1"))) as posted, \
          patch.object(coordinator, "_wait_terminal", AsyncMock(return_value="completed")), \
          patch.object(coordinator, "latest_run_reply", AsyncMock(return_value={"text": "same answer"})), \
          patch.object(coordinator.room_db, "append_log", AsyncMock(return_value=None)), \
@@ -278,3 +278,6 @@ async def test_a_resumed_slot_adopts_the_reply_it_already_logged():
     assert result["state"] == "done"
     assert result["seq"] == 11
     assert logged["seq"] == 11
+    body = posted.await_args.kwargs["body"]
+    assert body["suppress_push"] is True
+    assert body["messages"][0]["content"].startswith("<system-reminder>")
