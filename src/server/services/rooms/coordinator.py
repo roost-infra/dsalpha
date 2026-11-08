@@ -296,7 +296,7 @@ async def _speak(
     if status in ("error", "cancelled"):
         await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "missed", "run_id": run_id, "reason": status}, None
-    reply = (await latest_run_reply(thread_id)).get("text") or ""
+    reply = (await latest_run_reply(thread_id, run_id=run_id)).get("text") or ""
     if is_pass(reply):
         await _advance_seen(room["room_id"], str(bot["bot_id"]), latest)
         return {"state": "passed", "run_id": run_id}, None

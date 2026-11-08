@@ -255,6 +255,11 @@ class ThreadCreateRequest(BaseModel):
     workspace_id: Optional[str] = Field(
         None, description="Target workspace; Home's id for the user's Home"
     )
+    bot_id: Optional[str] = Field(
+        default=None,
+        description="The bot this thread answers as; it must be the caller's "
+        "live bot of the thread's workspace (Home's Chief of Staff included).",
+    )
     first_query: str = Field(
         "",
         description="The user's first message; stamped as the initial title "
@@ -325,6 +330,9 @@ class ThreadCreateResponse(BaseModel):
     feed; it is never awaited here.
     """
     thread_id: str
+    bot_id: Optional[str] = Field(
+        None, description="The bot the new thread answers as, when one was named."
+    )
     workspace_id: str
     thread_index: int
     title: Optional[str] = None
