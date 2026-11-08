@@ -59,7 +59,7 @@ export default function Rooms() {
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const workspaces = workspacesData?.workspaces ?? [];
+  const workspaces = useMemo(() => workspacesData?.workspaces ?? [], [workspacesData]);
   const workspacesReady = !workspacesLoading;
   const fallbackWorkspaceId = useMemo(
     () => (workspaces.find((workspace) => !workspace.is_home) ?? workspaces[0])?.workspace_id ?? null,

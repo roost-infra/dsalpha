@@ -91,10 +91,13 @@ function LogRow({
 function MemberChip({
   member,
   isHost,
+  removable,
   onRemove,
 }: {
   member: RoomMemberInfo;
   isHost: boolean;
+  /** A host keeps its place, and an archived room takes no edits. */
+  removable: boolean;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
@@ -116,7 +119,7 @@ function MemberChip({
           {t('rooms.pausedBadge')}
         </span>
       )}
-      {!isHost && (
+      {removable && !isHost && (
         <button
           type="button"
           className="rooms-member__remove"
@@ -172,9 +175,9 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
   const room = roomQuery.data;
   const logQuery = useRoomLog(roomId);
   const entries = logQuery.data ?? [];
-  const lastSeq = useMemo(
-    () => entries.reduce((highest, entry) => (entry.pending ? highest : Math.max(highest, entry.seq)), 0),
-    [entries],
+  const lastSeq = (logQuery.data ?? []).reduce(
+    (highest, entry) => (entry.pending ? highest : Math.max(highest, entry.seq)),
+    0,
   );
   const { round, live } = useRoomStream(roomId, lastSeq, !!room);
   const botsQuery = useBots(room?.workspace_id ?? null, !!room);
@@ -185,8 +188,10 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
 
   const [draft, setDraft] = useState('');
   const [addBotId, setAddBotId] = useState('');
-  const [bulletinDraft, setBulletinDraft] = useState('');
-  const [editingBulletin, setEditingBulletin] = useState(false);
+  // Null means "not editing"; the draft is seeded from the server's copy when
+  // the reader opens the editor, so no effect has to mirror the room into state.
+  const [bulletinDraft, setBulletinDraft] = useState<string | null>(null);
+  const editingBulletin = bulletinDraft !== null;
   const [archiveOpen, setArchiveOpen] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -195,13 +200,6 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
     const membersInRoom = new Set((room?.members ?? []).map((member) => member.bot_id));
     return (botsQuery.data?.bots ?? []).filter((bot) => !membersInRoom.has(bot.bot_id));
   }, [botsQuery.data, room?.members]);
-
-  // The bulletin is the room's, so the draft follows the server's copy until
-  // the reader starts editing; a save (or another page's rewrite) resets it.
-  useEffect(() => {
-    setBulletinDraft(room?.bulletin ?? '');
-    setEditingBulletin(false);
-  }, [room?.room_id, room?.bulletin]);
 
   // The log is a transcript: new rows should arrive in view, not below it.
   const entryCount = entries.length;
@@ -266,8 +264,8 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
 
   const submitBulletin = () => {
     updateRoom.mutate(
-      { roomId, patch: { bulletin: bulletinDraft.trim() } },
-      { onSuccess: () => setEditingBulletin(false) },
+      { roomId, patch: { bulletin: (bulletinDraft ?? '').trim() } },
+      { onSuccess: () => setBulletinDraft(null) },
     );
   };
 
@@ -329,6 +327,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
             key={member.bot_id}
             member={member}
             isHost={member.room_role === 'host' || member.bot_id === room.host_bot_id}
+            removable={!archived}
             onRemove={() => removeMember.mutate({ roomId, botId: member.bot_id })}
           />
         ))}
@@ -375,7 +374,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         <div className="rooms-panel__bulletin rooms-panel__bulletin--editing">
           <Textarea
             aria-label={t('rooms.bulletin')}
-            value={bulletinDraft}
+            value={bulletinDraft ?? ''}
             onChange={(event) => setBulletinDraft(event.target.value)}
             placeholder={t('rooms.bulletinPlaceholder')}
             rows={2}
@@ -386,10 +385,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
               variant="ghost"
               size="sm"
               disabled={updateRoom.isPending}
-              onClick={() => {
-                setBulletinDraft(room.bulletin);
-                setEditingBulletin(false);
-              }}
+              onClick={() => setBulletinDraft(null)}
             >
               {t('common.cancel')}
             </Button>
@@ -405,7 +401,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
           <button
             type="button"
             className="rooms-panel__bulletin-edit"
-            onClick={() => setEditingBulletin(true)}
+            onClick={() => setBulletinDraft(room.bulletin)}
           >
             {t('rooms.bulletinEdit')}
           </button>
@@ -415,7 +411,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
           <button
             type="button"
             className="rooms-panel__bulletin-edit"
-            onClick={() => setEditingBulletin(true)}
+            onClick={() => setBulletinDraft('')}
           >
             {t('rooms.bulletinAdd')}
           </button>

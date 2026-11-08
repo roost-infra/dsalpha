@@ -437,7 +437,7 @@
 
 .rooms-log__bubble {
   padding: 7px 11px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--color-border-muted);
   background: var(--color-bg-card);
   font-size: 13.5px;
@@ -481,7 +481,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--color-success);
+  background: var(--color-accent-primary);
   flex: none;
 }
 

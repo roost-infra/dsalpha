@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, waitFor } from '@testing-library/react';
+import { QueryClient } from '@tanstack/react-query';
 import { renderHookWithProviders } from '@/test/utils';
 import { queryKeys } from '@/lib/queryKeys';
 import type { RoomLogEntry, RoomRoundStatus, RoomView } from '@/api/rooms';
@@ -178,7 +179,9 @@ describe('useRoomLog', () => {
       await result.current.refetch();
     });
 
-    expect(result.current.data?.map((row) => row.seq)).toEqual([1, 2]);
+    // The stream appended a row the refetched page does not carry; the merge
+    // keeps it rather than dropping bytes between the two reads.
+    expect(queryClient.getQueryData<RoomLogEntry[]>(queryKeys.rooms.log('room-1'))?.map((row) => row.seq)).toEqual([1, 2]);
   });
 });
 
@@ -204,7 +207,7 @@ describe('room writes', () => {
   });
 
   it('merges an update into the room\'s members instead of emptying them', async () => {
-    mockUpdateRoom.mockResolvedValue({ ...ROOM, name: 'Renamed', members: undefined });
+    mockUpdateRoom.mockResolvedValue({ ...ROOM, name: 'Renamed' });
     const { result, queryClient } = renderHookWithProviders(() => useUpdateRoom());
     queryClient.setQueryData(queryKeys.rooms.detail('room-1'), ROOM);
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
@@ -244,7 +247,12 @@ describe('room writes', () => {
     mockSendMessage.mockImplementation(
       () => new Promise((resolve) => { resolveSend = resolve; }),
     );
-    const { result, queryClient } = renderHookWithProviders(() => useSendRoomMessage());
+    // No log observer is mounted here, so the client keeps the log query in
+    // its cache for the assertion (the test client's default gc is 0).
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const { result } = renderHookWithProviders(() => useSendRoomMessage(), { queryClient });
     const logKey = queryKeys.rooms.log('room-1');
     queryClient.setQueryData(logKey, [entry({ seq: 1, sender_type: 'user', content: 'Earlier' })]);
 
@@ -266,7 +274,10 @@ describe('room writes', () => {
 
   it('takes the optimistic row back out when the send is refused', async () => {
     mockSendMessage.mockRejectedValue(new Error('Room is archived'));
-    const { result, queryClient } = renderHookWithProviders(() => useSendRoomMessage());
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const { result } = renderHookWithProviders(() => useSendRoomMessage(), { queryClient });
     const logKey = queryKeys.rooms.log('room-1');
     queryClient.setQueryData(logKey, []);
 

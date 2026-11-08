@@ -26,7 +26,6 @@ import {
   streamRoom,
   updateRoom,
   type RoomCreateInput,
-  type RoomInfo,
   type RoomLogEntry,
   type RoomRoundStatus,
   type RoomUpdateInput,
@@ -171,7 +170,7 @@ export function useUpdateRoom() {
       const current = queryClient.getQueryData<RoomView>(key);
       // The patch answer is a RoomInfo with no members; keep the ones the
       // detail read already had instead of drawing the room empty.
-      if (current) queryClient.setQueryData<RoomView>(key, { ...current, ...room });
+      if (current) queryClient.setQueryData<RoomView>(key, { ...current, ...room, members: current.members });
       else queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
     },
@@ -284,8 +283,10 @@ export interface RoomStreamState {
  */
 export function useRoomStream(roomId: string | null, lastSeq: number, enabled = true): RoomStreamState {
   const queryClient = useQueryClient();
-  const [round, setRound] = useState<RoomRoundStatus | null>(null);
-  const [live, setLive] = useState(false);
+  // Both values carry the room they belong to, so a room switch simply stops
+  // matching instead of needing a synchronous reset inside the effect.
+  const [roundState, setRoundState] = useState<{ roomId: string; round: RoomRoundStatus } | null>(null);
+  const [liveRoom, setLiveRoom] = useState<string | null>(null);
   const cursorRef = useRef(lastSeq);
   // Raised in an effect, not in render: the tail reads this ref from a timer
   // callback, and a render-time write is what the compiler cannot memoize.
@@ -299,15 +300,13 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
     let abort: (() => void) | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
-    setRound(null);
-    setLive(false);
 
     const open = () => {
       if (closed) return;
       abort = streamRoom(roomId, cursorRef.current, {
         onOpen: () => {
           attempt = 0;
-          setLive(true);
+          setLiveRoom(roomId);
         },
         onMessage: (entry) => {
           cursorRef.current = Math.max(cursorRef.current, entry.seq);
@@ -317,10 +316,10 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
           );
         },
         onRoundStatus: (status) => {
-          setRound(status);
+          setRoundState({ roomId, round: status });
         },
         onClose: () => {
-          setLive(false);
+          setLiveRoom((current) => (current === roomId ? null : current));
           if (closed) return;
           attempt += 1;
           retryTimer = setTimeout(open, Math.min(1000 * 2 ** attempt, 10_000));
@@ -336,5 +335,8 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
     };
   }, [queryClient, roomId, enabled]);
 
-  return { round, live };
+  return {
+    round: roundState && roundState.roomId === roomId ? roundState.round : null,
+    live: liveRoom === roomId,
+  };
 }

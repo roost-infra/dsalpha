@@ -236,6 +236,7 @@ async def stream_room(
         seq = int(last_seq)
         sent_round: Optional[str] = None
         sent_status: Optional[str] = None
+        sent_cursor: Optional[int] = None
         idle = 0.0
         while True:
             entries = await room_db.read_log(room["room_id"], since_seq=seq, limit=100)
@@ -247,8 +248,17 @@ async def stream_room(
             if row is None:
                 row = await room_db.latest_round(room["room_id"])
             if row is not None:
-                if row["round_id"] != sent_round or row["status"] != sent_status:
-                    sent_round, sent_status = row["round_id"], row["status"]
+                cursor = row.get("slot_cursor")
+                if (
+                    row["round_id"] != sent_round
+                    or row["status"] != sent_status
+                    or cursor != sent_cursor
+                ):
+                    sent_round, sent_status, sent_cursor = (
+                        row["round_id"],
+                        row["status"],
+                        cursor,
+                    )
                     yield _sse(
                         "round_status",
                         {

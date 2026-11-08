@@ -165,8 +165,10 @@ describe('RoomPanel', () => {
         created_at: null,
       });
     });
-    expect(screen.getByText('Fresh take from the desk.')).toBeInTheDocument();
-    expect(screen.getAllByTestId('room-log-message')).toHaveLength(3);
+    // Query-cache notifications land on a microtask, so the row is painted on
+    // the next tick rather than inside the handler.
+    expect(await screen.findByText('Fresh take from the desk.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('room-log-message')).toHaveLength(3));
 
     act(() => {
       handlers.onRoundStatus({
@@ -176,7 +178,9 @@ describe('RoomPanel', () => {
         slots: [{ bot_id: 'bot-1', name: 'Chief of Staff', state: 'pending' }],
       });
     });
-    expect(screen.getByTestId('room-round-status')).toHaveTextContent('Chief of Staff is speaking…');
+    await waitFor(() =>
+      expect(screen.getByTestId('room-round-status')).toHaveTextContent('Chief of Staff is speaking…'),
+    );
 
     act(() => {
       handlers.onRoundStatus({
@@ -186,7 +190,9 @@ describe('RoomPanel', () => {
         slots: [],
       });
     });
-    expect(screen.getByTestId('room-round-status')).toHaveTextContent('Round finished');
+    await waitFor(() =>
+      expect(screen.getByTestId('room-round-status')).toHaveTextContent('Round finished'),
+    );
   });
 
   it('sends the composer text optimistically, then with the API', async () => {
