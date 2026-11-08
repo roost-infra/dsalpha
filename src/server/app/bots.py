@@ -157,6 +157,11 @@ async def update_bot(
     user_id = principal.user_id
     current = await _reachable_bot(principal, bot_id)
     changes = body.model_dump(exclude_none=True)
+    if current["role"] == "chief_of_staff" and changes.get("status") == "paused":
+        raise HTTPException(
+            status_code=409,
+            detail="The Chief of Staff is derived from Home and cannot be paused.",
+        )
     if not changes:
         return _info(current)
     if "name" in changes:

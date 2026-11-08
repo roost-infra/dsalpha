@@ -126,3 +126,18 @@ async def test_a_computer_token_reads_only_its_own_computers_rooms():
     ) as list_db:
         await list_rooms(computer, None)
     assert list_db.await_args.kwargs["computer_id"] == "c-1"
+
+
+def test_a_blank_room_message_is_refused_at_the_model():
+    from src.server.models.room import RoomMessageCreate
+
+    with pytest.raises(ValueError):
+        RoomMessageCreate(content="   ")
+
+
+def test_a_room_name_is_stripped_and_cannot_be_blank():
+    from src.server.models.room import RoomCreate
+
+    assert RoomCreate(workspace_id=WS, name="  Research  ").name == "Research"
+    with pytest.raises(ValueError):
+        RoomCreate(workspace_id=WS, name="   ")

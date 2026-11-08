@@ -13,7 +13,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.server.app.bots import delete_bot, get_bot, list_bots
+from src.server.app.bots import delete_bot, get_bot, list_bots, update_bot
+from src.server.models.bot import BotUpdate
 from src.server.dependencies.principal import Principal
 from src.server.models.bot import BotCreate
 
@@ -157,3 +158,33 @@ async def test_a_bot_model_the_account_cannot_run_is_refused_at_the_pick():
         with pytest.raises(HTTPException) as caught:
             await _create(PRINCIPAL, body)
     assert caught.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_a_rename_onto_a_taken_name_is_refused_with_a_409():
+    current = _bot("b-1")
+    with patch(
+        "src.server.app.bots._reachable_bot", AsyncMock(return_value=current)
+    ), patch(
+        "src.server.app.bots.bot_db.update_bot",
+        AsyncMock(side_effect=__import__("src.server.database.bots", fromlist=["bots"]).BotNameTaken("Quant")),
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await update_bot(PRINCIPAL, "b-1", BotUpdate(name="Quant"))
+    assert caught.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_the_derived_chief_of_staff_cannot_be_paused():
+    chief = _bot("b-home", role="chief_of_staff", workspace_id=HOME)
+    with patch(
+        "src.server.app.bots._reachable_bot", AsyncMock(return_value=chief)
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await update_bot(PRINCIPAL, "b-home", BotUpdate(status="paused"))
+    assert caught.value.status_code == 409
+
+
+def test_a_blank_bot_name_is_not_a_name():
+    with pytest.raises(ValueError):
+        BotCreate(workspace_id=WS, name="   ")

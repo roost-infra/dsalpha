@@ -9,11 +9,18 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.server.database.rooms import MAX_ROOM_BOTS
 
 Responder = str  # "everyone" | "mentions" | "member:<botId>"
+
+
+def _named(value: str) -> str:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise ValueError("must not be blank")
+    return cleaned
 
 
 class RoomCreate(BaseModel):
@@ -24,12 +31,16 @@ class RoomCreate(BaseModel):
     responder: Responder = "everyone"
     bulletin: str = Field(default="", max_length=2_000)
 
+    _name = field_validator("name")(_named)
+
 
 class RoomUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=64)
     responder: Optional[Responder] = None
     bulletin: Optional[str] = Field(default=None, max_length=2_000)
     status: Optional[Literal["active", "archived"]] = None
+
+    _name = field_validator("name")(_named)
 
 
 class RoomMemberAdd(BaseModel):
@@ -38,6 +49,16 @@ class RoomMemberAdd(BaseModel):
 
 class RoomMessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=64 * 1024)
+    #: A client retry sends the same key, so one message is appended once.
+    request_key: Optional[str] = Field(default=None, max_length=128)
+
+    @field_validator("content")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("must not be blank")
+        return cleaned
 
 
 class RoomMemberInfo(BaseModel):

@@ -23,6 +23,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from psycopg.errors import UniqueViolation
 from fastapi.responses import StreamingResponse
 
 from src.server.app.status_stream import SSE_HEADERS
@@ -176,7 +177,11 @@ async def update_room(
     changed = body.model_dump(exclude_none=True)
     try:
         updated = await room_db.update_room(room["room_id"], changed)
-    except Exception as exc:
+    except UniqueViolation:
+        raise HTTPException(
+            status_code=409, detail="A room with that name already exists."
+        ) from None
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     if updated is None:
         raise HTTPException(status_code=404, detail="Room not found")

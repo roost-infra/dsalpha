@@ -9,10 +9,17 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 #: Cap mirrors ``database.bots.MAX_BOTS_PER_WORKSPACE``.
 MAX_BOTS_PER_WORKSPACE = 20
+
+
+def _named(value: str) -> str:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        raise ValueError("must not be blank")
+    return cleaned
 
 
 class BotCreate(BaseModel):
@@ -20,6 +27,7 @@ class BotCreate(BaseModel):
 
     workspace_id: uuid.UUID
     name: str = Field(..., min_length=1, max_length=64)
+    _name = field_validator("name")(_named)
     #: Only a workspace analyst can be created by hand. The Chief of Staff is
     #: derived per user (Home) and is created lazily by the resolver.
     role: Literal["analyst"] = "analyst"
@@ -45,6 +53,10 @@ class BotUpdate(BaseModel):
     """Edit a bot. Absent fields are left alone; ``role`` is immutable."""
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=64)
+
+    _name = field_validator("name")(
+        lambda value: None if value is None else _named(value)
+    )
     persona: Optional[str] = Field(default=None, max_length=20_000)
     avatar: Optional[Dict[str, Any]] = None
     provider: Optional[str] = Field(default=None, max_length=64)
