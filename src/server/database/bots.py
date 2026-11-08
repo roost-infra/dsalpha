@@ -439,3 +439,34 @@ async def bind_thread_bot(
                 "VALUES (%s, %s, %s) ON CONFLICT (bot_id, thread_id) DO NOTHING",
                 (bot, thread, kind),
             )
+
+
+async def get_thread_bot_id(thread_id: Any, *, conn=None) -> Optional[str]:
+    """The bot a thread carries, if any (None for a not-yet-stamped thread)."""
+    cleaned = normalize_uuid(str(thread_id)) if thread_id else None
+    if cleaned is None:
+        return None
+    async with get_db_connection(conn) as db:
+        async with db.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT bot_id FROM conversation_threads "
+                "WHERE conversation_thread_id = %s",
+                (cleaned,),
+            )
+            row = await cur.fetchone()
+            return str(row["bot_id"]) if row and row["bot_id"] else None
+
+
+async def set_primary_thread(bot_id: Any, thread_id: Any, *, conn=None) -> None:
+    """Pin the bot's private thread the first time one exists."""
+    bot = _clean_bot_id(bot_id)
+    thread = normalize_uuid(str(thread_id)) if thread_id else None
+    if bot is None or thread is None:
+        return
+    async with get_db_connection(conn) as db:
+        async with db.cursor() as cur:
+            await cur.execute(
+                "UPDATE bots SET primary_thread_id = COALESCE(primary_thread_id, %s), "
+                "updated_at = NOW() WHERE bot_id = %s",
+                (thread, bot),
+            )

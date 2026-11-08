@@ -323,6 +323,17 @@ export const queryKeys = {
     // Under `all` so an install anywhere refreshes each entry's `installed`.
     marketplace: () => [...queryKeys.plugins.all, 'marketplace'],
   },
+  // The user's Bots: the identities a workspace's turns answer as. One list
+  // answer carries every workspace's bots, so a null workspace id is "all of
+  // them" rather than "unknown"; the settings section groups that one answer
+  // by workspace.
+  bots: {
+    all:     ['bots'],
+    lists:   () => [...queryKeys.bots.all, 'list'],
+    list:    (workspaceId: string | null) => [...queryKeys.bots.lists(), workspaceId ?? 'all'],
+    details: () => [...queryKeys.bots.all, 'detail'],
+    detail:  (botId: string) => [...queryKeys.bots.details(), botId],
+  },
   // The user's order attempts. The list is paged by the server on a keyset
   // cursor, so a filter set is its own list rather than a client-side view of
   // one: the key carries the filters, and changing one starts a new page 1.

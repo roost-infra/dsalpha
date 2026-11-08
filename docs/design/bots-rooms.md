@@ -408,7 +408,7 @@ requested → working → done / failed / cancelled
 | 工具 | 作用 |
 |---|---|
 | `list_bots` | 列出同 workspace 的 Bot（名字/角色/状态） |
-| `send_message(bot, kind, content, reply_policy)` | 给另一个 Bot 发消息；`kind=request` 时建 assignment |
+| `send_bot_message(to, content, kind)` | 给另一个 Bot 发消息；`kind=request` 时建 assignment。**不能叫 `send_message`**：那是发给聊天渠道（微信等）的既有工具（`src/tools/messaging/`），CoS 已绑定 |
 | `assign_to_bot(bot, brief)` | 建 assignment 并交办（CoS 的 `delegate_to_analyst` 泛化） |
 | `report_to(assignment, outcome, evidence)` | 完成/失败上报 |
 | `read_room(room, since_seq)` / `post_to_room(room, content)` | 房间读写；`@Name` 生效 |

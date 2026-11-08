@@ -1217,6 +1217,11 @@ class PTCAgent:
             from src.tools.secretary.chief_of_staff import CHIEF_OF_STAFF_TOOLS
 
             tools = [*tools, *CHIEF_OF_STAFF_TOOLS]
+        # Collaboration: the main agent is the one with a bot identity to speak
+        # from, and a subagent stack must not start a conversation of its own.
+        from src.tools.bots.tool import BOT_TOOLS
+
+        tools = [*tools, *BOT_TOOLS]
         if direct_tools:
             tools = [*tools, *direct_tools]
 
