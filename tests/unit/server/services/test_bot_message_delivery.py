@@ -26,7 +26,8 @@ MESSAGE = {
     "to_bot_id": "b-2",
     "kind": "request",
     "content": "check the filings",
-    "payload": {},
+    "payload": {"depth": 2},
+    "root_id": "99999999-9999-9999-9999-999999999999",
     "status": "queued",
     "thread_id": None,
 }
@@ -83,6 +84,8 @@ async def test_a_dispatched_message_is_recorded_delivered_with_its_thread():
         "from_name": "Quant",
         "message_kind": "request",
         "body": "check the filings",
+        "root_id": "99999999-9999-9999-9999-999999999999",
+        "depth": 2,
     }
 
 

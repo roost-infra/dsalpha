@@ -119,6 +119,52 @@ async def create_message(
             return _row_to_dict(await cur.fetchone()), True
 
 
+async def count_root_messages(root_id: Any) -> int:
+    """How many messages this root chain already holds (the loop budget)."""
+    cleaned = normalize_uuid(str(root_id)) if root_id else None
+    if cleaned is None:
+        return 0
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COUNT(*) FROM bot_messages WHERE root_id = %s", (cleaned,)
+            )
+            return int((await cur.fetchone())[0])
+
+
+async def count_recent_from(from_id: Any, *, seconds: int = 60) -> int:
+    """Messages a bot sent in the last ``seconds`` (per-sender rate limit)."""
+    from src.server.utils.pg_sanitize import normalize_uuid as _uuid
+
+    cleaned = _uuid(str(from_id)) if from_id else None
+    if cleaned is None:
+        return 0
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT COUNT(*) FROM bot_messages "
+                "WHERE from_type = 'bot' AND from_id = %s::uuid "
+                "AND created_at > NOW() - make_interval(secs => %s)",
+                (cleaned, int(seconds)),
+            )
+            return int((await cur.fetchone())[0])
+
+
+async def set_message_root(message_id: Any, root_id: Any) -> None:
+    """The first message of a chain is its own root, known only after insert."""
+    cleaned_message = normalize_uuid(str(message_id)) if message_id else None
+    cleaned_root = normalize_uuid(str(root_id)) if root_id else None
+    if cleaned_message is None or cleaned_root is None:
+        return
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE bot_messages SET root_id = %s "
+                "WHERE message_id = %s AND root_id IS NULL",
+                (cleaned_root, cleaned_message),
+            )
+
+
 async def get_message(message_id: Any) -> Optional[Dict[str, Any]]:
     cleaned = normalize_uuid(str(message_id)) if message_id else None
     if cleaned is None:

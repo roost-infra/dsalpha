@@ -699,8 +699,24 @@ class TestProvenanceMetadata:
                 "from_bot_id": "b-1",
                 "from_name": "Quant",
                 "message_kind": "request",
+                "depth": 0,
             }
         }
+
+    def test_a_bot_message_carries_its_chain_position(self):
+        from src.server.models.chat import BotMessageSource, ChatRequest
+
+        request = ChatRequest(
+            bot_message_source=BotMessageSource(
+                from_bot_id="b-1",
+                from_name="Quant",
+                message_kind="request",
+                root_id="r-1",
+                depth=3,
+            )
+        )
+        assert provenance_metadata(request)["bot_message_source"]["depth"] == 3
+        assert provenance_metadata(request)["bot_message_source"]["root_id"] == "r-1"
 
     def test_a_plain_user_turn_carries_none(self):
         from src.server.models.chat import ChatRequest

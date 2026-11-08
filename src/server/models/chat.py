@@ -408,6 +408,10 @@ class BotMessageSource(BaseModel):
     message_id: Optional[str] = None
     from_bot_id: Optional[str] = None
     from_name: str
+    #: The chain this message belongs to, and how far along it is: the
+    #: send tool reads them from the turn's config to budget bot-to-bot work.
+    root_id: Optional[str] = None
+    depth: int = 0
     message_kind: Literal[
         "message", "request", "reply", "report", "question", "notice"
     ] = "message"

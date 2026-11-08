@@ -127,6 +127,8 @@ async def deliver_message(message_id: Any) -> Dict[str, Any]:
             "from_name": sender_name,
             "message_kind": message["kind"],
             "body": message["content"],
+            "root_id": message.get("root_id"),
+            "depth": int((message.get("payload") or {}).get("depth") or 0),
         },
     }
     from src.server.services.report_back.notify_turn import post_notification_turn

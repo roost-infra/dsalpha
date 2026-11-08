@@ -22,6 +22,21 @@ TARGET = {"bot_id": "b-2", "name": "Scout", "role": "analyst", "workspace_id": W
 CONFIG = {"configurable": {"user_id": USER, "workspace_id": WS, "thread_id": THREAD}}
 
 
+@pytest.fixture(autouse=True)
+def _no_budget_reads():
+    """The loop-budget reads answer zero unless a test gives them a value."""
+    with patch(
+        "src.server.database.bot_messages.count_root_messages",
+        AsyncMock(return_value=0),
+    ), patch(
+        "src.server.database.bot_messages.count_recent_from",
+        AsyncMock(return_value=0),
+    ), patch(
+        "src.server.database.bot_messages.set_message_root", AsyncMock()
+    ):
+        yield
+
+
 def _call(args: dict) -> dict:
     """A send_bot_message call as the graph makes one (the id is injected)."""
     return {
@@ -100,7 +115,7 @@ async def test_a_request_creates_an_assignment():
         out = await _say({"to": "Scout", "content": "do it", "kind": "request"})
     assert "queued for Scout" in out
     make.assert_awaited_once()
-    assert create.call_args.kwargs["payload"] == {"assignment_id": "a-1"}
+    assert create.call_args.kwargs["payload"] == {"assignment_id": "a-1", "depth": 1}
 
 
 @pytest.mark.asyncio
@@ -213,3 +228,77 @@ async def test_listing_assignments_marks_which_side_you_are():
         out = await _invoke(list_assignments, {})
     assert "you →" in out
     assert "→ you" in out
+
+
+# --- loop budgets: depth, root size, rate, kill switch --------------------
+
+def _chained(**conf):
+    return {"configurable": {**CONFIG["configurable"], **conf}}
+
+
+@pytest.mark.asyncio
+async def test_a_chain_that_spent_its_depth_is_refused():
+    from src.tools.bots.tool import MAX_CHAIN_DEPTH
+
+    with _ctx():
+        out = await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "hi"}),
+            config=_chained(bot_message_depth=MAX_CHAIN_DEPTH),
+        )
+    assert "budget is spent" in out.content
+
+
+@pytest.mark.asyncio
+async def test_a_chain_that_spent_its_message_budget_is_refused():
+    with _ctx(), patch(
+        "src.server.database.bot_messages.count_root_messages",
+        AsyncMock(return_value=64),
+    ):
+        out = await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "hi"}),
+            config=_chained(bot_message_root_id="root-1"),
+        )
+    assert "budget" in out.content
+
+
+@pytest.mark.asyncio
+async def test_a_bot_sending_too_fast_is_refused():
+    with _ctx(), patch(
+        "src.server.database.bot_messages.count_recent_from",
+        AsyncMock(return_value=8),
+    ):
+        out = await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "hi"}), config=CONFIG
+        )
+    assert "last minute" in out.content
+
+
+@pytest.mark.asyncio
+async def test_the_deployments_kill_switch_refuses_new_messages(monkeypatch):
+    monkeypatch.setenv("BOT_MESSAGING_ENABLED", "0")
+    with _ctx():
+        out = await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "hi"}), config=CONFIG
+        )
+    assert "disabled" in out.content
+
+
+@pytest.mark.asyncio
+async def test_a_new_chain_is_rooted_at_its_first_message():
+    with _ctx(), patch(
+        "src.server.database.assignments.open_assignment_targets",
+        AsyncMock(return_value=set()),
+    ), patch(
+        "src.server.database.bot_messages.create_message",
+        AsyncMock(return_value=({"message_id": "m-1"}, True)),
+    ) as make, patch(
+        "src.server.database.bot_messages.set_message_root", AsyncMock()
+    ) as root, patch(
+        "src.server.services.bot_messages.delivery.deliver_message",
+        AsyncMock(return_value={"status": "delivered"}),
+    ):
+        await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "hi"}), config=CONFIG
+        )
+    assert make.await_args.kwargs["root_id"] is None
+    root.assert_awaited_once_with("m-1", "m-1")

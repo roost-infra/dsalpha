@@ -10,6 +10,7 @@ reading the transcript.
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from typing import Annotated
 
@@ -26,6 +27,34 @@ logger = logging.getLogger(__name__)
 
 _MAX_CONTENT = 64 * 1024
 _KINDS = ("message", "request", "reply", "question", "notice")
+
+# --- bot-to-bot budgets ---------------------------------------------------
+# A chain starts with a message sent from a user turn (depth 0), and every
+# delivery grows it by one. These caps are what keeps two bots from spending
+# the account's credit in a loop; the env var is the deployment's kill switch.
+MAX_CHAIN_DEPTH = 6
+MAX_ROOT_MESSAGES = 64
+SEND_RATE_PER_MINUTE = 8
+
+
+def _messaging_enabled() -> bool:
+    return os.environ.get("BOT_MESSAGING_ENABLED", "1").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+        "no",
+    )
+
+
+def _chain(config: RunnableConfig) -> tuple[str | None, int]:
+    """The root this turn's message belongs to, and its depth in that chain."""
+    conf = (config or {}).get("configurable") or {}
+    root = conf.get("bot_message_root_id")
+    try:
+        depth = int(conf.get("bot_message_depth") or 0)
+    except (TypeError, ValueError):
+        depth = 0
+    return (str(root) if root else None, max(0, depth))
 
 
 def _where(config: RunnableConfig) -> tuple[str, str, str]:
@@ -147,6 +176,31 @@ async def send_bot_message(
     if target["bot_id"] == caller["bot_id"]:
         return "refused: that is you; answer in this thread instead"
 
+    if not _messaging_enabled():
+        return "refused: bot-to-bot messaging is disabled on this deployment"
+
+    root, depth = _chain(config)
+    next_depth = depth + 1
+    if next_depth > MAX_CHAIN_DEPTH:
+        return (
+            f"refused: this message chain is already {depth} hops deep and "
+            "the budget is spent; answer the latest request instead of "
+            "starting another hop"
+        )
+    if root is not None:
+        used = await msg_db.count_root_messages(root)
+        if used >= MAX_ROOT_MESSAGES:
+            return (
+                f"refused: this message chain has used its {MAX_ROOT_MESSAGES}"
+                "-message budget"
+            )
+    recent = await msg_db.count_recent_from(caller["bot_id"], seconds=60)
+    if recent >= SEND_RATE_PER_MINUTE:
+        return (
+            f"refused: you have sent {recent} messages in the last minute; "
+            "wait for an answer before sending more"
+        )
+
     # Upstream cycle: the target is waiting on an answer from you. Messaging it
     # would loop the two of you instead of answering what it asked.
     waiting_on_me = await assign_db.open_assignment_targets(user_id, target["bot_id"])
@@ -163,6 +217,8 @@ async def send_bot_message(
             user_id,
             from_bot_id=caller["bot_id"],
             to_bot_id=target["bot_id"],
+            depth=next_depth,
+            root_id=root,
         )
     try:
         message, created = await msg_db.create_message(
@@ -172,11 +228,23 @@ async def send_bot_message(
             to_bot_id=target["bot_id"],
             kind=kind,
             content=text,
-            payload={"assignment_id": assignment["assignment_id"]} if assignment else {},
+            payload={
+                "depth": next_depth,
+                **(
+                    {"assignment_id": assignment["assignment_id"]}
+                    if assignment
+                    else {}
+                ),
+            },
             idem=idem,
+            root_id=root,
         )
     except ValueError as exc:
         return f"refused: {exc}"
+    if created and root is None:
+        # The first message of a chain is its own root, known only after insert.
+        root = message["message_id"]
+        await msg_db.set_message_root(message["message_id"], root)
 
     from src.server.services.bot_messages.delivery import deliver_message
 
@@ -247,8 +315,12 @@ async def report_to(
     requester = await bot_db.get_bot(assignment["from_bot_id"])
     if requester is None:
         return "reported (the requester bot is gone)"
+    root, depth = _chain(config)
     body = evidence.strip() or f"The assignment is {normalized}."
-    payload_assignment = {"assignment_id": str(assignment["assignment_id"])}
+    payload_assignment = {
+        "assignment_id": str(assignment["assignment_id"]),
+        "depth": depth + 1,
+    }
     try:
         message, _created = await msg_db.create_message(
             user_id,
@@ -260,9 +332,12 @@ async def report_to(
             payload=payload_assignment,
             idem=f"report:{assignment_id}",
             in_reply_to=None,
+            root_id=root,
         )
     except ValueError as exc:
         return f"reported, but the report message was refused: {exc}"
+    if root is None:
+        await msg_db.set_message_root(message["message_id"], message["message_id"])
     from src.server.services.bot_messages.delivery import deliver_message
 
     sent = await deliver_message(message["message_id"])
