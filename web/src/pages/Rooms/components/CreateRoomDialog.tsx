@@ -9,7 +9,6 @@
 import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RoomView } from '@/api/rooms';
-import { ApiError } from '@/api/client';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,12 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useBots } from '@/hooks/useBots';
 import { useCreateRoom } from '@/hooks/useRooms';
 import type { Workspace } from '@/types/api';
-
-/** The server writes refusals meant for the user; anything else gets ours. */
-function failureText(error: unknown, fallback: string): string | null {
-  if (!error) return null;
-  return error instanceof ApiError && error.message ? error.message : fallback;
-}
+import { failureText } from '@/lib/failureText';
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -87,15 +81,15 @@ export default function CreateRoomDialog({
   };
 
   const toggleMember = (botId: string) => {
-    setMemberIds((previous) => {
-      if (previous.includes(botId)) {
-        const next = previous.filter((id) => id !== botId);
-        if (hostChoice === botId) setHostChoice(next[0] ?? '');
-        return next;
-      }
-      if (previous.length >= maxBots) return previous;
-      return [...previous, botId];
-    });
+    // Compute the next member list in the handler: a host fix inside a
+    // setState updater is a side effect React may run twice.
+    const next = memberIds.includes(botId)
+      ? memberIds.filter((id) => id !== botId)
+      : memberIds.length >= maxBots
+        ? memberIds
+        : [...memberIds, botId];
+    setMemberIds(next);
+    if (hostChoice === botId && !next.includes(botId)) setHostChoice(next[0] ?? '');
   };
 
   const submit = async () => {

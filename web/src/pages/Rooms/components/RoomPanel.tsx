@@ -11,8 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Archive, ArrowLeft, Info, Plus, Send, X } from 'lucide-react';
-import { ApiError } from '@/api/client';
-import type { RoomLogEntry, RoomMemberInfo, RoomView } from '@/api/rooms';
+import type { RoomLogEntry, RoomMemberInfo, RoomResponder, RoomView } from '@/api/rooms';
 import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,12 +38,7 @@ import {
   type RoomLogCacheEntry,
 } from '@/hooks/useRooms';
 import { responderLabelKey } from '../roomsCopy';
-
-/** The server writes refusals meant for the user; anything else gets ours. */
-function failureText(error: unknown, fallback: string): string | null {
-  if (!error) return null;
-  return error instanceof ApiError && error.message ? error.message : fallback;
-}
+import { failureText } from '@/lib/failureText';
 
 /** Whether a log row is the room talking, not a member. Status rows are the
  *  round's own record ("skipped", "could not answer") and are drawn as notices,
@@ -185,7 +179,16 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
     (highest, entry) => (entry.pending ? highest : Math.max(highest, entry.seq)),
     0,
   );
-  const { round, live } = useRoomStream(roomId, lastSeq, !!room);
+  // The tail must not open before the log page fixes the cursor: at 0 it
+  // would replay the room's whole history it is about to render anyway.
+  const cursorKnown = !!room && logQuery.data !== undefined;
+  const {
+    round,
+    live,
+    connectedOnce,
+    error: streamError,
+    retry: retryStream,
+  } = useRoomStream(roomId, lastSeq, cursorKnown);
   const botsQuery = useBots(room?.workspace_id ?? null, !!room);
   const sendMessage = useSendRoomMessage();
   const updateRoom = useUpdateRoom();
@@ -199,20 +202,52 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
   const [bulletinDraft, setBulletinDraft] = useState<string | null>(null);
   const editingBulletin = bulletinDraft !== null;
   const [archiveOpen, setArchiveOpen] = useState(false);
+  // The latest action's refusal, not whichever mutation happens to still hold
+  // an error: a later successful write clears it.
+  const [actionFailure, setActionFailure] = useState<string | null>(null);
+  const [unseen, setUnseen] = useState(false);
+  const atBottomRef = useRef(true);
   const logRef = useRef<HTMLDivElement>(null);
+
+  const fail = (error: unknown) => setActionFailure(failureText(error, t('rooms.failed')));
+  const clearFailure = () => setActionFailure(null);
 
   const members = useMemo(() => new Map((room?.members ?? []).map((member) => [member.bot_id, member])), [room?.members]);
   const availableBots = useMemo(() => {
     const membersInRoom = new Set((room?.members ?? []).map((member) => member.bot_id));
     return (botsQuery.data?.bots ?? []).filter((bot) => !membersInRoom.has(bot.bot_id));
   }, [botsQuery.data, room?.members]);
+  const maxBots = botsQuery.data?.max_bots ?? 12;
+  const atMemberCap = (room?.members.length ?? 0) >= maxBots;
 
-  // The log is a transcript: new rows should arrive in view, not below it.
+
+  // The log is a transcript: new rows arrive in view only while the reader is
+  // already at the bottom; otherwise they wait behind the jump affordance.
+  // A room switch starts a fresh transcript at its bottom.
   const entryCount = entries.length;
   useEffect(() => {
+    atBottomRef.current = true;
+    setUnseen(false);
+  }, [roomId]);
+  useEffect(() => {
+    const element = logRef.current;
+    if (!element) return;
+    if (atBottomRef.current) element.scrollTop = element.scrollHeight;
+    else if (entryCount > 0) setUnseen(true);
+  }, [entryCount, roomId]);
+  const onLogScroll = () => {
+    const element = logRef.current;
+    if (!element) return;
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+    atBottomRef.current = atBottom;
+    if (atBottom) setUnseen(false);
+  };
+  const jumpToLatest = () => {
     const element = logRef.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [entryCount, roomId]);
+    atBottomRef.current = true;
+    setUnseen(false);
+  };
 
   const roundLine = useMemo((): { text: string; member: RoomMemberInfo | null } | null => {
     if (!round) return null;
@@ -253,26 +288,29 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
   }
 
   const archived = room.status !== 'active';
-  const actionFailure = failureText(
-    sendMessage.error ?? updateRoom.error ?? addMember.error ?? removeMember.error,
-    t('rooms.failed'),
-  );
-
   const submitMessage = () => {
     const content = draft.trim();
     if (!content || archived || sendMessage.isPending) return;
+    clearFailure();
     setDraft('');
     sendMessage.mutate(
       { roomId, content },
-      // A refused send puts the text back where the reader left it.
-      { onError: () => setDraft((current) => current || content) },
+      {
+        // A refused send puts the text back where the reader left it, and the
+        // refusal is this action's, not whichever mutation errored last.
+        onError: (error) => {
+          setDraft((current) => current || content);
+          fail(error);
+        },
+      },
     );
   };
 
   const submitBulletin = () => {
+    clearFailure();
     updateRoom.mutate(
       { roomId, patch: { bulletin: (bulletinDraft ?? '').trim() } },
-      { onSuccess: () => setBulletinDraft(null) },
+      { onSuccess: () => { setBulletinDraft(null); clearFailure(); }, onError: fail },
     );
   };
 
@@ -291,10 +329,22 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
           <h2 className="rooms-panel__title">{room.name}</h2>
           <div className="rooms-panel__sub">
             <span>{t(responderLabelKey(room.responder))}</span>
-            <span className={live ? 'rooms-live is-live' : 'rooms-live'} data-testid="room-live">
+            <span
+              className={streamError ? 'rooms-live is-error' : live ? 'rooms-live is-live' : 'rooms-live'}
+              data-testid="room-live"
+            >
               <span className="rooms-live__dot" aria-hidden />
-              {live ? t('rooms.live') : t('rooms.reconnecting')}
+              {streamError
+                ? t('rooms.streamError')
+                : live
+                  ? t('rooms.live')
+                  : connectedOnce
+                    ? t('rooms.reconnecting')
+                    : t('rooms.connecting')}
             </span>
+            {streamError && (
+              <Button variant="ghost" size="sm" onClick={retryStream}>{t('common.retry')}</Button>
+            )}
             {archived && <Badge variant="muted">{t('rooms.archivedBadge')}</Badge>}
           </div>
         </div>
@@ -305,18 +355,29 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
             value={room.responder}
             disabled={archived || updateRoom.isPending}
             onChange={(event) => {
-              updateRoom.mutate({
-                roomId,
-                patch: { responder: event.target.value === 'mentions' ? 'mentions' : 'everyone' },
-              });
+              clearFailure();
+              // The value is the responder as the server stores it, including a
+              // `member:<id>` set elsewhere: never fold that to "everyone".
+              updateRoom.mutate(
+                { roomId, patch: { responder: event.target.value as RoomResponder } },
+                { onSuccess: clearFailure, onError: fail },
+              );
             }}
           >
             <option value="everyone">{t('rooms.responder.everyone')}</option>
             <option value="mentions">{t('rooms.responder.mentions')}</option>
             {/* A single-member responder set by an older client keeps its value
-                drawn rather than snapping the select to the wrong option. */}
+                drawn rather than snapping the select to the wrong option, and
+                its option names the bot it keeps. */}
             {room.responder !== 'everyone' && room.responder !== 'mentions' && (
-              <option value={room.responder}>{t('rooms.responder.single')}</option>
+              <option value={room.responder}>
+                {(() => {
+                  const member = members.get(room.responder.slice('member:'.length));
+                  return member
+                    ? t('rooms.responder.singleNamed', { name: member.name })
+                    : t('rooms.responder.single');
+                })()}
+              </option>
             )}
           </Select>
           {!archived && (
@@ -335,12 +396,29 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
             member={member}
             isHost={member.room_role === 'host' || member.bot_id === room.host_bot_id}
             removable={!archived}
-            onRemove={() => removeMember.mutate({ roomId, botId: member.bot_id })}
+            onRemove={() => {
+              clearFailure();
+              removeMember.mutate(
+                { roomId, botId: member.bot_id },
+                { onSuccess: clearFailure, onError: fail },
+              );
+            }}
           />
         ))}
         {!archived && (
           <span className="rooms-member-add">
-            {availableBots.length > 0 ? (
+            {botsQuery.isError ? (
+              <>
+                <span className="rooms-member-add__empty">{t('rooms.membersError')}</span>
+                <Button variant="ghost" size="sm" onClick={() => { void botsQuery.refetch(); }}>
+                  {t('common.retry')}
+                </Button>
+              </>
+            ) : botsQuery.isLoading ? (
+              <span className="rooms-member-add__empty" role="status">{t('rooms.membersLoading')}</span>
+            ) : atMemberCap ? (
+              <span className="rooms-member-add__empty">{t('rooms.memberCap', { max: maxBots })}</span>
+            ) : availableBots.length > 0 ? (
               <>
                 <Select
                   className="rooms-member-add__select"
@@ -360,9 +438,13 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
                   size="sm"
                   disabled={!addBotId || addMember.isPending}
                   onClick={() => {
+                    clearFailure();
                     addMember.mutate(
                       { roomId, botId: addBotId },
-                      { onSuccess: () => setAddBotId('') },
+                      {
+                        onSuccess: () => { setAddBotId(''); clearFailure(); },
+                        onError: fail,
+                      },
                     );
                   }}
                 >
@@ -377,7 +459,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         )}
       </div>
 
-      {editingBulletin ? (
+      {(editingBulletin && !archived ? (
         <div className="rooms-panel__bulletin rooms-panel__bulletin--editing">
           <Textarea
             aria-label={t('rooms.bulletin')}
@@ -405,15 +487,17 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         <div className="rooms-panel__bulletin">
           <Info className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="rooms-panel__bulletin-text">{room.bulletin}</span>
-          <button
-            type="button"
-            className="rooms-panel__bulletin-edit"
-            onClick={() => setBulletinDraft(room.bulletin)}
-          >
-            {t('rooms.bulletinEdit')}
-          </button>
+          {!archived && (
+            <button
+              type="button"
+              className="rooms-panel__bulletin-edit"
+              onClick={() => setBulletinDraft(room.bulletin)}
+            >
+              {t('rooms.bulletinEdit')}
+            </button>
+          )}
         </div>
-      ) : (
+      ) : !archived ? (
         <div className="rooms-panel__bulletin rooms-panel__bulletin--empty">
           <button
             type="button"
@@ -423,9 +507,15 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
             {t('rooms.bulletinAdd')}
           </button>
         </div>
-      )}
+      ) : null)}
 
-      <div className="rooms-panel__log" role="log" aria-label={t('rooms.logLabel')} ref={logRef}>
+      <div
+        className="rooms-panel__log"
+        role="log"
+        aria-label={t('rooms.logLabel')}
+        ref={logRef}
+        onScroll={onLogScroll}
+      >
         {logQuery.isError ? (
           <div className="rooms-panel__placeholder">
             <ErrorBanner error={failureText(logQuery.error, t('rooms.logLoadFailed'))} />
@@ -448,6 +538,22 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         )}
       </div>
 
+      {unseen && (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          data-testid="room-new-messages"
+          className="mx-auto -mt-10 mb-2 relative z-10 rounded-full border px-3 py-1 text-xs"
+          style={{
+            backgroundColor: 'var(--color-bg-elevated)',
+            borderColor: 'var(--color-border-muted)',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          {t('rooms.newMessages')}
+        </button>
+      )}
+
       {roundLine && (
         <div className="rooms-panel__round" role="status" aria-live="polite" data-testid="room-round-status">
           {roundLine.member
@@ -460,7 +566,23 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
       {actionFailure && <ErrorBanner error={actionFailure} className="rooms-panel__error" />}
 
       {archived ? (
-        <div className="rooms-panel__archived" role="status">{t('rooms.archivedNotice')}</div>
+        <div className="rooms-panel__archived" role="status">
+          {t('rooms.archivedNotice')}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={updateRoom.isPending}
+            onClick={() => {
+              clearFailure();
+              updateRoom.mutate(
+                { roomId, patch: { status: 'active' } },
+                { onSuccess: clearFailure, onError: fail },
+              );
+            }}
+          >
+            {t('rooms.restoreRoom')}
+          </Button>
+        </div>
       ) : (
         <form
           className="rooms-panel__composer"

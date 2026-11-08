@@ -18,25 +18,41 @@ const h = vi.hoisted(() => ({
   update: vi.fn(async (_args: unknown) => ({})),
   remove: vi.fn(async (_botId: string) => ({})),
   toast: vi.fn(),
+  botsError: null as unknown,
+  botsRefetch: vi.fn(),
+  botsLoading: false,
+  botsFailed: false,
+  workspacesLoading: false,
+  workspacesError: null as unknown,
+  workspacesFailed: false,
+  workspacesRefetch: vi.fn(),
 }));
 
-vi.mock('@/hooks/useBots', () => ({
-  useBots: () => ({
-    data: { bots: h.bots, max_bots: 20 },
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: () => undefined,
-  }),
-  useCreateBot: () => ({ mutateAsync: h.create, mutate: h.create, isPending: false, error: null }),
-  useUpdateBot: () => ({ mutateAsync: h.update, mutate: h.update, isPending: false, error: null }),
-  useDeleteBot: () => ({ mutateAsync: h.remove, mutate: h.remove, isPending: false, error: null }),
-}));
+vi.mock('@/hooks/useBots', async () => {
+  // The real mutation objects, so a refusal lands in `error` and the dialog's
+  // banner is the thing under test (a stub returning error: null could hide it).
+  const { useMutation } = await import('@tanstack/react-query');
+  return {
+    useBots: () => ({
+      data: { bots: h.bots, max_bots: 20 },
+      isLoading: h.botsLoading,
+      isError: h.botsFailed,
+      error: h.botsError,
+      refetch: h.botsRefetch,
+    }),
+    useCreateBot: () => useMutation({ mutationFn: (input: unknown) => h.create(input) }),
+    useUpdateBot: () => useMutation({ mutationFn: (args: unknown) => h.update(args) }),
+    useDeleteBot: () => useMutation({ mutationFn: (botId: string) => h.remove(botId) }),
+  };
+});
 
 vi.mock('@/hooks/useAllWorkspaces', () => ({
   useAllWorkspaces: () => ({
-    data: { workspaces: h.workspaces, total: h.workspaces.length },
-    isLoading: false,
+    data: h.workspacesFailed ? undefined : { workspaces: h.workspaces, total: h.workspaces.length },
+    isLoading: h.workspacesLoading,
+    isError: h.workspacesFailed,
+    error: h.workspacesError,
+    refetch: h.workspacesRefetch,
   }),
 }));
 
@@ -86,6 +102,14 @@ beforeEach(() => {
   h.remove.mockReset();
   h.remove.mockResolvedValue({});
   h.toast.mockReset();
+  h.botsError = null;
+  h.botsRefetch.mockReset();
+  h.botsLoading = false;
+  h.botsFailed = false;
+  h.workspacesLoading = false;
+  h.workspacesError = null;
+  h.workspacesFailed = false;
+  h.workspacesRefetch.mockReset();
 });
 
 describe('BotsPanel list', () => {
@@ -151,18 +175,50 @@ describe('BotsPanel writes', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 
-  it('edits the name, persona, model and approval of a bot', async () => {
+  it('sends only the changed name when nothing else was edited', async () => {
     renderPanel();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Macro strategist' } });
     // The approval is stored and shown for now; the dialog says so.
     expect(screen.getByText(/v1 does not auto-approve/)).toBeInTheDocument();
+    // Memory scopes are stored for a later version, and the form says so.
+    expect(screen.getByText(/does not enforce memory scopes/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    // persona/model/approval are versioned server-side: a rename alone must not
+    // restate them into a new bot_versions row.
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: { name: 'Macro strategist' },
+    }));
+  });
+
+  it('clears the model with an explicit null when the field empties', async () => {
+    h.bots = [CHIEF, { ...ANALYST, model: 'claude-sonnet-4' }];
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(h.update).toHaveBeenCalledWith({
       botId: 'bot-1',
-      patch: { name: 'Macro strategist', persona: '', model: null, approval: 'ask' },
+      patch: { name: 'Macro analyst', model: null },
+    }));
+  });
+
+  it('sends persona and approval only when they changed', async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.change(screen.getByLabelText('Persona'), { target: { value: 'Reads the tape.' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Approval' }), { target: { value: 'edits' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith({
+      botId: 'bot-1',
+      patch: { name: 'Macro analyst', persona: 'Reads the tape.', approval: 'edits' },
     }));
   });
 
@@ -181,9 +237,6 @@ describe('BotsPanel writes', () => {
       botId: 'bot-1',
       patch: {
         name: 'Macro analyst',
-        persona: '',
-        model: null,
-        approval: 'ask',
         skills: ['macro', 'rates'],
         tools_allow: ['web_search', 'quote'],
         tools_deny: ['trading'],
@@ -254,15 +307,14 @@ describe('BotsPanel writes', () => {
     }));
   });
 
-  it('pauses an active bot through the status write', () => {
+  it('pauses an active bot through the status write', async () => {
     renderPanel();
 
     fireEvent.click(screen.getByRole('button', { name: 'Pause Macro analyst' }));
 
-    expect(h.update).toHaveBeenCalledWith(
+    await waitFor(() => expect(h.update).toHaveBeenCalledWith(
       { botId: 'bot-1', patch: { status: 'paused' } },
-      expect.objectContaining({ onError: expect.any(Function) }),
-    );
+    ));
   });
 
   it('deletes a bot only after the confirmation dialog', async () => {
@@ -272,6 +324,52 @@ describe('BotsPanel writes', () => {
     expect(screen.getByRole('heading', { name: 'Delete bot' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Delete bot' }));
 
-    await waitFor(() => expect(h.remove).toHaveBeenCalledWith('bot-1', expect.anything()));
+    await waitFor(() => expect(h.remove).toHaveBeenCalledWith('bot-1'));
   });
-});
+
+  it('shows the server\'s refusal sentence when an edit is refused', async () => {
+    h.update.mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'A bot with that name already exists in this workspace.' } },
+      }),
+    );
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Macro analyst' }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Macro analyst' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('A bot with that name already exists in this workspace.')).toBeInTheDocument();
+  });
+
+  it('does not report "no bots yet" while the bots read has failed', () => {
+    h.bots = [];
+    h.botsFailed = true;
+    h.botsError = new Error('Network Error');
+    renderPanel();
+
+    expect(screen.queryByText('No bots yet')).toBeNull();
+    expect(screen.getByText("Couldn't load your bots.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(h.botsRefetch).toHaveBeenCalled();
+  });
+
+  it('does not report "no bots yet" while the workspace read has failed', () => {
+    h.bots = [];
+    h.workspacesFailed = true;
+    h.workspacesError = new Error('Network Error');
+    renderPanel();
+
+    expect(screen.getByText("Couldn't load your bots.")).toBeInTheDocument();
+    expect(screen.queryByText('No bots yet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(h.workspacesRefetch).toHaveBeenCalled();
+  });
+
+  it('shows loading instead of an empty state while the reads are in flight', () => {
+    h.botsLoading = true;
+    renderPanel();
+
+    expect(screen.getByRole('status')).toHaveTextContent('Loading');
+    expect(screen.queryByText('No bots yet')).toBeNull();
+  });});

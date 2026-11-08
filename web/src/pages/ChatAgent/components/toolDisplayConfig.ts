@@ -182,17 +182,37 @@ function botMessageKind(toolName: string, args: ToolCallArgs | undefined): strin
   return BOT_MESSAGE_KINDS.has(kind) ? kind : 'message';
 }
 
-/** What the call's own answer says became of it: delivered, queued, refused. */
+/**
+ * What the call's own answer says became of it. A refusal names the specific
+ * reason when it can ("already", "failed", "missing"), and a report's own
+ * delivery status rides in its trailing parenthetical: delivered/queued when
+ * the report reached the requester, failed/missing/already when it did not.
+ */
 function botMessageStatus(toolName: string, result: string): string | null {
   const text = result.trim().toLowerCase();
   if (!text) return null;
-  if (text.startsWith('refused')) return 'refused';
+  if (text.startsWith('refused')) {
+    if (text.includes('already')) return 'already';
+    if (text.includes('no assignment') || text.includes('no longer exists')) return 'missing';
+    if (text.includes('outcome must be')) return 'failed';
+    return 'refused';
+  }
   if (text.startsWith('queued')) return 'queued';
   if (text.startsWith('delivered')) return 'delivered';
   if (toolName === 'report_to' && text.startsWith('reported')) {
+    // "reported to Scout (delivered)" — the parenthetical is the delivery.
+    const status = /\(([a-z]+)\)/.exec(text)?.[1];
+    if (status === 'delivered' || status === 'queued' || status === 'failed'
+      || status === 'missing' || status === 'already' || status === 'refused') {
+      return status;
+    }
+    // "reported (no requester to notify)" / "(the requester bot is gone)":
+    // the report closed the assignment but reached nobody.
+    if (text.includes('no requester') || text.includes('requester bot is gone')
+      || text.includes('missing')) return 'missing';
     // A report whose own message could not be sent says so after "reported".
     if (text.includes('refused')) return 'refused';
-    return text.includes('(queued)') ? 'queued' : 'delivered';
+    return 'delivered';
   }
   return null;
 }

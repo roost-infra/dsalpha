@@ -76,6 +76,17 @@ describe('a settled bot-message call', () => {
       .toBe('refused');
   });
 
+  it('maps the other report outcomes the server can state', () => {
+    const at = (result: string) => settled('report_to', { assignment_id: 'a-1' }, result).summary;
+    expect(at('reported to Scout (failed)')).toBe('failed');
+    expect(at('reported to Scout (missing)')).toBe('missing');
+    expect(at('reported to Scout (already)')).toBe('already');
+    expect(at('reported (no requester to notify)')).toBe('missing');
+    expect(at('reported (the requester bot is gone)')).toBe('missing');
+    expect(at('refused: that assignment is already done')).toBe('already');
+    expect(at('refused: no assignment you were given has that id')).toBe('missing');
+  });
+
   it('says no more than it knows when the answer did not state an outcome', () => {
     expect(settled('send_bot_message', { to: 'Scout' }, '').summary).toBeNull();
     expect(settled('report_to', { assignment_id: 'a-1' }, '').title).toBe('Reported back');

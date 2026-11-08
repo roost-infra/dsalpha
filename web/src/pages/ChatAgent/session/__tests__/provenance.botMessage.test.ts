@@ -215,6 +215,27 @@ describe('history replay of a delivered bot message', () => {
     expect(rows.map((m) => m.id)).toEqual(['history-user-4']);
   });
 
+  it('draws a replayed bot message with no report_run_id and no run to take over', () => {
+    const rows = replay({
+      content: '[Message from Scout]\nNVDA moved 3%.',
+      query_type: 'system',
+      timestamp: 1_700_000_000,
+      metadata: {
+        bot_message_source: {
+          kind: 'bot_message', message_id: 'msg-1', from_bot_id: 'bot-2',
+          from_name: 'Scout', message_kind: 'message',
+        },
+      },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      content: 'NVDA moved 3%.',
+      provenance: { kind: 'bot_message', fromName: 'Scout', messageKind: 'message' },
+    });
+    // No run was reported for the row, so nothing claims to be its turn.
+    expect(rows[0].runId).toBeUndefined();
+  });
+
   it('keeps a system turn with no sender and no frame hidden, as it always was', () => {
     expect(replay({ content: '<system>done</system>', query_type: 'system', metadata: {} })).toEqual([]);
   });

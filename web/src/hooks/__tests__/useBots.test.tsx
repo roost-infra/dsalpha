@@ -109,6 +109,9 @@ describe('useCreateBot', () => {
     expect(mockCreateBot).toHaveBeenCalledWith({ workspace_id: 'ws-1', name: 'Macro analyst' });
     expect(queryClient.getQueryData(queryKeys.bots.detail('bot-1'))).toEqual(BOT);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.bots.lists() });
+    // A renamed/paused/deleted bot is also a member chip in an open room.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.details() });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
   });
 });
 
@@ -124,6 +127,9 @@ describe('useUpdateBot', () => {
     expect(mockUpdateBot).toHaveBeenCalledWith('bot-1', { status: 'paused' });
     expect(queryClient.getQueryData(queryKeys.bots.detail('bot-1'))).toEqual(paused);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.bots.lists() });
+    // A renamed/paused/deleted bot is also a member chip in an open room.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.details() });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
   });
 });
 
@@ -139,5 +145,8 @@ describe('useDeleteBot', () => {
     expect(mockDeleteBot).toHaveBeenCalledWith('bot-1');
     expect(queryClient.getQueryData(queryKeys.bots.detail('bot-1'))).toBeUndefined();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.bots.lists() });
+    // A deleted bot disappears from any room's chips too.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.details() });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
   });
 });

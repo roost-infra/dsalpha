@@ -28,9 +28,17 @@ import {
   type RoomCreateInput,
   type RoomLogEntry,
   type RoomRoundStatus,
+  type RoomUpdated,
   type RoomUpdateInput,
   type RoomView,
 } from '@/api/rooms';
+
+/** The HTTP status a stream failure carried (the class lives in api/rooms so
+ *  the transport and this read agree on one name). */
+function streamStatus(error: Error | null): number | null {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' ? status : null;
+}
 
 /** The server's log page cap; reading the tail means one page, not all of it. */
 const ROOM_LOG_PAGE_SIZE = 200;
@@ -240,18 +248,26 @@ export function useSendRoomMessage() {
       const key = queryKeys.rooms.log(roomId);
       queryClient.setQueryData<RoomLogCacheEntry[]>(key, (previous) => {
         if (!previous) return previous;
-        return orderEntries(
-          previous.map((entry) =>
-            entry.seq === context?.pendingSeq
-              ? {
-                  ...entry,
-                  seq: answer.message_seq,
-                  round_id: answer.round_id,
-                  pending: undefined,
-                }
-              : entry,
-          ),
+        const mapped = previous.map((entry) =>
+          entry.seq === context?.pendingSeq
+            ? {
+                ...entry,
+                seq: answer.message_seq,
+                round_id: answer.round_id,
+                pending: undefined,
+              }
+            : entry,
         );
+        // The SSE tail can have drawn the persisted row before this answer
+        // arrived; the answer's twin of it is the same row, drawn once.
+        const seen = new Set<number>();
+        const deduped = mapped.filter((entry) => {
+          if (entry.pending) return true;
+          if (seen.has(entry.seq)) return false;
+          seen.add(entry.seq);
+          return true;
+        });
+        return orderEntries(deduped);
       });
       // The server's page is the truth if the answer names a seq the stream
       // has not drawn yet.
@@ -262,6 +278,11 @@ export function useSendRoomMessage() {
       queryClient.setQueryData<RoomLogCacheEntry[]>(key, (previous) =>
         previous?.filter((entry) => entry.seq !== context?.pendingSeq),
       );
+      // A send refused because the room was archived (or its members changed)
+      // is the room row's news: re-read it so the composer and controls stop
+      // offering a write the server just refused.
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(roomId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
     },
   });
 }
@@ -271,15 +292,27 @@ export interface RoomStreamState {
   round: RoomRoundStatus | null;
   /** Whether the tail is currently connected. */
   live: boolean;
+  /** The tail opened at least once, so a stop is a reconnect rather than a
+   *  first connection still in progress. */
+  connectedOnce: boolean;
+  /** A refusal that asking again cannot fix (4xx): the tail stopped. */
+  error: Error | null;
+  /** Reopen from the cursor after `error`, or after giving up. */
+  retry: () => void;
 }
+
+/** How long to wait before reopening, bounded. The first retry is quick; a
+ *  long outage backs off to ten seconds. */
+const reconnectDelay = (attempt: number) => Math.min(1000 * 2 ** Math.min(attempt, 4), 10_000);
 
 /**
  * Follow one room's log and round over SSE, from `lastSeq`.
  *
  * The tail reopens itself from the highest seq it has seen (the table-sourced
  * replay makes that gapless), with a bounded backoff, and appends every
- * `room_message` into the log cache. It stops when the id goes away or the
- * caller disables it.
+ * `room_message` into the log cache. A 4xx refusal (the room is gone, or not
+ * this caller's) is not retried: it is exposed as `error` with `retry` for the
+ * reader. It stops when the id goes away or the caller disables it.
  */
 export function useRoomStream(roomId: string | null, lastSeq: number, enabled = true): RoomStreamState {
   const queryClient = useQueryClient();
@@ -287,7 +320,13 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
   // matching instead of needing a synchronous reset inside the effect.
   const [roundState, setRoundState] = useState<{ roomId: string; round: RoomRoundStatus } | null>(null);
   const [liveRoom, setLiveRoom] = useState<string | null>(null);
+  const [connectedRoom, setConnectedRoom] = useState<string | null>(null);
+  const [streamError, setStreamError] = useState<{ roomId: string; error: Error } | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const cursorRef = useRef(lastSeq);
+  // The last room_updated a tail announced. A reconnect re-announces the row
+  // as it stands; only a genuinely newer one is worth re-reading.
+  const roomUpdatedRef = useRef<Record<string, string | null>>({});
   // Raised in an effect, not in render: the tail reads this ref from a timer
   // callback, and a render-time write is what the compiler cannot memoize.
   useEffect(() => {
@@ -301,12 +340,24 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
 
+    const invalidateRoom = (update: RoomUpdated) => {
+      const last = roomUpdatedRef.current[update.room_id];
+      if (last !== undefined && last === update.updated_at) return;
+      roomUpdatedRef.current[update.room_id] = update.updated_at;
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(update.room_id) });
+      // The list names the room and its responder too; a rename or a member
+      // change reaches it as well as the detail.
+      queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
+    };
+
     const open = () => {
       if (closed) return;
       abort = streamRoom(roomId, cursorRef.current, {
         onOpen: () => {
           attempt = 0;
           setLiveRoom(roomId);
+          setConnectedRoom(roomId);
+          setStreamError(null);
         },
         onMessage: (entry) => {
           cursorRef.current = Math.max(cursorRef.current, entry.seq);
@@ -319,15 +370,21 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
           setRoundState({ roomId, round: status });
         },
         // The room row changed (name, responder, bulletin or members), so the
-        // detail read is stale. The log did not move, so it is not read again.
-        onRoomUpdated: (update) => {
-          queryClient.invalidateQueries({ queryKey: queryKeys.rooms.detail(update.room_id) });
-        },
-        onClose: () => {
+        // detail and the list are stale. The log did not move, so it is not
+        // read again.
+        onRoomUpdated: invalidateRoom,
+        onClose: (error) => {
           setLiveRoom((current) => (current === roomId ? null : current));
           if (closed) return;
+          const status = streamStatus(error);
+          // A 4xx is the room (gone, archived, not this caller's): reopening
+          // the same tail would only be refused the same way.
+          if (status !== null && status >= 400 && status < 500) {
+            setStreamError({ roomId, error: error as Error });
+            return;
+          }
           attempt += 1;
-          retryTimer = setTimeout(open, Math.min(1000 * 2 ** attempt, 10_000));
+          retryTimer = setTimeout(open, reconnectDelay(attempt));
         },
       });
     };
@@ -338,10 +395,18 @@ export function useRoomStream(roomId: string | null, lastSeq: number, enabled = 
       if (retryTimer) clearTimeout(retryTimer);
       abort?.();
     };
-  }, [queryClient, roomId, enabled]);
+  }, [queryClient, roomId, enabled, retryNonce]);
 
+  const error = streamError && streamError.roomId === roomId ? streamError.error : null;
   return {
     round: roundState && roundState.roomId === roomId ? roundState.round : null,
-    live: liveRoom === roomId,
+    live: liveRoom === roomId && !error,
+    connectedOnce: connectedRoom === roomId,
+    error,
+    retry: () => {
+      if (!roomId) return;
+      setStreamError(null);
+      setRetryNonce((nonce) => nonce + 1);
+    },
   };
 }

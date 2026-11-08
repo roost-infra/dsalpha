@@ -24,8 +24,20 @@ vi.mock('@/api/rooms', () => ({
   streamRoom: vi.fn(),
 }));
 
+const botsState = vi.hoisted(() => ({
+  bots: [] as { bot_id: string; name: string }[],
+  loading: false,
+  failed: false,
+  refetch: vi.fn(),
+}));
+
 vi.mock('@/hooks/useBots', () => ({
-  useBots: () => ({ data: { bots: [], max_bots: 12 }, isLoading: false, isError: false }),
+  useBots: () => ({
+    data: { bots: botsState.bots, max_bots: 12 },
+    isLoading: botsState.loading,
+    isError: botsState.failed,
+    refetch: botsState.refetch,
+  }),
 }));
 
 import {
@@ -97,8 +109,10 @@ const LOG: RoomLogEntry[] = [
 function streamHandlers() {
   const call = mockStreamRoom.mock.calls.at(-1);
   return call?.[2] as {
+    onOpen: () => void;
     onMessage: (entry: RoomLogEntry) => void;
     onRoundStatus: (status: RoomRoundStatus) => void;
+    onClose: (error: Error | null) => void;
   };
 }
 
@@ -110,6 +124,10 @@ async function renderPanel() {
 }
 
 beforeEach(() => {
+  botsState.bots = [];
+  botsState.loading = false;
+  botsState.failed = false;
+  botsState.refetch.mockReset();
   mockGetRoom.mockReset().mockResolvedValue(ROOM);
   mockGetRoomLog.mockReset().mockResolvedValue({ entries: LOG, latest_seq: 3 });
   mockSendMessage.mockReset();
@@ -271,4 +289,127 @@ describe('RoomPanel', () => {
     await waitFor(() => expect(mockUpdateRoom).toHaveBeenCalledWith('room-1', { status: 'archived' }));
     expect(await screen.findByText(/This room is archived/)).toBeInTheDocument();
   });
-});
+
+  it('opens the live tail only once the log page has fixed the cursor', async () => {
+    await renderPanel();
+
+    // The log's highest seq is 3: a tail opened before the page resolves would
+    // replay the whole history from last_seq=0.
+    await waitFor(() => expect(mockStreamRoom).toHaveBeenCalledWith('room-1', 3, expect.any(Object)));
+    expect(mockStreamRoom.mock.calls.map((call) => call[1])).not.toContain(0);
+  });
+
+  it('stops on a refused stream and offers Retry', async () => {
+    await renderPanel();
+    await waitFor(() => expect(mockStreamRoom).toHaveBeenCalled());
+
+    act(() => {
+      streamHandlers().onClose(Object.assign(new Error('HTTP error! status: 404'), { status: 404 }));
+    });
+
+    expect(await screen.findByText("The room's live updates stopped.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(mockStreamRoom).toHaveBeenCalledTimes(2));
+  });
+
+  it('restores a refused send and re-reads the room row', async () => {
+    mockSendMessage.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'This room is archived.' } },
+      }),
+    );
+    await renderPanel();
+
+    fireEvent.change(screen.getByLabelText('Message the room…'), {
+      target: { value: 'Too late?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('This room is archived.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Message the room…')).toHaveValue('Too late?');
+    // The refusal is the room row's news: detail is read again so the composer
+    // reflects the archived state.
+    await waitFor(() => expect(mockGetRoom.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it('clears a stale action banner after a later write succeeds', async () => {
+    mockRemoveMember.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'The room is busy.' } },
+      }),
+    );
+    mockSendMessage.mockResolvedValue({ message_seq: 4, round_id: 'round-1', round_status: 'queued' });
+    await renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Macro analyst' }));
+    expect(await screen.findByText('The room is busy.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Message the room…'), { target: { value: 'Ready now.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(screen.queryByText('The room is busy.')).toBeNull());
+  });
+
+  it('separates a members page still loading from every bot already added', async () => {
+    botsState.loading = true;
+    await renderPanel();
+
+    expect(await screen.findByText("Loading the workspace's bots…")).toBeInTheDocument();
+    expect(screen.queryByText('Every bot in this workspace is already in the room.')).toBeNull();
+  });
+
+  it('disables adding a member at the cap, and reports a failed bots read', async () => {
+    const capped = {
+      ...ROOM,
+      members: Array.from({ length: 12 }, (_, index) => ({
+        bot_id: `bot-${index + 1}`,
+        name: `Bot ${index + 1}`,
+        role: 'analyst' as const,
+        status: 'active' as const,
+        room_role: 'member' as const,
+      })),
+    };
+    mockGetRoom.mockResolvedValue(capped);
+    const view = await renderPanel();
+
+    expect(await screen.findByText('A room holds at most 12 bots.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Add member')).toBeNull();
+    view.unmount();
+
+    mockGetRoom.mockResolvedValue(ROOM);
+    botsState.failed = true;
+    await renderPanel();
+    expect(await screen.findByText("Couldn't load the workspace's bots.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(botsState.refetch).toHaveBeenCalled();
+  });
+
+  it('names a single-member responder and sends its member:<id> value back unchanged', async () => {
+    const single = { ...ROOM, responder: 'member:bot-2' as const };
+    mockGetRoom.mockResolvedValue(single);
+    await renderPanel();
+
+    expect(await screen.findByRole('option', { name: 'Only Macro analyst replies' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Who replies'), {
+      target: { value: 'member:bot-2' },
+    });
+    await waitFor(() => expect(mockUpdateRoom).toHaveBeenCalledWith('room-1', {
+      responder: 'member:bot-2',
+    }));
+  });
+
+  it('takes no bulletin edits in an archived room and can restore it', async () => {
+    mockGetRoom.mockResolvedValue({
+      ...ROOM,
+      status: 'archived',
+      bulletin: 'Keep it brief.',
+      members: ROOM.members.map((member) => ({ ...member, room_role: 'host' as const })),
+    });
+    await renderPanel();
+
+    expect(await screen.findByRole('button', { name: 'Restore room' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore room' }));
+    await waitFor(() => expect(mockUpdateRoom).toHaveBeenCalledWith('room-1', { status: 'active' }));
+  });});

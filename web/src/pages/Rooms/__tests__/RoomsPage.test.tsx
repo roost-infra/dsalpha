@@ -18,12 +18,17 @@ const h = vi.hoisted(() => ({
   roomById: {} as Record<string, RoomView>,
   bots: [] as BotInfo[],
   create: vi.fn(),
+  workspacesFailed: false,
+  workspacesRefetch: vi.fn(),
 }));
 
 vi.mock('@/hooks/useAllWorkspaces', () => ({
   useAllWorkspaces: () => ({
-    data: { workspaces: h.workspaces, total: h.workspaces.length },
+    data: h.workspacesFailed ? undefined : { workspaces: h.workspaces, total: h.workspaces.length },
     isLoading: false,
+    isError: h.workspacesFailed,
+    error: h.workspacesFailed ? Object.assign(new Error('Network Error'), { message: 'Network Error' }) : null,
+    refetch: h.workspacesRefetch,
   }),
 }));
 
@@ -35,7 +40,9 @@ vi.mock('@/hooks/useBots', () => ({
   }),
 }));
 
-vi.mock('@/hooks/useRooms', () => ({
+vi.mock('@/hooks/useRooms', async () => {
+  const { useMutation } = await import('@tanstack/react-query');
+  return ({
   useRooms: (workspaceId: string | null) => ({
     data: {
       rooms: workspaceId ? (h.roomsByWorkspace[workspaceId] ?? []) : Object.values(h.roomsByWorkspace).flat(),
@@ -61,12 +68,13 @@ vi.mock('@/hooks/useRooms', () => ({
     refetch: () => undefined,
   }),
   useRoomStream: () => ({ round: null, live: false }),
-  useCreateRoom: () => ({ mutateAsync: h.create, mutate: h.create, isPending: false, error: null }),
+  useCreateRoom: () => useMutation({ mutationFn: (input: unknown) => h.create(input) }),
   useUpdateRoom: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, error: null }),
   useAddRoomMember: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, error: null }),
   useRemoveRoomMember: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, error: null }),
   useSendRoomMessage: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false, error: null }),
-}));
+  });
+});
 
 import Rooms from '../Rooms';
 
@@ -105,6 +113,27 @@ const CREATED: RoomView = {
   ],
 };
 
+const BOT2: BotInfo = {
+  bot_id: 'bot-2',
+  user_id: 'user-1',
+  workspace_id: 'ws-1',
+  name: 'Rates analyst',
+  role: 'analyst',
+  persona: '',
+  avatar: {},
+  provider: null,
+  model: null,
+  skills: [],
+  tools_allow: [],
+  tools_deny: [],
+  approval: 'ask',
+  memory_scopes: ['workspace'],
+  status: 'active',
+  primary_thread_id: null,
+  created_at: null,
+  updated_at: null,
+};
+
 const BOT: BotInfo = {
   bot_id: 'bot-1',
   user_id: 'user-1',
@@ -133,7 +162,9 @@ beforeEach(() => {
     'room-1': { ...MORNING, members: CREATED.members },
     'room-3': { ...TRADING_ROOM, members: CREATED.members },
   };
-  h.bots = [BOT];
+  h.bots = [BOT, BOT2];
+  h.workspacesFailed = false;
+  h.workspacesRefetch.mockReset();
   h.create.mockReset();
   h.create.mockImplementation(async (input: unknown) => {
     const body = input as { room_id?: string; name?: string };
@@ -166,6 +197,68 @@ describe('Rooms page', () => {
 
     expect(await screen.findByRole('button', { name: /Trading desk/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Morning desk/ })).toBeNull();
+  });
+
+  it('follows a deep link into the room\'s own workspace', async () => {
+    renderWithProviders(<Rooms />, { route: '/rooms?room=room-3' });
+
+    // The link named a Trading room while Research was selected: the picker
+    // follows the room so the list and the panel agree.
+    await waitFor(() => expect(screen.getByLabelText('Workspace')).toHaveValue('ws-2'));
+    expect(await screen.findByRole('button', { name: /Trading desk/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Morning desk/ })).toBeNull();
+  });
+
+  it('surfaces a failed workspaces read instead of the empty-workspace fallback', async () => {
+    h.workspacesFailed = true;
+    renderWithProviders(<Rooms />);
+
+    expect(await screen.findByText("Couldn't load your workspaces.")).toBeInTheDocument();
+    expect(screen.queryByText('Create a workspace first')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(h.workspacesRefetch).toHaveBeenCalled();
+  });
+
+  it('shows the server\'s refusal sentence when a create is refused', async () => {
+    h.create.mockRejectedValueOnce(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'A room with that name already exists.' } },
+      }),
+    );
+    renderWithProviders(<Rooms />);
+    await screen.findByRole('button', { name: /Morning desk/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'New room' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Morning desk' } });
+    fireEvent.click(within(dialog).getByLabelText('Macro analyst'));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create room' }));
+
+    expect(await screen.findByText('A room with that name already exists.')).toBeInTheDocument();
+  });
+
+  it('falls the host back to the first member when the chosen one is unchecked', async () => {
+    renderWithProviders(<Rooms />);
+    await screen.findByRole('button', { name: /Morning desk/ });
+
+    fireEvent.click(screen.getByRole('button', { name: 'New room' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Two desks' } });
+    fireEvent.click(within(dialog).getByLabelText('Macro analyst'));
+    fireEvent.click(within(dialog).getByLabelText('Rates analyst'));
+    fireEvent.change(within(dialog).getByLabelText('Host'), { target: { value: 'bot-2' } });
+    expect(within(dialog).getByLabelText('Host')).toHaveValue('bot-2');
+
+    // Removing the host leaves the first remaining member hosting, computed in
+    // the handler rather than inside a state updater.
+    fireEvent.click(within(dialog).getByLabelText('Rates analyst'));
+    expect(within(dialog).getByLabelText('Host')).toHaveValue('bot-1');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create room' }));
+    await waitFor(() => expect(h.create).toHaveBeenCalledWith(expect.objectContaining({
+      member_bot_ids: ['bot-1'],
+      host_bot_id: 'bot-1',
+    })));
   });
 
   it('creates a room with the bots and host the dialog picks', async () => {

@@ -19,10 +19,20 @@ const label = (key: string, opts?: Record<string, unknown>) => i18n.t(key, opts)
 
 const h = vi.hoisted(() => ({
   bots: [] as unknown[],
+  lastEnabled: true,
 }));
 
+// A realistic mock: the hook is disabled until its workspace is known, and a
+// disabled read must not look like an answer with no bots.
 vi.mock('@/hooks/useBots', () => ({
-  useBots: () => ({ data: { bots: h.bots, max_bots: 20 }, isLoading: false }),
+  useBots: (_workspaceId: string | null, enabled = true) => {
+    h.lastEnabled = enabled;
+    const answer = { bots: h.bots, max_bots: 20 };
+    // A disabled read still sees what a previous open left in the cache, which
+    // is how the folded line can keep naming its target.
+    const cached = h.bots.length > 0 ? answer : undefined;
+    return { data: enabled ? answer : cached, isLoading: false, isError: false };
+  },
 }));
 
 vi.mock('@/hooks/useWorkspaces', () => ({
@@ -145,6 +155,8 @@ describe('the more-options bot picker', () => {
     );
 
     expect(screen.getByText(label('automation.botTargetContinueNamed', { name: 'Macro analyst' }))).toBeInTheDocument();
+    // The picker's read is enabled: a disabled read would draw no bots at all.
+    expect(h.lastEnabled).toBe(true);
     // The selected bot wears the same mark it wears everywhere else.
     const mark = container.querySelector('[data-bot-mark]') as HTMLElement;
     expect(mark).not.toBeNull();

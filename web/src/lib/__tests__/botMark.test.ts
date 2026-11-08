@@ -18,6 +18,7 @@ import {
   imageAvatar,
   isBotColor,
   isBotShape,
+  isSafeImageUrl,
   lookOfBot,
   markAvatar,
 } from '../botMark';
@@ -164,4 +165,27 @@ describe('the editor helpers', () => {
     expect(isBotColor('pink')).toBe(false);
     expect(isBotShape('diamond')).toBe(false);
   });
-});
+
+describe('image URL safety', () => {
+  it('accepts http(s) and inline raster images only', () => {
+    expect(isSafeImageUrl('https://example.com/a.png')).toBe(true);
+    expect(isSafeImageUrl('http://example.com/a.png')).toBe(true);
+    expect(isSafeImageUrl('data:image/png;base64,AAAA')).toBe(true);
+    expect(isSafeImageUrl('data:image/svg+xml,<svg/>')).toBe(true);
+    expect(isSafeImageUrl('')).toBe(false);
+    expect(isSafeImageUrl('   ')).toBe(false);
+    expect(isSafeImageUrl('/uploads/a.png')).toBe(false);
+    expect(isSafeImageUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeImageUrl('file:///etc/passwd')).toBe(false);
+    expect(isSafeImageUrl('data:text/html,<script/>')).toBe(false);
+  });
+
+  it('draws the derived mark for a stored unsafe or empty image URL', () => {
+    const derived = lookOfBot({ bot_id: 'bot-1', name: 'Scout', avatar: {} });
+    expect(lookOfBot({ bot_id: 'bot-1', name: 'Scout', avatar: { kind: 'image', url: 'javascript:alert(1)' } }))
+      .toEqual(derived);
+    expect(lookOfBot({ bot_id: 'bot-1', name: 'Scout', avatar: { url: '  ' } })).toEqual(derived);
+    expect(lookOfBot({ bot_id: 'bot-1', name: 'Scout', avatar: { url: 'https://example.com/a.png' } }))
+      .toEqual({ kind: 'image', url: 'https://example.com/a.png' });
+  });
+});});

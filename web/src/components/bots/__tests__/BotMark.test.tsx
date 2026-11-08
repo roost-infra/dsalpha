@@ -3,7 +3,7 @@
  * and the accessibility contract (a labelled image, or hidden beside a name).
  */
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { BotMark } from '../BotMark';
 import { BOT_COLORS, botColorToken, lookOfBot } from '@/lib/botMark';
@@ -129,4 +129,28 @@ describe('BotMark', () => {
     render(<BotMark bot={{ bot_id: 'bot-1', name: '' }} />);
     expect(screen.getByRole('img', { name: 'Bot' })).toBeInTheDocument();
   });
-});
+
+  it('falls back to the deterministic mark when a stored image fails to load', () => {
+    const bot = { bot_id: 'bot-1', name: 'Scout', avatar: { kind: 'image', url: 'https://example.com/dead.png' } };
+    const { container } = render(<BotMark bot={bot} />);
+    const image = container.querySelector('img');
+    expect(image).not.toBeNull();
+
+    fireEvent.error(image as HTMLImageElement);
+
+    // The broken picture becomes the mark the bot would wear with no avatar.
+    expect(container.querySelector('img')).toBeNull();
+    const mark = container.querySelector('[data-bot-mark]') as HTMLElement;
+    expect(mark).toHaveAttribute('data-mark-kind', 'mark');
+    expect(mark).toHaveTextContent('S');
+    expect(screen.getByRole('img', { name: 'Scout' })).toBe(mark);
+  });
+
+  it('never loads an image URL with an unsafe scheme', () => {
+    const { container } = render(
+      <BotMark bot={{ bot_id: 'bot-1', name: 'Scout', avatar: { kind: 'image', url: 'javascript:alert(1)' } }} />,
+    );
+
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('[data-bot-mark]')).toHaveAttribute('data-mark-kind', 'mark');
+  });});

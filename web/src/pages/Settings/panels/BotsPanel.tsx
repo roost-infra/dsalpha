@@ -2,7 +2,6 @@ import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BotMessageSquare, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { BotApproval, BotCreateInput, BotInfo, BotUpdateInput } from '@/api/bots';
-import { ApiError } from '@/api/client';
 import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +21,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
 import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots, useCreateBot, useDeleteBot, useUpdateBot } from '@/hooks/useBots';
+import { failureText } from '@/lib/failureText';
 import type { Workspace } from '@/types/api';
 import { BotAvatarEditor } from './BotAvatarEditor';
 import { SettingsCardBody, SettingsGroup, SettingRow } from '../components/SettingsLayout';
@@ -65,12 +65,6 @@ function sameList(a: readonly string[], b: readonly string[]): boolean {
 function personaPreview(persona: string): string {
   const line = persona.trim().split('\n')[0].trim();
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
-}
-
-/** The server writes refusals meant for the user; anything else gets ours. */
-function failureText(error: unknown, fallback: string): string | null {
-  if (!error) return null;
-  return error instanceof ApiError && error.message ? error.message : fallback;
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
@@ -217,14 +211,16 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
     if (!canSubmit) return;
     try {
       if (bot) {
-        const patch: BotUpdateInput = {
-          name: trimmedName,
-          persona: persona.trim(),
-          model: model.trim() || null,
-          approval,
-        };
-        // Only what changed: a list restated on every save would add a
-        // version row for a value nobody edited.
+        // Only what changed: every field here is versioned server-side, so a
+        // restated persona/model/approval writes a bot_versions row for a value
+        // nobody edited. `model: null` is a deliberate clear, so it is sent
+        // when the field emptied (the server takes an explicit null).
+        const patch: BotUpdateInput = { name: trimmedName };
+        if (persona.trim() !== (bot.persona ?? '')) patch.persona = persona.trim();
+        const modelValue = model.trim() || null;
+        if (modelValue !== (bot.model ?? null)) patch.model = modelValue;
+        if (approval !== bot.approval) patch.approval = approval;
+        // The list fields below are already compared for the same reason.
         const skills = splitList(skillsText);
         const toolsAllow = splitList(toolsAllowText);
         const toolsDeny = splitList(toolsDenyText);
@@ -314,7 +310,11 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
           </FormField>
 
           <FormField label={t('bots.approvalLabel')}>
-            <Select value={approval} onChange={(e) => setApproval(e.target.value as BotApproval)}>
+            <Select
+              aria-label={t('bots.approvalLabel')}
+              value={approval}
+              onChange={(e) => setApproval(e.target.value as BotApproval)}
+            >
               {APPROVALS.map((level) => (
                 <option key={level} value={level}>{t(APPROVAL_KEY[level])}</option>
               ))}
@@ -383,6 +383,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                     </CheckboxChoice>
                   ))}
                 </div>
+                <p className="text-[0.6875rem] leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
+                  {t('bots.memoryScopesDeferredNote')}
+                </p>
               </FormField>
             </>
           )}
@@ -441,7 +444,13 @@ export function BotsPanel() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const { data, isLoading, isError, error, refetch } = useBots();
-  const { data: workspacesData, isLoading: areWorkspacesLoading } = useAllWorkspaces({ includeHome: true });
+  const {
+    data: workspacesData,
+    isLoading: areWorkspacesLoading,
+    isError: areWorkspacesError,
+    error: workspacesError,
+    refetch: refetchWorkspaces,
+  } = useAllWorkspaces({ includeHome: true });
   const { mutate: updateBot, isPending: isUpdating } = useUpdateBot();
   const [editor, setEditor] = useState<{ bot: BotInfo | null; workspaceId?: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<BotInfo | null>(null);
@@ -456,8 +465,16 @@ export function BotsPanel() {
     const rows = bots.filter((bot) => bot.workspace_id === workspace.workspace_id);
     return rows.length > 0 ? [{ workspace, bots: rows }] : [];
   });
-  const loading = isLoading || areWorkspacesLoading;
-  const noWorkspace = placeable.length === 0;
+  // A failed read must not read as "no bots / no workspace": both empty states
+  // below are only for a loaded, successful answer.
+  const failed = isError || areWorkspacesError;
+  const loading = !failed && (isLoading || areWorkspacesLoading);
+  const noWorkspace = !failed && !areWorkspacesLoading && placeable.length === 0;
+  const failure = failureText(error ?? workspacesError, t('bots.loadFailed'));
+  const retry = () => {
+    void refetch();
+    void refetchWorkspaces();
+  };
 
   const toggleStatus = (bot: BotInfo) => {
     updateBot(
@@ -480,18 +497,18 @@ export function BotsPanel() {
         </SettingsGroup>
       )}
 
-      {!loading && isError && groups.length === 0 && (
+      {!loading && failed && groups.length === 0 && (
         <SettingsGroup title={t('bots.title')}>
           <SettingsCardBody>
-            <ErrorBanner error={failureText(error, t('bots.failed'))} />
+            <ErrorBanner error={failure} />
             <div className="mt-3">
-              <Button variant="ghost" size="sm" onClick={() => { void refetch(); }}>{t('common.retry')}</Button>
+              <Button variant="ghost" size="sm" onClick={retry}>{t('common.retry')}</Button>
             </div>
           </SettingsCardBody>
         </SettingsGroup>
       )}
 
-      {!loading && !isError && groups.length === 0 && (
+      {!loading && !failed && groups.length === 0 && (
         <SettingsGroup
           title={t('bots.title')}
           action={
@@ -522,7 +539,7 @@ export function BotsPanel() {
         </SettingsGroup>
       )}
 
-      {!loading && !isError && groups.length > 0 && (
+      {!loading && !failed && groups.length > 0 && (
         <SettingsGroup
           title={t('bots.title')}
           description={t('bots.description')}
@@ -535,7 +552,10 @@ export function BotsPanel() {
         >
           <SettingsCardBody id={SETTINGS.bots.anchor}>
             <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-              {t('bots.summary', { bots: bots.length, workspaces: groups.length })}
+              {t('bots.summary', {
+                count: bots.length,
+                workspaces: t('bots.workspaceCount', { count: groups.length }),
+              })}
             </p>
           </SettingsCardBody>
         </SettingsGroup>

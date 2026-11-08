@@ -138,16 +138,27 @@ function storedMark(bot: BotIdentity | null | undefined, avatar: Record<string, 
  * no kind names its kind by the field it carries (`{ url }` / `{ emoji }`);
  * anything else draws the id-derived mark.
  */
+/**
+ * Whether a stored image URL is one this app will load: http(s) or an inline
+ * raster image. A `javascript:` or `file:` value in the open avatar dict is
+ * never a face, so it falls through to the derived mark instead.
+ */
+export function isSafeImageUrl(url: string | null | undefined): boolean {
+  const trimmed = (url ?? '').trim();
+  if (!trimmed) return false;
+  return /^https?:\/\/\S+$/i.test(trimmed) || /^data:image\/[a-z0-9.+-]+[\s;,]/i.test(trimmed);
+}
+
 export function lookOfBot(bot: BotIdentity | null | undefined): BotLook {
   const avatar = bot?.avatar ?? {};
   const kind = typeof avatar.kind === 'string' ? avatar.kind : null;
   const url = typeof avatar.url === 'string' ? avatar.url.trim() : '';
   const emoji = typeof avatar.emoji === 'string' ? avatar.emoji.trim() : '';
 
-  if (kind === 'image') return url ? { kind: 'image', url } : derivedMark(bot);
+  if (kind === 'image') return isSafeImageUrl(url) ? { kind: 'image', url } : derivedMark(bot);
   if (kind === 'emoji') return emoji ? { kind: 'emoji', emoji } : derivedMark(bot);
   if (kind === 'mark') return storedMark(bot, avatar);
-  if (url) return { kind: 'image', url };
+  if (isSafeImageUrl(url)) return { kind: 'image', url };
   if (emoji) return { kind: 'emoji', emoji };
   return derivedMark(bot);
 }
@@ -156,7 +167,7 @@ export function lookOfBot(bot: BotIdentity | null | undefined): BotLook {
 export function avatarKindOf(avatar: Record<string, unknown> | null | undefined): BotAvatarKind {
   const kind = avatar?.kind;
   if (kind === 'image' || kind === 'emoji' || kind === 'mark') return kind;
-  if (typeof avatar?.url === 'string' && avatar.url.trim()) return 'image';
+  if (isSafeImageUrl(typeof avatar?.url === 'string' ? avatar.url : null)) return 'image';
   if (typeof avatar?.emoji === 'string' && avatar.emoji.trim()) return 'emoji';
   return 'auto';
 }

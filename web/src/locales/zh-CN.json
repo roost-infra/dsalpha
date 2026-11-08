@@ -3786,7 +3786,10 @@
       "reportedBack": "已汇报",
       "delivered": "已送达",
       "queued": "排队中",
-      "refused": "被拒绝"
+      "refused": "被拒绝",
+      "failed": "失败",
+      "missing": "未找到",
+      "already": "已完成过"
     },
     "inProgress": {
       "callingServer": "正在调用 {{server}}...",
@@ -6521,7 +6524,6 @@
     "emptyDescription": "工作区需要有自己的 Bot，才能以自己的身份作答。先创建一个开始。",
     "noWorkspace": "这个账户还没有可以放 Bot 的工作区。请先创建工作区。",
     "groupCount": "Bot 数：{{n}}",
-    "summary": "{{bots}} 个 Bot，分布在 {{workspaces}} 个工作区。",
     "readOnly": "只读",
     "pausedBadge": "已暂停",
     "chiefOfStaffDesc": "派生自 Home，无法在这里编辑或删除。",
@@ -6536,7 +6538,7 @@
     "memoryScopes": "记忆范围",
     "memoryScopeWorkspace": "工作区记忆",
     "memoryScopeUser": "用户记忆",
-    "memoryScopeRoom": "Room 记忆",
+    "memoryScopeRoom": "群聊记忆",
     "pauseNamed": "暂停 {{name}}",
     "resumeNamed": "恢复 {{name}}",
     "editNamed": "编辑 {{name}}",
@@ -6582,7 +6584,8 @@
       "glyphHint": "留空则使用名字首字。",
       "emojiPlaceholder": "例如 🦊",
       "imageUrl": "图片链接",
-      "imagePlaceholder": "https://…"
+      "imagePlaceholder": "https://…",
+      "imageInvalid": "请使用 http(s) 或 data: 图片链接。"
     },
     "model": "模型",
     "modelPlaceholder": "服务商的模型 ID；留空则跟随会话",
@@ -6595,7 +6598,11 @@
     "deleteTitle": "删除 Bot",
     "deleteDescription": "删除 {{name}}？它的会话记录仍可查看，但 Bot 将不再作答。",
     "deleteConfirmAction": "删除 Bot",
-    "failed": "没有保存成功，请重试。"
+    "failed": "没有保存成功，请重试。",
+    "summary_other": "{{count}} 个 Bot · {{workspaces}}",
+    "workspaceCount_other": "{{count}} 个工作区",
+    "memoryScopesDeferredNote": "仅保存并展示：v1 尚未按记忆范围限制访问。",
+    "loadFailed": "无法加载 Bot。"
   },
   "rooms": {
     "title": "群聊",
@@ -6634,7 +6641,8 @@
       "label": "谁回复",
       "everyone": "所有成员回复",
       "mentions": "只有被 @ 的 Bot 回复",
-      "single": "只有一个 Bot 回复"
+      "single": "只有一个 Bot 回复",
+      "singleNamed": "只有 {{name}} 回复"
     },
     "logLabel": "群聊记录",
     "logEmpty": "还没有消息。发一条消息来开启一轮。",
@@ -6671,12 +6679,20 @@
       "create": "创建群聊",
       "failed": "群聊没有创建成功，请重试。"
     },
-    "failed": "操作没有成功，请重试。"
+    "failed": "操作没有成功，请重试。",
+    "connecting": "正在连接…",
+    "streamError": "房间的实时更新已停止。",
+    "memberCap": "一个群聊最多 {{max}} 个 Bot。",
+    "membersLoading": "正在加载工作区的 Bot…",
+    "membersError": "无法加载工作区的 Bot。",
+    "restoreRoom": "恢复群聊",
+    "newMessages": "有新消息",
+    "workspacesFailed": "无法加载工作区。"
   },
   "agents": {
     "chiefOfStaffHint": "统筹所有工作区的分析师，把每项任务交给合适的那一位。",
     "home": "Home",
-    "chiefOfStaff": "CoS Agent",
+    "chiefOfStaff": "Chief of Staff",
     "analyst": "分析师",
     "pickWhere": "选择 Agent 的工作范围",
     "backToChiefOfStaff": "返回 CoS Agent",

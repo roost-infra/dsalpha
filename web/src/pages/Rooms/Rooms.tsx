@@ -7,7 +7,7 @@
  * the workspace it is showing. On a phone the list and the panel swap places
  * (see Rooms.css), which keeps the composer above the tab bar.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { MessagesSquare, Plus, UsersRound } from 'lucide-react';
@@ -16,8 +16,9 @@ import { Button } from '@/components/ui/button';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { Select } from '@/components/ui/select';
 import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
-import { useRooms } from '@/hooks/useRooms';
+import { useRoom, useRooms } from '@/hooks/useRooms';
 import type { RoomInfo } from '@/api/rooms';
+import { failureText } from '@/lib/failureText';
 import { responderLabelKey } from './roomsCopy';
 import CreateRoomDialog from './components/CreateRoomDialog';
 import RoomPanel from './components/RoomPanel';
@@ -54,7 +55,13 @@ function RoomListRow({
 
 export default function Rooms() {
   const { t } = useTranslation();
-  const { data: workspacesData, isLoading: workspacesLoading } = useAllWorkspaces({ includeHome: true });
+  const {
+    data: workspacesData,
+    isLoading: workspacesLoading,
+    isError: workspacesFailed,
+    error: workspacesError,
+    refetch: refetchWorkspaces,
+  } = useAllWorkspaces({ includeHome: true });
   const [searchParams, setSearchParams] = useSearchParams();
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -65,15 +72,29 @@ export default function Rooms() {
     () => (workspaces.find((workspace) => !workspace.is_home) ?? workspaces[0])?.workspace_id ?? null,
     [workspaces],
   );
-  const workspaceId =
+  const chosenWorkspaceId =
     workspaceChoice && workspaces.some((workspace) => workspace.workspace_id === workspaceChoice)
       ? workspaceChoice
-      : fallbackWorkspaceId;
+      : null;
 
+  const selectedRoomId = searchParams.get('room');
+  // A deep link names its room's workspace through the room row, so the picker
+  // follows it instead of leaving the list on another workspace. The page and
+  // the panel read the same detail key, so this costs no second request.
+  const linkedRoomQuery = useRoom(selectedRoomId);
+  const linkedWorkspaceId = selectedRoomId ? (linkedRoomQuery.data?.workspace_id ?? null) : null;
+  const workspaceId = chosenWorkspaceId ?? linkedWorkspaceId ?? fallbackWorkspaceId;
   const roomsQuery = useRooms(workspaceId, workspacesReady);
   const rooms = roomsQuery.data?.rooms ?? [];
   const maxBots = roomsQuery.data?.max_bots ?? 12;
-  const selectedRoomId = searchParams.get('room');
+  // A link that names a room the server refuses is dropped from the URL rather
+  // than left over an empty panel.
+  useEffect(() => {
+    if (!selectedRoomId || workspacesLoading || !linkedRoomQuery.isError) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('room');
+    setSearchParams(next, { replace: true });
+  }, [selectedRoomId, workspacesLoading, linkedRoomQuery.isError, searchParams, setSearchParams]);
 
   const openRoom = (roomId: string | null) => {
     const next = new URLSearchParams(searchParams);
@@ -111,7 +132,7 @@ export default function Rooms() {
             </Select>
           )}
           <Button
-            disabled={workspacesReady && workspaces.length === 0}
+            disabled={workspacesFailed || (workspacesReady && workspaces.length === 0)}
             onClick={() => setCreating(true)}
           >
             <Plus className="mr-1.5 h-4 w-4" aria-hidden />
@@ -122,7 +143,14 @@ export default function Rooms() {
 
       <div className="rooms-page__body">
         <aside className="rooms-list" aria-label={t('rooms.listLabel')}>
-          {!workspacesReady || roomsQuery.isLoading ? (
+          {workspacesFailed ? (
+            <div className="rooms-list__placeholder">
+              <ErrorBanner error={failureText(workspacesError, t('rooms.workspacesFailed'))} />
+              <Button variant="ghost" size="sm" onClick={() => { void refetchWorkspaces(); }}>
+                {t('common.retry')}
+              </Button>
+            </div>
+          ) : !workspacesReady || roomsQuery.isLoading ? (
             <div className="rooms-list__placeholder" role="status">{t('common.loading')}</div>
           ) : roomsQuery.isError && rooms.length === 0 ? (
             <div className="rooms-list__placeholder">

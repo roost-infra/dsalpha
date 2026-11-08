@@ -272,6 +272,36 @@ describe('room writes', () => {
     expect(landed.round_id).toBe('round-1');
   });
 
+  it('draws one row when the stream beat the send answer to its seq', async () => {
+    let resolveSend: ((answer: unknown) => void) | null = null;
+    mockSendMessage.mockImplementation(() => new Promise((resolve) => { resolveSend = resolve; }));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const logKey = queryKeys.rooms.log('room-1');
+    queryClient.setQueryData(logKey, []);
+    const { result: send } = renderHookWithProviders(() => useSendRoomMessage(), { queryClient });
+
+    const sending = send.current.mutateAsync({ roomId: 'room-1', content: 'What moved?' });
+    await waitFor(() => expect(queryClient.getQueryData<RoomLogEntry[]>(logKey)).toHaveLength(1));
+    const optimistic = queryClient.getQueryData<Array<RoomLogEntry & { pending?: boolean }>>(logKey)![0];
+    expect(optimistic.pending).toBe(true);
+
+    // The tail persists the row before the POST answers: same seq, same words.
+    queryClient.setQueryData<Array<RoomLogEntry & { pending?: boolean }>>(logKey, (previous) => [
+      ...(previous ?? []).filter((entry) => !entry.pending),
+      entry({ seq: 5, sender_type: 'user', content: 'What moved?' }),
+    ]);
+    await act(async () => {
+      resolveSend?.({ message_seq: 5, round_id: 'round-1', round_status: 'queued' });
+      await sending;
+    });
+
+    const rows = queryClient.getQueryData<RoomLogEntry[]>(logKey)!;
+    expect(rows.filter((row) => row.seq === 5)).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+  });
+
   it('takes the optimistic row back out when the send is refused', async () => {
     mockSendMessage.mockRejectedValue(new Error('Room is archived'));
     const queryClient = new QueryClient({
@@ -288,6 +318,28 @@ describe('room writes', () => {
     });
 
     expect(queryClient.getQueryData<RoomLogEntry[]>(logKey)).toEqual([]);
+  });
+
+  it('re-reads the room row when a send is refused, so archived state reaches the composer', async () => {
+    mockSendMessage.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), {
+        response: { status: 409, data: { detail: 'This room is archived.' } },
+      }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const { result } = renderHookWithProviders(() => useSendRoomMessage(), { queryClient });
+    queryClient.setQueryData(queryKeys.rooms.log('room-1'), []);
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    await act(async () => {
+      await result.current.mutateAsync({ roomId: 'room-1', content: 'Too late?' }).catch(() => undefined);
+    });
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.detail('room-1') });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
+    invalidate.mockRestore();
   });
 });
 
@@ -325,7 +377,7 @@ describe('useRoomStream', () => {
     expect(abort).toHaveBeenCalled();
   });
 
-  it('reads the room detail again when the room row changed, and leaves the log alone', () => {
+  it('reads the room detail and the list when the room row changed, and leaves the log alone', () => {
     mockStreamRoom.mockReturnValue(vi.fn());
     const { queryClient, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0));
     const handlers = mockStreamRoom.mock.calls[0][2] as {
@@ -336,7 +388,107 @@ describe('useRoomStream', () => {
     act(() => handlers.onRoomUpdated({ room_id: 'room-1', updated_at: '2026-11-08T12:00:00Z' }));
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.detail('room-1') });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.lists() });
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.rooms.log('room-1') });
+    unmount();
+  });
+
+  it('does not re-read a row a reconnect re-announced unchanged', () => {
+    mockStreamRoom.mockReturnValue(vi.fn());
+    const { queryClient, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0));
+    const handlers = mockStreamRoom.mock.calls[0][2] as {
+      onRoomUpdated: (update: { room_id: string; updated_at: string | null }) => void;
+    };
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+
+    act(() => handlers.onRoomUpdated({ room_id: 'room-1', updated_at: '2026-11-08T12:00:00Z' }));
+    invalidate.mockClear();
+    act(() => handlers.onRoomUpdated({ room_id: 'room-1', updated_at: '2026-11-08T12:00:00Z' }));
+    expect(invalidate).not.toHaveBeenCalled();
+
+    act(() => handlers.onRoomUpdated({ room_id: 'room-1', updated_at: '2026-11-08T12:05:00Z' }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.rooms.detail('room-1') });
+    unmount();
+  });
+
+  it('exposes a first connection as not-yet-live, not as reconnecting', () => {
+    mockStreamRoom.mockReturnValue(vi.fn());
+    const { result, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0));
+    expect(result.current.live).toBe(false);
+    expect(result.current.connectedOnce).toBe(false);
+
+    const handlers = mockStreamRoom.mock.calls[0][2] as { onOpen: () => void };
+    act(() => handlers.onOpen());
+    expect(result.current.live).toBe(true);
+    expect(result.current.connectedOnce).toBe(true);
+    unmount();
+  });
+
+  it('stops on a 4xx, exposes the error and reopens only on retry', () => {
+    vi.useFakeTimers();
+    mockStreamRoom.mockReturnValue(vi.fn());
+    const { result, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0));
+    const handlers = mockStreamRoom.mock.calls[0][2] as { onClose: (error: Error | null) => void };
+
+    act(() => {
+      handlers.onClose(Object.assign(new Error('HTTP error! status: 404'), { status: 404 }));
+    });
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(result.current.live).toBe(false);
+    expect(mockStreamRoom).toHaveBeenCalledTimes(1);
+
+    act(() => { vi.advanceTimersByTime(30_000); });
+    expect(mockStreamRoom).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.retry());
+    expect(mockStreamRoom).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBeNull();
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('backs off between reconnects and resets the wait once a tail opens', () => {
+    vi.useFakeTimers();
+    mockStreamRoom.mockReturnValue(vi.fn());
+    renderHookWithProviders(() => useRoomStream('room-1', 0));
+    const first = mockStreamRoom.mock.calls[0][2] as { onClose: (error: Error | null) => void };
+
+    act(() => first.onClose(new Error('Network Error')));
+    expect(mockStreamRoom).toHaveBeenCalledTimes(1);
+    act(() => { vi.advanceTimersByTime(1_999); });
+    expect(mockStreamRoom).toHaveBeenCalledTimes(1);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(mockStreamRoom).toHaveBeenCalledTimes(2);
+
+    const second = mockStreamRoom.mock.calls[1][2] as {
+      onOpen: () => void;
+      onClose: (error: Error | null) => void;
+    };
+    act(() => second.onOpen());
+    act(() => second.onClose(new Error('Network Error')));
+    act(() => { vi.advanceTimersByTime(2_000); });
+    // A successful open reset the attempt count to the fast first retry.
+    expect(mockStreamRoom).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
+  it('streams a row twice without duplicating it and lands an answer on the same row', async () => {
+    const handlersRef: { current: { onMessage: (row: RoomLogEntry) => void } | null } = { current: null };
+    mockStreamRoom.mockImplementation((_id: string, _seq: number, handlers: { onMessage: (row: RoomLogEntry) => void }) => {
+      handlersRef.current = handlers;
+      return vi.fn();
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } },
+    });
+    const { queryClient: client, unmount } = renderHookWithProviders(() => useRoomStream('room-1', 0), { queryClient });
+    const streamed = entry({ seq: 1, sender_type: 'user', content: 'What moved?' });
+    act(() => handlersRef.current?.onMessage(streamed));
+    // The replay after a reconnect resends the same row; the cache keeps one.
+    act(() => handlersRef.current?.onMessage(streamed));
+    expect(client.getQueryData(queryKeys.rooms.log('room-1'))).toEqual([streamed]);
     unmount();
   });
 

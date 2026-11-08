@@ -212,6 +212,24 @@ export async function getRoomLog(
  *  socket is gone, not quiet. */
 const ROOM_STREAM_BEAT_MS = 20_000;
 
+/** A stream that the server refused. The status is the one a caller's retry
+ *  decision reads: a 4xx is the room itself (gone, not the caller's), so
+ *  reopening the same tail only gets the same refusal. */
+export class RoomStreamError extends Error {
+  readonly status: number | null;
+
+  constructor(message: string, status: number | null) {
+    super(message);
+    this.name = 'RoomStreamError';
+    this.status = status;
+  }
+}
+
+/** The HTTP status a stream failure carried, when it carried one. */
+export function roomStreamErrorStatus(error: unknown): number | null {
+  return error instanceof RoomStreamError ? error.status : null;
+}
+
 export interface RoomStreamHandlers {
   /** The response headers arrived and the body is about to be read. */
   onOpen?: () => void;
@@ -332,10 +350,10 @@ export function streamRoom(
         signal: controller.signal,
       });
       if (!response.ok) {
-        // The server explains a refused stream in the body's `detail`; a plain
-        // status is all this tail needs for the caller's retry decision.
+        // The server explains a refused stream in the body's `detail`; the
+        // status is what the caller's retry decision reads.
         const text = await response.text().catch(() => '');
-        throw new Error(text || `HTTP error! status: ${response.status}`);
+        throw new RoomStreamError(text || `HTTP error! status: ${response.status}`, response.status);
       }
       handlers.onOpen?.();
       const reader = response.body?.getReader();

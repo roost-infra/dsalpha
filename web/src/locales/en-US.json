@@ -3787,7 +3787,10 @@
       "reportedBack": "Reported back",
       "delivered": "delivered",
       "queued": "queued",
-      "refused": "refused"
+      "refused": "refused",
+      "failed": "failed",
+      "missing": "missing",
+      "already": "already"
     },
     "inProgress": {
       "callingServer": "calling {{server}}...",
@@ -6609,7 +6612,6 @@
     "emptyDescription": "A workspace needs a bot to answer as its own identity. Create one to get started.",
     "noWorkspace": "This account has no workspace to put a bot in yet. Create a workspace first.",
     "groupCount": "Bots: {{n}}",
-    "summary": "{{bots}} bots across {{workspaces}} workspaces.",
     "readOnly": "Read-only",
     "pausedBadge": "Paused",
     "chiefOfStaffDesc": "Derived from Home, so it cannot be edited or deleted here.",
@@ -6670,7 +6672,8 @@
       "glyphHint": "Empty draws the name's first character.",
       "emojiPlaceholder": "e.g. 🦊",
       "imageUrl": "Image URL",
-      "imagePlaceholder": "https://…"
+      "imagePlaceholder": "https://…",
+      "imageInvalid": "Use an http(s) or data: image URL."
     },
     "model": "Model",
     "modelPlaceholder": "The provider's model id; empty follows the thread",
@@ -6683,7 +6686,13 @@
     "deleteTitle": "Delete bot",
     "deleteDescription": "Delete {{name}}? Its chat history stays readable, but the bot stops answering.",
     "deleteConfirmAction": "Delete bot",
-    "failed": "That did not save. Try again."
+    "failed": "That did not save. Try again.",
+    "summary_one": "{{count}} bot · {{workspaces}}",
+    "summary_other": "{{count}} bots · {{workspaces}}",
+    "workspaceCount_one": "{{count}} workspace",
+    "workspaceCount_other": "{{count}} workspaces",
+    "memoryScopesDeferredNote": "Stored and shown only: v1 does not enforce memory scopes yet.",
+    "loadFailed": "Couldn't load your bots."
   },
   "rooms": {
     "title": "Rooms",
@@ -6722,7 +6731,8 @@
       "label": "Who replies",
       "everyone": "Everyone replies",
       "mentions": "Only bots you @mention reply",
-      "single": "One bot replies"
+      "single": "One bot replies",
+      "singleNamed": "Only {{name}} replies"
     },
     "logLabel": "Room log",
     "logEmpty": "No messages yet. Send one to open a round.",
@@ -6759,7 +6769,15 @@
       "create": "Create room",
       "failed": "That room was not created. Try again."
     },
-    "failed": "That did not work. Try again."
+    "failed": "That did not work. Try again.",
+    "connecting": "Connecting…",
+    "streamError": "The room's live updates stopped.",
+    "memberCap": "A room holds at most {{max}} bots.",
+    "membersLoading": "Loading the workspace's bots…",
+    "membersError": "Couldn't load the workspace's bots.",
+    "restoreRoom": "Restore room",
+    "newMessages": "New messages",
+    "workspacesFailed": "Couldn't load your workspaces."
   },
   "agents": {
     "chiefOfStaffHint": "Coordinates the Analysts in every workspace and hands each task to the right one.",

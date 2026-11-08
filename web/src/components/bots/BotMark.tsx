@@ -7,7 +7,7 @@
  * chip, the room log and an automation's target picker. Quiet by design: no
  * animation, a solid fill and the design tokens' white glyph ink.
  */
-import React, { type CSSProperties } from 'react';
+import React, { useState, type CSSProperties } from 'react';
 import { botColorToken, lookOfBot, type BotIdentity } from '@/lib/botMark';
 import { cn } from '@/lib/utils';
 
@@ -52,7 +52,14 @@ function Glyph({ size, children }: { size: number; children: React.ReactNode }):
 export function BotMark({ bot, name, size = 22, decorative = false }: BotMarkProps): React.ReactElement {
   const identity = bot ?? null;
   const label = (identity?.name ?? name ?? '').trim();
-  const look = lookOfBot(identity ? { ...identity } : { name: label });
+  // A stored image can be dead (a moved upload, an expired link). The mark
+  // falls back to the deterministic one the bot would wear with no avatar,
+  // once per URL, rather than showing a broken image.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const stored = lookOfBot(identity ? { ...identity } : { name: label });
+  const look = stored.kind === 'image' && failedUrl === stored.url
+    ? lookOfBot({ ...(identity ?? {}), avatar: {} })
+    : stored;
   // The image's alt carries the name; every other kind names a wrapper.
   const a11y = decorative ? { 'aria-hidden': true as const } : { role: 'img' as const, 'aria-label': label || 'Bot' };
   const box = boxStyle(size);
@@ -66,6 +73,7 @@ export function BotMark({ bot, name, size = 22, decorative = false }: BotMarkPro
         alt={decorative ? '' : label}
         className="shrink-0 rounded-full object-cover"
         style={box}
+        onError={() => setFailedUrl(look.url)}
       />
     );
   }

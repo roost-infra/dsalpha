@@ -18,6 +18,16 @@ import {
   type BotUpdateInput,
 } from '@/api/bots';
 
+/**
+ * A bot's identity is drawn in a room's member chips and its log, so a bots
+ * write also re-reads the rooms that show it: a rename, a pause or a delete
+ * must not leave an open room naming the old face.
+ */
+function invalidateRoomCaches(queryClient: ReturnType<typeof useQueryClient>): void {
+  queryClient.invalidateQueries({ queryKey: queryKeys.rooms.details() });
+  queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
+}
+
 /** Every workspace's bots when `workspaceId` is null, else one workspace's. */
 export function useBots(workspaceId: string | null = null, enabled = true) {
   return useQuery({
@@ -45,6 +55,7 @@ export function useCreateBot() {
     onSuccess: (bot) => {
       queryClient.setQueryData(queryKeys.bots.detail(bot.bot_id), bot);
       queryClient.invalidateQueries({ queryKey: queryKeys.bots.lists() });
+      invalidateRoomCaches(queryClient);
     },
   });
 }
@@ -57,6 +68,7 @@ export function useUpdateBot() {
     onSuccess: (bot) => {
       queryClient.setQueryData(queryKeys.bots.detail(bot.bot_id), bot);
       queryClient.invalidateQueries({ queryKey: queryKeys.bots.lists() });
+      invalidateRoomCaches(queryClient);
     },
   });
 }
@@ -68,6 +80,7 @@ export function useDeleteBot() {
     onSuccess: (_answer, botId) => {
       queryClient.removeQueries({ queryKey: queryKeys.bots.detail(botId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.bots.lists() });
+      invalidateRoomCaches(queryClient);
     },
   });
 }
