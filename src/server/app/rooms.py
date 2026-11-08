@@ -29,7 +29,11 @@ from src.server.app.status_stream import SSE_HEADERS
 from src.server.database import bots as bot_db
 from src.server.database import rooms as room_db
 from src.server.database.workspace import get_workspace
-from src.server.dependencies.principal import ReadUserId, WorkspaceWriteUserId
+from src.server.dependencies.principal import (
+    ReadPrincipal,
+    WorkspaceWritePrincipal,
+    assert_reaches,
+)
 from src.server.models.room import (
     RoomCreate,
     RoomInfo,
@@ -63,6 +67,13 @@ async def _owned_room(user_id: str, room_id: str) -> dict:
     room = await room_db.get_room(room_id)
     if room is None or room.get("user_id") != user_id:
         raise HTTPException(status_code=404, detail="Room not found")
+    return room
+
+
+async def _reach_room(principal, room_id: str) -> dict:
+    """An owned room the caller's computer also holds; body ids are checked here."""
+    room = await _owned_room(principal.user_id, room_id)
+    await assert_reaches(principal, workspace_id=room["workspace_id"])
     return room
 
 
@@ -109,8 +120,12 @@ async def _view(room: dict) -> RoomView:
 
 
 @router.post("", response_model=RoomView, status_code=201)
-async def create_room(user_id: WorkspaceWriteUserId, body: RoomCreate) -> RoomView:
-    await _own_workspace(user_id, str(body.workspace_id))
+async def create_room(
+    principal: WorkspaceWritePrincipal, body: RoomCreate
+) -> RoomView:
+    user_id = principal.user_id
+    workspace = await _own_workspace(user_id, str(body.workspace_id))
+    await assert_reaches(principal, workspace_id=str(workspace["workspace_id"]))
     member_ids = [str(b) for b in body.member_bot_ids]
     if body.host_bot_id:
         member_ids = [str(body.host_bot_id), *member_ids]
@@ -134,24 +149,30 @@ async def create_room(user_id: WorkspaceWriteUserId, body: RoomCreate) -> RoomVi
 
 @router.get("", response_model=RoomListResponse)
 async def list_rooms(
-    user_id: ReadUserId, workspace_id: Optional[str] = Query(default=None)
+    principal: ReadPrincipal, workspace_id: Optional[str] = Query(default=None)
 ) -> RoomListResponse:
+    user_id = principal.user_id
     if workspace_id:
-        await _own_workspace(user_id, workspace_id)
-    rooms = await room_db.list_rooms(user_id, workspace_id)
+        workspace = await _own_workspace(user_id, workspace_id)
+        await assert_reaches(
+            principal, workspace_id=str(workspace["workspace_id"])
+        )
+    rooms = await room_db.list_rooms(
+        user_id, workspace_id, computer_id=principal.computer_id
+    )
     return RoomListResponse(rooms=[_info(r) for r in rooms])
 
 
 @router.get("/{room_id}", response_model=RoomView)
-async def get_room(user_id: ReadUserId, room_id: str) -> RoomView:
-    return await _view(await _owned_room(user_id, room_id))
+async def get_room(principal: ReadPrincipal, room_id: str) -> RoomView:
+    return await _view(await _reach_room(principal, room_id))
 
 
 @router.patch("/{room_id}", response_model=RoomInfo)
 async def update_room(
-    user_id: WorkspaceWriteUserId, room_id: str, body: RoomUpdate
+    principal: WorkspaceWritePrincipal, room_id: str, body: RoomUpdate
 ) -> RoomInfo:
-    room = await _owned_room(user_id, room_id)
+    room = await _reach_room(principal, room_id)
     changed = body.model_dump(exclude_none=True)
     try:
         updated = await room_db.update_room(room["room_id"], changed)
@@ -164,10 +185,12 @@ async def update_room(
 
 @router.post("/{room_id}/members", response_model=RoomView, status_code=201)
 async def add_member(
-    user_id: WorkspaceWriteUserId, room_id: str, body: RoomMemberAdd
+    principal: WorkspaceWritePrincipal, room_id: str, body: RoomMemberAdd
 ) -> RoomView:
-    room = await _owned_room(user_id, room_id)
-    await _validated_members(user_id, room["workspace_id"], [str(body.bot_id)])
+    room = await _reach_room(principal, room_id)
+    await _validated_members(
+        principal.user_id, room["workspace_id"], [str(body.bot_id)]
+    )
     try:
         await room_db.add_member(room["room_id"], str(body.bot_id))
     except room_db.RoomMemberLimit as exc:
@@ -177,19 +200,20 @@ async def add_member(
 
 @router.delete("/{room_id}/members/{bot_id}", response_model=RoomMemberDeleteResponse)
 async def remove_member(
-    user_id: WorkspaceWriteUserId, room_id: str, bot_id: str
+    principal: WorkspaceWritePrincipal, room_id: str, bot_id: str
 ) -> RoomMemberDeleteResponse:
-    room = await _owned_room(user_id, room_id)
+    room = await _reach_room(principal, room_id)
     await room_db.remove_member(room["room_id"], bot_id)
     return RoomMemberDeleteResponse(bot_id=bot_id)
 
 
 @router.post("/{room_id}/messages", response_model=RoomSendResponse, status_code=202)
 async def send_message(
-    user_id: WorkspaceWriteUserId, room_id: str, body: RoomMessageCreate
+    principal: WorkspaceWritePrincipal, room_id: str, body: RoomMessageCreate
 ) -> RoomSendResponse:
     """Append the user's message and let the round walk the members."""
-    room = await _owned_room(user_id, room_id)
+    user_id = principal.user_id
+    room = await _reach_room(principal, room_id)
     if room.get("status") != "active":
         raise HTTPException(status_code=409, detail="Room is archived")
     result = await start_round(room, body.content.strip(), user_id=user_id)
@@ -203,12 +227,12 @@ async def send_message(
 
 @router.get("/{room_id}/log", response_model=RoomLogResponse)
 async def read_log(
-    user_id: ReadUserId,
+    principal: ReadPrincipal,
     room_id: str,
     since_seq: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=200),
 ) -> RoomLogResponse:
-    room = await _owned_room(user_id, room_id)
+    room = await _reach_room(principal, room_id)
     entries = await room_db.read_log(room["room_id"], since_seq=since_seq, limit=limit)
     return RoomLogResponse(
         entries=[RoomLogEntry(**entry) for entry in entries],
@@ -222,7 +246,7 @@ def _sse(event: str, data: dict) -> str:
 
 @router.get("/{room_id}/stream")
 async def stream_room(
-    user_id: ReadUserId,
+    principal: ReadPrincipal,
     room_id: str,
     last_seq: int = Query(default=0, ge=0),
 ) -> StreamingResponse:
@@ -231,7 +255,7 @@ async def stream_room(
     Reads the table rather than Redis: the room log is the record, and a
     client that misses a beat only needs to re-read from its last seq.
     """
-    room = await _owned_room(user_id, room_id)
+    room = await _reach_room(principal, room_id)
 
     async def events():
         seq = int(last_seq)

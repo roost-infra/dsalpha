@@ -160,7 +160,10 @@ async def get_room(room_id: Any) -> Optional[Dict[str, Any]]:
 
 
 async def list_rooms(
-    user_id: str, workspace_id: Optional[str] = None
+    user_id: str,
+    workspace_id: Optional[str] = None,
+    *,
+    computer_id: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
     where = ["user_id = %s"]
     params: list[Any] = [user_id]
@@ -170,6 +173,12 @@ async def list_rooms(
             return []
         where.append("workspace_id = %s")
         params.append(cleaned)
+    if computer_id is not None:
+        where.append(
+            "workspace_id IN (SELECT workspace_id FROM workspaces "
+            "WHERE computer_id = %s::uuid)"
+        )
+        params.append(str(computer_id))
     async with get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(

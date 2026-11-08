@@ -80,8 +80,14 @@ async def list_bots(
     workspace_id: Optional[str] = None,
     *,
     include_paused: bool = True,
+    computer_id: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
-    """The caller's live bots, optionally narrowed to one workspace."""
+    """The caller's live bots, optionally narrowed to one workspace.
+
+    ``computer_id`` keeps a computer token's read to what that computer holds
+    (Home belongs to no computer, so it is never in such a read): the ids are
+    checked by subquery rather than a join, so the bot columns stay unambiguous.
+    """
     where = ["user_id = %s", "deleted_at IS NULL"]
     params: list[Any] = [user_id]
     if workspace_id:
@@ -90,6 +96,12 @@ async def list_bots(
             return []
         where.append("workspace_id = %s")
         params.append(cleaned)
+    if computer_id is not None:
+        where.append(
+            "workspace_id IN (SELECT workspace_id FROM workspaces "
+            "WHERE computer_id = %s::uuid)"
+        )
+        params.append(str(computer_id))
     if not include_paused:
         where.append("status = 'active'")
     async with get_db_connection() as conn:

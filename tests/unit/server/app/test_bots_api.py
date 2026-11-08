@@ -13,10 +13,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.server.app.bots import delete_bot, list_bots
+from src.server.app.bots import delete_bot, get_bot, list_bots
+from src.server.dependencies.principal import Principal
 from src.server.models.bot import BotCreate
 
 USER = "u-1"
+PRINCIPAL = Principal(user_id=USER, auth="pat")
 WS = "22222222-2222-2222-2222-222222222222"
 HOME = "33333333-3333-3333-3333-333333333333"
 
@@ -52,7 +54,7 @@ async def test_an_unfiltered_list_makes_the_derived_chief_of_staff():
     ) as ensure, patch(
         "src.server.app.bots.bot_db.list_bots", AsyncMock(return_value=[home])
     ):
-        answer = await list_bots(USER, None)
+        answer = await list_bots(PRINCIPAL, None)
     ensure.assert_awaited_once_with(USER)
     assert [b.role for b in answer.bots] == ["chief_of_staff"]
 
@@ -67,7 +69,7 @@ async def test_a_filtered_list_makes_nothing():
     ) as ensure, patch(
         "src.server.app.bots.bot_db.list_bots", AsyncMock(return_value=[])
     ):
-        answer = await list_bots(USER, workspace_id=WS)
+        answer = await list_bots(PRINCIPAL, workspace_id=WS)
     ensure.assert_not_awaited()
     assert answer.bots == []
 
@@ -77,7 +79,7 @@ async def test_the_derived_chief_of_staff_cannot_be_deleted():
     home = _bot("b-home", role="chief_of_staff", workspace_id=HOME)
     with patch("src.server.app.bots._owned_bot", AsyncMock(return_value=home)):
         with pytest.raises(HTTPException) as caught:
-            await delete_bot(USER, "b-home")
+            await delete_bot(PRINCIPAL, "b-home")
     assert caught.value.status_code == 409
 
 
@@ -89,11 +91,53 @@ async def test_no_hand_made_bot_in_home():
         "src.server.app.bots._own_workspace", AsyncMock(return_value=home_workspace)
     ), patch("src.server.app.bots.is_home_id", return_value=True):
         with pytest.raises(HTTPException) as caught:
-            await _create(USER, body)
+            await _create(PRINCIPAL, body)
     assert caught.value.status_code == 400
 
 
-async def _create(user_id: str, body: BotCreate):
+async def _create(principal, body: BotCreate):
     from src.server.app.bots import create_bot
 
-    return await create_bot(user_id, body)
+    return await create_bot(principal, body)
+
+
+@pytest.mark.asyncio
+async def test_a_computer_token_reads_only_its_own_computers_bots():
+    """Unfiltered list: the DB call is scoped to the computer and Home is not minted."""
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    with patch(
+        "src.server.app.bots.bot_db.ensure_home_bot", AsyncMock()
+    ) as ensure, patch(
+        "src.server.app.bots.bot_db.list_bots", AsyncMock(return_value=[])
+    ) as list_db:
+        await list_bots(computer, None)
+    ensure.assert_not_awaited()
+    assert list_db.await_args.kwargs["computer_id"] == "c-1"
+
+
+@pytest.mark.asyncio
+async def test_a_workspace_off_its_computer_is_refused():
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    workspace = {"workspace_id": WS, "user_id": USER}
+    refused = HTTPException(status_code=403, detail="Forbidden")
+    with patch(
+        "src.server.app.bots._own_workspace", AsyncMock(return_value=workspace)
+    ), patch(
+        "src.server.app.bots.assert_reaches", AsyncMock(side_effect=refused)
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await list_bots(computer, workspace_id=WS)
+    assert caught.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_bot_off_its_computer_is_refused_on_read():
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    bot = _bot("b-1")
+    refused = HTTPException(status_code=403, detail="Forbidden")
+    with patch(
+        "src.server.app.bots._owned_bot", AsyncMock(return_value=bot)
+    ), patch("src.server.app.bots.assert_reaches", AsyncMock(side_effect=refused)):
+        with pytest.raises(HTTPException) as caught:
+            await get_bot(computer, "b-1")
+    assert caught.value.status_code == 403

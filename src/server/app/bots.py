@@ -21,7 +21,11 @@ from fastapi import APIRouter, HTTPException, Query
 from src.server.database import bots as bot_db
 from src.server.database.home_workspace import get_home_workspace_id, is_home_id
 from src.server.database.workspace import get_workspace
-from src.server.dependencies.principal import ReadUserId, WorkspaceWriteUserId
+from src.server.dependencies.principal import (
+    ReadPrincipal,
+    WorkspaceWritePrincipal,
+    assert_reaches,
+)
 from src.server.models.bot import (
     MAX_BOTS_PER_WORKSPACE,
     BotCreate,
@@ -54,9 +58,16 @@ async def _own_workspace(user_id: str, workspace_id: str) -> dict:
     return workspace
 
 
+async def _reachable_bot(principal, bot_id: str) -> dict:
+    """An owned bot the caller's computer also holds; body ids are checked here."""
+    bot = await _owned_bot(principal.user_id, bot_id)
+    await assert_reaches(principal, workspace_id=bot["workspace_id"])
+    return bot
+
+
 @router.get("", response_model=BotListResponse)
 async def list_bots(
-    user_id: ReadUserId,
+    principal: ReadPrincipal,
     workspace_id: Optional[str] = Query(default=None),
 ) -> BotListResponse:
     """The caller's live bots, narrowed to one workspace when named.
@@ -66,23 +77,35 @@ async def list_bots(
     Home turn or this read creates one. A filtered read makes nothing: the
     caller asked for one workspace's roster, not their account's.
     """
+    user_id = principal.user_id
     if workspace_id:
-        await _own_workspace(user_id, workspace_id)
-    else:
+        workspace = await _own_workspace(user_id, workspace_id)
+        await assert_reaches(
+            principal, workspace_id=str(workspace["workspace_id"])
+        )
+    elif principal.computer_id is None:
+        # A computer token's unfiltered read never creates (or reaches) Home:
+        # the derived Chief of Staff is the account's, not the machine's.
         await bot_db.ensure_home_bot(user_id)
-    rows = await bot_db.list_bots(user_id, workspace_id=workspace_id)
+    rows = await bot_db.list_bots(
+        user_id,
+        workspace_id=workspace_id,
+        computer_id=principal.computer_id,
+    )
     return BotListResponse(bots=[_info(r) for r in rows])
 
 
 @router.post("", response_model=BotInfo, status_code=201)
-async def create_bot(user_id: WorkspaceWriteUserId, body: BotCreate) -> BotInfo:
+async def create_bot(principal: WorkspaceWritePrincipal, body: BotCreate) -> BotInfo:
     """Create an analyst bot in one of the caller's workspaces.
 
     The Home workspace is where the derived Chief of Staff runs, so a second
     hand-made bot there would compete with it; it is refused rather than
     silently allowed.
     """
+    user_id = principal.user_id
     workspace = await _own_workspace(user_id, str(body.workspace_id))
+    await assert_reaches(principal, workspace_id=str(workspace["workspace_id"]))
     if is_home_id(user_id, workspace["workspace_id"]):
         raise HTTPException(
             status_code=400,
@@ -115,17 +138,18 @@ async def create_bot(user_id: WorkspaceWriteUserId, body: BotCreate) -> BotInfo:
 
 
 @router.get("/{bot_id}", response_model=BotInfo)
-async def get_bot(user_id: ReadUserId, bot_id: str) -> BotInfo:
-    return _info(await _owned_bot(user_id, bot_id))
+async def get_bot(principal: ReadPrincipal, bot_id: str) -> BotInfo:
+    return _info(await _reachable_bot(principal, bot_id))
 
 
 @router.patch("/{bot_id}", response_model=BotInfo)
 async def update_bot(
-    user_id: WorkspaceWriteUserId, bot_id: str, body: BotUpdate
+    principal: WorkspaceWritePrincipal, bot_id: str, body: BotUpdate
 ) -> BotInfo:
     """Edit the bot. Versioned fields (persona, model, tool surface…) keep a
     row in ``bot_versions`` so a change is auditable and revertible."""
-    current = await _owned_bot(user_id, bot_id)
+    user_id = principal.user_id
+    current = await _reachable_bot(principal, bot_id)
     changes = body.model_dump(exclude_none=True)
     if not changes:
         return _info(current)
@@ -145,10 +169,13 @@ async def update_bot(
 
 
 @router.delete("/{bot_id}", response_model=BotDeleteResponse)
-async def delete_bot(user_id: WorkspaceWriteUserId, bot_id: str) -> BotDeleteResponse:
+async def delete_bot(
+    principal: WorkspaceWritePrincipal, bot_id: str
+) -> BotDeleteResponse:
     """Soft-delete a bot. Its threads stay readable; the row keeps the name
     and is restored by clearing ``deleted_at`` out of band."""
-    current = await _owned_bot(user_id, bot_id)
+    user_id = principal.user_id
+    current = await _reachable_bot(principal, bot_id)
     if current["role"] == "chief_of_staff":
         raise HTTPException(
             status_code=409,

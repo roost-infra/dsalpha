@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.server.app.rooms import create_room, read_log, send_message
+from src.server.app.rooms import create_room, list_rooms, read_log, send_message
 from src.server.models.room import RoomCreate, RoomMessageCreate
+from src.server.dependencies.principal import Principal
 
 USER = "u-1"
+PRINCIPAL = Principal(user_id=USER, auth="pat")
 WS = "22222222-2222-2222-2222-222222222222"
 
 
@@ -32,7 +34,7 @@ async def test_a_member_of_another_workspace_is_refused():
         AsyncMock(return_value=_bot("other-ws")),
     ):
         with pytest.raises(HTTPException) as caught:
-            await create_room(USER, body)
+            await create_room(PRINCIPAL, body)
     assert caught.value.status_code == 400
 
 
@@ -43,7 +45,7 @@ async def test_an_archived_room_takes_no_message():
         "src.server.app.rooms.start_round", AsyncMock()
     ) as start:
         with pytest.raises(HTTPException) as caught:
-            await send_message(USER, "r-1", RoomMessageCreate(content="hi"))
+            await send_message(PRINCIPAL, "r-1", RoomMessageCreate(content="hi"))
     assert caught.value.status_code == 409
     start.assert_not_awaited()
 
@@ -66,7 +68,7 @@ async def test_the_log_reads_from_a_seq_and_reports_the_tail():
     with patch("src.server.app.rooms._owned_room", AsyncMock(return_value=room)), patch(
         "src.server.app.rooms.room_db.read_log", AsyncMock(return_value=entries)
     ), patch("src.server.app.rooms.room_db.latest_seq", AsyncMock(return_value=3)):
-        answer = await read_log(USER, "r-1", since_seq=2, limit=100)
+        answer = await read_log(PRINCIPAL, "r-1", since_seq=2, limit=100)
     assert answer.latest_seq == 3
     assert answer.entries[0].content == "hello"
 
@@ -99,3 +101,28 @@ async def test_a_member_row_carries_the_bots_avatar():
     ):
         view = await _view(room)
     assert view.members[0].avatar == {"kind": "mark", "color": "teal"}
+
+
+@pytest.mark.asyncio
+async def test_a_room_off_the_computers_hold_is_refused():
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    room = {"room_id": "r-1", "user_id": USER, "workspace_id": WS, "status": "active"}
+    refused = HTTPException(status_code=403, detail="Forbidden")
+    with patch(
+        "src.server.app.rooms._owned_room", AsyncMock(return_value=room)
+    ), patch(
+        "src.server.app.rooms.assert_reaches", AsyncMock(side_effect=refused)
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await read_log(computer, "r-1")
+    assert caught.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_computer_token_reads_only_its_own_computers_rooms():
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    with patch(
+        "src.server.app.rooms.room_db.list_rooms", AsyncMock(return_value=[])
+    ) as list_db:
+        await list_rooms(computer, None)
+    assert list_db.await_args.kwargs["computer_id"] == "c-1"
