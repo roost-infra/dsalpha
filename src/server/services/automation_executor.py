@@ -87,6 +87,10 @@ class _Firing:
     # The starts made, and the entries the last one was made for.
     delivery_starts: int = 0
     delivery_entries: Optional[list[str]] = None
+    # The bot the run speaks as (None for a row with no bot, or one that was
+    # deleted/moved/paused): the turn runs with its persona, model and tool
+    # surface, and a thread it creates is stamped with it.
+    bot: Optional[Dict[str, Any]] = None
 
     @property
     def held(self) -> bool:
@@ -439,6 +443,20 @@ class AutomationExecutor:
                 conversation_thread_id=thread_id,
             )
         await self._precreate_titled_thread(automation, thread_id, workspace_id)
+        if place.bot:
+            # The run's own thread answers as its bot from the first turn; a
+            # failure here is provenance only and must not fail the run.
+            try:
+                from src.server.database import bots as bot_db
+
+                await bot_db.bind_thread_bot(thread_id, place.bot["bot_id"])
+            except Exception as exc:
+                logger.warning(
+                    "[AUTOMATION_EXEC] could not stamp thread %s with bot %s: %s",
+                    thread_id,
+                    place.bot.get("bot_id"),
+                    exc,
+                )
         return thread_id
 
     async def _wait_for_thread(
@@ -775,7 +793,10 @@ class AutomationExecutor:
             request = ChatRequest(
                 workspace_id=firing.workspace_id,
                 messages=[ChatMessage(role="user", content=instruction)],
-                llm_model=automation.get("llm_model"),
+                # A bot-owned automation runs on the bot's model unless the
+                # row names one itself, exactly like the bot's chat turns.
+                llm_model=automation.get("llm_model")
+                or (firing.bot or {}).get("model"),
                 additional_context=additional_context,
                 origin=ThreadOrigin(
                     type="automation",
@@ -798,6 +819,7 @@ class AutomationExecutor:
                 is_byok=has_byok,
                 from_server=True,
                 steerable=False,
+                turn_bot=firing.bot,
                 # Stamped on the run at START, so its finalize settles this
                 # firing whichever worker is left to drain the job, and
                 # delivers the way its start chose.
@@ -956,6 +978,7 @@ class AutomationExecutor:
 
             # ─── Resolve workspace + thread ───────────────────────
             place = await _turn_place(firing.automation)
+            firing.bot = place.bot
             route = turn_route(user_id, place.workspace, place.bot)
             await route.bind(user_id, place.workspace)
             firing.route = route
