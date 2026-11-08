@@ -69,3 +69,33 @@ async def test_the_log_reads_from_a_seq_and_reports_the_tail():
         answer = await read_log(USER, "r-1", since_seq=2, limit=100)
     assert answer.latest_seq == 3
     assert answer.entries[0].content == "hello"
+
+
+@pytest.mark.asyncio
+async def test_a_member_row_carries_the_bots_avatar():
+    from src.server.app.rooms import _view
+
+    room = {
+        "room_id": "r-1",
+        "workspace_id": WS,
+        "name": "R",
+        "responder": "everyone",
+        "bulletin": "",
+        "status": "active",
+    }
+    members = [
+        {
+            "bot_id": "b-1",
+            "name": "Quant",
+            "role": "analyst",
+            "status": "active",
+            "room_role": "host",
+            "avatar": {"kind": "mark", "color": "teal"},
+        }
+    ]
+    with patch(
+        "src.server.app.rooms.room_db.list_members_with_bots",
+        AsyncMock(return_value=members),
+    ):
+        view = await _view(room)
+    assert view.members[0].avatar == {"kind": "mark", "color": "teal"}

@@ -270,7 +270,7 @@ async def list_members_with_bots(room_id: Any) -> list[Dict[str, Any]]:
                 """
                 SELECT m.member_id, m.role AS room_role, m.joined_at,
                        b.bot_id, b.user_id, b.workspace_id, b.name, b.role,
-                       b.model, b.provider, b.status, b.persona
+                       b.model, b.provider, b.status, b.persona, b.avatar
                 FROM room_members m
                 JOIN bots b ON b.bot_id = m.member_id::uuid
                 WHERE m.room_id = %s AND m.member_type = 'bot'

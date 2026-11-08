@@ -101,6 +101,7 @@ async def _view(room: dict) -> RoomView:
                 role=m.get("role") or "analyst",
                 status=m.get("status") or "active",
                 room_role=m.get("room_role") or "member",
+                avatar=m.get("avatar") or {},
             )
             for m in members
         ],

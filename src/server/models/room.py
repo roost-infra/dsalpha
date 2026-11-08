@@ -7,7 +7,7 @@ workspace; the room is not a sandbox boundary.
 
 import uuid
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,6 +48,7 @@ class RoomMemberInfo(BaseModel):
     role: str
     status: str
     room_role: str
+    avatar: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RoomInfo(BaseModel):
