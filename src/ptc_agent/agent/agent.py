@@ -1220,8 +1220,9 @@ class PTCAgent:
         # Collaboration: the main agent is the one with a bot identity to speak
         # from, and a subagent stack must not start a conversation of its own.
         from src.tools.bots.tool import BOT_TOOLS
+        from src.tools.rooms.tool import ROOM_TOOLS
 
-        tools = [*tools, *BOT_TOOLS]
+        tools = [*tools, *BOT_TOOLS, *ROOM_TOOLS]
         if direct_tools:
             tools = [*tools, *direct_tools]
 
