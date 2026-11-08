@@ -16,7 +16,7 @@
 | P3 定时任务/routine 接线 | ✅ 后端（前端待做） | `automations.bot_id`；Bot 归属的 automation 默认 `continue` 并落 Bot 私聊/既定 routine 会话；executor 以 Bot 角色路由并加 `[Scheduled task]` 框；`scripts/automations_to_persistent.py`（dry-run/apply） |
 | P3 Bot 工具面 | ✅ | `tools_allow`/`tools_deny` 在构建期收窄主 agent 工具集（`tools/bots/scope.py`） |
 | P3 会话可见性 | ✅ | 线程响应带 `bot_id`（聊天头部可解析名字/头像）；rooms 行有 `updated_at` 并推 `room_updated` |
-| V1.1 review 修复 | ✅ | 见 §25（P0/P1/P2 修复清单与仍留 v2 的项） |
+| V1.1 review 修复 | ✅ | 见 §25（P0/P1/P2 修复清单与仍留 v2 的项）；含任意 Bot 私聊入口（`POST /threads {bot_id}` + Bots 页 Chat） |
 | P3 待做 | ⏳ | `approval` 执行映射、`skills`/`memory_scopes` 生效、非默认 Bot 私聊、Exchange 抽屉（v2） |
 | Bot 消息页面显示 | ✅ | `bot_message_source`（history + live 首帧，含 frame-stripped body）；`BotMessageRow`（ds-bot EventLine 风格：发送者行 + 正文气泡、长文折叠、无用户操作）；发出方向工具行 "Messaging X · kind" / "Messaged X · status" |
 | Bot 头像（BotMark） | ✅ | `lib/botMark.ts`（FNV-1a 推导 8 色 × 4 形状 + 首字；image/emoji/mark/auto）+ `components/bots/BotMark.tsx`；替换 Chat 头部、Bot 消息行、Bots 列表/编辑、房间成员/日志/轮次、自动化选择器；Bots 编辑页可编辑；`--color-bot-1..8` 双主题实色 token |
@@ -270,6 +270,7 @@ CREATE INDEX ix_automations_bot ON automations (bot_id);
 ## 6. 会话归属（一个会话 = 一个 Bot）
 
 - `conversation_threads.bot_id` 决定这条 thread 属于谁。
+- 新建会话可显式指定 Bot：`POST /api/v1/threads {workspace_id, bot_id}`（Home CoS 用 Home 的 workspace_id）；Bots 页的 Chat 按钮走这条路径。未指定时由 resolver 取该位置的默认 Bot。
 - 三种线程：
   - `private`：Bot 私聊（用户 ↔ Bot）；一个 Bot 默认一条（`bots.primary_thread_id`，首次发消息时创建）。
   - `routine`：定时任务的持续会话；`automations.thread_strategy='continue'` 时钉住的就是它；也可多条（每个 automation 一条）。
@@ -458,7 +459,8 @@ POST   /api/v1/bots
 GET    /api/v1/bots/{bot_id}
 PATCH  /api/v1/bots/{bot_id}
 DELETE /api/v1/bots/{bot_id}            # 软删
-POST   /api/v1/bots/{bot_id}/messages   # v2：用户直连非默认 Bot 的私聊（v1 未实现，见 §25）
+POST   /api/v1/threads {workspace_id, bot_id?}  # 用户与指定 Bot 开对话（v1 实际入口；thread 出生即绑定该 Bot）
+# 兼容别名 POST /api/v1/bots/{bot_id}/messages 未实现（v2）
 
 # Rooms
 GET    /api/v1/rooms?workspace_id=
@@ -688,7 +690,7 @@ ds-bot 的 SVG 角色 + 表情动画是它产品性格的一部分；LangAlpha �
 
 ### 25.2 明确留到 v2（未做，不要再按已实现引用）
 
-- 用户直连非默认 Bot 的私聊（`POST /bots/{id}/messages` 与前端入口）。
+- `POST /bots/{id}/messages` 这个别名路由（实际入口是 `POST /threads` 带 `bot_id` + Bots 页 Chat 按钮，已实现）。
 - `approval` 的执行映射；`skills`/`memory_scopes` 目前只存储/展示，未进入 agent 构建。
 - `bot.updated` / `bot.thread_fallback` 事件；`hook_outbox` 复用。
 - root 预算的 96/64 双阈值细节（v1 为 6 深 / 64 条 / 8 条每分钟）；`room_rounds.metadata.budget` 列。
