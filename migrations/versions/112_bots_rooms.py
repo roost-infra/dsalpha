@@ -11,15 +11,23 @@ before the code that writes them does; the P0 slice only reads ``bots``,
 
 The backfill keeps behavior identical: one analyst bot per live workspace,
 threads pointed at their workspace's bot, automations pointed at it too. Home
-bots are made lazily by the resolver (a Home row may not exist yet), and the
-P0 code path never requires ``bot_id`` to be set.
+is the one place left out: it holds the derived Chief of Staff, made lazily by
+the resolver (its row may not exist yet), so a Home row gets no analyst and
+its threads/automations keep no bot until that resolver stamps them.
 
 Revision ID: 112
 Revises: 111
 Rollback: ``alembic downgrade 111``
 """
 
+import uuid
+
+import sqlalchemy as sa
 from alembic import op
+
+#: The namespace Home ids derive from (``database.home_workspace``); spelled
+#: here so the migration does not import application code that may change.
+_HOME_NAMESPACE = uuid.UUID("f1a50000-0000-5000-e000-f1a500000000")
 
 
 revision = "112"
@@ -312,6 +320,28 @@ def upgrade() -> None:
         ON CONFLICT (workspace_id, name) DO NOTHING
         """
     )
+    # Home holds the derived Chief of Staff, never a backfilled analyst:
+    # answering Home turns as an analyst is a role regression, and an analyst
+    # beside the CoS in Home contradicts the Bots rules. Home ids are
+    # uuid5(user_id) under a fixed namespace, computed here because Postgres
+    # has no uuid5; the delete runs before threads/automations are pointed at
+    # bots, so nothing else references these rows yet.
+    bind = op.get_bind()
+    user_rows = bind.execute(
+        sa.text("SELECT DISTINCT user_id FROM workspaces WHERE status <> 'deleted'")
+    ).fetchall()
+    home_ids = [
+        str(uuid.uuid5(_HOME_NAMESPACE, str(row[0]))) for row in user_rows
+    ]
+    if home_ids:
+        bind.execute(
+            sa.text(
+                "DELETE FROM bots WHERE role = 'analyst' "
+                "AND workspace_id = CAST(:home AS uuid)"
+            ),
+            [{"home": home_id} for home_id in home_ids],
+        )
+
     op.execute(
         """
         UPDATE conversation_threads t

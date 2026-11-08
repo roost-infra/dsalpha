@@ -366,10 +366,16 @@ async def ensure_workspace_bot(
     """The workspace's analyst bot, created on first need.
 
     The migration backfills every live workspace; this covers a workspace the
-    resolver meets before that, and a Home row with no bot yet.
+    resolver meets before that. Home is not such a place — it holds the
+    derived Chief of Staff — so a Home row answers with that bot rather than
+    minting an analyst beside it.
     """
-    workspace_id = normalize_uuid(str(workspace.get("workspace_id") or ""))
+    from src.server.database.home_workspace import is_home_row
+
     user_id = workspace.get("user_id")
+    if is_home_row(workspace) and user_id:
+        return await ensure_home_bot(str(user_id), conn=conn)
+    workspace_id = normalize_uuid(str(workspace.get("workspace_id") or ""))
     if workspace_id is None or not user_id:
         return None
     existing = await get_workspace_bot(workspace_id, role="analyst", conn=conn)

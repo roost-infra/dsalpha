@@ -109,3 +109,33 @@ def test_bot_role_answers_only_the_known_roles():
     assert bot_role(CHIEF) == "chief_of_staff"
     assert bot_role({"role": "other"}) is None
     assert bot_role(None) is None
+
+
+HOME_ROW = {"workspace_id": HOME, "user_id": USER, "status": "running", "name": "Home"}
+
+
+@pytest.mark.asyncio
+async def test_a_home_row_resolves_the_chief_of_staff_not_a_workspace_analyst():
+    """Home is a place one can send to by its id; it must not be mistaken for
+    a workspace whose analyst answers, which was the pre-bot routing bug."""
+    get, ws_default, home_default, bind = _patched(place_default=CHIEF)
+    with get, ws_default as ensure_workspace, home_default as ensure_home, bind:
+        bot = await resolve_turn_bot(
+            USER, thread_id="t-3", thread_meta={}, workspace=HOME_ROW
+        )
+    assert bot == CHIEF
+    ensure_home.assert_awaited_once()
+    ensure_workspace.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_asking_home_for_a_workspace_bot_answers_its_chief_of_staff():
+    from src.server.database import bots as bot_db
+
+    with patch(
+        "src.server.database.bots.ensure_home_bot",
+        new=AsyncMock(return_value=CHIEF),
+    ) as ensure_home:
+        bot = await bot_db.ensure_workspace_bot(HOME_ROW)
+    assert bot == CHIEF
+    ensure_home.assert_awaited_once_with(USER, conn=None)

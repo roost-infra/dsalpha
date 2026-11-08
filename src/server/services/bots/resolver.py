@@ -102,8 +102,12 @@ async def _default_bot(
     user_id: str, workspace: Optional[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
     from src.server.database import bots as bot_db
+    from src.server.database.home_workspace import is_home_row
 
-    if workspace is None:
+    # Home is the Chief of Staff's place whether or not its row exists yet: a
+    # Home row read by id must not be mistaken for a workspace whose analyst
+    # answers. A workspace's analyst is the default only outside Home.
+    if workspace is None or is_home_row(workspace):
         return await bot_db.ensure_home_bot(user_id)
     return await bot_db.ensure_workspace_bot(workspace)
 
