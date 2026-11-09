@@ -6712,6 +6712,7 @@
     "selectTitle": "Open a room",
     "selectDescription": "Pick a room on the left, or start a new one.",
     "hostBadge": "Host",
+    "primarySession": "Primary",
     "unread": "Unread messages",
     "previewEmpty": "No messages yet",
     "membersCount": "{{count}} members",

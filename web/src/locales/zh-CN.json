@@ -6622,6 +6622,7 @@
     "selectTitle": "打开一个群聊",
     "selectDescription": "从左侧选择一个群聊，或新建一个。",
     "hostBadge": "主持",
+    "primarySession": "主会话",
     "unread": "有未读消息",
     "previewEmpty": "还没有消息",
     "membersCount": "{{count}} 位成员",
