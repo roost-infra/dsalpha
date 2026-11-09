@@ -20,6 +20,10 @@ vi.mock('../../../hooks/useNavigationData', () => ({
   useNavigationData: () => ({ workspaces: [], workspaceThreads: {} }),
 }));
 vi.mock('../../NavDisplayOptions', () => ({ default: () => null }));
+vi.mock('@/components/Sidebar/ConversationSections', () => ({
+  ConversationSections: () => null,
+}));
+
 vi.mock('../../NavigationPanel', () => ({
   default: ({ onNavigateThread, onNewThread, onSelectAgent }: {
     onNavigateThread: (ws: string, thread: string) => void;
