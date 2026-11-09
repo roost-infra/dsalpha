@@ -750,3 +750,124 @@
     width: 100%;
   }
 }
+
+/* A room row in the left list: the group's face, its name and last message. */
+.rooms-list__row--room {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.rooms-list__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.rooms-list__row--room .rooms-list__name {
+  width: 100%;
+}
+
+.rooms-list__preview {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rooms-list__unread {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--color-accent-primary);
+}
+
+/* The group's members in a small stack, for the list and the panel head. */
+.room-avatar {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.room-avatar__empty {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 50%;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-card);
+}
+
+.room-avatar__seat {
+  position: absolute;
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--color-bg-page);
+  border-radius: 50%;
+  background: var(--color-bg-card);
+}
+
+.room-avatar__seat--0 { top: 0; left: 0; z-index: 3; }
+.room-avatar__seat--1 { top: 0; right: 0; z-index: 2; }
+.room-avatar__seat--2 { bottom: 0; left: 50%; z-index: 4; transform: translateX(-50%); }
+
+.room-avatar__more {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  z-index: 5;
+  min-width: 13px;
+  padding: 0 2px;
+  border-radius: 999px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-tertiary);
+  font-size: 8px;
+  line-height: 13px;
+  text-align: center;
+}
+
+/* A group conversation: a lead avatar, the sender's name, then its conclusion. */
+.rooms-log__row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: min(680px, 86%);
+}
+
+.rooms-log__lead {
+  display: inline-flex;
+  flex: none;
+  padding-top: 1px;
+}
+
+.rooms-log__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rooms-log__row--user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.rooms-log__row--user .rooms-log__content {
+  align-items: flex-end;
+}
+
+.rooms-log__day {
+  align-self: center;
+  padding: 10px 0 2px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}

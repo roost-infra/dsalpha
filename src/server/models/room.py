@@ -87,10 +87,16 @@ class RoomInfo(BaseModel):
     status: str = "active"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    #: The newest human/member message, for the room list's preview.
+    preview: str = ""
+    #: Highest log seq, for the client's unread marker.
+    latest_seq: int = 0
+    #: The room's bot members, so the list can draw the group's avatar stack.
+    members: List[RoomMemberInfo] = Field(default_factory=list)
 
 
 class RoomView(RoomInfo):
-    members: List[RoomMemberInfo] = Field(default_factory=list)
+    """The detail read; ``members`` is inherited from RoomInfo."""
 
 
 class RoomListResponse(BaseModel):

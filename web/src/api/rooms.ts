@@ -48,6 +48,12 @@ export interface RoomInfo {
   bulletin: string;
   status: string;
   created_at: string | null;
+  /** The newest message, for the list's preview; absent on older servers. */
+  preview?: string;
+  /** Highest log seq, for the list's unread dot; absent on older servers. */
+  latest_seq?: number;
+  /** Member bots, for the group avatar stack; the list and detail both carry it. */
+  members?: RoomMemberInfo[];
 }
 
 /** A member as the detail read returns it, with its bot's live status. */

@@ -27,11 +27,30 @@ import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import { failureText } from '@/lib/failureText';
 import { responderLabelKey } from './roomsCopy';
 import CreateRoomDialog from './components/CreateRoomDialog';
+import { RoomAvatar } from './components/RoomAvatar';
 import RoomPanel from './components/RoomPanel';
 import './Rooms.css';
 
 /** The bot-to-bot inbox, opened from the left rail: who sent what to which bot. */
 const EMPTY_BOT_MESSAGES: BotMessageInfo[] = [];
+const ROOM_READ_KEY = 'langalpha.rooms.read';
+
+function loadReadSeqs(): Record<string, number> {
+  try {
+    const raw = window.localStorage.getItem(ROOM_READ_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveReadSeqs(seqs: Record<string, number>): void {
+  try {
+    window.localStorage.setItem(ROOM_READ_KEY, JSON.stringify(seqs));
+  } catch {
+    // A full or disabled storage only costs the unread dot, not the room.
+  }
+}
 
 function BotMessagesDrawer({
   workspaceId,
@@ -103,28 +122,35 @@ function BotMessagesDrawer({
 function RoomListRow({
   room,
   active,
+  unread,
   onOpen,
 }: {
   room: RoomInfo;
   active: boolean;
+  unread: boolean;
   onOpen: () => void;
 }) {
   const { t } = useTranslation();
   return (
     <button
       type="button"
-      className={active ? 'rooms-list__row is-active' : 'rooms-list__row'}
+      className={active ? 'rooms-list__row rooms-list__row--room is-active' : 'rooms-list__row rooms-list__row--room'}
       aria-current={active ? 'true' : undefined}
       onClick={onOpen}
     >
-      <span className="rooms-list__name">
-        <MessagesSquare className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        <span className="rooms-list__name-text">{room.name}</span>
-        {room.status === 'archived' && (
-          <Badge variant="muted">{t('rooms.archivedBadge')}</Badge>
-        )}
+      <RoomAvatar members={room.members ?? []} size={34} />
+      <span className="rooms-list__body">
+        <span className="rooms-list__name">
+          <span className="rooms-list__name-text">{room.name}</span>
+          {room.status === 'archived' && (
+            <Badge variant="muted">{t('rooms.archivedBadge')}</Badge>
+          )}
+          {unread && !active && <span className="rooms-list__unread" aria-label={t('rooms.unread')} />}
+        </span>
+        <span className="rooms-list__preview">
+          {room.preview?.trim() || t('rooms.previewEmpty')}
+        </span>
       </span>
-      <span className="rooms-list__meta">{t(responderLabelKey(room.responder))}</span>
     </button>
   );
 }
@@ -144,6 +170,16 @@ export default function Rooms() {
   const [creating, setCreating] = useState(false);
   const [botMessagesOpen, setBotMessagesOpen] = useState(false);
   const [openingBotId, setOpeningBotId] = useState<string | null>(null);
+  const [readSeqs, setReadSeqs] = useState<Record<string, number>>(loadReadSeqs);
+  const markRoomRead = (room: RoomInfo) => {
+    if (!room.latest_seq) return;
+    setReadSeqs((current) => {
+      if ((current[room.room_id] ?? 0) >= room.latest_seq!) return current;
+      const next = { ...current, [room.room_id]: room.latest_seq! };
+      saveReadSeqs(next);
+      return next;
+    });
+  };
 
   const workspaces = useMemo(() => workspacesData?.workspaces ?? [], [workspacesData]);
   const workspacesReady = !workspacesLoading;
@@ -280,7 +316,11 @@ export default function Rooms() {
                 key={room.room_id}
                 room={room}
                 active={room.room_id === selectedRoomId}
-                onOpen={() => openRoom(room.room_id)}
+                unread={(room.latest_seq ?? 0) > (readSeqs[room.room_id] ?? 0)}
+                onOpen={() => {
+                  markRoomRead(room);
+                  openRoom(room.room_id);
+                }}
               />
             ))
           )}
