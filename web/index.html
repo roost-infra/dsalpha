@@ -330,6 +330,16 @@
       html.desktop-mac:has(.sidebar-window-drag) #window-drag { display: none; }
     </style>
     <link rel="icon" type="image/svg+xml" href="/logo-favicon.svg" />
+    <!-- Add-to-home-screen: standalone window, own icon and title. The
+         manifest is JSON rather than .webmanifest because the static server
+         may not map that extension to application/manifest+json. -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#1B1D25" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="athena" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!-- ONE font request for every family (alphabetical, as css2 requires),
@@ -347,6 +357,16 @@
     </script>
     <div id="window-drag" aria-hidden="true"></div>
     <div id="root"></div>
+    <script>
+      // Installability on Android needs a service worker; iOS ignores it and
+      // uses the apple-mobile-web-app tags above. Skipped on http so the dev
+      // server (and an insecure OSS deployment) never caches build assets.
+      if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function () {});
+        });
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
