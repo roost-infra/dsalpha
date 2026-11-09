@@ -70,6 +70,7 @@ export const NavBotsContext = createContext<Map<string, {
   bot_id: string;
   name: string;
   avatar?: Record<string, unknown>;
+  primary_thread_id?: string | null;
 }> | null>(null);
 
 interface RowMachine {
@@ -413,6 +414,7 @@ function ThreadTreeRowImpl({
   const bots = useContext(NavBotsContext);
   const botId = typeof thread.bot_id === 'string' ? thread.bot_id : null;
   const bot = botId ? bots?.get(botId) : undefined;
+  const isPrimarySession = Boolean(bot && bot.primary_thread_id === thread.thread_id);
   const seedTitle = thread.title || thread.first_query_content?.slice(0, 40) || '';
   // A bot's private conversation has no user-typed title until it is named;
   // the bot's own name is the honest fallback, not "Untitled".
@@ -524,6 +526,11 @@ function ThreadTreeRowImpl({
                   />
                 ) : (<>
                   <ThreadRowTitle tid={tid} title={title} active={isCurrentThread} onActivate={activateRow} />
+                  {isPrimarySession && (
+                    <span className="nav-primary-badge" data-testid="nav-primary-session">
+                      {t('nav.primarySession')}
+                    </span>
+                  )}
                   {/* Expand-agents chevron — immediately right of the thread name,
                       mirroring the workspace row. Only on the current thread when it
                       has subagents. Hover-revealed (always shown on touch); rotates

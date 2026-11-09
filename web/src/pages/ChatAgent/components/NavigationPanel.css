@@ -203,3 +203,16 @@
 [data-theme='light'] .subagent-avatar-glyph {
   filter: brightness(0) saturate(100%);
 }
+
+/* Which of a bot's sessions is its one primary conversation, where bot-to-bot
+   messages land. */
+.nav-primary-badge {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-bg-card);
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  line-height: 15px;
+  white-space: nowrap;
+}

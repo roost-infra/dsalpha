@@ -86,7 +86,7 @@ describe('thread row meta card', () => {
 
   it('draws the bot a session answers as, so a session reads as its bot', () => {
     render(
-      <NavBotsContext value={new Map([['bot-1', { bot_id: 'bot-1', name: 'Rates analyst', avatar: {} }]])}>
+      <NavBotsContext value={new Map([['bot-1', { bot_id: 'bot-1', name: 'Rates analyst', avatar: {}, primary_thread_id: 'thread-1' }]])}>
         <ThreadTreeRow
           wsId="ws-1"
           thread={{ thread_id: 'thread-1', title: 'Rate path', bot_id: 'bot-1' }}
@@ -102,5 +102,6 @@ describe('thread row meta card', () => {
       </NavBotsContext>,
     );
     expect(screen.getByTestId('nav-thread-bot-avatar')).toBeInTheDocument();
+    expect(screen.getByTestId('nav-primary-session')).toHaveTextContent('nav.primarySession');
   });
 });
