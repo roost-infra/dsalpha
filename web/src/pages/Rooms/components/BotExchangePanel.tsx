@@ -96,6 +96,7 @@ export function BotExchangePanel({
           })}
         </div>
       )}
+      {messages.length > 0 && <p className="rooms-ai-disclaimer">{t('chat.aiDisclaimer')}</p>}
     </aside>
   );
 }

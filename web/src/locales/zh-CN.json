@@ -2141,6 +2141,7 @@
     "worker": "工作者",
     "agentNotFound": "未找到 Agent",
     "stoppedChip": "已停止",
+    "aiDisclaimer": "AI 生成内容，仅供参考，不构成投资建议。",
     "workingFor": "工作中 {{duration}}",
     "workedFor": "已工作 {{duration}}",
     "worked": "工作过程",
