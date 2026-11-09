@@ -12,7 +12,7 @@ import { DETAIL_KIND_TAB, parseDetail, readView, type SectionView } from '../../
 export type Section = 'plugins' | 'mcp' | 'skills' | 'subagents' | 'brokerages' | 'secrets';
 
 export const CUSTOMIZE: readonly Section[] = ['plugins', 'mcp', 'skills', 'subagents'];
-export const ACCOUNTS: readonly Section[] = ['brokerages', 'secrets'];
+export const ACCOUNTS: readonly Section[] = ['secrets'];
 const ALL: readonly Section[] = [...CUSTOMIZE, ...ACCOUNTS];
 
 // Bare literals (not a template) so the locale parity test sees every label.
