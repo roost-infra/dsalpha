@@ -100,7 +100,7 @@ export default function Rooms() {
   const navigate = useNavigate();
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [exchangeKey, setExchangeKey] = useState<string | null>(null);
+  const [exchangeKey, setExchangeKey] = useState<string | null>(() => searchParams.get('exchange'));
   const [openingBotId, setOpeningBotId] = useState<string | null>(null);
   const [readSeqs, setReadSeqs] = useState<Record<string, number>>(loadReadSeqs);
   const markRoomRead = (room: RoomInfo) => {
@@ -160,6 +160,11 @@ export default function Rooms() {
   // A link that names a room the server refuses is dropped from the URL rather
   // than left over an empty panel.
   useEffect(() => {
+    const fromUrl = searchParams.get('exchange');
+    if (fromUrl !== exchangeKey) setExchangeKey(fromUrl);
+  }, [searchParams, exchangeKey]);
+
+  useEffect(() => {
     if (!selectedRoomId || workspacesLoading || !linkedRoomQuery.isError) return;
     const next = new URLSearchParams(searchParams);
     next.delete('room');
@@ -176,6 +181,16 @@ export default function Rooms() {
   const changeWorkspace = (nextWorkspaceId: string) => {
     setWorkspaceChoice(nextWorkspaceId);
     openRoom(null);
+  };
+
+  // The sidebar navigates an exchange by URL so a deep link can open the pair
+  // too; closing it removes the parameter instead of leaving a stale key.
+  const chooseExchange = (key: string | null) => {
+    setExchangeKey(key);
+    const next = new URLSearchParams(searchParams);
+    if (key) next.set('exchange', key);
+    else next.delete('exchange');
+    setSearchParams(next, { replace: true });
   };
 
   return (
@@ -290,7 +305,7 @@ export default function Rooms() {
                 key={pair.key}
                 type="button"
                 className="rooms-list__row rooms-list__row--exchange"
-                onClick={() => setExchangeKey(pair.key)}
+                onClick={() => chooseExchange(pair.key)}
               >
                 <span className="rooms-exchange__faces" aria-hidden>
                   <BotMark bot={pair.left} size={20} decorative />
@@ -334,7 +349,7 @@ export default function Rooms() {
           messages={activePair.messages}
           loading={inbox.isLoading}
           failed={inbox.isError}
-          onClose={() => setExchangeKey(null)}
+          onClose={() => chooseExchange(null)}
         />
       )}
 
