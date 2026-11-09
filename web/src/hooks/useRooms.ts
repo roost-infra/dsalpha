@@ -173,12 +173,15 @@ export function useUpdateRoom() {
   return useMutation({
     mutationFn: ({ roomId, patch }: { roomId: string; patch: RoomUpdateInput }) =>
       updateRoom(roomId, patch),
-    onSuccess: (room, { roomId }) => {
+    onSuccess: (room, { roomId, patch }) => {
       const key = queryKeys.rooms.detail(roomId);
       const current = queryClient.getQueryData<RoomView>(key);
-      // The patch answer is a RoomInfo with no members; keep the ones the
-      // detail read already had instead of drawing the room empty.
-      if (current) queryClient.setQueryData<RoomView>(key, { ...current, ...room, members: current.members });
+      // Moving the host seat changes members' room_role too, which the
+      // RoomInfo answer does not carry: reread the detail rather than keep
+      // the old roles. Every other patch keeps the members it already had.
+      if ('host_bot_id' in patch) {
+        queryClient.invalidateQueries({ queryKey: key });
+      } else if (current) queryClient.setQueryData<RoomView>(key, { ...current, ...room, members: current.members });
       else queryClient.invalidateQueries({ queryKey: key });
       queryClient.invalidateQueries({ queryKey: queryKeys.rooms.lists() });
     },

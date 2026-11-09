@@ -165,3 +165,46 @@ def test_the_sse_writer_survives_uuid_fields():
     )
     assert frame.startswith("event: room_message")
     assert '"seq": 1' in frame
+
+
+@pytest.mark.asyncio
+async def test_moving_the_host_seat_is_a_room_write():
+    import uuid
+
+    from src.server.app.rooms import update_room as update_room_endpoint
+    from src.server.models.room import RoomUpdate
+
+    room = {
+        "room_id": "r-1", "user_id": USER, "workspace_id": WS, "name": "R",
+        "host_bot_id": None, "responder": "everyone", "bulletin": "",
+        "status": "active", "created_at": None, "updated_at": None,
+    }
+    new_host = uuid.uuid4()
+    updated = {**room, "host_bot_id": str(new_host), "responder": "everyone"}
+    with patch("src.server.app.rooms._reach_room", AsyncMock(return_value=room)), patch(
+        "src.server.app.rooms.room_db.set_room_host", AsyncMock(return_value=updated)
+    ) as move:
+        answer = await update_room_endpoint(
+            PRINCIPAL, "r-1", RoomUpdate(host_bot_id=new_host)
+        )
+    assert answer.host_bot_id == str(new_host)
+    move.assert_awaited_once_with("r-1", new_host)
+
+
+@pytest.mark.asyncio
+async def test_a_host_that_is_not_a_member_is_refused():
+    import uuid
+
+    from src.server.app.rooms import update_room as update_room_endpoint
+    from src.server.models.room import RoomUpdate
+
+    room = {"room_id": "r-1", "user_id": USER, "workspace_id": WS, "status": "active"}
+    with patch("src.server.app.rooms._reach_room", AsyncMock(return_value=room)), patch(
+        "src.server.app.rooms.room_db.set_room_host",
+        AsyncMock(side_effect=ValueError("the host must be a member of the room")),
+    ):
+        with pytest.raises(HTTPException) as caught:
+            await update_room_endpoint(
+                PRINCIPAL, "r-1", RoomUpdate(host_bot_id=uuid.uuid4())
+            )
+    assert caught.value.status_code == 400

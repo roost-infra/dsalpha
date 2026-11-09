@@ -6806,7 +6806,9 @@
     "membersError": "Couldn't load the workspace's bots.",
     "restoreRoom": "Restore room",
     "newMessages": "New messages",
-    "workspacesFailed": "Couldn't load your workspaces."
+    "workspacesFailed": "Couldn't load your workspaces.",
+    "makeHost": "Make host",
+    "makeHostNamed": "Make {{name}} host"
   },
   "agents": {
     "chiefOfStaffHint": "Coordinates the Analysts in every workspace and hands each task to the right one.",

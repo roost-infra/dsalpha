@@ -6716,7 +6716,9 @@
     "membersError": "无法加载工作区的 Bot。",
     "restoreRoom": "恢复群聊",
     "newMessages": "有新消息",
-    "workspacesFailed": "无法加载工作区。"
+    "workspacesFailed": "无法加载工作区。",
+    "makeHost": "设为主持",
+    "makeHostNamed": "将 {{name}} 设为主持"
   },
   "agents": {
     "chiefOfStaffHint": "统筹所有工作区的分析师，把每项任务交给合适的那一位。",

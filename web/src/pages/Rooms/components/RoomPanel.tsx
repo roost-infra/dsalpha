@@ -10,7 +10,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Archive, ArrowLeft, Info, Plus, Send, X } from 'lucide-react';
+import { Archive, ArrowLeft, Crown, Info, Plus, Send, X } from 'lucide-react';
 import type { RoomLogEntry, RoomMemberInfo, RoomResponder, RoomView } from '@/api/rooms';
 import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
@@ -152,12 +152,14 @@ function MemberChip({
   member,
   isHost,
   removable,
+  onMakeHost,
   onRemove,
 }: {
   member: RoomMemberInfo;
   isHost: boolean;
   /** A host keeps its place, and an archived room takes no edits. */
   removable: boolean;
+  onMakeHost: () => void;
   onRemove: () => void;
 }) {
   const { t } = useTranslation();
@@ -174,6 +176,17 @@ function MemberChip({
         {t(member.role === 'chief_of_staff' ? 'agents.chiefOfStaff' : 'agents.analyst')}
       </span>
       {isHost && <span className="rooms-member__badge">{t('rooms.hostBadge')}</span>}
+      {removable && !isHost && (
+        <button
+          type="button"
+          className="rooms-member__make-host"
+          aria-label={t('rooms.makeHostNamed', { name: member.name })}
+          title={t('rooms.makeHost')}
+          onClick={onMakeHost}
+        >
+          <Crown className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      )}
       {paused && (
         <span className="rooms-member__badge rooms-member__badge--paused">
           {t('rooms.pausedBadge')}
@@ -472,6 +485,13 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
             member={member}
             isHost={member.room_role === 'host' || member.bot_id === room.host_bot_id}
             removable={!archived}
+            onMakeHost={() => {
+              clearFailure();
+              updateRoom.mutate(
+                { roomId, patch: { host_bot_id: member.bot_id } },
+                { onSuccess: clearFailure, onError: fail },
+              );
+            }}
             onRemove={() => {
               clearFailure();
               removeMember.mutate(
