@@ -1,0 +1,1 @@
+function e(e,t){let n=e?.other_preference;return typeof n==`object`&&n&&!Array.isArray(n)?n[t]:void 0}function t(e,t){return{other_preference:{[e]:t}}}export{e as n,t};

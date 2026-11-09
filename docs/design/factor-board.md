@@ -1,3 +1,5 @@
+> 2026-11-09: this deployment removed the Factor Board's web page (nav entry, `/factors` route, page and its API client). The backend endpoints below remain.
+
 # Factor Board (因子看板)
 
 The Factor Board has two surfaces, and the order matters:

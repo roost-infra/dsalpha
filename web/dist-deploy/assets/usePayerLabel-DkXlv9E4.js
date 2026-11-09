@@ -1,0 +1,1 @@
+import{o as e}from"./vendor-react-Bsv8HSB4.js";import{gp as t}from"./index-DokTljjM.js";import{o as n}from"./modelPayer-BFy7TPd3.js";import{t as r}from"./useProviderCatalog-MEKjOUgY.js";var i=e();function a(){let e=(0,i.c)(3),{t:a}=t(),{entryFor:o}=r(),s;return e[0]!==o||e[1]!==a?(s=e=>n(a,e,e=>o(e)?.display_name),e[0]=o,e[1]=a,e[2]=s):s=e[2],s}export{a as t};

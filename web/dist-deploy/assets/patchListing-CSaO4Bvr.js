@@ -1,0 +1,1 @@
+async function e(e,t,n){if(!n)return e.invalidateQueries({queryKey:t});await e.cancelQueries({queryKey:t});let r=e.getQueryData(t);if(r===void 0)return e.invalidateQueries({queryKey:t});e.setQueryData(t,n(r))}export{e as t};

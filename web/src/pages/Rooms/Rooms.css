@@ -552,6 +552,13 @@
     width: 132px;
   }
 
+  /* The member strip repeats what the log already shows by each reply, and
+     with several bots plus the add controls it is the densest row on a phone.
+     Members are managed on desktop; the room itself stays fully usable here. */
+  .rooms-panel__members {
+    display: none;
+  }
+
   .rooms-panel__actions {
     flex-wrap: wrap;
     justify-content: flex-end;

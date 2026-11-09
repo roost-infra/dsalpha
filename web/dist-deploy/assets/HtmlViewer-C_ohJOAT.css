@@ -1,0 +1,1 @@
+.html-viewer{flex-direction:column;height:100%;display:flex;overflow:hidden}.html-viewer-source{tab-size:2;flex:1;min-height:0;padding:12px;overflow:auto}.html-viewer{position:relative}.html-viewer-stage{flex:1;min-height:0;position:relative}.html-viewer-stage[data-shown=false]{visibility:hidden;pointer-events:none;position:absolute;inset:0}

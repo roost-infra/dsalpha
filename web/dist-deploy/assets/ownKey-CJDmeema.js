@@ -1,0 +1,1 @@
+var e=`(server)`,t=e=>!!e&&!!e.masked_key&&e.masked_key!==`(server)`;export{t as n,e as t};
