@@ -37,6 +37,9 @@ import {
   useUpdateRoom,
   type RoomLogCacheEntry,
 } from '@/hooks/useRooms';
+import Markdown from '@/pages/ChatAgent/components/Markdown';
+import { readWorkspaceFile } from '@/pages/ChatAgent/utils/api/files';
+import type { OpenFileHandler } from '@/pages/ChatAgent/utils/fileLocation';
 import { responderLabelKey } from '../roomsCopy';
 import { failureText } from '@/lib/failureText';
 
@@ -50,9 +53,11 @@ function isStatusRow(entry: RoomLogEntry): boolean {
 function LogRow({
   entry,
   members,
+  onOpenFile,
 }: {
   entry: RoomLogCacheEntry;
   members: Map<string, RoomMemberInfo>;
+  onOpenFile: OpenFileHandler;
 }) {
   const { t } = useTranslation();
   if (isStatusRow(entry)) {
@@ -80,8 +85,63 @@ function LogRow({
         {!isUser && <BotMark bot={member ?? { name: sender }} size={16} decorative />}
         <span>{sender}</span>
       </span>
-      <div className="rooms-log__bubble">{entry.content}</div>
+      <div className="rooms-log__bubble rooms-log__bubble--markdown">
+        <Markdown content={entry.content} variant="chat" onOpenFile={onOpenFile} />
+      </div>
     </div>
+  );
+}
+
+/** A workspace HTML artifact the room opened: rendered in a right-side drawer,
+ *  sandboxed so its scripts cannot reach the app. */
+function RoomHtmlArtifact({
+  workspaceId,
+  path,
+  onClose,
+}: {
+  workspaceId: string;
+  path: string;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [content, setContent] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    setContent(null);
+    setFailed(false);
+    readWorkspaceFile(workspaceId, path)
+      .then((data: { content?: string }) => {
+        if (live) setContent(data.content ?? '');
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => { live = false; };
+  }, [workspaceId, path]);
+
+  return (
+    <aside className="rooms-artifact" role="dialog" aria-modal="true" aria-label={path}>
+      <header className="rooms-artifact__header">
+        <span className="rooms-artifact__path" title={path}>{path}</span>
+        <Button variant="ghost" size="icon" aria-label={t('common.close')} onClick={onClose}>
+          <X className="h-4 w-4" aria-hidden />
+        </Button>
+      </header>
+      {failed ? (
+        <div className="rooms-artifact__state" role="status">{t('rooms.failed')}</div>
+      ) : content === null ? (
+        <div className="rooms-artifact__state" role="status">{t('common.loading')}</div>
+      ) : (
+        <iframe
+          className="rooms-artifact__frame"
+          title={path}
+          sandbox="allow-scripts allow-forms allow-popups allow-modals"
+          srcDoc={content}
+        />
+      )}
+    </aside>
   );
 }
 
@@ -206,11 +266,27 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
   // an error: a later successful write clears it.
   const [actionFailure, setActionFailure] = useState<string | null>(null);
   const [unseen, setUnseen] = useState(false);
+  const [htmlArtifact, setHtmlArtifact] = useState<{ workspaceId: string; path: string } | null>(null);
   const atBottomRef = useRef(true);
   const logRef = useRef<HTMLDivElement>(null);
 
   const fail = (error: unknown) => setActionFailure(failureText(error, t('rooms.failed')));
   const clearFailure = () => setActionFailure(null);
+  // A room reply can link a workspace file. HTML opens in the side drawer; any
+  // other file opens through the authenticated download route.
+  const openFile: OpenFileHandler = (path, workspaceId) => {
+    const ws = workspaceId || room?.workspace_id;
+    if (!ws) return;
+    if (/\.html?$/i.test(path)) {
+      setHtmlArtifact({ workspaceId: ws, path });
+      return;
+    }
+    window.open(
+      `/api/v1/workspaces/${encodeURIComponent(ws)}/files/download?path=${encodeURIComponent(path)}`,
+      '_blank',
+      'noopener,noreferrer',
+    );
+  };
 
   const members = useMemo(() => new Map((room?.members ?? []).map((member) => [member.bot_id, member])), [room?.members]);
   const availableBots = useMemo(() => {
@@ -533,6 +609,7 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
               key={entry.pending ? `pending-${entry.seq}` : entry.seq}
               entry={entry}
               members={members}
+              onOpenFile={openFile}
             />
           ))
         )}
@@ -614,6 +691,14 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
       )}
 
       {archiveOpen && <ArchiveRoomDialog room={room} onClose={() => setArchiveOpen(false)} />}
+
+      {htmlArtifact && (
+        <RoomHtmlArtifact
+          workspaceId={htmlArtifact.workspaceId}
+          path={htmlArtifact.path}
+          onClose={() => setHtmlArtifact(null)}
+        />
+      )}
     </div>
   );
 }

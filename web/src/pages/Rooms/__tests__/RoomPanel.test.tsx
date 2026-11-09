@@ -31,6 +31,10 @@ const botsState = vi.hoisted(() => ({
   refetch: vi.fn(),
 }));
 
+vi.mock('@/pages/ChatAgent/utils/api/files', () => ({
+  readWorkspaceFile: vi.fn(),
+}));
+
 vi.mock('@/hooks/useBots', () => ({
   useBots: () => ({
     data: { bots: botsState.bots, max_bots: 12 },
@@ -48,6 +52,7 @@ import {
   streamRoom,
   updateRoom,
 } from '@/api/rooms';
+import { readWorkspaceFile } from '@/pages/ChatAgent/utils/api/files';
 import RoomPanel from '../components/RoomPanel';
 
 const mockGetRoom = getRoom as unknown as ReturnType<typeof vi.fn>;
@@ -56,6 +61,7 @@ const mockSendMessage = sendRoomMessage as unknown as ReturnType<typeof vi.fn>;
 const mockStreamRoom = streamRoom as unknown as ReturnType<typeof vi.fn>;
 const mockUpdateRoom = updateRoom as unknown as ReturnType<typeof vi.fn>;
 const mockRemoveMember = removeRoomMember as unknown as ReturnType<typeof vi.fn>;
+const mockReadWorkspaceFile = readWorkspaceFile as unknown as ReturnType<typeof vi.fn>;
 
 const ROOM: RoomView = {
   room_id: 'room-1',
@@ -134,6 +140,7 @@ beforeEach(() => {
   mockUpdateRoom.mockReset().mockResolvedValue({ ...ROOM, status: 'archived' });
   mockRemoveMember.mockReset().mockResolvedValue({ ok: true, bot_id: 'bot-2' });
   mockStreamRoom.mockReset().mockReturnValue(vi.fn());
+  mockReadWorkspaceFile.mockReset().mockResolvedValue({ content: '<h1>报告</h1>' });
 });
 
 describe('RoomPanel', () => {
@@ -165,6 +172,31 @@ describe('RoomPanel', () => {
     expect(statusRow).toHaveClass('rooms-log__status');
     expect(statusRow).toHaveTextContent('Rates analyst was skipped: not an active member.');
     expect(statusRow).not.toHaveClass('rooms-log__row');
+  });
+
+  it('renders a reply as markdown and opens a linked HTML report in a side drawer', async () => {
+    mockGetRoomLog.mockResolvedValue({
+      entries: [
+        {
+          seq: 4,
+          room_id: 'room-1',
+          round_id: 'round-1',
+          sender_type: 'bot',
+          sender_id: 'bot-2',
+          kind: 'message',
+          content: '## 结论\n\n毛利率改善，详见[打开报告](reports/rates.html)。',
+          created_at: null,
+        },
+      ],
+      latest_seq: 4,
+    });
+    await renderPanel();
+
+    expect(screen.getByRole('heading', { name: '结论' })).toBeInTheDocument();
+    fireEvent.click(screen.getByText('打开报告'));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    const frame = (await screen.findAllByTitle('reports/rates.html')).find((node) => node.tagName === 'IFRAME');
+    expect(frame).toHaveAttribute('srcdoc', '<h1>报告</h1>');
   });
 
   it('draws the member BotMark in its chip, its log line and the speaking line', async () => {
