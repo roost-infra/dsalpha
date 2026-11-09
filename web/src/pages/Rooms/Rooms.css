@@ -871,3 +871,87 @@
   color: var(--color-text-tertiary);
   font-size: 11px;
 }
+
+/* A pair conversation in the bot inbox: two faces, then the latest line. */
+.rooms-list__row--exchange {
+  flex-direction: row;
+  align-items: center;
+  gap: 9px;
+}
+
+.rooms-exchange__faces {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: 32px;
+}
+
+.rooms-exchange__faces > :last-child {
+  margin-left: -8px;
+  filter: drop-shadow(0 0 1px var(--color-bg-page));
+}
+
+/* One pair's exchange inside the drawer. */
+.rooms-bot-messages__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rooms-bot-messages__swap {
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
+.rooms-bot-messages__day {
+  align-self: center;
+  padding: 8px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.rooms-bot-messages__row--exchange {
+  display: flex;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.rooms-bot-messages__lead {
+  display: inline-flex;
+  flex: none;
+  padding-top: 1px;
+}
+
+.rooms-bot-messages__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rooms-bot-messages__name {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+}
+
+.rooms-bot-messages__row--exchange .rooms-bot-messages__body {
+  margin-top: 0;
+  padding: 7px 11px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+  background: var(--color-bg-card);
+}
+
+.rooms-bot-messages__row--exchange .rooms-bot-messages__body .markdown-root {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.rooms-bot-messages__row--exchange .rooms-bot-messages__meta {
+  margin-left: 0;
+}

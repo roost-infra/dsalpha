@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import type { Workspace } from '@/types/api';
-import type { BotInfo } from '@/api/bots';
+import type { BotInfo, BotMessageInfo } from '@/api/bots';
 import type { RoomInfo, RoomView } from '@/api/rooms';
 import { renderWithProviders } from '@/test/utils';
 
@@ -17,6 +17,7 @@ const h = vi.hoisted(() => ({
   roomsByWorkspace: {} as Record<string, RoomInfo[]>,
   roomById: {} as Record<string, RoomView>,
   bots: [] as BotInfo[],
+  botMessages: [] as BotMessageInfo[],
   create: vi.fn(),
   workspacesFailed: false,
   workspacesRefetch: vi.fn(),
@@ -34,7 +35,8 @@ vi.mock('@/hooks/useAllWorkspaces', () => ({
 
 vi.mock('@/api/bots', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/bots')>()),
-  getBotMessages: vi.fn(async () => ({ messages: [] })),
+  getBotMessages: vi.fn(async () => ({ messages: h.botMessages })),
+  streamBotMessages: vi.fn(() => () => {}),
 }));
 
 vi.mock('@/hooks/useBots', () => ({
@@ -168,6 +170,7 @@ beforeEach(() => {
     'room-3': { ...TRADING_ROOM, members: CREATED.members },
   };
   h.bots = [BOT, BOT2];
+  h.botMessages = [];
   h.workspacesFailed = false;
   h.workspacesRefetch.mockReset();
   h.create.mockReset();
@@ -292,5 +295,42 @@ describe('Rooms page', () => {
       await screen.findByRole('heading', { name: 'Rates desk', level: 2 }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('groups bot messages into pair exchanges and opens the conclusions', async () => {
+    h.botMessages = [
+      {
+        message_id: 'm-1',
+        from_type: 'bot',
+        from_id: 'bot-1',
+        from_name: 'Macro analyst',
+        to_bot_id: 'bot-2',
+        to_name: 'Rates analyst',
+        kind: 'request',
+        content: 'Review the filings.',
+        status: 'delivered',
+        created_at: '2026-11-09T10:00:00Z',
+        delivered_at: null,
+      },
+      {
+        message_id: 'm-2',
+        from_type: 'bot',
+        from_id: 'bot-2',
+        from_name: 'Rates analyst',
+        to_bot_id: 'bot-1',
+        to_name: 'Macro analyst',
+        kind: 'reply',
+        content: 'Rates are on hold.',
+        status: 'delivered',
+        created_at: '2026-11-09T10:05:00Z',
+        delivered_at: null,
+      },
+    ];
+    renderWithProviders(<Rooms />);
+    const pair = await screen.findByRole('button', { name: /Macro analyst ⇄ Rates analyst/ });
+    fireEvent.click(pair);
+    const dialog = await screen.findByRole('dialog', { name: 'Bot-to-bot messages' });
+    expect(within(dialog).getByText('Review the filings.')).toBeInTheDocument();
+    expect(within(dialog).getByText('Rates are on hold.')).toBeInTheDocument();
   });
 });
