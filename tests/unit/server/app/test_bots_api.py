@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
-from src.server.app.bots import delete_bot, get_bot, list_bots, update_bot
+from src.server.app.bots import delete_bot, get_bot, list_bot_messages, list_bots, update_bot
 from src.server.models.bot import BotUpdate
 from src.server.dependencies.principal import Principal
 from src.server.models.bot import BotCreate
@@ -188,3 +188,28 @@ async def test_the_derived_chief_of_staff_cannot_be_paused():
 def test_a_blank_bot_name_is_not_a_name():
     with pytest.raises(ValueError):
         BotCreate(workspace_id=WS, name="   ")
+
+
+@pytest.mark.asyncio
+async def test_the_bot_inbox_returns_names_for_both_sides():
+    row = {
+        "message_id": "m-1",
+        "from_type": "bot",
+        "from_id": "b-1",
+        "from_name": "Quant",
+        "to_bot_id": "b-2",
+        "to_name": "Macro",
+        "kind": "request",
+        "content": "Review the filings.",
+        "status": "queued",
+        "created_at": None,
+        "delivered_at": None,
+    }
+    with patch(
+        "src.server.database.bot_messages.list_for_user",
+        AsyncMock(return_value=[row]),
+    ) as read:
+        answer = await list_bot_messages(PRINCIPAL, workspace_id=None, limit=50)
+    assert answer.messages[0].from_name == "Quant"
+    assert answer.messages[0].to_name == "Macro"
+    read.assert_awaited_once_with(USER, workspace_id=None, limit=50)

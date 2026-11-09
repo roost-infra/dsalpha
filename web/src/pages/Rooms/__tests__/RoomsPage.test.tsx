@@ -32,6 +32,11 @@ vi.mock('@/hooks/useAllWorkspaces', () => ({
   }),
 }));
 
+vi.mock('@/api/bots', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/bots')>()),
+  getBotMessages: vi.fn(async () => ({ messages: [] })),
+}));
+
 vi.mock('@/hooks/useBots', () => ({
   useBots: () => ({
     data: { bots: h.bots, max_bots: 20 },

@@ -32,6 +32,8 @@ from src.server.models.bot import (
     BotDeleteResponse,
     BotInfo,
     BotListResponse,
+    BotMessageInfo,
+    BotMessageListResponse,
     BotUpdate,
 )
 from src.server.utils.api import require_workspace_owner
@@ -141,6 +143,23 @@ async def create_bot(principal: WorkspaceWritePrincipal, body: BotCreate) -> Bot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return _info(row)
+
+
+@router.get("/messages", response_model=BotMessageListResponse)
+async def list_bot_messages(
+    principal: ReadPrincipal,
+    workspace_id: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> BotMessageListResponse:
+    """Recent bot-to-bot messages for the caller, optionally one workspace."""
+    if workspace_id:
+        await assert_reaches(principal, workspace_id=workspace_id)
+    from src.server.database import bot_messages as message_db
+
+    rows = await message_db.list_for_user(
+        principal.user_id, workspace_id=workspace_id, limit=limit
+    )
+    return BotMessageListResponse(messages=[BotMessageInfo(**row) for row in rows])
 
 
 @router.get("/{bot_id}", response_model=BotInfo)
