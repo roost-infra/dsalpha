@@ -333,3 +333,38 @@ async def list_for_user(
         item["to_name"] = row.get("to_name") or ""
         out.append(item)
     return out
+
+
+async def list_after(
+    user_id: str,
+    *,
+    after,
+    workspace_id: Optional[str] = None,
+    limit: int = 100,
+) -> list[Dict[str, Any]]:
+    """Messages newer than ``after``, oldest first (for an SSE tail)."""
+    sql = f"""
+        SELECT {", ".join("m." + c.strip() for c in _MESSAGE_COLUMNS.split(","))},
+               fb.name AS from_name, tb.name AS to_name
+        FROM bot_messages m
+        JOIN bots tb ON tb.bot_id = m.to_bot_id
+        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type = 'bot'
+        WHERE m.user_id = %s AND m.created_at > %s
+    """
+    params: list[Any] = [user_id, after]
+    if workspace_id:
+        sql += " AND tb.workspace_id = %s"
+        params.append(normalize_uuid(str(workspace_id)))
+    sql += " ORDER BY m.created_at ASC, m.message_id ASC LIMIT %s"
+    params.append(max(1, min(int(limit), 200)))
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+    out = []
+    for row in rows:
+        item = _row_to_dict(row) or {}
+        item["from_name"] = row.get("from_name")
+        item["to_name"] = row.get("to_name") or ""
+        out.append(item)
+    return out
