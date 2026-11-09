@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "langalpha-quota-service"
+version = "0.1.0"
+description = "Self-hosted plan, quota and credit service for LangAlpha"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psycopg[binary,pool]>=3.2",
+    "jinja2>=3.1",
+    "itsdangerous>=2.2",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.6"]
+
+[project.scripts]
+quota-admin = "quota_service.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["quota_service*"]
+
+# schema.sql and the admin templates are read at runtime via __file__.
+[tool.setuptools.package-data]
+quota_service = ["schema.sql", "templates/*.html"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

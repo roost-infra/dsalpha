@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ bundle.user.user_id }} - LangAlpha 额度管理{% endblock %}
+{% block content %}
+<h1>用户 <span class="mono">{{ bundle.user.user_id }}</span></h1>
+<p class="muted">{{ bundle.user.email or "" }} {{ bundle.user.name or "" }}</p>
+
+<div class="stats">
+  <div class="stat"><div class="n mono">{{ bundle.user.plan_code }}</div><div class="k">当前套餐</div></div>
+  <div class="stat"><div class="n">{{ "%.2f"|format(bundle.user.balance or 0) }}</div><div class="k">余额（积分）</div></div>
+  <div class="stat"><div class="n">{{ bundle.leases|length }}</div><div class="k">活跃租约</div></div>
+</div>
+
+<h2>修改套餐</h2>
+<div class="card">
+  <form class="row" method="post" action="/admin/users/{{ bundle.user.user_id }}/plan">
+    <label>套餐
+      <select name="plan_code">
+        {% for p in plans %}
+        <option value="{{ p.code }}" {% if p.code == bundle.plan_code %}selected{% endif %}>{{ p.code }} · {{ p.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>备注<input type="text" name="note" placeholder="可选"></label>
+    <label><span>&nbsp;</span>
+      <span><input type="checkbox" name="grant_month" value="on"> 同时发放本月积分</span>
+    </label>
+    <button class="primary" type="submit">保存</button>
+  </form>
+</div>
+
+<h2>充值 / 调整</h2>
+<div class="card">
+  <form class="row" method="post" action="/admin/users/{{ bundle.user.user_id }}/credits">
+    <label>积分（正数充值，负数扣减）<input type="number" name="delta" step="0.01" required></label>
+    <label>类型
+      <select name="reason">
+        <option value="topup">充值</option>
+        <option value="adjust">调整</option>
+      </select>
+    </label>
+    <label>备注<input type="text" name="note" placeholder="必填便于对账"></label>
+    <button class="primary" type="submit">记账</button>
+  </form>
+</div>
+
+<h2>活跃租约</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>run_ref</th><th>预占积分</th><th>generation</th><th>到期</th><th></th></tr></thead>
+    <tbody>
+      {% for l in bundle.leases %}
+      <tr>
+        <td class="mono">{{ l.run_ref }}</td>
+        <td>{{ "%.2f"|format(l.reserved_credits or 0) }}</td>
+        <td>{{ l.generation }}</td>
+        <td class="muted">{{ l.expires_at.strftime("%Y-%m-%d %H:%M:%S") if l.expires_at else "" }}</td>
+        <td>
+          <form class="inline" method="post" action="/admin/users/{{ bundle.user.user_id }}/leases/{{ l.run_ref }}/release">
+            <button class="danger" type="submit" onclick="return confirm('确认释放该租约？')">释放</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">没有活跃租约</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Token 用量（近 {{ bundle.usage.days }} 天）</h2>
+<div class="stats">
+  <div class="stat"><div class="n">{{ "{:,}".format(bundle.usage.summary.total_tokens or 0) }}</div><div class="k">总 token</div></div>
+  <div class="stat"><div class="n">{{ "{:,}".format(bundle.usage.summary.input_tokens or 0) }}</div><div class="k">输入</div></div>
+  <div class="stat"><div class="n">{{ "{:,}".format(bundle.usage.summary.output_tokens or 0) }}</div><div class="k">输出</div></div>
+  <div class="stat"><div class="n">{{ "{:,}".format(bundle.usage.summary.cached_tokens or 0) }}</div><div class="k">命中缓存</div></div>
+  <div class="stat"><div class="n">{{ bundle.usage.summary.turns }}</div><div class="k">对话轮次</div></div>
+  <div class="stat"><div class="n">{{ "%.2f"|format(bundle.usage.summary.token_credits or 0) }}</div><div class="k">token 积分</div></div>
+</div>
+<div class="card">
+  <table>
+    <thead><tr><th>模型</th><th>输入</th><th>输出</th><th>总量</th><th>缓存</th><th>调用次数</th><th>成本(USD)</th></tr></thead>
+    <tbody>
+      {% for m in bundle.usage.by_model %}
+      <tr>
+        <td class="mono">{{ m.model }}</td>
+        <td>{{ "{:,}".format(m.input_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(m.output_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(m.total_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(m.cached_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(m.call_count or 0) }}</td>
+        <td>{{ "%.4f"|format(m.total_cost or 0) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">该时间段没有 token 用量</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card">
+  <table>
+    <thead><tr><th>日期</th><th>轮次</th><th>输入</th><th>输出</th><th>总 token</th><th>token 积分</th><th>工具积分</th></tr></thead>
+    <tbody>
+      {% for d in bundle.usage.by_day %}
+      <tr>
+        <td class="muted">{{ d.day }}</td>
+        <td>{{ d.turns }}</td>
+        <td>{{ "{:,}".format(d.input_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(d.output_tokens or 0) }}</td>
+        <td>{{ "{:,}".format(d.total_tokens or 0) }}</td>
+        <td>{{ "%.2f"|format(d.token_credits or 0) }}</td>
+        <td>{{ "%.2f"|format(d.infrastructure_credits or 0) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">没有记录</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>最近流水</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>时间</th><th>变动</th><th>类型</th><th>来源</th></tr></thead>
+    <tbody>
+      {% for e in bundle.ledger %}
+      <tr>
+        <td class="muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "" }}</td>
+        <td>{{ "%.2f"|format(e.delta) }}</td>
+        <td class="mono">{{ e.reason }}</td>
+        <td class="mono muted">{{ e.source or "" }} {{ e.source_id or "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">暂无流水</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

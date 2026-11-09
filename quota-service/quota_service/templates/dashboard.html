@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}概览 - LangAlpha 额度管理{% endblock %}
+{% block content %}
+<h1>概览</h1>
+<div class="stats">
+  <div class="stat"><div class="n">{{ stats.users }}</div><div class="k">用户总数</div></div>
+  <div class="stat"><div class="n">{{ stats.assigned }}</div><div class="k">已手动分配套餐</div></div>
+  <div class="stat"><div class="n">{{ stats.leases }}</div><div class="k">活跃租约</div></div>
+  <div class="stat"><div class="n">{{ "%.2f"|format(stats.reserved or 0) }}</div><div class="k">当前预占积分</div></div>
+  <div class="stat"><div class="n" style="color:#b42318">{{ stats.negative }}</div><div class="k">负余额用户</div></div>
+</div>
+
+<h2>套餐分布</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>套餐</th><th>用户数</th></tr></thead>
+    <tbody>
+      {% for row in stats.distribution %}
+      <tr><td class="mono">{{ row.plan_code }}</td><td>{{ row.n }}</td></tr>
+      {% else %}
+      <tr><td colspan="2" class="muted">暂无数据</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
