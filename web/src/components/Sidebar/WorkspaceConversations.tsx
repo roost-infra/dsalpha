@@ -13,6 +13,7 @@ import { RoomAvatar } from '@/pages/Rooms/components/RoomAvatar';
 import { buildBotPairs } from '@/pages/Rooms/botInbox';
 import { useBotInbox } from '@/pages/Rooms/useBotInbox';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
+import './ConversationSections.css';
 
 export function WorkspaceConversations({
   workspaceId,
