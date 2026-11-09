@@ -15,6 +15,14 @@ import { useBotInbox } from '@/pages/Rooms/useBotInbox';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import './ConversationSections.css';
 
+function plainPreview(text: string | null | undefined): string {
+  return (text ?? '')
+    .replace(/[#>*_`\[\]()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
 export function WorkspaceConversations({
   workspaceId,
   onNavigate,
@@ -83,7 +91,7 @@ export function WorkspaceConversations({
             <span className="workspace-conversations__body">
               <span className="workspace-conversations__name">{room.name}</span>
               <span className="workspace-conversations__preview">
-                {room.preview?.replace(/\s+/g, ' ').trim() || t('rooms.previewEmpty')}
+                {plainPreview(room.preview) || t('rooms.previewEmpty')}
               </span>
             </span>
           </button>
@@ -132,7 +140,7 @@ export function WorkspaceConversations({
                 {pair.left.name} ⇄ {pair.right.name}
               </span>
               <span className="workspace-conversations__preview">
-                {pair.messages.at(-1)?.content.replace(/\s+/g, ' ').trim() || t('rooms.previewEmpty')}
+                {plainPreview(pair.messages.at(-1)?.content) || t('rooms.previewEmpty')}
               </span>
             </span>
           </button>
