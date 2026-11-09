@@ -797,6 +797,16 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
 
         {isUser && actionsRow}
 
+        {isAssistant && isTurnTail && !isSubagentView && !turnLive && (
+          <p
+            data-testid="ai-investment-disclaimer"
+            className={showTurnFiles || sourceCount > 0 ? 'mt-2' : 'mt-1'}
+            style={{ fontSize: '10.5px', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}
+          >
+            {t('chat.aiDisclaimer')}
+          </p>
+        )}
+
         {/* ThumbDown feedback modal */}
         {showThumbDownModal && (
           <ThumbDownModal

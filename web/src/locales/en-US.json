@@ -2101,6 +2101,7 @@
     "worker": "Worker",
     "agentNotFound": "Agent not found",
     "stoppedChip": "Stopped",
+    "aiDisclaimer": "AI-generated content, for reference only. Not investment advice.",
     "workingFor": "Working for {{duration}}",
     "workedFor": "Worked for {{duration}}",
     "worked": "Worked",

@@ -669,6 +669,8 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         )}
       </div>
 
+      <p className="rooms-ai-disclaimer">{t('chat.aiDisclaimer')}</p>
+
       {unseen && (
         <button
           type="button"

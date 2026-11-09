@@ -918,3 +918,15 @@
     display: none;
   }
 }
+
+/* A quiet footer under a room/exchange: every AI answer is research, not advice. */
+.rooms-ai-disclaimer {
+  flex: none;
+  margin: 0;
+  padding: 7px 16px 9px;
+  border-top: 1px solid var(--color-border-muted);
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+  text-align: center;
+}
