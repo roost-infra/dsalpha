@@ -102,3 +102,25 @@ class BotListResponse(BaseModel):
 class BotDeleteResponse(BaseModel):
     ok: bool = True
     bot_id: str
+
+
+class BotMessageInfo(BaseModel):
+    """One bot-to-bot message as a reader sees it."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    message_id: str
+    from_type: str
+    from_id: str
+    from_name: Optional[str] = None
+    to_bot_id: str
+    to_name: str = ""
+    kind: str
+    content: str
+    status: str
+    created_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+
+
+class BotMessageListResponse(BaseModel):
+    messages: List[BotMessageInfo]

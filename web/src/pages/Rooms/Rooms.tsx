@@ -8,21 +8,75 @@
  * (see Rooms.css), which keeps the composer above the tab bar.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { MessagesSquare, Plus, UsersRound } from 'lucide-react';
+import { Bot as BotIcon, MessageSquare, MessagesSquare, Plus, UsersRound, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ErrorBanner } from '@/components/ui/error-banner';
 import { Select } from '@/components/ui/select';
 import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
+import { useBots } from '@/hooks/useBots';
 import { useRoom, useRooms } from '@/hooks/useRooms';
 import type { RoomInfo } from '@/api/rooms';
+import { getBotMessages, type BotInfo, type BotMessageInfo } from '@/api/bots';
+import { BotMark } from '@/components/bots/BotMark';
+import Markdown from '@/pages/ChatAgent/components/Markdown';
+import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import { failureText } from '@/lib/failureText';
 import { responderLabelKey } from './roomsCopy';
 import CreateRoomDialog from './components/CreateRoomDialog';
 import RoomPanel from './components/RoomPanel';
 import './Rooms.css';
+
+/** The bot-to-bot inbox, opened from the left rail: who sent what to which bot. */
+function BotMessagesDrawer({
+  messages,
+  loading,
+  failed,
+  onClose,
+}: {
+  messages: BotMessageInfo[];
+  loading: boolean;
+  failed: boolean;
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <aside className="rooms-bot-messages" role="dialog" aria-modal="true" aria-label={t('rooms.botMessagesTitle')}>
+      <header className="rooms-bot-messages__header">
+        <span>{t('rooms.botMessagesTitle')}</span>
+        <Button variant="ghost" size="icon" aria-label={t('common.close')} onClick={onClose}>
+          <X className="h-4 w-4" aria-hidden />
+        </Button>
+      </header>
+      {loading ? (
+        <div className="rooms-bot-messages__state" role="status">{t('common.loading')}</div>
+      ) : failed ? (
+        <div className="rooms-bot-messages__state" role="status">{t('rooms.botMessagesFailed')}</div>
+      ) : messages.length === 0 ? (
+        <div className="rooms-bot-messages__state">{t('rooms.botMessagesEmpty')}</div>
+      ) : (
+        <div className="rooms-bot-messages__list">
+          {messages.map((message) => (
+            <article className="rooms-bot-messages__row" key={message.message_id}>
+              <div className="rooms-bot-messages__route">
+                <span>{message.from_name || t('rooms.you')}</span>
+                <span aria-hidden>→</span>
+                <span>{message.to_name}</span>
+                <span className="rooms-bot-messages__meta">{message.kind} · {message.status}</span>
+              </div>
+              <div className="rooms-bot-messages__body">
+                <Markdown content={message.content} variant="compact" />
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </aside>
+  );
+}
 
 function RoomListRow({
   room,
@@ -63,8 +117,11 @@ export default function Rooms() {
     refetch: refetchWorkspaces,
   } = useAllWorkspaces({ includeHome: true });
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [botMessagesOpen, setBotMessagesOpen] = useState(false);
+  const [openingBotId, setOpeningBotId] = useState<string | null>(null);
 
   const workspaces = useMemo(() => workspacesData?.workspaces ?? [], [workspacesData]);
   const workspacesReady = !workspacesLoading;
@@ -87,6 +144,32 @@ export default function Rooms() {
   const roomsQuery = useRooms(workspaceId, workspacesReady);
   const rooms = roomsQuery.data?.rooms ?? [];
   const maxBots = roomsQuery.data?.max_bots ?? 12;
+  const botsQuery = useBots(workspaceId, !!workspaceId);
+  // The bot-to-bot inbox is a read of the durable bot_messages rows, not of a
+  // thread: it is how a reader sees A→B without opening B's private chat.
+  const botMessages = useQuery({
+    queryKey: ['bot-messages', workspaceId],
+    queryFn: () => getBotMessages(workspaceId, 50),
+    enabled: !!workspaceId,
+  });
+  const bots = botsQuery.data?.bots ?? [];
+  const openPrivateChat = async (bot: BotInfo) => {
+    if (!workspaceId || openingBotId) return;
+    setOpeningBotId(bot.bot_id);
+    try {
+      const created = await createThreadWithTitle({
+        workspaceId,
+        firstQuery: '',
+        title: bot.name,
+        botId: bot.bot_id,
+      });
+      navigate(`/chat/t/${created.thread_id}`, {
+        state: { workspaceId: created.workspace_id },
+      });
+    } finally {
+      setOpeningBotId(null);
+    }
+  };
   // A link that names a room the server refuses is dropped from the URL rather
   // than left over an empty panel.
   useEffect(() => {
@@ -143,6 +226,7 @@ export default function Rooms() {
 
       <div className="rooms-page__body">
         <aside className="rooms-list" aria-label={t('rooms.listLabel')}>
+          <div className="rooms-list__section">{t('rooms.roomsSection')}</div>
           {workspacesFailed ? (
             <div className="rooms-list__placeholder">
               <ErrorBanner error={failureText(workspacesError, t('rooms.workspacesFailed'))} />
@@ -178,6 +262,37 @@ export default function Rooms() {
               />
             ))
           )}
+
+          <div className="rooms-list__section">{t('rooms.privateSection')}</div>
+          {bots.length === 0 ? (
+            <div className="rooms-list__empty-body rooms-list__quiet">{t('rooms.privateEmpty')}</div>
+          ) : (
+            bots.map((bot) => (
+              <button
+                key={bot.bot_id}
+                type="button"
+                className="rooms-list__row rooms-list__bot"
+                disabled={openingBotId === bot.bot_id}
+                onClick={() => { void openPrivateChat(bot); }}
+              >
+                <span className="rooms-list__name">
+                  <BotMark bot={bot} size={16} decorative />
+                  <span className="rooms-list__name-text">{bot.name}</span>
+                </span>
+                <span className="rooms-list__meta">
+                  {bot.status === 'paused' ? t('bots.pausedBadge') : t('rooms.privateOpen')}
+                </span>
+              </button>
+            ))
+          )}
+
+          <div className="rooms-list__section">
+            <span>{t('rooms.botMessagesSection')}</span>
+            <Button variant="ghost" size="sm" onClick={() => setBotMessagesOpen(true)}>
+              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
+              {t('rooms.botMessagesOpen')}
+            </Button>
+          </div>
         </aside>
 
         <section className="rooms-detail">
@@ -196,6 +311,15 @@ export default function Rooms() {
           )}
         </section>
       </div>
+
+      {botMessagesOpen && (
+        <BotMessagesDrawer
+          messages={botMessages.data?.messages ?? []}
+          loading={botMessages.isLoading}
+          failed={botMessages.isError}
+          onClose={() => setBotMessagesOpen(false)}
+        />
+      )}
 
       {creating && (
         <CreateRoomDialog

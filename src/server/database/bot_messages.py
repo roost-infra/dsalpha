@@ -297,3 +297,39 @@ async def set_status(
             return cur.rowcount > 0
 
 
+
+
+async def list_for_user(
+    user_id: str, *, workspace_id: Optional[str] = None, limit: int = 50
+) -> list[Dict[str, Any]]:
+    """Recent bot-to-bot messages the user can see, newest first.
+
+    ``workspace_id`` narrows to messages addressed to a bot in that workspace;
+    the sender may be a bot or the user (``from_type`` says which). Names are
+    joined here so a feed does not make one request per row.
+    """
+    sql = f"""
+        SELECT {", ".join("m." + c.strip() for c in _MESSAGE_COLUMNS.split(","))},
+               fb.name AS from_name, tb.name AS to_name
+        FROM bot_messages m
+        JOIN bots tb ON tb.bot_id = m.to_bot_id
+        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type = 'bot'
+        WHERE m.user_id = %s
+    """
+    params: list[Any] = [user_id]
+    if workspace_id:
+        sql += " AND tb.workspace_id = %s"
+        params.append(normalize_uuid(str(workspace_id)))
+    sql += " ORDER BY m.created_at DESC, m.message_id DESC LIMIT %s"
+    params.append(max(1, min(int(limit), 200)))
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(sql, tuple(params))
+            rows = await cur.fetchall()
+    out = []
+    for row in rows:
+        item = _row_to_dict(row) or {}
+        item["from_name"] = row.get("from_name")
+        item["to_name"] = row.get("to_name") or ""
+        out.append(item)
+    return out

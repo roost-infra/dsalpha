@@ -117,3 +117,34 @@ export async function deleteBot(botId: string): Promise<BotDeleteResponse> {
   const { data } = await api.delete<BotDeleteResponse>(`/api/v1/bots/${encodeURIComponent(botId)}`);
   return data;
 }
+
+
+/** One bot-to-bot message, as the room page's feed lists it. */
+export interface BotMessageInfo {
+  message_id: string;
+  from_type: 'bot' | 'user' | string;
+  from_id: string;
+  from_name: string | null;
+  to_bot_id: string;
+  to_name: string;
+  kind: string;
+  content: string;
+  status: string;
+  created_at: string | null;
+  delivered_at: string | null;
+}
+
+export interface BotMessageListResponse {
+  messages: BotMessageInfo[];
+}
+
+/** Recent bot-to-bot messages for the caller, optionally one workspace. */
+export async function getBotMessages(
+  workspaceId: string | null = null,
+  limit = 50,
+): Promise<BotMessageListResponse> {
+  const { data } = await api.get<BotMessageListResponse>('/api/v1/bots/messages', {
+    params: { ...(workspaceId ? { workspace_id: workspaceId } : {}), limit },
+  });
+  return data;
+}
