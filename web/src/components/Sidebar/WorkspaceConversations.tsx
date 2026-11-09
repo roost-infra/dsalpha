@@ -146,7 +146,6 @@ export function WorkspaceConversations({
           </button>
         ))
       )}
-      <div className="workspace-conversations__section">{t('nav.history')}</div>
     </div>
   );
 }
