@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}审计 - LangAlpha 额度管理{% endblock %}
+{% block content %}
+<h1>审计</h1>
+
+<div class="card">
+  <table>
+    <thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>详情</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "" }}</td>
+        <td class="mono">{{ e.actor }}</td>
+        <td class="mono">{{ e.action }}</td>
+        <td class="mono">{{ e.target or "" }}</td>
+        <td class="mono muted">{{ e.detail|tojson }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">暂无记录</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="pager">
+    {% if page > 1 %}<a href="/admin/audit?page={{ page - 1 }}">上一页</a>{% endif %}
+    {% if entries|length == page_size %}<a href="/admin/audit?page={{ page + 1 }}">下一页</a>{% endif %}
+  </div>
+</div>
+{% endblock %}
