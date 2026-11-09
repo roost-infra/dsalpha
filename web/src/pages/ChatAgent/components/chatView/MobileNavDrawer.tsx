@@ -5,6 +5,7 @@ import { Minus } from 'lucide-react';
 import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { TWEEN } from '@/lib/motion';
 import NavigationPanel from '../NavigationPanel';
+import { ConversationSections } from '@/components/Sidebar/ConversationSections';
 import NavDisplayOptions from '../NavDisplayOptions';
 import { useNavTreeProps, type NavTreeAgents } from '../../hooks/useNavTreeProps';
 import { useWorkspaceLabel } from '@/hooks/useWorkspaceLabel';
@@ -144,12 +145,17 @@ export function MobileNavDrawer({ visible, onMinimize, isActive, workspaceId, th
               }}
               style={{ width: '100%', height: '100%', position: 'absolute', left: 0, top: 0 }}
             >
-              <NavigationPanel
-                headerActions={headerActions}
-                isActive={isActive}
-                {...navTreeProps}
-                {...picks}
-              />
+              <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                <ConversationSections onNavigate={onMinimize} />
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <NavigationPanel
+                    headerActions={headerActions}
+                    isActive={isActive}
+                    {...navTreeProps}
+                    {...picks}
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

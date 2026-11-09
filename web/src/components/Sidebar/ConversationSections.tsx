@@ -21,7 +21,7 @@ import './ConversationSections.css';
 
 const WORKSPACE_KEY = 'conversation.workspace';
 
-export function ConversationSections() {
+export function ConversationSections({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -70,6 +70,7 @@ export function ConversationSections() {
     if (!bot || !workspaceId) return;
     if (bot.primary_thread_id) {
       navigate(`/chat/t/${bot.primary_thread_id}`, { state: { workspaceId } });
+      onNavigate?.();
       return;
     }
     const created = await createThreadWithTitle({
@@ -79,11 +80,17 @@ export function ConversationSections() {
       botId: bot.bot_id,
     });
     navigate(`/chat/t/${created.thread_id}`, { state: { workspaceId: created.workspace_id } });
+    onNavigate?.();
   };
 
-  const openRoom = (id: string) => navigate(`/rooms?room=${encodeURIComponent(id)}`);
-  const openExchange = (key: string) =>
+  const openRoom = (id: string) => {
+    navigate(`/rooms?room=${encodeURIComponent(id)}`);
+    onNavigate?.();
+  };
+  const openExchange = (key: string) => {
     navigate(`/rooms?exchange=${encodeURIComponent(key)}`);
+    onNavigate?.();
+  };
 
   if (!workspaceId) return null;
 
