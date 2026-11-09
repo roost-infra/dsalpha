@@ -143,7 +143,10 @@ async def count_recent_from(from_id: Any, *, seconds: int = 60) -> int:
         async with conn.cursor() as cur:
             await cur.execute(
                 "SELECT COUNT(*) FROM bot_messages "
-                "WHERE from_type = 'bot' AND from_id = %s::uuid "
+                # from_id is VARCHAR (a user id can be the sender too); a
+                # ::uuid cast here made every bot rate-limit check fail with
+                # "operator does not exist: character varying = uuid".
+                "WHERE from_type = 'bot' AND from_id = %s "
                 "AND created_at > NOW() - make_interval(secs => %s)",
                 (cleaned, int(seconds)),
             )
