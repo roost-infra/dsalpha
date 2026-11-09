@@ -34,7 +34,7 @@ import { BUSY_REPLY_KEYS, isBusyCode } from '../../hooks/utils/forkRefusal';
 import {
   handleReasoningSignal, handleReasoningContent, handleTextContent,
   handleToolCalls, handleToolCallResult, handleToolCallChunks,
-  handleTodoUpdate, handleHtmlWidget, handleProvenance,
+  handleTodoUpdate, handleHtmlWidget, handleProvenance, handlePlanBilled,
 } from './mainEventHandlers';
 import {
   isSubagentEvent, handleSubagentMessageChunk, handleSubagentToolCallChunks,
@@ -93,6 +93,9 @@ export interface StreamRouterDeps {
   /** Re-read the user's Claude Code tokens, after Anthropic refused the one
    *  a turn ran on mid-turn. */
   refreshClaudeCode: () => void;
+  /** Re-read the Claude plan behind the user's Claude Code tokens, which
+   *  each request of a turn on one reports. */
+  refreshClaudeCodePlan: () => void;
   /** Hears the turn the server admitted the run to, before the run's bubbles
    *  take it, while they still carry the turn the view counted. */
   onAdmittedTurn?: (bubbleId: string, turnIndex: number) => void;
@@ -301,6 +304,10 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
     // stopped here, the way a reload shows it. This tab's Stop aborts the read
     // first and settles the bubble itself.
     if (eventType === 'run_end' && !isSubagent) {
+      // A turn on a Claude Code model moved its Claude plan, which the
+      // picker's meter and the composer's row read. The stream does not say
+      // which model ran, and only reads on screen go out again.
+      deps.refreshClaudeCodePlan();
       const counted = event.token_totals;
       if (counted) rt.setTokenUsage((prev) => withServerTotals(prev, counted));
       // A frame without the field could not read it, and the stream's end
@@ -608,6 +615,21 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       return;
     }
 
+    // A reply whose last request was billed to usage credits gets its notice
+    // under it, as a reload replays it. Main agent only.
+    if (eventType === 'claude_code_plan') {
+      if (!isSubagent) {
+        const billed = handlePlanBilled({
+          assistantMessageId,
+          event,
+          order: event._eventId != null ? Number(event._eventId) : ++refs.contentOrderCounterRef.current,
+          setMessages: setMessagesForHandlers,
+        });
+        if (billed) deps.refreshClaudeCode();
+      }
+      return;
+    }
+
     // A `retry` ends the stream of a run that failed before it reached the
     // agent. After `metadata` the run lives on in the background executor, so
     // a `retry` there, which only an older server sends, means only this
@@ -859,9 +881,9 @@ export const createStreamEventProcessor = (rt: StreamRuntime, deps: StreamRouter
       // as a notice: the server's name the CLI's commands, and the reply's
       // Retry sends the message again.
       const busyCode = event.error_type === 'admission_conflict' && isBusyCode(event.code) ? event.code : null;
-      // A Claude Code refusal the server's next read of the tokens says:
-      // Settings and the picker take that now.
-      if (event.type === 'claude_code_off' && claudeCodeRefusal(event.reason, rt.workspaceId).reread) deps.refreshClaudeCode();
+      // A Claude Code refusal the server's next read of the tokens or of the
+      // Claude plan says: Settings, the picker and the composer take that now.
+      if (event.type === 'claude_code_off' && claudeCodeRefusal(event, rt.workspaceId).reread) deps.refreshClaudeCode();
       // Only the frame that ends the server's own retries carries `max_retries`.
       const errorMessage = busyCode !== null
         ? rt.t(BUSY_REPLY_KEYS[busyCode])

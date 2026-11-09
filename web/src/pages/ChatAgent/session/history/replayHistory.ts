@@ -20,7 +20,7 @@ import {
   buildModelFallbackSegment, appendNotificationSegmentOnce, mapToolCallIdToAgentId,
 } from '../../hooks/utils/messageFinalizers';
 import { applyCallUsage, handleContextWindowEvent } from '../../hooks/utils/contextWindowEvent';
-import { handleProvenance } from '../stream/mainEventHandlers';
+import { handlePlanBilled, handleProvenance } from '../stream/mainEventHandlers';
 import {
   handleHistoryUserMessage,
   handleHistoryReasoningSignal,
@@ -43,6 +43,7 @@ import { createApprovalEvidence, recordApprovalEvidence } from '../interrupts/cl
 import { projectHistoryInterrupt } from '../interrupts/fromHistoryEvent';
 import type { HistoryRuntime } from '../runtime';
 import type { HistoryPageInfo, LoadedHistoryPage } from './olderPages';
+import type { PageBudget } from './pageBudget';
 import { applyHistoryToolResult, markSteeredResumeCards, settleResumedInterrupts } from './resumeSettlement';
 import { readStreamFailure } from '../stream/streamFailure';
 
@@ -65,8 +66,8 @@ export interface ReplayHistoryDeps {
    *  what the load will return. The caller settles here what only it can judge
    *  (a run that is over), so the transcript never appears unsettled first. */
   beforeReveal?: (ok: boolean) => void;
-  /** Page size for the newest page; omitted replays the whole thread. */
-  limit?: number;
+  /** What the newest page may carry; omitted replays the whole thread. */
+  page?: PageBudget;
   /** Replay the page before this turn instead, into a transcript of its own:
    *  an older page (loadOlderHistoryPage), with `signal` to abort its fetch. */
   beforeTurn?: number;
@@ -308,6 +309,24 @@ export async function loadConversationHistory(
             if (msg.role !== 'assistant') return msg;
             return appendNotificationSegmentOnce(msg as AssistantMessage, segment);
           }));
+        }
+        return;
+      }
+
+      // A reply whose last request was billed to usage credits replays its
+      // notice under it, as the live stream drew it. Main agent only.
+      if (eventType === 'claude_code_plan') {
+        const msgId = currentActivePairIndex !== null
+          ? (assistantMessagesByPair.get(currentActivePairIndex) ?? null) : null;
+        if (!isSubagent && msgId) {
+          handlePlanBilled({
+            assistantMessageId: msgId,
+            event: event as Record<string, unknown>,
+            order: event._eventId != null
+              ? Number(event._eventId)
+              : (currentActivePairState ? ++currentActivePairState.contentOrderCounter : 0),
+            setMessages: setMessagesForHandlers,
+          });
         }
         return;
       }
@@ -816,7 +835,7 @@ export async function loadConversationHistory(
       }
     };
       const result = await replayThreadHistory(threadIdToUse, onEvent, {
-        limit: deps.limit, beforeTurn: deps.beforeTurn, signal: deps.signal,
+        page: deps.page, beforeTurn: deps.beforeTurn, signal: deps.signal,
       });
       stripHistory();
       // An older page that did not arrive whole is no page.

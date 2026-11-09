@@ -8,6 +8,8 @@ import { useStableHandler } from '@/hooks/useStableHandler';
 import { useLatestRef } from '@/hooks/useLatestRef';
 import { ScrollArea } from '../../../components/ui/scroll-area';
 import { usePreferences } from '@/hooks/usePreferences';
+import { usePlanReader } from '@/hooks/useClaudeCodePlan';
+import { planActionText } from '@/lib/claudeCodePlan';
 import { readTurnEndScroll } from '@/lib/turnEndScroll';
 import {
   readStreamingMode,
@@ -75,6 +77,8 @@ import TodoDrawer from './TodoDrawer';
 import { ComposerTray, ReconnectingChip, TrayDock } from './chatView/ComposerTray';
 import { ThreadBotChip } from './chatView/ThreadBotChip';
 import { useTrayContents } from './chatView/useTrayContents';
+import { useHistoryBackfill } from './chatView/useHistoryBackfill';
+import { OlderHistorySkeleton } from './chatView/OlderHistorySkeleton';
 import { useThreadCommands } from '../hooks/useCommands';
 import { ThreadCommandsContext } from './commands/threadCommandsContext';
 import { ChatCommentSendsProvider, useChatCommentSends } from './artifactComments/useChatCommentSends';
@@ -115,6 +119,7 @@ import type {
 import { TranscriptStatus } from './chatView/TranscriptStatus';
 import { FallbackSuggestionPill } from './chatView/FallbackSuggestionPill';
 import { ThreadOffers } from './chatView/ThreadNotices';
+import { ClaudeCodePlanRow } from './chatView/ClaudeCodePlanRow';
 import { useNextSummary } from '../hooks/useNextSummaryHint';
 import { ChatDiskWarning } from './chatView/ChatDiskWarning';
 import { ChatRestoreOffer } from './chatView/ChatRestoreOffer';
@@ -342,7 +347,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     isLoadingHistory,
     historyLoadFailed,
     isLoadingThread,
-    olderHistory: { status: olderHistoryStatus, load: loadOlderHistory },
+    olderHistory: { snapshot: olderHistory, load: loadOlderHistory, backfill: backfillOlderHistory },
     isReconnecting,
     modelStatus,
     fallbackSuggestion,
@@ -390,6 +395,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     threadId: currentThreadId,
     isLoading,
     initialModel: navModel,
+    chiefOfStaff: isHome,
   });
   const { pickModel: pickThreadModel } = threadModel;
   const threadSubagents = useThreadSubagents({
@@ -495,6 +501,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const loadOlderPage = useCallback(() => {
     void loadOlderHistory(holdPlace);
   }, [loadOlderHistory, holdPlace]);
+  // What a newest page cut short on its bytes is owed, landed the same way.
+  useHistoryBackfill({
+    snapshot: olderHistory,
+    ready: isActive && entryRestored,
+    backfill: backfillOlderHistory,
+    place: holdPlace,
+  });
 
   // One value for both transcripts below (main thread and subagent tab), so a
   // flip in Settings reaches them together and neither re-renders on the other's
@@ -754,6 +767,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     }));
   }, [marketWatchEnabled, stableSendMessage, takeChartSelections, takeQueuedComments, composerSendOptions]);
 
+  const planReader = useLatestRef(usePlanReader());
+
   // Handle action-type slash commands (e.g. /compact, /compaction, /offload)
   const handleAction = useCallback((cmd: ActionCommand) => {
     const tid = currentThreadId || threadId;
@@ -773,6 +788,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
         const obj = detail as { code?: string; message?: string };
         if (obj.code === 'workflow_active') {
           thread.insertNotification(t('chat.compactBusy'), 'warning');
+          return;
+        }
+        const planWords = planActionText(t, detail as Record<string, unknown>, { ...planReader.current, now: Date.now() });
+        if (planWords) {
+          thread.insertNotification(planWords, 'warning');
           return;
         }
         if (typeof obj.message === 'string' && obj.message.length > 0) {
@@ -849,6 +869,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           console.error('[ChatView] Compaction failed:', err);
           handleActionError(err);
           clearIfCurrent(myGeneration);
+        })
+        .finally(() => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.features.claudeCode() });
         });
     } else if (cmd.name === 'offload') {
       userStoppedCompactionRef.current = false;
@@ -871,7 +894,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
           clearIfCurrent(myGeneration);
         });
     }
-  }, [currentThreadId, threadId, setIsCompacting, forThread, isCompacting, isLoading, t]);
+  }, [currentThreadId, threadId, setIsCompacting, forThread, isCompacting, isLoading, t, planReader, queryClient]);
 
   // Show sidebar at the start of each backend response (streaming)
   // Auto-refresh workspace files when agent finishes (isLoading transitions true→false)
@@ -1468,7 +1491,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                 <Menu className="h-5 w-5" />
               </button>
             )}
-            <h1 className="text-base font-semibold whitespace-nowrap title-font truncate" style={{ color: 'var(--color-text-primary)' }}>
+            <h1 className="title-font text-[length:var(--cs-text-heading,1rem)] leading-6 font-semibold tracking-[var(--cs-title-track,-0.01em)] whitespace-nowrap truncate" style={{ color: 'var(--color-text-primary)' }}>
               {/* The bar's tap is a pointer's shortcut, and a bar holding buttons
                   cannot be one. The title is the same action as a real control,
                   named by the words on it, with what it does as its description. */}
@@ -1558,18 +1581,26 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
               />
               {activeAgentId === 'main' ? (
                 <ScrollArea ref={scrollAreaRef} className={`h-full w-full${!isMobile && !rightPanelType ? ' chat-scroll-hide-scrollbar' : ''}`}>
-                  {/* The floor a pinned send holds open under its reply
-                      (chatView/turnPin). Never a transition: the pin
-                      measures the floor it has just written, and a transition
-                      would hand it the old one for a frame and clamp an
-                      instant pin short. */}
-                  <div ref={transcriptFloorRef} data-transcript-floor="" className="transition-none">
+                  {/* The floor a pinned send holds open (chatView/turnPin); a transition would
+                      hand the pin last frame's floor. A thread opened mid-way sits at the
+                      bottom under a skeleton, and back on top while a pin holds room. */}
+                  <div
+                    ref={transcriptFloorRef}
+                    data-transcript-floor=""
+                    className={cn(
+                      'group/floor transition-none',
+                      olderHistory.aligned && 'flex min-h-full flex-col justify-end data-[pinned]:justify-start',
+                    )}
+                  >
+                    {olderHistory.aligned && (olderHistory.status === 'idle' || olderHistory.status === 'loading') && (
+                      <OlderHistorySkeleton isMobile={isMobile} />
+                    )}
                     <div className={`${isMobile ? 'px-3 pt-3' : 'px-6 pt-4'} ${TRANSCRIPT_BOTTOM_PAD} flex justify-center`}>
-                      <div className="w-full max-w-3xl overflow-x-hidden">
+                      <div data-transcript-content="" className="w-full max-w-3xl overflow-x-hidden">
                         <OlderHistoryRow
                           getRoot={getMainScrollRoot}
-                          status={olderHistoryStatus}
-                          canLoad={isActive && entryRestored && olderHistoryStatus === 'idle'}
+                          status={olderHistory.status}
+                          canLoad={isActive && entryRestored && olderHistory.status === 'idle'}
                           onLoad={loadOlderPage}
                         />
                         <MessageActionsProvider actions={messageActions}>
@@ -1722,8 +1753,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   reads it. */}
               {/* The stack moves to the foot of a file tab while the chat is
                   out of view (chatView/useComposerDock), as the same elements. */}
+              {/* The rows here that draw a surface (the error, the restore
+                  offer, the disk warning) take the composer's corner, 16 unless
+                  the card style says otherwise (--cs-composer-*,
+                  styles/cardStyle.css), and set their text in where Soft's
+                  rounder corner needs it. The same rows elsewhere keep their own. */}
               <DockableComposer home={composerDock.home} host={composerDock.host}>
-              <div className="w-full max-w-3xl sibling-space-y-3 relative pointer-events-auto [--composer-h:initial]">
+              <div className="w-full max-w-3xl sibling-space-y-3 relative pointer-events-auto [--composer-h:initial] [--stack-row-radius:var(--cs-composer-stack-radius,16px)] [--stack-row-pad:var(--cs-composer-row-pad)]">
                 {activeAgentId === 'main' ? (
                   <>
                     {/* Only rows with a surface of their own sit here: the
@@ -1767,6 +1803,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       onDismiss={clearFallbackSuggestion}
                     />
                     <ThreadOffers model={threadModel} subagents={threadSubagents} summary={summaryHint} />
+                    <ClaudeCodePlanRow workspaceId={workspaceId} chiefOfStaff={isHome} model={threadModel.model} />
                     <SelectionChips chips={chartSelectionChips} />
                     {/* At a file's foot the transcript is out of view, so the
                         turn's progress comes along with the composer. */}
@@ -1791,6 +1828,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         tokenUsage={tokenUsage}
                         onAction={handleAction}
                         model={threadModel.model}
+                        sendModel={threadModel.sendModel}
                         onPickModel={pickThreadModel}
                         threadModels={threadModels}
                         subagentsAllowed={threadSubagents.allowed}

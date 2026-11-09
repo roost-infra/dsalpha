@@ -9,7 +9,7 @@ Use src.config.loaders for file-based loading.
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -341,6 +341,20 @@ class LLMConfig(BaseModel):
         return list(dict.fromkeys(m for m in self.fallback or () if m and m != model))
 
 
+class Admitted(NamedTuple):
+    """What admission let a Claude Code CLI run on: ``hosted``, its credential
+    on a cloud computer (``saved_token`` or ``stored_token``, None on an own
+    computer), ``saved``, which setup token the user saved it may sign in
+    with, there or relayed to an own computer (named as ``hosted`` is), None
+    where it may sign in with none, and ``cli_computer``, the own computer
+    the server picked to run it for a workspace on a cloud computer that runs
+    none, None where the workspace's computer or the server runs it."""
+
+    hosted: str | None = None
+    saved: str | None = None
+    cli_computer: str | None = None
+
+
 class AgentConfig(BaseModel):
     """Agent-specific configuration.
 
@@ -376,7 +390,7 @@ class AgentConfig(BaseModel):
     #: what the deployment and the manifest declare.
     prompt_guidance: str | None = None
 
-    # Search API provider (tavily, serper, bocha, exa, parallel)
+    # Search API provider (tavily, serper, bocha, exa, parallel, deepseek)
     search_api: str = "tavily"
 
     # Search depth level name from the provider's manifest entry
@@ -426,13 +440,16 @@ class AgentConfig(BaseModel):
     subagent_models: dict[str, SubagentModel] = Field(
         default_factory=dict, exclude=True
     )
-    # What a Claude Code turn on a cloud computer was admitted to sign in
-    # with, None on any other turn; the run's row is stamped from it, so the
-    # turn is counted as what admission let it run on.
-    claude_code_hosted: str | None = Field(default=None, exclude=True)
-    # Which setup token the user saved it may sign in with, there or relayed
-    # to an own computer (``saved_token`` or ``stored_token``), None for none.
-    claude_code_saved: str | None = Field(default=None, exclude=True)
+    # Whether admission let the turn run on Claude Code, which its run's row
+    # is stamped with, so its computer counts its CLI.
+    claude_code: bool = Field(default=False, exclude=True)
+    # What admission let a Claude Code turn run on, None on any other turn;
+    # the run's row is stamped from it, so the turn is counted as what it was
+    # let run on, and its CLI signs in with it.
+    claude_code_admitted: Admitted | None = Field(default=None, exclude=True)
+    # On a turn of another model, what admission let its subagents' Claude
+    # Code pins run on; None where they run the turn's model.
+    claude_code_pins: Admitted | None = Field(default=None, exclude=True)
     # None permits standalone name resolution; [] means resolution rejected all candidates.
     fallback_llm_clients: list[Any] | None = Field(default=None, exclude=True)
     # Display names aligned index-for-index with ``fallback_llm_clients``

@@ -4,6 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Info } from 'lucide-react';
 import { UPSTREAM_HINT_I18N_KEY, type ErrorLinkSpec, type StructuredError } from '@/utils/rateLimitError';
 import { parseErrorMessage } from '@/pages/ChatAgent/utils/parseErrorMessage';
+import { usePlanClock } from '@/hooks/useClaudeCodePlan';
+import type { PlanRefusal } from '@/api/model';
+import { planRefusalText } from '@/lib/claudeCodePlan';
+import { cn } from '@/lib/utils';
 
 interface ErrorBannerProps {
   error: string | StructuredError | null | undefined;
@@ -61,6 +65,21 @@ export function NoticeLine({ message, className, style }: { message: string; cla
   );
 }
 
+/** A turn a Claude plan's limit refused, worded in the reader's zone. */
+function PlanRefusalWords({ refusal }: { refusal: PlanRefusal }): React.ReactElement {
+  const { t } = useTranslation();
+  return <>{planRefusalText(t, refusal, usePlanClock())}</>;
+}
+
+/** The banner's headline over a failure the server classified, or over a
+ *  Claude plan's limit; none for any other, whose message says it all. */
+function headlineOf(err: StructuredError, t: (key: string, opts?: Record<string, unknown>) => string): string | null {
+  if (err.planRefusal) return t('claudeCodePlan.limitTitle');
+  if (err.kind === 'internal') return t('chat.errorInternalHeadline');
+  if (err.kind !== 'upstream') return null;
+  return err.statusCode ? t('chat.errorUpstreamHeadlineStatus', { status: err.statusCode }) : t('chat.errorUpstreamHeadline');
+}
+
 export function ErrorBanner({ error, className, style }: ErrorBannerProps): React.ReactElement | null {
   const { t } = useTranslation();
   if (!error) return null;
@@ -70,7 +89,9 @@ export function ErrorBanner({ error, className, style }: ErrorBannerProps): Reac
     return <NoticeLine message={error.message} className={`px-3 py-1.5 ${className ?? ''}`} style={style} />;
   }
 
-  const baseClass = `flex items-start gap-2 px-3 py-2 rounded-md text-sm ${className ?? ''}`;
+  // In the composer stack the corner and the text's inset are the stack's
+  // (ChatView); anywhere else, these.
+  const baseClass = cn('flex items-start gap-2 py-2 pr-3 pl-[var(--stack-row-pad,0.75rem)] rounded-[var(--stack-row-radius,var(--radius-md))] text-sm', className);
   // Opaque: the tint is layered over the page surface, so the answer's text
   // scrolling under the banner above the composer does not read through it.
   const baseStyle: React.CSSProperties = {
@@ -82,16 +103,8 @@ export function ErrorBanner({ error, className, style }: ErrorBannerProps): Reac
 
   if (typeof error === 'object' && 'message' in error) {
     const err = error as StructuredError;
-    const isUpstream = err.kind === 'upstream';
-    const isInternal = err.kind === 'internal';
-    const headline = isUpstream
-      ? (err.statusCode
-          ? t('chat.errorUpstreamHeadlineStatus', { status: err.statusCode })
-          : t('chat.errorUpstreamHeadline'))
-      : isInternal
-        ? t('chat.errorInternalHeadline')
-        : null;
-    const hasHints = isUpstream && err.hints && err.hints.length > 0;
+    const headline = headlineOf(err, t);
+    const hasHints = err.kind === 'upstream' && err.hints && err.hints.length > 0;
     return (
       <div className={baseClass} style={baseStyle}>
         <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" style={{ color: 'var(--color-loss)' }} />
@@ -101,7 +114,7 @@ export function ErrorBanner({ error, className, style }: ErrorBannerProps): Reac
               and its headline is the whole message. */}
           {(err.message || (err.links && err.links.length > 0)) && (
             <span className="wrap-break-word">
-              {err.message}
+              {err.planRefusal ? <PlanRefusalWords refusal={err.planRefusal} /> : err.message}
               {err.links?.map((l, i) => (
                 <React.Fragment key={`${l.url}|${l.label}`}>
                   {i === 0 ? ' ' : <span aria-hidden="true"> · </span>}

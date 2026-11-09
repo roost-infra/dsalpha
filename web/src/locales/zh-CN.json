@@ -175,8 +175,8 @@
   },
   "settings": {
     "fontSize": "字体大小",
-    "cardStyle": "卡片样式",
-    "cardStyleDesc": "对话和看板中数据卡片及其详情面板的外观。",
+    "cardStyle": "样式",
+    "cardStyleDesc": "主题的外观：卡片、控件和页面的绘制方式。",
     "cardStyleTerminal": "终端",
     "cardStyleBalanced": "均衡",
     "cardStyleQuiet": "简洁",
@@ -217,7 +217,7 @@
       },
       "claude_code_runtime": {
         "label": "Claude Code 运行时（预览版）",
-        "description": "通过 Claude Code 运行你的 Claude 对话，用量计入你自己的 Claude 套餐。它用 setup token 登录，这是专为 LangAlpha 生成的独立凭据，不会影响你自己的 Claude Code 登录。Claude Code 在你自己的电脑上运行；如果此服务器提供该选项，也可以在云端计算机上运行，使用你的 setup token 或 Anthropic API 密钥。请在设置的“模型接入”中选择运行位置。"
+        "description": "通过 Claude Code 运行你的 Claude 对话，用量计入你自己的 Claude 套餐。它用 setup token 登录，这是专为 LangAlpha 生成的独立凭据，不会影响你自己的 Claude Code 登录。Claude Code 在你自己的电脑上运行；如果此服务器提供该选项，也可以在云端计算机上运行，使用你的 setup token。请在设置的“模型接入”中选择运行位置。"
       },
       "a_share_pack": {
         "label": "A 股市场包",
@@ -511,7 +511,7 @@
       "preferences": "你告诉 Agent 的投资方式，让它的研究更贴合你。",
       "plan": "你的套餐、积分和账单，在 LangAlpha 账户中管理。",
       "general": "语言、时区和应用内引导。",
-      "appearance": "主题、字号和数据卡片的样式。",
+      "appearance": "主题（样式与浅色或深色）和字号。",
       "chat": "回复如何呈现，以及 Agent 工作时对话里显示什么。",
       "artifacts": "评论 Agent 生成的文件时的默认设置。",
       "agent": "Agent 如何作答、哪些操作无需询问，以及如何搜索网页。",
@@ -543,7 +543,7 @@
     "desktopGroup": "桌面应用",
     "helpGroup": "帮助",
     "displayGroup": "显示",
-    "themeDesc": "自动模式跟随系统设置。",
+    "themeDesc": "浅色或深色。自动则跟随系统设置。",
     "fontSizeDesc": "在此设备上缩放整个应用的文字。",
     "chartsGroup": "数据卡片",
     "repliesGroup": "Agent 回复时",
@@ -617,7 +617,12 @@
       "open": "打开",
       "connectedApps": "已连接的应用",
       "connectedAppsDesc": "你用 LangAlpha 账户登录过的应用。"
-    }
+    },
+    "cardStyleSoft": "柔和",
+    "cardStyleSoftDesc": "开放边框、胶囊与细线",
+    "cardStyleBalancedDesc": "填充卡片，最接近经典外观",
+    "cardStyleTerminalDesc": "等宽字体、括号与虚线",
+    "themeMode": "模式"
   },
   "dashboard": {
     "title": "LangAlpha",
@@ -1323,7 +1328,10 @@
       "alertQuantityMissing": "请输入数量。",
       "alertAverageCostMissing": "请输入平均成本。",
       "alertQuantityInvalid": "请输入大于 0 的有效数量。",
-      "alertAverageCostInvalid": "请输入大于 0 的有效平均成本。"
+      "alertAverageCostInvalid": "请输入大于 0 的有效平均成本。",
+      "currencyLabel": "币种",
+      "currencyPlaceholder": "例如 BRL",
+      "alertCurrencyMissing": "请输入平均成本所用币种的三位字母代码。"
     },
     "chatInputCard": {
       "suggestion1": "总结苹果公司的财报",
@@ -1349,7 +1357,10 @@
         "profit": "利好",
         "loss": "利空",
         "muted": "中性"
-      }
+      },
+      "tickerImpactMeta": "AI",
+      "tickerImpactNote": "情绪与说明由新闻服务商的 AI 模型推断，可能与文章本身的观点不一致。",
+      "unscored": "未评分"
     }
   },
   "workspace": {
@@ -2480,7 +2491,9 @@
       "orderPartialExpired": "{{order}} 部分成交 {{filled}}/{{qty}} 后过期",
       "orderExpired": "{{order}} 已过期",
       "orderConfirmed": "{{order}} 已在券商处确认",
-      "orderHandedOff": "{{order}} 已从券商指令列表移除"
+      "orderHandedOff": "{{order}} 已从券商指令列表移除",
+      "stateHeldPlan": "等待 Claude 套餐在 {{time}} 重置",
+      "stateHeldPlanUnknown": "等待 Claude 套餐重置"
     },
     "missingWorkspaceOrThread": "缺少工作区或对话信息",
     "accessDeniedTitle": "你没有权限查看此对话",
@@ -2615,7 +2628,10 @@
       "claudeCodeApiKeyEndpoint": "请在设置中清空 Anthropic API 密钥的 Base URL，才能在云端计算机上使用",
       "claudeCodePaused": "此服务器已暂停在云端计算机上运行",
       "claudeCodeNeedsBiggerComputer": "需要中型及以上规格的云端计算机，或你自己的电脑",
-      "claudeCodeNeedsBiggerComputerPlan": "需要中型及以上规格的云端计算机：可更改规格或升级 LangAlpha 套餐，或使用你自己的电脑"
+      "claudeCodeNeedsBiggerComputerPlan": "需要中型及以上规格的云端计算机：可更改规格或升级 LangAlpha 套餐，或使用你自己的电脑",
+      "claudeCodeNoOwnComputer": "需要一台有独立 setup token 的电脑在线",
+      "claudeCodeCliComputerOffline": "{{name}} 目前离线",
+      "claudeCodeNeedsBiggerComputerHome": "需要中型及以上规格的云端计算机"
     },
     "voice": {
       "start": "开启语音输入",
@@ -2766,7 +2782,11 @@
         "stored_unattended": "自动化、唤醒以及其他 Agent 发来的对话不会使用 LangAlpha 为你保存的 setup token 运行。请在设置的“模型接入”中改用你的 Anthropic API 密钥，或在你自己的、有独立 token 的电脑上运行此工作区。",
         "choice_changed": "本轮开始时，云端计算机上 Claude Code 的运行方式发生了变化。请重新发送你的消息。",
         "needs_bigger_computer": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格，或把此工作区移到你自己的电脑上。",
-        "needs_bigger_computer_plan": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格或升级 LangAlpha 套餐，或把此工作区移到你自己的电脑上。"
+        "needs_bigger_computer_plan": "Claude Code 只在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格更小。请更改它的规格或升级 LangAlpha 套餐，或在设置的“模型接入”中改为在你自己的电脑上运行 Claude Code。",
+        "no_own_computer": "Claude Code 会在你自己的电脑上运行，但目前没有一台有独立 setup token 的电脑在线。请开启其中一台，或在设置的“模型接入”中为一台电脑添加 token。",
+        "cli_computer_offline": "为你运行 Claude Code 的 {{name}} 目前离线。请开启它，或选择其他模型。",
+        "needs_bigger_computer_home": "Claude Code 可在中型及以上规格的云端计算机上运行，而 Home 所在的计算机规格较小。你可以更改这台计算机的规格。",
+        "needs_bigger_computer_plan_home": "Claude Code 只在中型及以上规格的云端计算机上运行，而 Home 所在的计算机规格更小。请更改它的规格或升级 LangAlpha 套餐，或在设置的“模型接入”中改为在你自己的电脑上运行 Claude Code。"
       }
     }
   },
@@ -3516,7 +3536,8 @@
     "freqDays": "按星期",
     "monthDay": "{{day}} 日",
     "lastDay": "最后一天",
-    "skipsShortMonths": "不足 {{day}} 天的月份会被跳过。选择“最后一天”可在每月月底运行。"
+    "skipsShortMonths": "不足 {{day}} 天的月份会被跳过。选择“最后一天”可在每月月底运行。",
+    "stateClaudePlan": "Claude 套餐已达限额"
   },
   "toolArtifact": {
     "open": "开盘",
@@ -4120,7 +4141,8 @@
     "optionsOfType": {
       "call": "看涨期权",
       "put": "看跌期权"
-    }
+    },
+    "staleOption": "本交易时段未成交，最近一笔成交于纽约时间 {{time}} 公布"
   },
   "setup": {
     "capabilities": "能力",
@@ -4805,7 +4827,9 @@
         "holdingsTitle": "持仓",
         "watchlistTitle": "自选",
         "watchlistRemove": "从自选中移除 {{symbol}}",
-        "watchlistFailed": "无法将 {{symbol}} 加入自选。"
+        "watchlistFailed": "无法将 {{symbol}} 加入自选。",
+        "currency": "币种",
+        "currencyPlaceholder": "例如 BRL"
       },
       "shots": {
         "prompt": "添加持仓或自选列表的截图",
@@ -6504,7 +6528,8 @@
       "create": "创建",
       "availableNextTurn": "从下一轮起可用。",
       "copyStartsOff": "与 {{name}} 一样默认关闭。创建后开启即可使用。",
-      "atLimit": "你已有 {{count}} 个自己的子 Agent，已达上限。移除一个后才能再添加。"
+      "atLimit": "你已有 {{count}} 个自己的子 Agent，已达上限。移除一个后才能再添加。",
+      "claudeCodePinHint": "对话所在的工作区能运行 Claude Code 时，使用你的 Claude 套餐运行；其他情况下使用对话的模型。"
     }
   },
   "timezone": {
@@ -6696,7 +6721,7 @@
   "agents": {
     "chiefOfStaffHint": "统筹所有工作区的分析师，把每项任务交给合适的那一位。",
     "home": "Home",
-    "chiefOfStaff": "Chief of Staff",
+    "chiefOfStaff": "CoS Agent",
     "analyst": "分析师",
     "pickWhere": "选择 Agent 的工作范围",
     "backToChiefOfStaff": "返回 CoS Agent",
@@ -6937,7 +6962,9 @@
         "savedRejected": "Claude 拒绝了你已保存的 token，它可能已过期或被撤销。",
         "offline": "这台电脑未在运行，无法检查它的 token。",
         "addOwn": "为它添加 token",
-        "checking": "正在向 Claude 确认它的 token 是否有效"
+        "checking": "正在向 Claude 确认它的 token 是否有效",
+        "clis": "同时运行的 Claude Code Agent 数",
+        "clisHelp": "这台电脑同时运行的 Claude Code Agent 数量，包括子 Agent。超过 4 个时，LangAlpha 会为它再建立一条连接。"
       },
       "optOut": {
         "saved": "Claude Code 已关闭，但你的 setup token 仍处于保存状态。",
@@ -6946,13 +6973,13 @@
       "savedTag": "Setup token",
       "hosted": {
         "heading": "Claude Code 在哪里运行",
-        "local": "仅在你自己的电脑上",
-        "localDetail": "Claude Code 在你自己的电脑上运行，每台电脑各用自己的 setup token，LangAlpha 不保留副本。云端计算机上的工作区无法使用 Claude Code 模型。",
+        "local": "在你自己的电脑上",
+        "localDetail": "Claude Code 在你自己的、有独立 setup token 的电脑上运行，所有工作区都是如此，包括云端计算机上的工作区。这些工作区的文件和命令仍在云端计算机上运行，LangAlpha 不会保留 token 的副本。",
         "apiKey": "也用于云端计算机，使用你的 Anthropic API 密钥",
         "apiKeyDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行，每轮对话由 LangAlpha 把你的 API 密钥发给它。用量计入你的 Anthropic Console 账户，Max、Ultra 和 Team 套餐每月含 API 额度，不占用你 Claude 套餐的用量限额。",
         "apiKeyEndpoint": "你的 Anthropic API 密钥设置了自定义 Base URL，云端计算机上的 Claude Code 无法使用它。清空该密钥的 Base URL 后即可使用。",
         "needsApiKey": "云端计算机上的 Claude Code 没有可用的 Anthropic API 密钥。请在“模型接入”中添加，或重新保存已有的密钥。",
-        "stored": "也用于云端计算机，使用由 LangAlpha 保存的 setup token",
+        "stored": "在云端计算机上，使用 LangAlpha 为你保存的 setup token",
         "storedDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行；没有独立 token 的你自己的电脑也在本机运行 Claude Code。每轮对话由 LangAlpha 把加密保存的 setup token 发给运行它的计算机。用量计入你的 Claude 套餐。",
         "paused": "此服务器已暂停在云端计算机上运行 Claude Code。你的选择会保留，Claude Code 在你自己的电脑上照常运行。",
         "blocked": "你的账户无法保存 setup token。Claude Code 在你自己的电脑上照常运行。"
@@ -6960,7 +6987,7 @@
       "consent": {
         "title": "让 LangAlpha 保存你的 setup token？",
         "encrypted": "LangAlpha 会加密保存你的 token，只用于为你的对话运行 Claude Code。每轮对话，LangAlpha 会把 token 发给运行这轮对话的计算机。LangAlpha 的服务器也会用它检查 token 是否仍然可用。",
-        "unattended": "用量计入你的 Claude 套餐。自动化、唤醒以及其他 Agent 发来的对话不会使用此 token。",
+        "unattended": "用量计入你的 Claude 套餐，包括自动化、唤醒以及其他 Agent 发来的对话。",
         "terms": "这种使用方式适用 Anthropic 为你的 Claude 套餐制定的条款，你需要自行确保遵守。Anthropic 可能会限制或停用它认定违反条款的账户。",
         "undo": "你可以随时切换回来，LangAlpha 会立即删除此 token。",
         "confirm": "保存我的 token",
@@ -7024,8 +7051,10 @@
         },
         "connected": {
           "title": "Claude Code 已可使用",
-          "body": "在这些电脑上的工作区中，模型选择器里已有 Claude Code 模型。",
-          "bodyAny": "模型选择器里已有 Claude Code 模型。"
+          "body": "模型选择器里已有 Claude Code 模型。",
+          "bodyAny": "模型选择器里已有 Claude Code 模型。",
+          "cliOwn": "你的云端工作区和 Chief of Staff Agent 都在 {{name}} 上运行 Claude Code。",
+          "cliHome": "你的 Chief of Staff Agent 在 Home 所在的计算机 {{name}} 上运行 Claude Code。"
         },
         "checking": {
           "title": "正在检查 setup token",
@@ -7230,5 +7259,71 @@
       "unbind": "解绑失败"
     },
     "retry": "重试"
+  },
+  "claudeCodePlan": {
+    "window": {
+      "five_hour": "Claude 套餐的 5 小时限额",
+      "seven_day": "Claude 套餐的每周限额",
+      "seven_day_opus": "Claude 套餐的每周 Opus 限额",
+      "seven_day_sonnet": "Claude 套餐的每周 Sonnet 限额",
+      "seven_day_overage_included": "Claude 套餐的每周 Fable 限额"
+    },
+    "limitTitle": "Claude 套餐已达限额",
+    "stopped": "{{window}}已用完，本轮已停止，将于 {{time}} 重置。没有改用其他模型运行。",
+    "stoppedBilled": "{{window}}已用完，本轮已停止，将于 {{time}} 重置。没有改用其他模型运行。已在进行中的请求计入了你的额外用量。",
+    "stoppedUnknown": "Claude 套餐的限额已用完，本轮已停止。没有改用其他模型运行。",
+    "stoppedBilledUnknown": "Claude 套餐的限额已用完，本轮已停止。没有改用其他模型运行。已在进行中的请求计入了你的额外用量。",
+    "refused": "{{window}}已用完，{{time}} 重置前无法使用。请换一个模型，或在重置后再发送。",
+    "refusedUnknown": "Claude 套餐的限额已用完，Claude 没有告知重置时间。请换一个模型，或稍后再发送。",
+    "billed": "{{window}}在这次回复中用完，最后一次请求计入了你的额外用量。Claude Code 将等到 {{time}} 重置后再运行。",
+    "billedUnknown": "Claude 套餐的限额在这次回复中用完，最后一次请求计入了你的额外用量。Claude Code 将等到限额重置后再运行。",
+    "limit": "{{window}}已用完，{{time}} 重置前无法使用。如需继续，请换一个模型。",
+    "limitUnknown": "Claude 套餐的限额已用完。如需继续，请换一个模型。",
+    "credits": "{{window}}已用完，{{time}} 重置前 Claude Code 将使用你的额外用量运行。",
+    "creditsUnknown": "Claude 套餐的限额已用完，重置前 Claude Code 将使用你的额外用量运行。",
+    "picker": "套餐限额已用完，{{time}} 重置",
+    "pickerUnknown": "套餐限额已用完",
+    "runsOut": {
+      "title": "Claude 套餐用完时",
+      "stop": "停止",
+      "stopDetail": "Claude Code 在套餐达到限额时停止，等待重置。不会改用其他模型。",
+      "credits": "使用额外用量",
+      "creditsDetail": "如果你的 Claude 账户开启了额外用量，Claude Code 会继续用它运行。",
+      "note": "{{names}} 上的 Claude 账户开启了额外用量。超出限额的第一次请求会在 LangAlpha 停止之前计入额外用量。如果永远不想使用，请在 claude.ai 中关闭。",
+      "noteLink": "打开 claude.ai 用量设置"
+    },
+    "short": {
+      "five_hour": "5 小时",
+      "seven_day": "7 天",
+      "seven_day_opus": "7 天 Opus",
+      "seven_day_sonnet": "7 天 Sonnet",
+      "seven_day_overage_included": "7 天 Fable"
+    },
+    "near": "{{window}}已用 {{percent}}%，将于 {{time}} 重置。",
+    "limitDetail": "{{short}}限额已用完，{{time}} 重置",
+    "limitReached": "已达限额",
+    "pending": "下一轮 Claude Code 运行后显示套餐用量",
+    "asOf": "截至{{ago}}，来自这个 token 最近一次 Claude Code 请求。在 claude.ai 和你自己的 Claude Code 中的使用也计入。",
+    "table": {
+      "computer": "电脑",
+      "token": "Token",
+      "account": "账户",
+      "resets": "重置"
+    },
+    "meter": {
+      "title": "{{name}} 上的 Claude 套餐",
+      "tip": "截至{{ago}}。5 小时将于 {{time5}} 重置，7 天将于 {{time7}} 重置。",
+      "empty": "首轮运行后显示用量",
+      "resets": "5 小时将于 {{time5}} 重置，7 天将于 {{time7}} 重置。"
+    },
+    "check": {
+      "now": "立即检查",
+      "running": "检查中…",
+      "tip": "用你的 Claude 套餐发送一次很小的请求来读取用量。",
+      "held": "{{time}} 后可再次检查。",
+      "failed": "无法连接 Claude 检查用量，请稍后再试。",
+      "computerUnreached": "无法连接这台电脑查看用量，请稍后再试。",
+      "unsaved": "Claude 已响应，但用量未能更新，请稍后再试。"
+    }
   }
 }

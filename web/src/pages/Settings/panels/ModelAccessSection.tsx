@@ -13,8 +13,8 @@ import { useNow } from '@/hooks/useNow';
 import { useClaudeCodeCustody } from '@/hooks/useClaudeCodeCustody';
 import { useWorkspaceClaudeCode } from '@/hooks/useWorkspaceClaudeCode';
 import {
-  ANTHROPIC, CLAUDE_CODE, CLAUDE_CODE_CHOICE, CLAUDE_CODE_CONNECTION, CLAUDE_CODE_MODE_LABELS, CLAUDE_CODE_SETUP_STATUS,
-  CLAUDE_CODE_TOKEN_PARAM, CLAUDE_CODE_WORKSPACE_PARAM,
+  CLAUDE_CODE, CLAUDE_CODE_CHOICE, CLAUDE_CODE_CONNECTION, CLAUDE_CODE_MODE_LABELS, CLAUDE_CODE_SETUP_STATUS,
+  CLAUDE_CODE_TOKEN_PARAM, CLAUDE_CODE_WORKSPACE_PARAM, computerTokenWorks,
 } from '@/lib/claudeCode';
 import { useProviderCatalog } from '@/hooks/useProviderCatalog';
 import type { ProviderCatalogEntry } from '@/components/model/types';
@@ -26,6 +26,11 @@ import { tokenSheetTitle, type SheetAction, type TokenTarget } from '@/component
 import { planLabel } from '@/components/modelAccess/planLabel';
 import { regionTag } from '@/components/modelAccess/optionLabels';
 import { StatusLabel, type AccessStatus } from '@/components/modelAccess/parts';
+import { UsageHeaderRow } from '@/components/modelAccess/PlanUsage';
+import { SUMMARY_WIDTHS, UsageTableContext, useUsageSteps } from '@/components/modelAccess/usageSteps';
+import { usePlanClock } from '@/hooks/useClaudeCodePlan';
+import { fullerWindow, limitDetail, rowLimit } from '@/lib/claudeCodePlan';
+import { cn } from '@/lib/utils';
 import { ProviderChoices } from '@/components/modelAccess/ProviderChoices';
 import { SubscriptionChoices } from '@/components/modelAccess/SubscriptionChoices';
 import { KeyProviderList, KeyStepFrame, ProviderTitle } from '@/components/modelAccess/KeyProviderPicker';
@@ -34,7 +39,23 @@ import { AccessRow, Group, KeyRow } from './modelAccess/AccessRows';
 import { KeySheet } from './modelAccess/KeySheet';
 import { ManageSheet, SubscriptionFlow } from './modelAccess/ManageSheet';
 import { ClaudeCodeSheet } from './modelAccess/ClaudeCodeSheet';
-import { claudeCodeHeadline, computerTokenWorks } from './modelAccess/claudeCodeHeadline';
+import { claudeCodeHeadline } from './modelAccess/claudeCodeHeadline';
+
+/** The Subscriptions card as a usage table, once Claude Code's row has a
+ *  plan's use to show: its rows on one grid under a header row, stepping
+ *  down as the card narrows (`SUMMARY_WIDTHS`). */
+function SummaryTable({ on, children }: { on: boolean; children: React.ReactNode }) {
+  const [table, setTable] = useState<HTMLDivElement | null>(null);
+  const steps = useUsageSteps(table, on ? SUMMARY_WIDTHS : null);
+  if (!on) return <>{children}</>;
+  return (
+    <div ref={setTable}>
+      <div className={cn('grid gap-x-3', steps?.grid)}>
+        <UsageTableContext.Provider value={steps}>{children}</UsageTableContext.Provider>
+      </div>
+    </div>
+  );
+}
 
 const subscriptionName = (t: (k: string) => string, p: SubscriptionProvider) =>
   t(`modelAccess.${subscriptionKey(p)}.name`);
@@ -49,9 +70,7 @@ type Sheet =
   | { kind: 'connect-subscription'; provider: SubscriptionProvider }
   | { kind: 'pick-key' }
   | { kind: 'pick-local' }
-  /** `origin` null: the Anthropic key's sheet on its own, which Cancel
-   *  closes. */
-  | { kind: 'key'; group: ProviderGroup; option: KeyOption; origin: KeyOrigin | null }
+  | { kind: 'key'; group: ProviderGroup; option: KeyOption; origin: KeyOrigin }
   | { kind: 'local-key'; entry: ProviderCatalogEntry }
   | { kind: 'claude-code-token'; target: TokenTarget; action: SheetAction }
   /** Claude Code itself: where it stands, what sets it apart, and each
@@ -63,18 +82,19 @@ type Sheet =
   | { kind: 'manage'; provider: string; from: 'list' | 'key-flow'; justConnected?: boolean };
 
 /** The add-key flow is one size from the list to the saved key's models; see
- *  KeyStepFrame. Claude Code's view is wide enough for a row's name and
- *  detail beside its status and button on one line. */
-function isWide(sheet: Sheet): boolean {
+ *  KeyStepFrame. Claude Code's view is a table of each token's plan use
+ *  beside its status and button, so it is wider still. */
+function sheetWidth(sheet: Sheet): 'standard' | 'wide' | 'table' {
   switch (sheet.kind) {
+    case 'claude-code':
+      return 'table';
     case 'pick-key':
     case 'key':
-    case 'claude-code':
-      return true;
+      return 'wide';
     case 'manage':
-      return sheet.from === 'key-flow';
+      return sheet.from === 'key-flow' ? 'wide' : 'standard';
     default:
-      return false;
+      return 'standard';
   }
 }
 
@@ -82,7 +102,7 @@ function isWide(sheet: Sheet): boolean {
 function backFrom(sheet: Sheet): Sheet | null {
   switch (sheet.kind) {
     case 'connect-subscription': return { kind: 'pick-subscription' };
-    case 'key': return sheet.origin && { kind: sheet.origin };
+    case 'key': return { kind: sheet.origin };
     case 'local-key': return { kind: 'pick-local' };
     default: return null;
   }
@@ -127,15 +147,9 @@ export function ModelAccessSection() {
     ? tokenRows.find(({ target }) => (target.kind === 'computer' ? target.computerId === linked.computerId : !linked.computerId))
     : undefined;
   const linkedAction = linkedRow && linkedSheetAction(linkedRow.line);
-  // A link to the Anthropic key (the picker's, a refused turn's) opens its
-  // sheet, and drops once the key is saved or the sheet closed.
-  const anthropicGroup = keyGroups.find((g) => g.group === ANTHROPIC);
-  const anthropicKey = anthropicGroup ? { group: anthropicGroup, option: startingOption(anthropicGroup, configuredSet) } : null;
-  const anthropicKeySheet = (): Sheet | null => anthropicKey && { kind: 'key', ...anthropicKey, origin: null };
   const linkedSheet: Sheet | null = linkedRow && linkedAction
     ? { kind: 'claude-code-token', target: linkedRow.target, action: linkedAction }
-    : searchParams.get(CLAUDE_CODE_TOKEN_PARAM) === ANTHROPIC ? anthropicKeySheet()
-      : searchParams.get(CLAUDE_CODE_TOKEN_PARAM) === CLAUDE_CODE_CHOICE && (setup || setupUnread) ? { kind: 'claude-code' } : null;
+    : searchParams.get(CLAUDE_CODE_TOKEN_PARAM) === CLAUDE_CODE_CHOICE && (setup || setupUnread) ? { kind: 'claude-code' } : null;
   const sheet: Sheet | null = opened ?? linkedSheet;
   const dropLink = () => {
     if (searchParams.has(CLAUDE_CODE_TOKEN_PARAM)) setSearchParams((params) => {
@@ -191,10 +205,25 @@ export function ModelAccessSection() {
   const subscriptionDetail = (p: ConfiguredProvider) =>
     [p.email || p.account_id, planLabel(p.provider, p.plan_type)].filter(Boolean).join(' · ') || null;
 
-  /** What Claude Code's row says: the computers a token works on, or what
-   *  it runs on there, else what the view leads with, or that it is off
-   *  with a token left behind. */
+  // The token whose plan Claude Code's row shows: of those that work and
+  // reported use, the one nearest a limit, a limit held first.
+  const clock = usePlanClock();
+  const summary = setup?.on && setup.state === 'connected' ? [
+    ...setup.computers.filter((c) => computerTokenWorks(c, now)).map((c) => ({ name: c.name, email: c.email, plan: c.plan })),
+    ...(claudeCode.runsHere && claudeCode.state !== 'rejected'
+      ? [{ name: t('modelAccess.claudeCode.setup.savedName'), email: claudeCode.email, plan: claudeCode.plan }] : []),
+  ].flatMap(({ plan, ...who }) => {
+    const limit = rowLimit(plan, clock.now);
+    const fuller = fullerWindow(plan, clock.now);
+    return plan && (limit || fuller) ? [{ ...who, plan, limit, used: fuller?.used ?? 0 }] : [];
+  }).sort((a, b) => Number(!!b.limit) - Number(!!a.limit) || b.used - a.used)[0] ?? null : null;
+
+  /** What Claude Code's row says: the account, or the limit it is held at,
+   *  of the token whose plan it shows; else the computers a token works on,
+   *  or what it runs on there, else what the view leads with, or that it is
+   *  off with a token left behind. */
   const claudeCodeDetail = () => {
+    if (summary) return summary.limit ? limitDetail(t, summary.limit, clock) : summary.email ?? summary.name;
     if (!setup && setupUnread) return null;
     if (!setup?.on) return t(tokenRows.some(({ key }) => key === 'saved') ? 'modelAccess.claudeCode.optOut.saved' : 'modelAccess.claudeCode.optOut.computer');
     if (setup.state === 'checking') return null;
@@ -202,7 +231,7 @@ export function ModelAccessSection() {
     const working = setup.computers.filter((c) => computerTokenWorks(c, now)).map((c) => c.name);
     if (working.length > 0) return t('modelAccess.claudeCode.setup.listSummary', { names: formatUnitList(working, locale) });
     if (custody?.runs_on) return t(CLAUDE_CODE_MODE_LABELS[custody.mode]);
-    // Until the choice is read, it may be the API key that connects it.
+    // Until the choice is read, it may be the stored token that connects it.
     if (custodyLoading || custodyUnread) return null;
     return t('modelAccess.claudeCode.detail');
   };
@@ -214,8 +243,10 @@ export function ModelAccessSection() {
     <div className="flex flex-col gap-4">
       <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>{t('modelAccess.description')}</p>
 
-      <Group title={t('modelAccess.subscriptions')} empty={statusLoading ? '' : statusError ? t('modelAccess.status.unknownLong') : t('modelAccess.noneSubscriptions')}>
+      <SummaryTable on={!!summary}>
+      <Group subgrid={!!summary} title={t('modelAccess.subscriptions')} empty={statusLoading ? '' : statusError ? t('modelAccess.status.unknownLong') : t('modelAccess.noneSubscriptions')}>
         {[
+          ...(summary ? [<UsageHeaderRow key="header" first={t('claudeCodePlan.table.account')} />] : []),
           ...subscriptionRows.map((p) => p.access_type === 'coding_plan' ? (
             <KeyRow key={p.provider} p={p} place={placeOf(p.provider)} onManage={() => manage(p.provider)} />
           ) : (
@@ -241,8 +272,10 @@ export function ModelAccessSection() {
               provider={CLAUDE_CODE}
               name={CLAUDE_CODE_CONNECTION.display_name}
               detail={claudeCodeDetail()}
-              wrapDetail
-              status={setup?.on ? CLAUDE_CODE_SETUP_STATUS[setup.state] : setupUnread ? 'unknown' : 'off'}
+              wrapDetail={!summary}
+              plan={summary?.plan}
+              limited={!!summary?.limit}
+              status={summary?.limit ? 'limit_reached' : setup?.on ? CLAUDE_CODE_SETUP_STATUS[setup.state] : setupUnread ? 'unknown' : 'off'}
               action={(
                 <Button type="button" variant="ghost" size="sm" className="tap-target" onClick={() => setSheet({ kind: 'claude-code' })}>
                   {t('modelAccess.manage')}
@@ -252,6 +285,7 @@ export function ModelAccessSection() {
           )] : []),
         ]}
       </Group>
+      </SummaryTable>
 
       <Group title={t('modelAccess.apiKeys')} empty={t('modelAccess.noneKeys')}>
         {[
@@ -309,7 +343,7 @@ export function ModelAccessSection() {
           labelId={sheetTitleId}
           title={sheetTitle}
           onClose={closeSheet}
-          width={isWide(sheet) ? 'wide' : 'standard'}
+          width={sheetWidth(sheet)}
           covered={!!removing || (!!removingToken && sheet.kind === 'claude-code') || choiceCovered}
         >
           {sheet.kind === 'pick-subscription' && (
@@ -373,8 +407,7 @@ export function ModelAccessSection() {
                 dropLink();
                 setSheet({ kind: 'manage', provider, from: 'key-flow', justConnected: fresh });
               }}
-              onBack={sheet.origin ? back(sheet) : undefined}
-              onCancel={sheet.origin ? undefined : closeSheet}
+              onBack={back(sheet)}
             />
           )}
           {sheet.kind === 'local-key' && (
@@ -402,8 +435,6 @@ export function ModelAccessSection() {
             <ClaudeCodeSheet
               setup={setup}
               tokenRows={tokenRows}
-              anthropicKey={anthropicKey}
-              configured={providers}
               onRemoveToken={setRemovingToken}
               onCover={setChoiceCovered}
             />
