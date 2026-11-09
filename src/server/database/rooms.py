@@ -217,6 +217,51 @@ async def update_room(room_id: Any, changes: Dict[str, Any]) -> Optional[Dict[st
             return _room_row(await cur.fetchone())
 
 
+async def set_room_host(room_id: Any, bot_id: Any) -> Optional[Dict[str, Any]]:
+    """Make a member the host, moving the seat from whoever held it.
+
+    The room row is the lock: a concurrent add/remove cannot leave two hosts or
+    a host that is not a member. Returns the room, None when it does not exist,
+    and raises ValueError when the bot is not a member.
+    """
+    cleaned_room, cleaned_bot = _str(room_id), _str(bot_id)
+    if cleaned_room is None or cleaned_bot is None:
+        return None
+    async with get_db_connection() as conn:
+        async with conn.transaction():
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    "SELECT 1 AS held FROM rooms WHERE room_id = %s FOR UPDATE",
+                    (cleaned_room,),
+                )
+                if await cur.fetchone() is None:
+                    return None
+                await cur.execute(
+                    "SELECT 1 FROM room_members WHERE room_id = %s "
+                    "AND member_type = 'bot' AND member_id = %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                if await cur.fetchone() is None:
+                    raise ValueError("the host must be a member of the room")
+                await cur.execute(
+                    "UPDATE room_members SET role = 'member' "
+                    "WHERE room_id = %s AND member_type = 'bot' "
+                    "AND role = 'host' AND member_id <> %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                await cur.execute(
+                    "UPDATE room_members SET role = 'host' "
+                    "WHERE room_id = %s AND member_type = 'bot' AND member_id = %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                await cur.execute(
+                    "UPDATE rooms SET host_bot_id = %s::uuid, updated_at = NOW() "
+                    "WHERE room_id = %s RETURNING " + _ROOM_COLUMNS,
+                    (cleaned_bot, cleaned_room),
+                )
+                return _room_row(await cur.fetchone())
+
+
 async def add_member(
     room_id: Any, bot_id: Any, *, role: str = "member"
 ) -> bool:

@@ -182,8 +182,13 @@ async def update_room(
 ) -> RoomInfo:
     room = await _reach_room(principal, room_id)
     changed = body.model_dump(exclude_none=True)
+    host_bot_id = changed.pop("host_bot_id", None)
+    updated = None
     try:
-        updated = await room_db.update_room(room["room_id"], changed)
+        if host_bot_id is not None:
+            updated = await room_db.set_room_host(room["room_id"], host_bot_id)
+        if changed:
+            updated = await room_db.update_room(room["room_id"], changed) or updated
     except UniqueViolation:
         raise HTTPException(
             status_code=409, detail="A room with that name already exists."

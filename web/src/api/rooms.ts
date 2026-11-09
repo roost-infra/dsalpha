@@ -132,6 +132,8 @@ export interface RoomUpdateInput {
   responder?: RoomResponder;
   bulletin?: string;
   status?: RoomStatus;
+  /** The member that speaks first; it must already be in the room. */
+  host_bot_id?: string;
 }
 
 export interface RoomMemberDeleteResponse {

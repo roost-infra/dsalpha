@@ -199,6 +199,14 @@ describe('RoomPanel', () => {
     expect(frame).toHaveAttribute('srcdoc', '<h1>报告</h1>');
   });
 
+  it('moves the host seat through the member action', async () => {
+    await renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Make Rates analyst host' }));
+    await waitFor(() => {
+      expect(mockUpdateRoom).toHaveBeenCalledWith('room-1', { host_bot_id: 'bot-3' });
+    });
+  });
+
   it('draws the member BotMark in its chip, its log line and the speaking line', async () => {
     await renderPanel();
 

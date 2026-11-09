@@ -632,3 +632,18 @@
     width: 100%;
   }
 }
+
+.rooms-member__make-host {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0 1px;
+}
+
+.rooms-member__make-host:hover {
+  color: var(--color-text-primary);
+}

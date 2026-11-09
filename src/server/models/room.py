@@ -39,6 +39,9 @@ class RoomUpdate(BaseModel):
     responder: Optional[Responder] = None
     bulletin: Optional[str] = Field(default=None, max_length=2_000)
     status: Optional[Literal["active", "archived"]] = None
+    #: A member that speaks first. Moving the seat updates both the room row and
+    #: the members' roles, so ``_view`` never shows two hosts or none.
+    host_bot_id: Optional[uuid.UUID] = None
 
     _name = field_validator("name")(_named)
 
