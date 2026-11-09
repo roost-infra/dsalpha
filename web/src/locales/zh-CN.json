@@ -165,6 +165,7 @@
     "threadTurns": "轮次",
     "threadNeedsInput": "等待您的输入",
     "threadUnseen": "已完成，尚未查看",
+    "history": "历史会话",
     "untitledThread": "未命名",
     "primarySession": "主会话",
     "onComputer": "位于 {{name}} · {{kind}}",

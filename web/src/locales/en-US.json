@@ -165,6 +165,7 @@
     "threadTurns": "Turns",
     "threadNeedsInput": "Waiting for your input",
     "threadUnseen": "Finished, not yet viewed",
+    "history": "History",
     "untitledThread": "Untitled",
     "primarySession": "Primary",
     "onComputer": "On {{name}} · {{kind}}",
