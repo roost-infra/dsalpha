@@ -1867,7 +1867,9 @@ class TestDockerProviderTierDisk:
     @pytest.mark.asyncio
     async def test_disk_is_skipped_when_not_configured(self):
         provider = DockerProvider(
-            DockerConfig(memory_limit="1g", cpu_count=1.0),
+            DockerConfig(
+                memory_limit="1g", cpu_count=1.0, storage_quota_enabled=False
+            ),
             working_dir="/home/workspace",
         )
         client, _ = _make_tier_client()
@@ -1878,9 +1880,44 @@ class TestDockerProviderTierDisk:
         assert "StorageOpt" not in _created_host_config(client)
 
     @pytest.mark.asyncio
+    async def test_driver_rejecting_the_quota_still_creates_the_container(self):
+        provider = DockerProvider(
+            DockerConfig(memory_limit="1g", cpu_count=1.0),  # quota on by default
+            working_dir="/home/workspace",
+        )
+        client, _ = _make_tier_client()
+        attempts: list[dict] = []
+
+        async def _create(*, config, name):
+            attempts.append(dict(config["HostConfig"]))
+            if "StorageOpt" in config["HostConfig"]:
+                raise Exception(
+                    "storage-opt size is only supported for the overlay2 "
+                    "storage driver with the xfs backing filesystem"
+                )
+            container = _make_mock_container()
+            container.show = AsyncMock(return_value={
+                "State": {"Status": "running"},
+                "HostConfig": dict(config["HostConfig"]),
+                "NetworkSettings": {"Ports": {}},
+            })
+            return container
+
+        client.containers.create = AsyncMock(side_effect=_create)
+        provider._client = client
+
+        await provider.create(tier="max")
+
+        assert len(attempts) == 2
+        assert "StorageOpt" in attempts[0]
+        assert "StorageOpt" not in attempts[1]
+
+    @pytest.mark.asyncio
     async def test_disk_notice_is_logged_once_per_provider(self):
         provider = DockerProvider(
-            DockerConfig(memory_limit="1g", cpu_count=1.0),
+            DockerConfig(
+                memory_limit="1g", cpu_count=1.0, storage_quota_enabled=False
+            ),
             working_dir="/home/workspace",
         )
         client, _ = _make_tier_client()

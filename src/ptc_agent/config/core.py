@@ -170,6 +170,12 @@ class DaytonaConfig(CredentialedSandboxConfig):
     API_KEY_HELP: ClassVar[str] = "DAYTONA_API_KEY"
     TIER_CEILING: ClassVar[ResourceTier | None] = DAYTONA_TIER_CEILING
 
+    # A user's own Daytona key (BYOK), carried as ciphertext inside a computer's
+    # persisted provider_config so a provider can be built synchronously.
+    # ``ComputerManager._provider_settings`` decrypts it into api_key at build
+    # time; a deployment never sets this in YAML.
+    api_key_encrypted: str = ""
+
     base_url: str = "https://app.daytona.io/api"
     auto_stop_interval: int = 3600  # 1 hour
     auto_archive_interval: int = 604800  # 7 days, keep stopped (fast restart) before cold storage
@@ -450,9 +456,11 @@ class DockerConfig(ResourceTieredConfig):
     memory_limit: str = "4g"
     cpu_count: float = 2.0
     # A tier's disk only reaches the container on a storage driver that supports
-    # per-container quotas (overlay2 on xfs with pquota, btrfs, zfs, devicemapper);
-    # every other driver rejects the option outright, so it is opt-in.
-    storage_quota_enabled: bool = False
+    # per-container quotas (overlay2 on xfs with pquota, btrfs, zfs, devicemapper).
+    # On by default so an idle sandbox's disk is capped instead of being the
+    # host's; a driver that rejects the option is detected at create, logged, and
+    # the container is created without it (turn this off to silence that).
+    storage_quota_enabled: bool = True
     dev_mode: bool = False
     host_work_dir: str | None = None
     volumes: list[str] = Field(default_factory=list)

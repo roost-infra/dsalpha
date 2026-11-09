@@ -97,6 +97,17 @@ _FUSE_HOST_CONFIG: dict[str, Any] = {
 }
 
 
+def _storage_opt_unsupported(error: Exception) -> bool:
+    """Whether create failed only because the driver cannot size a disk.
+
+    The daemon's answer is a plain error string, e.g. "storage-opt size is
+    only supported for the overlay2 storage driver with the xfs backing
+    filesystem". Matched here so the failure can be retried without it.
+    """
+    text = str(error).lower()
+    return "storage-opt" in text or "storage opt" in text
+
+
 async def _remove_quietly(container: Any, name: str) -> None:
     try:
         await container.delete(force=True)
@@ -668,7 +679,21 @@ class DockerProvider(SandboxProvider):
         try:
             container = await client.containers.create(config=config, name=name)
         except Exception as e:
-            if sizing.elevated:
+            if "StorageOpt" in config["HostConfig"] and _storage_opt_unsupported(e):
+                # Quotas are on by default, but a host whose storage driver
+                # cannot enforce them must still run sandboxes: drop the size
+                # and say so, once per provider, like the opt-out path does.
+                if not self._storage_quota_notice_shown:
+                    self._storage_quota_notice_shown = True
+                    logger.warning(
+                        "Docker storage driver rejected the per-container disk "
+                        "quota; continuing without disk isolation",
+                        container_name=name,
+                        error=str(e),
+                    )
+                config["HostConfig"].pop("StorageOpt", None)
+                container = await client.containers.create(config=config, name=name)
+            elif sizing.elevated:
                 host_config = config["HostConfig"]
                 disk_note = (
                     f", {sizing.disk_gib}G disk" if "StorageOpt" in host_config else ""
@@ -678,7 +703,8 @@ class DockerProvider(SandboxProvider):
                     f"({sizing.cpus} vCPU, {sizing.memory_bytes} bytes{disk_note}): "
                     f"{e}; refusing to create a base-sized container for an elevated tier"
                 ) from e
-            raise
+            else:
+                raise
         try:
             await container.start()
         except BaseException:
