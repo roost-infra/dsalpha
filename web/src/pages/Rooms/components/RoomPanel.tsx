@@ -8,7 +8,7 @@
  * The round line above the composer is the one live signal a reader needs —
  * who is speaking, or that the round is over.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Archive, ArrowLeft, Crown, Info, Plus, Send, X } from 'lucide-react';
 import type { RoomLogEntry, RoomMemberInfo, RoomResponder, RoomView } from '@/api/rooms';
@@ -41,6 +41,7 @@ import Markdown from '@/pages/ChatAgent/components/Markdown';
 import { readWorkspaceFile } from '@/pages/ChatAgent/utils/api/files';
 import type { OpenFileHandler } from '@/pages/ChatAgent/utils/fileLocation';
 import { responderLabelKey } from '../roomsCopy';
+import { RoomAvatar } from './RoomAvatar';
 import { failureText } from '@/lib/failureText';
 
 /** Whether a log row is the room talking, not a member. Status rows are the
@@ -48,6 +49,23 @@ import { failureText } from '@/lib/failureText';
  *  not as anyone's message. */
 function isStatusRow(entry: RoomLogEntry): boolean {
   return entry.sender_type === 'system' || entry.kind !== 'message';
+}
+
+function dayKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? '' : date.toDateString();
+}
+
+function dayLabel(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString(undefined, {
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
 }
 
 function LogRow({
@@ -81,12 +99,16 @@ function LogRow({
       data-sender-type={entry.sender_type}
       data-pending={entry.pending ? 'true' : undefined}
     >
-      <span className="rooms-log__sender inline-flex items-center gap-1">
-        {!isUser && <BotMark bot={member ?? { name: sender }} size={16} decorative />}
-        <span>{sender}</span>
-      </span>
-      <div className="rooms-log__bubble rooms-log__bubble--markdown">
-        <Markdown content={entry.content} variant="chat" onOpenFile={onOpenFile} />
+      {!isUser && (
+        <span className="rooms-log__lead">
+          <BotMark bot={member ?? { name: sender }} size={22} decorative />
+        </span>
+      )}
+      <div className="rooms-log__content">
+        <span className="rooms-log__sender">{sender}</span>
+        <div className="rooms-log__bubble rooms-log__bubble--markdown">
+          <Markdown content={entry.content} variant="chat" onOpenFile={onOpenFile} />
+        </div>
       </div>
     </div>
   );
@@ -403,6 +425,9 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
     );
   };
 
+  // The log draws a date separator whenever the calendar day changes.
+  let lastDay = '';
+
   return (
     <div className="rooms-panel">
       <header className="rooms-panel__header">
@@ -414,9 +439,11 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         >
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </button>
+        <RoomAvatar members={room.members} size={36} />
         <div className="rooms-panel__heading">
           <h2 className="rooms-panel__title">{room.name}</h2>
           <div className="rooms-panel__sub">
+            <span>{t('rooms.membersCount', { count: room.members.length })}</span>
             <span>{t(responderLabelKey(room.responder))}</span>
             <span
               className={streamError ? 'rooms-live is-error' : live ? 'rooms-live is-live' : 'rooms-live'}
@@ -624,14 +651,21 @@ export default function RoomPanel({ roomId, onClose }: { roomId: string; onClose
         ) : entries.length === 0 ? (
           <div className="rooms-panel__placeholder">{t('rooms.logEmpty')}</div>
         ) : (
-          entries.map((entry) => (
-            <LogRow
-              key={entry.pending ? `pending-${entry.seq}` : entry.seq}
-              entry={entry}
-              members={members}
-              onOpenFile={openFile}
-            />
-          ))
+          entries.map((entry) => {
+            const day = dayKey(entry.created_at);
+            const showDay = Boolean(day) && day !== lastDay;
+            if (showDay) lastDay = day;
+            return (
+              <Fragment key={entry.pending ? `pending-${entry.seq}` : entry.seq}>
+                {showDay && <div className="rooms-log__day">{dayLabel(entry.created_at)}</div>}
+                <LogRow
+                  entry={entry}
+                  members={members}
+                  onOpenFile={openFile}
+                />
+              </Fragment>
+            );
+          })
         )}
       </div>
 

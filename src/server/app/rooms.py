@@ -104,20 +104,19 @@ async def _validated_members(
 
 async def _view(room: dict) -> RoomView:
     members = await room_db.list_members_with_bots(room["room_id"])
-    return RoomView(
-        **_info(room).model_dump(),
-        members=[
-            RoomMemberInfo(
-                bot_id=m["bot_id"],
-                name=m.get("name") or m["bot_id"],
-                role=m.get("role") or "analyst",
-                status=m.get("status") or "active",
-                room_role=m.get("room_role") or "member",
-                avatar=m.get("avatar") or {},
-            )
-            for m in members
-        ],
-    )
+    info = _info(room).model_dump()
+    info["members"] = [
+        RoomMemberInfo(
+            bot_id=m["bot_id"],
+            name=m.get("name") or m["bot_id"],
+            role=m.get("role") or "analyst",
+            status=m.get("status") or "active",
+            room_role=m.get("room_role") or "member",
+            avatar=m.get("avatar") or {},
+        )
+        for m in members
+    ]
+    return RoomView(**info)
 
 
 @router.post("", response_model=RoomView, status_code=201)

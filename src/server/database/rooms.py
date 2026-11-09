@@ -185,8 +185,23 @@ async def list_rooms(
     async with get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                f"SELECT {_ROOM_COLUMNS} FROM rooms WHERE {' AND '.join(where)} "
-                "ORDER BY created_at LIMIT %s OFFSET %s",
+                f"""
+                SELECT {_ROOM_COLUMNS},
+                       COALESCE((SELECT l.content FROM room_log l
+                                  WHERE l.room_id = rooms.room_id AND l.kind = 'message'
+                                  ORDER BY l.seq DESC LIMIT 1), '') AS preview,
+                       COALESCE((SELECT MAX(l.seq) FROM room_log l
+                                  WHERE l.room_id = rooms.room_id), 0) AS latest_seq,
+                       COALESCE((SELECT json_agg(json_build_object(
+                                   'bot_id', b.bot_id::text, 'name', b.name,
+                                   'role', b.role, 'status', b.status,
+                                   'room_role', m.role, 'avatar', b.avatar)
+                                ORDER BY (m.role = 'host') DESC, b.name)
+                          FROM room_members m JOIN bots b ON b.bot_id = m.member_id::uuid
+                         WHERE m.room_id = rooms.room_id AND m.member_type = 'bot'), '[]'::json) AS members
+                FROM rooms WHERE {' AND '.join(where)}
+                ORDER BY created_at LIMIT %s OFFSET %s
+                """,
                 (*params, max(1, min(int(limit), 200)), max(0, int(offset))),
             )
             return [_room_row(r) for r in await cur.fetchall()]
