@@ -13,10 +13,14 @@ Endpoints:
 - DELETE /api/v1/bots/{bot_id}       - Soft-delete (the row stays auditable)
 """
 
+import asyncio
+import json
 import logging
+from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from src.server.database import bots as bot_db
 from src.server.database.home_workspace import get_home_workspace_id, is_home_id
@@ -143,6 +147,55 @@ async def create_bot(principal: WorkspaceWritePrincipal, body: BotCreate) -> Bot
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return _info(row)
+
+
+@router.get("/messages/stream")
+async def stream_bot_messages(
+    principal: ReadPrincipal,
+    workspace_id: Optional[str] = Query(default=None),
+    after: Optional[str] = Query(default=None),
+):
+    """Tail the bot-to-bot inbox as SSE, from an ISO timestamp.
+
+    The table is the record; a client that misses a frame reopens from the
+    newest ``created_at`` it holds. The tail is read-side only and sends the
+    same rows as the list.
+    """
+    if workspace_id:
+        await assert_reaches(principal, workspace_id=workspace_id)
+    cursor = datetime.now(UTC)
+    if after:
+        try:
+            parsed = datetime.fromisoformat(after.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="after must be an ISO timestamp")
+        cursor = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    from src.server.database import bot_messages as message_db
+
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+
+    async def events():
+        nonlocal cursor
+        while True:
+            rows = await message_db.list_after(
+                principal.user_id,
+                after=cursor,
+                workspace_id=workspace_id,
+                limit=100,
+            )
+            for row in rows:
+                yield sse("bot_message", row)
+                stamp = row.get("created_at")
+                if stamp:
+                    try:
+                        cursor = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+                    except ValueError:
+                        pass
+            yield ": keepalive\n\n"
+            await asyncio.sleep(1.5)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
 @router.get("/messages", response_model=BotMessageListResponse)

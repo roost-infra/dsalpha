@@ -20,7 +20,7 @@ import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots } from '@/hooks/useBots';
 import { useRoom, useRooms } from '@/hooks/useRooms';
 import type { RoomInfo } from '@/api/rooms';
-import { getBotMessages, type BotInfo, type BotMessageInfo } from '@/api/bots';
+import { getBotMessages, streamBotMessages, type BotInfo, type BotMessageInfo } from '@/api/bots';
 import { BotMark } from '@/components/bots/BotMark';
 import Markdown from '@/pages/ChatAgent/components/Markdown';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
@@ -31,18 +31,40 @@ import RoomPanel from './components/RoomPanel';
 import './Rooms.css';
 
 /** The bot-to-bot inbox, opened from the left rail: who sent what to which bot. */
+const EMPTY_BOT_MESSAGES: BotMessageInfo[] = [];
+
 function BotMessagesDrawer({
-  messages,
+  workspaceId,
+  initialMessages,
   loading,
   failed,
   onClose,
 }: {
-  messages: BotMessageInfo[];
+  workspaceId: string;
+  initialMessages: BotMessageInfo[];
   loading: boolean;
   failed: boolean;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const [messages, setMessages] = useState(initialMessages);
+
+  // The list read is the snapshot; the tail is what makes an open inbox live.
+  // Starting from the newest snapshot timestamp means a message that landed
+  // between the two reads arrives once, and the id check drops the overlap.
+  useEffect(() => {
+    setMessages(initialMessages);
+    const after = initialMessages[0]?.created_at ?? null;
+    return streamBotMessages(workspaceId, after, {
+      onMessage: (message) => {
+        setMessages((current) =>
+          current.some((row) => row.message_id === message.message_id)
+            ? current
+            : [message, ...current],
+        );
+      },
+    });
+  }, [workspaceId, initialMessages]);
   return (
     <aside className="rooms-bot-messages" role="dialog" aria-modal="true" aria-label={t('rooms.botMessagesTitle')}>
       <header className="rooms-bot-messages__header">
@@ -314,7 +336,8 @@ export default function Rooms() {
 
       {botMessagesOpen && (
         <BotMessagesDrawer
-          messages={botMessages.data?.messages ?? []}
+          workspaceId={workspaceId ?? ''}
+          initialMessages={botMessages.data?.messages ?? EMPTY_BOT_MESSAGES}
           loading={botMessages.isLoading}
           failed={botMessages.isError}
           onClose={() => setBotMessagesOpen(false)}
