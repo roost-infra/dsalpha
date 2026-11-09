@@ -63,7 +63,7 @@ _ORPHAN_ROOM_THREADS_SQL = """
       AND EXISTS (
           SELECT 1 FROM conversation_queries q
           WHERE q.conversation_thread_id = t.conversation_thread_id
-            AND q.content LIKE '%[Group chat "%'
+            AND POSITION('[Group chat "' IN q.content) > 0
       )
 """
 
