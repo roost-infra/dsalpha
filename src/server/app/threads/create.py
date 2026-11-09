@@ -173,6 +173,10 @@ async def create_thread_endpoint(
         # The thread is the bot's from birth; the resolver would otherwise
         # answer the first turn as the place's default.
         await bot_db.bind_thread_bot(thread_id, turn_bot["bot_id"], force=True)
+        # The first chat a user opens with a bot is its private conversation.
+        # Pinning it here keeps bot-to-bot delivery from minting a second,
+        # unnamed thread the user never asked for (COALESCE keeps the first).
+        await bot_db.set_primary_thread(turn_bot["bot_id"], thread_id)
 
     title_task = None if named_title is not None else schedule_title_generation(
         thread_id=thread_id,

@@ -502,6 +502,36 @@ async def get_private_thread(bot_id: Any, *, conn=None) -> Optional[str]:
             return str(row["primary_thread_id"])
 
 
+async def find_private_thread(bot_id: Any) -> Optional[str]:
+    """An existing private thread for a bot whose pointer is missing.
+
+    Old rows predate the pointer being written at chat creation. Prefer a
+    thread with a title (the chat the user opened from Bots) over the
+    pointer-less unnamed threads an earlier delivery path minted, then the
+    oldest; the caller pins it before using it.
+    """
+    bot = _clean_bot_id(bot_id)
+    if bot is None:
+        return None
+    async with get_db_connection() as db:
+        async with db.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT t.conversation_thread_id
+                FROM bot_threads bt
+                JOIN conversation_threads t
+                  ON t.conversation_thread_id = bt.thread_id
+                WHERE bt.bot_id = %s AND bt.kind = 'private'
+                  AND t.bot_id = %s AND t.archived_at IS NULL
+                ORDER BY (COALESCE(t.title, '') <> '') DESC, t.created_at ASC
+                LIMIT 1
+                """,
+                (bot, bot),
+            )
+            row = await cur.fetchone()
+            return str(row["conversation_thread_id"]) if row else None
+
+
 async def get_thread_bot_id(thread_id: Any, *, conn=None) -> Optional[str]:
     """The bot a thread carries, if any (None for a not-yet-stamped thread)."""
     cleaned = normalize_uuid(str(thread_id)) if thread_id else None

@@ -62,6 +62,18 @@ async def ensure_private_thread(bot: Dict[str, Any]) -> str:
     usable = await bot_db.get_private_thread(bot["bot_id"])
     if usable:
         return usable
+    # Older bots have private chat threads but no pointer (the pointer used to
+    # be written only by this delivery path). Reuse the chat the user opened
+    # before minting an unnamed thread they never asked for.
+    existing = await bot_db.find_private_thread(bot["bot_id"])
+    if existing:
+        await bot_db.set_primary_thread(bot["bot_id"], existing)
+        logger.info(
+            "[BOT_MESSAGE] reused private thread %s for bot %s",
+            existing,
+            bot["bot_id"],
+        )
+        return existing
     from psycopg.rows import dict_row
 
     from src.server.database.conversation.threads_write import ensure_thread_exists

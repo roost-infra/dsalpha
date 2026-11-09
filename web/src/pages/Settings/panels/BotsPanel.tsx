@@ -524,6 +524,14 @@ export function BotsPanel() {
   const startChat = async (bot: BotInfo) => {
     if (chattingBotId || bot.status === 'paused') return;
     setChatFailure(null);
+    // A bot has one private conversation. Opening it again must not make a
+    // second thread beside the one its bot-to-bot messages land in.
+    if (bot.primary_thread_id) {
+      navigate(`/chat/t/${bot.primary_thread_id}`, {
+        state: { workspaceId: bot.workspace_id },
+      });
+      return;
+    }
     setChattingBotId(bot.bot_id);
     try {
       const created = await createThreadWithTitle({

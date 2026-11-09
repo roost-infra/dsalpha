@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.server.services.bot_messages.delivery import deliver_message, sender_frame
+from src.server.services.bot_messages.delivery import deliver_message, ensure_private_thread, sender_frame
 
 USER = "user-1"
 WS = "22222222-2222-2222-2222-222222222222"
@@ -182,3 +182,22 @@ async def test_an_attempt_past_the_retry_ceiling_fails_the_row():
     assert result["outcome"] == "attempts_exhausted"
     mark.assert_awaited_once_with("m-1", "failed")
     finish.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_existing_bot_chat_is_pinned_before_minting_a_new_thread():
+    with patch(
+        "src.server.database.bots.get_private_thread", AsyncMock(return_value=None)
+    ), patch(
+        "src.server.database.bots.find_private_thread",
+        AsyncMock(return_value="existing-thread"),
+    ), patch(
+        "src.server.database.bots.set_primary_thread", AsyncMock()
+    ) as pin, patch(
+        "src.server.database.conversation.threads_write.ensure_thread_exists",
+        AsyncMock(),
+    ) as mint:
+        thread = await ensure_private_thread(TARGET)
+    assert thread == "existing-thread"
+    pin.assert_awaited_once_with("b-2", "existing-thread")
+    mint.assert_not_awaited()
