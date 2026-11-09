@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, ChevronRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
 import logoLight from '../../assets/img/logo.svg';
 import logoDark from '../../assets/img/logo-dark.svg';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -9,7 +9,6 @@ import { useNavActive } from '../nav/useNavActive';
 import { useNavItems } from '../nav/useNavItems';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import NavigationPanel from '@/pages/ChatAgent/components/NavigationPanel';
-import { ConversationSections } from './ConversationSections';
 import NavDisplayOptions from '@/pages/ChatAgent/components/NavDisplayOptions';
 import { useCreateWorkspace } from '@/pages/ChatAgent/hooks/useCreateWorkspace';
 import { useNavTreeProps } from '@/pages/ChatAgent/hooks/useNavTreeProps';
@@ -140,7 +139,6 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
   }, [onWidthChange]);
 
   const { currentWorkspaceId, currentThreadId } = useChatRoute();
-  const [treeOpen, setTreeOpen] = useState(false);
   // Subagent registry published by the visible ChatView (sidebarAgentsBridge).
   // Only surfaced when the slice belongs to the thread this sidebar shows as
   // current — a stale slice from another thread must never render a tree.
@@ -292,16 +290,9 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
         })}
       </nav>
 
-      <ConversationSections />
-
       <div className="sidebar-section-header">
-        <button
-          className="sidebar-section-title"
-          onClick={() => setTreeOpen((open) => !open)}
-          aria-expanded={treeOpen}
-        >
-          <ChevronRight className={treeOpen ? 'tree-caret is-open' : 'tree-caret'} aria-hidden />
-          {t('conversations.moreSessions')}
+        <button className="sidebar-section-title" onClick={openGallery}>
+          {t('sidebar.workspaces')}
         </button>
         <div className="sidebar-section-actions">
           <button
@@ -324,11 +315,9 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
         </div>
       </div>
 
-      {treeOpen && (
-        <div className="sidebar-tree">
-          <NavigationPanel {...navTreeProps} />
-        </div>
-      )}
+      <div className="sidebar-tree">
+        <NavigationPanel {...navTreeProps} />
+      </div>
 
       <GettingStartedGate variant="row" />
 

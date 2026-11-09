@@ -35,6 +35,7 @@ import { useNow } from '@/hooks/useNow';
 import { useWorkspaceLabel } from '@/hooks/useWorkspaceLabel';
 import { HomeRowIcon } from '@/hooks/useHomeWorkspace';
 import { BotMark } from '@/components/bots/BotMark';
+import { WorkspaceConversations } from '@/components/Sidebar/WorkspaceConversations';
 import { isHomeWorkspace } from '@/lib/homeWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import { sidebarAgentRowLabel, type SidebarAgentRow } from '../session/subagents/subagentStatus';
@@ -869,6 +870,7 @@ function WorkspaceTreeRowImpl({
             shrinks to header height (clean gap), and the DragOverlay chip
             carries the visual instead. */}
         <kit.Collapse show={isExpanded && !isDragging}>
+          <WorkspaceConversations workspaceId={wsId} />
           {!threadsLoading && threads.length === 0 && (
             <div
               className="text-xs px-2 py-1"
