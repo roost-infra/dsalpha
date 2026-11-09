@@ -48,6 +48,26 @@ async def _count(sql: str, params: tuple = ()) -> int:
             return int(row[0]) if row else 0
 
 
+# An old room member removed before the removal archived its thread: the
+# thread has a bot but no bot_threads row, and its first turn is the room
+# system reminder. Only those are touched; a user's own untitled chat stays.
+_ORPHAN_ROOM_THREADS_SQL = """
+    SELECT COUNT(*) FROM conversation_threads t
+    WHERE t.bot_id IS NOT NULL
+      AND COALESCE(btrim(t.title), '') = ''
+      AND t.archived_at IS NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM bot_threads bt
+          WHERE bt.thread_id = t.conversation_thread_id
+      )
+      AND EXISTS (
+          SELECT 1 FROM conversation_queries q
+          WHERE q.conversation_thread_id = t.conversation_thread_id
+            AND q.content LIKE '%[Group chat "%'
+      )
+"""
+
+
 async def main(args: argparse.Namespace) -> int:
     dry = not args.apply
     print(f"bots/rooms maintenance — {'DRY RUN' if dry else 'APPLY'}")
@@ -76,6 +96,9 @@ async def main(args: argparse.Namespace) -> int:
         "WHERE created_at < NOW() - make_interval(days => %s)",
         (args.prune_days,),
     )
+    orphan_room_threads = await _count(
+        _ORPHAN_ROOM_THREADS_SQL
+    )
     stale_assignments = await _count(
         "SELECT COUNT(*) FROM assignments "
         "WHERE status IN ('requested', 'working', 'needs_input') "
@@ -85,6 +108,7 @@ async def main(args: argparse.Namespace) -> int:
     print(f"terminal bot messages older than {args.prune_days}d: {terminal}")
     print(f"room log rows older than {args.prune_days}d: {old_log}")
     print(f"bot versions older than {args.prune_days}d: {old_versions}")
+    print(f"untitled orphaned room threads: {orphan_room_threads}")
     print(
         f"open assignments older than {args.stale_assignment_days}d: "
         f"{stale_assignments}"
@@ -119,6 +143,15 @@ async def main(args: argparse.Namespace) -> int:
         (args.prune_days,),
     )
     closed = 0
+    if args.archive_orphan_room_threads:
+        archived = await _one(
+            _ORPHAN_ROOM_THREADS_SQL.replace(
+                "SELECT COUNT(*) FROM conversation_threads t",
+                "UPDATE conversation_threads t SET archived_at = NOW()",
+            )
+        )
+        print(f"archived orphaned room threads: {archived}")
+
     if args.close_assignments:
         closed = await _one(
             "UPDATE assignments SET status = 'cancelled', outcome = 'timeout', "
@@ -151,6 +184,11 @@ def _parse() -> argparse.Namespace:
         "--close-assignments",
         action="store_true",
         help="cancel open assignments past the stale window",
+    )
+    parser.add_argument(
+        "--archive-orphan-room-threads",
+        action="store_true",
+        help="archive untitled room threads left behind by old member removals",
     )
     return parser.parse_args()
 

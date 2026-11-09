@@ -286,10 +286,25 @@ async def remove_member(room_id: Any, bot_id: Any) -> bool:
                     (cleaned_room, cleaned_bot),
                 )
                 # A bot that left the room cannot read or post in it any more;
-                # its room thread mapping goes with the membership.
+                # archive the thread it answered in (a thread with no mapping
+                # surfaced as an untitled conversation in the sidebar), then
+                # drop the mapping.
+                await cur.execute(
+                    "SELECT thread_id FROM bot_threads "
+                    "WHERE room_id = %s AND bot_id = %s",
+                    (cleaned_room, cleaned_bot),
+                )
+                orphaned = [row["thread_id"] for row in await cur.fetchall()]
+                if orphaned:
+                    await cur.execute(
+                        "UPDATE conversation_threads SET archived_at = NOW() "
+                        "WHERE conversation_thread_id = ANY(%s) "
+                        "AND archived_at IS NULL",
+                        (orphaned,),
+                    )
                 await cur.execute(
                     "DELETE FROM bot_threads WHERE room_id = %s AND bot_id = %s",
-                    (cleaned_room, _str(cleaned_bot)),
+                    (cleaned_room, cleaned_bot),
                 )
                 if member["role"] == "host":
                     # The host seat survives a removal: the earliest remaining

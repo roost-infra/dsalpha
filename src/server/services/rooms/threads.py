@@ -40,7 +40,16 @@ async def ensure_room_thread(room: Dict[str, Any], bot: Dict[str, Any]) -> str:
     )
     if bound and bound != thread_id:
         # Another dispatch minted the member's room thread first; answer
-        # there, and leave this race's unused thread to history.
+        # there and archive this race's unused thread rather than leaving an
+        # untitled conversation behind. Best effort: the round can proceed.
+        from src.server.database.conversation.threads_write import (
+            update_thread_fields,
+        )
+
+        try:
+            await update_thread_fields(thread_id, archived=True)
+        except Exception:  # pragma: no cover - cleanup must not fail a round
+            logger.warning("[ROOM] could not archive unused thread %s", thread_id)
         logger.info(
             "[ROOM] bot %s already answers room %s in %s",
             bot["bot_id"],
