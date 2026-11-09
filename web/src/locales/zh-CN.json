@@ -6610,6 +6610,7 @@
     "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。"
   },
   "conversations": {
+    "moreSessions": "工作区与历史会话",
       "title": "会话",
       "workspace": "工作区",
       "noRooms": "这个工作区还没有群聊"

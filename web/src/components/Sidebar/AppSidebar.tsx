@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, SquarePen } from 'lucide-react';
 import logoLight from '../../assets/img/logo.svg';
 import logoDark from '../../assets/img/logo-dark.svg';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -140,6 +140,7 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
   }, [onWidthChange]);
 
   const { currentWorkspaceId, currentThreadId } = useChatRoute();
+  const [treeOpen, setTreeOpen] = useState(false);
   // Subagent registry published by the visible ChatView (sidebarAgentsBridge).
   // Only surfaced when the slice belongs to the thread this sidebar shows as
   // current — a stale slice from another thread must never render a tree.
@@ -294,8 +295,13 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
       <ConversationSections />
 
       <div className="sidebar-section-header">
-        <button className="sidebar-section-title" onClick={openGallery}>
-          {t('sidebar.workspaces')}
+        <button
+          className="sidebar-section-title"
+          onClick={() => setTreeOpen((open) => !open)}
+          aria-expanded={treeOpen}
+        >
+          <ChevronRight className={treeOpen ? 'tree-caret is-open' : 'tree-caret'} aria-hidden />
+          {t('conversations.moreSessions')}
         </button>
         <div className="sidebar-section-actions">
           <button
@@ -318,9 +324,11 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
         </div>
       </div>
 
-      <div className="sidebar-tree">
-        <NavigationPanel {...navTreeProps} />
-      </div>
+      {treeOpen && (
+        <div className="sidebar-tree">
+          <NavigationPanel {...navTreeProps} />
+        </div>
+      )}
 
       <GettingStartedGate variant="row" />
 

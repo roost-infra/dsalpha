@@ -6700,6 +6700,7 @@
     "skillsStoredNote": "Stored for v2: the bot does not yet restrict the skills a turn may load."
   },
   "conversations": {
+    "moreSessions": "Workspaces & history",
       "title": "Conversations",
       "workspace": "Workspace",
       "noRooms": "No rooms in this workspace yet"

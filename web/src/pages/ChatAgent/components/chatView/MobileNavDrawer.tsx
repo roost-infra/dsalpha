@@ -1,7 +1,7 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { Minus } from 'lucide-react';
+import { ChevronRight, Minus } from 'lucide-react';
 import { motion, AnimatePresence, type PanInfo } from '@/lib/framer';
 import { TWEEN } from '@/lib/motion';
 import NavigationPanel from '../NavigationPanel';
@@ -59,6 +59,7 @@ export function MobileNavDrawer({ visible, onMinimize, isActive, workspaceId, th
   // Every pick shows something the drawer is covering, so it leaves with the
   // pick. Closed here as well as on activation because a pick can stay in this
   // view: the thread already open, or one of its subagents.
+  const [treeOpen, setTreeOpen] = useState(false);
   const { onNavigateThread, onNewThread, onSelectAgent } = navTreeProps;
   const picks = useMemo(() => {
     const closing = <Args extends unknown[]>(pick: (...args: Args) => void) => (...args: Args): void => {
@@ -147,14 +148,25 @@ export function MobileNavDrawer({ visible, onMinimize, isActive, workspaceId, th
             >
               <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 <ConversationSections onNavigate={onMinimize} />
-                <div style={{ flex: 1, minHeight: 0 }}>
-                  <NavigationPanel
-                    headerActions={headerActions}
-                    isActive={isActive}
-                    {...navTreeProps}
-                    {...picks}
-                  />
-                </div>
+                <button
+                  type="button"
+                  className="conversation-tree-toggle"
+                  aria-expanded={treeOpen}
+                  onClick={() => setTreeOpen((open) => !open)}
+                >
+                  <ChevronRight className={treeOpen ? 'tree-caret is-open' : 'tree-caret'} aria-hidden />
+                  {t('conversations.moreSessions')}
+                </button>
+                {treeOpen && (
+                  <div style={{ flex: 1, minHeight: 0 }}>
+                    <NavigationPanel
+                      headerActions={headerActions}
+                      isActive={isActive}
+                      {...navTreeProps}
+                      {...picks}
+                    />
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
