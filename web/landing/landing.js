@@ -44,5 +44,10 @@
       });
     }, { rootMargin: '0px 0px -8% 0px', threshold: 0.05 });
     targets.forEach(function (el) { observer.observe(el); });
+    // If the observer never delivers (a restored scroll position, a browser
+    // that throttles it), do not leave the page looking empty.
+    setTimeout(function () {
+      targets.forEach(function (el) { el.classList.add('is-in'); });
+    }, 1800);
   }
 })();
