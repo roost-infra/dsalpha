@@ -9,7 +9,7 @@
  * (./navTreeKit) finds its twin in the new tree by it, to carry focus and
  * animation clocks across. An element without one has no twin.
  */
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
+import React, { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight, Folder, FolderOpen, Pin,
@@ -33,6 +33,7 @@ import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { useWorkspaceLabel } from '@/hooks/useWorkspaceLabel';
 import { HomeRowIcon } from '@/hooks/useHomeWorkspace';
+import { BotMark } from '@/components/bots/BotMark';
 import { isHomeWorkspace } from '@/lib/homeWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import { sidebarAgentRowLabel, type SidebarAgentRow } from '../session/subagents/subagentStatus';
@@ -62,6 +63,13 @@ export interface ThreadsData {
   loading?: boolean;
   total?: number;
 }
+
+/** Bot identities for the nav tree's thread avatars; absent in isolated rows. */
+export const NavBotsContext = createContext<Map<string, {
+  bot_id: string;
+  name: string;
+  avatar?: Record<string, unknown>;
+}> | null>(null);
 
 interface RowMachine {
   icon: LucideIcon;
@@ -401,8 +409,13 @@ function ThreadTreeRowImpl({
   const tid = thread.thread_id;
   const subagents = agents?.filter((a) => !a.isMainAgent) || [];
   const hasSubagents = isCurrentThread && subagents.length > 0;
+  const bots = useContext(NavBotsContext);
+  const botId = typeof thread.bot_id === 'string' ? thread.bot_id : null;
+  const bot = botId ? bots?.get(botId) : undefined;
   const seedTitle = thread.title || thread.first_query_content?.slice(0, 40) || '';
-  const title = seedTitle || t('nav.untitledThread');
+  // A bot's private conversation has no user-typed title until it is named;
+  // the bot's own name is the honest fallback, not "Untitled".
+  const title = seedTitle || bot?.name || t('nav.untitledThread');
   const isPinned = Boolean(thread.is_pinned);
 
   // The metadata card is held shut while the right-click menu is up, so the
@@ -485,6 +498,11 @@ function ThreadTreeRowImpl({
                 onClick={activateRow}
               >
                 <ThreadRowGlyph tid={tid} isCurrentThread={isCurrentThread} />
+                {bot && (
+                  <span className="inline-flex shrink-0" data-testid="nav-thread-bot-avatar">
+                    <BotMark bot={bot} size={16} decorative />
+                  </span>
+                )}
                 {renaming ? (
                   <input
                     data-nav-key={`thread:${tid}:rename`}
