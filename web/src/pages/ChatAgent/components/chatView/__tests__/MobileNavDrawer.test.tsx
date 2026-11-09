@@ -53,6 +53,7 @@ function renderDrawer() {
       workspaceName="Workspace"
     />,
   );
+  fireEvent.click(screen.getByRole('button', { name: 'conversations.moreSessions' }));
   return { onMinimize, agents };
 }
 
