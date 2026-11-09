@@ -193,5 +193,12 @@ def _parse() -> argparse.Namespace:
     return parser.parse_args()
 
 
+async def _run() -> int:
+    # The script talks to the app's Postgres pool, which the server opens in
+    # its lifespan; app_infra opens (and closes) it for a one-shot process.
+    async with app_infra(redis=False, agent_config=False):
+        return await main(_parse())
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main(_parse())))
+    raise SystemExit(asyncio.run(_run()))
