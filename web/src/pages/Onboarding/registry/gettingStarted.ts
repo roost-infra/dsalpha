@@ -1,4 +1,4 @@
-import { DESKTOP_DOWNLOAD_URL, PLATFORM_URL } from '@/config/supportLinks';
+import { PLATFORM_URL } from '@/config/supportLinks';
 import { openComputersPanel } from '@/pages/ChatAgent/hooks/computerPanelStore';
 import { WELCOME_PATH } from '../welcome/paths';
 import type { GettingStartedTaskDef } from './types';
@@ -55,15 +55,6 @@ export const GETTING_STARTED_TASKS: GettingStartedTaskDef[] = [
     descKey: 'onboarding.gettingStarted.tasks.models.desc',
     to: '/settings?tab=model',
     visitRoute: (p, s) => p === '/settings' && new URLSearchParams(s).get('tab') === 'model',
-  },
-  {
-    id: 'desktopApp',
-    titleKey: 'onboarding.gettingStarted.tasks.desktopApp.title',
-    descKey: 'onboarding.gettingStarted.tasks.desktopApp.desc',
-    to: DESKTOP_DOWNLOAD_URL,
-    external: true,
-    offeredOn: 'browser',
-    doneWhen: 'inDesktopApp',
   },
   {
     id: 'remoteControl',
