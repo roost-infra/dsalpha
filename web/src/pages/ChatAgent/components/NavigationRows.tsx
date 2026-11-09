@@ -37,6 +37,7 @@ import { BotMark } from '@/components/bots/BotMark';
 import { WorkspaceConversations } from '@/components/Sidebar/WorkspaceConversations';
 import { isHomeWorkspace } from '@/lib/homeWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
+import { useBots } from '@/hooks/useBots';
 import { sidebarAgentRowLabel, type SidebarAgentRow } from '../session/subagents/subagentStatus';
 import { SubagentStatusIcon } from './taskStatusUi';
 import type { NavWorkspace } from '../hooks/useNavigationData';
@@ -708,9 +709,18 @@ function WorkspaceTreeRowImpl({
   const isPinned = Boolean(ws.is_pinned);
   const machine = useRowMachine(ws);
   const threads = threadsData?.threads || [];
+  // A bot's primary thread is its private chat, already in the 私聊 list above;
+  // listing it again under 历史会话 is the same conversation twice.
+  const { data: botsData } = useBots(wsId);
+  const primaryThreadIds = new Set(
+    (botsData?.bots ?? [])
+      .map((bot) => bot.primary_thread_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const historyThreads = threads.filter((thread) => !primaryThreadIds.has(thread.thread_id));
   // Row-order signature for the thread rows' glide: rows re-measure only when
   // membership or order actually changes, not on every panel render.
-  const threadOrderSignature = threads.map((th) => th.thread_id).join('|');
+  const threadOrderSignature = historyThreads.map((th) => th.thread_id).join('|');
   const threadsLoading = threadsData?.loading || false;
   const isRenaming = rename.active;
   // The options menu isn't offered on Home (shared, immutable), mirroring
@@ -870,16 +880,13 @@ function WorkspaceTreeRowImpl({
             carries the visual instead. */}
         <kit.Collapse show={isExpanded && !isDragging}>
           <WorkspaceConversations workspaceId={wsId} />
-          {!threadsLoading && threads.length === 0 && (
-            <div
-              className="text-xs px-2 py-1"
-              style={{ paddingLeft: 34, color: 'var(--color-icon-muted)' }}
-            >
-              {t('nav.noConversations')}
+          {historyThreads.length > 0 && (
+            <div className="workspace-conversations__section" style={{ paddingLeft: 34 }}>
+              {t('nav.history')}
             </div>
           )}
           <kit.ThreadList>
-            {threads.map((thread) => (
+            {historyThreads.map((thread) => (
               <kit.ThreadItem key={thread.thread_id} order={threadOrderSignature}>
                 <ThreadTreeRow
                   wsId={wsId}
@@ -904,7 +911,7 @@ function WorkspaceTreeRowImpl({
           </kit.ThreadList>
           {/* Show more: the next page of threads for this workspace */}
           {onLoadMoreThreads && typeof threadsData?.total === 'number'
-            && threads.length < threadsData.total && !threadsLoading && (
+            && historyThreads.length < threadsData.total && !threadsLoading && (
             <div
               className="nav-panel-row"
               style={{ paddingLeft: 44 }}
