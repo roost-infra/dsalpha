@@ -9,9 +9,8 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { Bot as BotIcon, MessageSquare, MessagesSquare, Plus, UsersRound, X } from 'lucide-react';
+import { Bot as BotIcon, MessagesSquare, Plus, UsersRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ErrorBanner } from '@/components/ui/error-banner';
@@ -20,19 +19,19 @@ import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots } from '@/hooks/useBots';
 import { useRoom, useRooms } from '@/hooks/useRooms';
 import type { RoomInfo } from '@/api/rooms';
-import { getBotMessages, streamBotMessages, type BotInfo, type BotMessageInfo } from '@/api/bots';
+import type { BotInfo } from '@/api/bots';
 import { BotMark } from '@/components/bots/BotMark';
-import Markdown from '@/pages/ChatAgent/components/Markdown';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import { failureText } from '@/lib/failureText';
 import { responderLabelKey } from './roomsCopy';
 import CreateRoomDialog from './components/CreateRoomDialog';
 import { RoomAvatar } from './components/RoomAvatar';
+import { BotExchangePanel } from './components/BotExchangePanel';
+import { buildBotPairs } from './botInbox';
+import { useBotInbox } from './useBotInbox';
 import RoomPanel from './components/RoomPanel';
 import './Rooms.css';
 
-/** The bot-to-bot inbox, opened from the left rail: who sent what to which bot. */
-const EMPTY_BOT_MESSAGES: BotMessageInfo[] = [];
 const ROOM_READ_KEY = 'langalpha.rooms.read';
 
 function loadReadSeqs(): Record<string, number> {
@@ -50,73 +49,6 @@ function saveReadSeqs(seqs: Record<string, number>): void {
   } catch {
     // A full or disabled storage only costs the unread dot, not the room.
   }
-}
-
-function BotMessagesDrawer({
-  workspaceId,
-  initialMessages,
-  loading,
-  failed,
-  onClose,
-}: {
-  workspaceId: string;
-  initialMessages: BotMessageInfo[];
-  loading: boolean;
-  failed: boolean;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const [messages, setMessages] = useState(initialMessages);
-
-  // The list read is the snapshot; the tail is what makes an open inbox live.
-  // Starting from the newest snapshot timestamp means a message that landed
-  // between the two reads arrives once, and the id check drops the overlap.
-  useEffect(() => {
-    setMessages(initialMessages);
-    const after = initialMessages[0]?.created_at ?? null;
-    return streamBotMessages(workspaceId, after, {
-      onMessage: (message) => {
-        setMessages((current) =>
-          current.some((row) => row.message_id === message.message_id)
-            ? current
-            : [message, ...current],
-        );
-      },
-    });
-  }, [workspaceId, initialMessages]);
-  return (
-    <aside className="rooms-bot-messages" role="dialog" aria-modal="true" aria-label={t('rooms.botMessagesTitle')}>
-      <header className="rooms-bot-messages__header">
-        <span>{t('rooms.botMessagesTitle')}</span>
-        <Button variant="ghost" size="icon" aria-label={t('common.close')} onClick={onClose}>
-          <X className="h-4 w-4" aria-hidden />
-        </Button>
-      </header>
-      {loading ? (
-        <div className="rooms-bot-messages__state" role="status">{t('common.loading')}</div>
-      ) : failed ? (
-        <div className="rooms-bot-messages__state" role="status">{t('rooms.botMessagesFailed')}</div>
-      ) : messages.length === 0 ? (
-        <div className="rooms-bot-messages__state">{t('rooms.botMessagesEmpty')}</div>
-      ) : (
-        <div className="rooms-bot-messages__list">
-          {messages.map((message) => (
-            <article className="rooms-bot-messages__row" key={message.message_id}>
-              <div className="rooms-bot-messages__route">
-                <span>{message.from_name || t('rooms.you')}</span>
-                <span aria-hidden>→</span>
-                <span>{message.to_name}</span>
-                <span className="rooms-bot-messages__meta">{message.kind} · {message.status}</span>
-              </div>
-              <div className="rooms-bot-messages__body">
-                <Markdown content={message.content} variant="compact" />
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </aside>
-  );
 }
 
 function RoomListRow({
@@ -168,7 +100,7 @@ export default function Rooms() {
   const navigate = useNavigate();
   const [workspaceChoice, setWorkspaceChoice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [botMessagesOpen, setBotMessagesOpen] = useState(false);
+  const [exchangeKey, setExchangeKey] = useState<string | null>(null);
   const [openingBotId, setOpeningBotId] = useState<string | null>(null);
   const [readSeqs, setReadSeqs] = useState<Record<string, number>>(loadReadSeqs);
   const markRoomRead = (room: RoomInfo) => {
@@ -203,14 +135,11 @@ export default function Rooms() {
   const rooms = roomsQuery.data?.rooms ?? [];
   const maxBots = roomsQuery.data?.max_bots ?? 12;
   const botsQuery = useBots(workspaceId, !!workspaceId);
-  // The bot-to-bot inbox is a read of the durable bot_messages rows, not of a
-  // thread: it is how a reader sees A→B without opening B's private chat.
-  const botMessages = useQuery({
-    queryKey: ['bot-messages', workspaceId],
-    queryFn: () => getBotMessages(workspaceId, 50),
-    enabled: !!workspaceId,
-  });
+  const inbox = useBotInbox(workspaceId);
   const bots = botsQuery.data?.bots ?? [];
+  const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
+  const botPairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  const activePair = botPairs.find((pair) => pair.key === exchangeKey) ?? null;
   const openPrivateChat = async (bot: BotInfo) => {
     if (!workspaceId || openingBotId) return;
     setOpeningBotId(bot.bot_id);
@@ -348,13 +277,38 @@ export default function Rooms() {
             ))
           )}
 
-          <div className="rooms-list__section">
-            <span>{t('rooms.botMessagesSection')}</span>
-            <Button variant="ghost" size="sm" onClick={() => setBotMessagesOpen(true)}>
-              <MessageSquare className="h-3.5 w-3.5" aria-hidden />
-              {t('rooms.botMessagesOpen')}
-            </Button>
-          </div>
+          <div className="rooms-list__section">{t('rooms.botMessagesSection')}</div>
+          {inbox.isLoading && botPairs.length === 0 ? (
+            <div className="rooms-list__empty-body rooms-list__quiet" role="status">
+              {t('common.loading')}
+            </div>
+          ) : botPairs.length === 0 ? (
+            <div className="rooms-list__empty-body rooms-list__quiet">{t('rooms.botMessagesEmpty')}</div>
+          ) : (
+            botPairs.map((pair) => (
+              <button
+                key={pair.key}
+                type="button"
+                className="rooms-list__row rooms-list__row--exchange"
+                onClick={() => setExchangeKey(pair.key)}
+              >
+                <span className="rooms-exchange__faces" aria-hidden>
+                  <BotMark bot={pair.left} size={20} decorative />
+                  <BotMark bot={pair.right} size={20} decorative />
+                </span>
+                <span className="rooms-list__body">
+                  <span className="rooms-list__name">
+                    <span className="rooms-list__name-text">
+                      {pair.left.name} ⇄ {pair.right.name}
+                    </span>
+                  </span>
+                  <span className="rooms-list__preview">
+                    {pair.messages.at(-1)?.content.replace(/\s+/g, ' ').trim() || t('rooms.previewEmpty')}
+                  </span>
+                </span>
+              </button>
+            ))
+          )}
         </aside>
 
         <section className="rooms-detail">
@@ -374,13 +328,13 @@ export default function Rooms() {
         </section>
       </div>
 
-      {botMessagesOpen && (
-        <BotMessagesDrawer
-          workspaceId={workspaceId ?? ''}
-          initialMessages={botMessages.data?.messages ?? EMPTY_BOT_MESSAGES}
-          loading={botMessages.isLoading}
-          failed={botMessages.isError}
-          onClose={() => setBotMessagesOpen(false)}
+      {activePair && (
+        <BotExchangePanel
+          pair={activePair}
+          messages={activePair.messages}
+          loading={inbox.isLoading}
+          failed={inbox.isError}
+          onClose={() => setExchangeKey(null)}
         />
       )}
 
