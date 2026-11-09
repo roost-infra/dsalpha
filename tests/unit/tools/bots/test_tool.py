@@ -424,3 +424,21 @@ async def test_an_unselectable_bot_model_is_refused():
         out = await _invoke(create_bot, {"name": "Macro", "model": "nope"})
     assert "Model unavailable" in out
     check.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_chain_older_than_its_wall_clock_budget_is_refused():
+    from datetime import UTC, datetime, timedelta
+
+    from src.tools.bots.tool import MAX_CHAIN_AGE_SECONDS
+
+    old = datetime.now(UTC) - timedelta(seconds=MAX_CHAIN_AGE_SECONDS + 60)
+    with _ctx(), patch(
+        "src.server.database.bot_messages.get_message",
+        AsyncMock(return_value={"message_id": "root-1", "created_at": old.isoformat()}),
+    ):
+        out = await send_bot_message.ainvoke(
+            _call({"to": "Scout", "content": "one more hop"}),
+            config=_chained(bot_message_root_id="root-1"),
+        )
+    assert "budget is spent" in out.content

@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from langchain_core.runnables import RunnableConfig
@@ -32,9 +33,14 @@ _KINDS = ("message", "request", "reply", "question", "notice")
 # A chain starts with a message sent from a user turn (depth 0), and every
 # delivery grows it by one. These caps are what keeps two bots from spending
 # the account's credit in a loop; the env var is the deployment's kill switch.
-MAX_CHAIN_DEPTH = 6
-MAX_ROOT_MESSAGES = 64
-SEND_RATE_PER_MINUTE = 8
+# Six hops of full agent turns take tens of minutes, and a bot that branches a
+# request to two peers multiplies that; these are the deployment defaults, all
+# env-tunable. The age cap is the wall-clock stop: hops alone do not bound how
+# long one hop can think.
+MAX_CHAIN_DEPTH = int(os.environ.get("BOT_MAX_CHAIN_DEPTH", "3"))
+MAX_ROOT_MESSAGES = int(os.environ.get("BOT_MAX_ROOT_MESSAGES", "24"))
+MAX_CHAIN_AGE_SECONDS = int(os.environ.get("BOT_MAX_CHAIN_AGE_SECONDS", "600"))
+SEND_RATE_PER_MINUTE = int(os.environ.get("BOT_SEND_RATE_PER_MINUTE", "8"))
 
 
 def _messaging_enabled() -> bool:
@@ -188,6 +194,20 @@ async def send_bot_message(
             "starting another hop"
         )
     if root is not None:
+        root_message = await msg_db.get_message(root)
+        started_at = (root_message or {}).get("created_at")
+        if started_at:
+            try:
+                started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+                age = (datetime.now(UTC) - started).total_seconds()
+            except (TypeError, ValueError):
+                age = 0.0
+            if age > MAX_CHAIN_AGE_SECONDS:
+                return (
+                    f"refused: this message chain started {int(age // 60)} minutes "
+                    f"ago; the {MAX_CHAIN_AGE_SECONDS // 60}-minute budget is spent. "
+                    "Answer the latest request instead of forwarding it again"
+                )
         used = await msg_db.count_root_messages(root)
         if used >= MAX_ROOT_MESSAGES:
             return (
