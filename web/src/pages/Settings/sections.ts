@@ -63,7 +63,7 @@ export function sectionShown(section: Section): boolean {
 export const GROUPS: readonly { labelKey: string; sections: readonly Section[] }[] = [
   { labelKey: 'settings.group.account', sections: ['account', 'preferences', 'plan'] },
   { labelKey: 'settings.group.app', sections: ['general', 'appearance', 'chat', 'artifacts'] },
-  { labelKey: 'settings.group.agent', sections: ['agent', 'bots', 'model', 'integrations', 'trading'] },
+  { labelKey: 'settings.group.agent', sections: ['bots', 'model', 'integrations', 'wechat'] },
   { labelKey: 'settings.group.labs', sections: ['experiments'] },
 ];
 
