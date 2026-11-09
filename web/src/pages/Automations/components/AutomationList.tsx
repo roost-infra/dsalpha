@@ -16,6 +16,8 @@ import { usePrefetchExecutions } from '../hooks/useExecutions';
 import type { OrderedGroup } from '../hooks/useOrderedGroups';
 import { INSTANT, SELECTION_SPRING } from '../utils/motion';
 import { StatusGlyph } from './StatusMark';
+import { BotMark } from '@/components/bots/BotMark';
+import { useBots } from '@/hooks/useBots';
 import './AutomationList.css';
 
 /** A finished group longer than this starts folded when anything else is on
@@ -35,6 +37,11 @@ interface AutomationListProps {
 export function AutomationList({ groups, readings, selectedId, onSelect, keyboardNav = false }: AutomationListProps) {
   const { t } = useTranslation();
   const locale = useLocale();
+  const { data: botsData } = useBots();
+  const botsById = useMemo(
+    () => new Map((botsData?.bots ?? []).map((bot) => [bot.bot_id, bot])),
+    [botsData],
+  );
   const now = useNow();
   const homeZone = useHomeTimezone();
   const finished = groups.find((g) => g.group === 'finished');
@@ -177,6 +184,11 @@ export function AutomationList({ groups, readings, selectedId, onSelect, keyboar
                     <span className="automations-list-glyph">
                       <StatusGlyph ui={ui} label={t(ui.labelKey)} size={14} />
                     </span>
+                    {a.bot_id && botsById.get(a.bot_id) && (
+                      <span className="inline-flex shrink-0" title={botsById.get(a.bot_id)?.name}>
+                        <BotMark bot={botsById.get(a.bot_id)} size={16} decorative />
+                      </span>
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="automations-list-name">{a.name}</span>
                       <span className="automation-mono automations-list-sub">{scheduleLine(a, t, homeZone, locale)}</span>

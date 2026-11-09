@@ -955,3 +955,11 @@
 .rooms-bot-messages__row--exchange .rooms-bot-messages__meta {
   margin-left: 0;
 }
+
+/* Desktop already has the conversation navigator in the app sidebar; the
+   page keeps its own list only on small screens, where that sidebar is gone. */
+@media (min-width: 768px) {
+  .rooms-page__body > .rooms-list {
+    display: none;
+  }
+}

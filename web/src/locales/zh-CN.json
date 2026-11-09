@@ -166,6 +166,7 @@
     "threadNeedsInput": "等待您的输入",
     "threadUnseen": "已完成，尚未查看",
     "untitledThread": "未命名",
+    "primarySession": "主会话",
     "onComputer": "位于 {{name}} · {{kind}}",
     "noConversations": "暂无会话",
     "workspaceFallback": "工作区",
@@ -6607,6 +6608,11 @@
     "chatPaused": "恢复该 Bot 后才能对话",
     "chatFailed": "无法打开该对话，请重试。",
     "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。"
+  },
+  "conversations": {
+      "title": "会话",
+      "workspace": "工作区",
+      "noRooms": "这个工作区还没有群聊"
   },
   "rooms": {
     "title": "群聊",

@@ -166,6 +166,7 @@
     "threadNeedsInput": "Waiting for your input",
     "threadUnseen": "Finished, not yet viewed",
     "untitledThread": "Untitled",
+    "primarySession": "Primary",
     "onComputer": "On {{name}} · {{kind}}",
     "noConversations": "No conversations yet",
     "workspaceFallback": "Workspace",
@@ -6697,6 +6698,11 @@
     "chatPaused": "Resume this bot before chatting",
     "chatFailed": "That conversation could not be opened. Try again.",
     "skillsStoredNote": "Stored for v2: the bot does not yet restrict the skills a turn may load."
+  },
+  "conversations": {
+      "title": "Conversations",
+      "workspace": "Workspace",
+      "noRooms": "No rooms in this workspace yet"
   },
   "rooms": {
     "title": "Rooms",

@@ -9,6 +9,7 @@ import { useNavActive } from '../nav/useNavActive';
 import { useNavItems } from '../nav/useNavItems';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import NavigationPanel from '@/pages/ChatAgent/components/NavigationPanel';
+import { ConversationSections } from './ConversationSections';
 import NavDisplayOptions from '@/pages/ChatAgent/components/NavDisplayOptions';
 import { useCreateWorkspace } from '@/pages/ChatAgent/hooks/useCreateWorkspace';
 import { useNavTreeProps } from '@/pages/ChatAgent/hooks/useNavTreeProps';
@@ -289,6 +290,8 @@ function AppSidebar({ collapsed, onToggleCollapse, width, onWidthChange }: AppSi
           );
         })}
       </nav>
+
+      <ConversationSections />
 
       <div className="sidebar-section-header">
         <button className="sidebar-section-title" onClick={openGallery}>
