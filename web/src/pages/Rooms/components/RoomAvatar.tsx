@@ -6,6 +6,7 @@
 import { UsersRound } from 'lucide-react';
 import { BotMark } from '@/components/bots/BotMark';
 import type { RoomMemberInfo } from '@/api/rooms';
+import './RoomAvatar.css';
 
 export function RoomAvatar({
   members = [],

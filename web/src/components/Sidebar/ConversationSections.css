@@ -111,3 +111,11 @@
   font-size: 10px;
   color: var(--color-text-tertiary);
 }
+
+/* The phone drawer is the only navigation it has; keep the three sections
+   whole (including exchanges) before the workspace tree starts. */
+@media (max-width: 767px) {
+  .conversation-nav {
+    max-height: 60vh;
+  }
+}
