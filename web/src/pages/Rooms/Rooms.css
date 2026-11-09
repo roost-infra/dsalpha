@@ -568,3 +568,67 @@
     max-width: 92%;
   }
 }
+
+/* A reply may carry markdown: the bubble lets the renderer own its whitespace
+   instead of drawing the source preformatted, like a chat bubble. */
+.rooms-log__bubble--markdown {
+  white-space: normal;
+}
+
+.rooms-log__bubble--markdown .markdown-root {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* A workspace HTML report opened from a room reply: a right-side drawer over
+   the room, sandboxed so the document cannot script the app. */
+.rooms-artifact {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: min(60vw, 760px);
+  height: 100dvh;
+  border-left: 1px solid var(--color-border-muted);
+  background: var(--color-bg-elevated);
+  box-shadow: -18px 0 40px rgb(0 0 0 / 18%);
+}
+
+.rooms-artifact__header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+.rooms-artifact__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.rooms-artifact__state {
+  padding: 24px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.rooms-artifact__frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+@media (max-width: 767px) {
+  .rooms-artifact {
+    width: 100%;
+  }
+}
