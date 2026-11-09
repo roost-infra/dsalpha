@@ -17,8 +17,9 @@ import {
   toggleThreadExpansion,
 } from './navExpansionStore';
 import type { SidebarAgentRow } from '../session/subagents/subagentStatus';
-import { WorkspaceTreeRow, WorkspaceDragChip } from './NavigationRows';
+import { NavBotsContext, WorkspaceTreeRow, WorkspaceDragChip } from './NavigationRows';
 import type { ThreadsData } from './NavigationRows';
+import { useBots } from '@/hooks/useBots';
 import { useArchiveThreadConfirm } from './threadArchiveAction';
 import { useThreadDeleteConfirm } from './threadDeleteAction';
 import ShareThreadDialog, { type ShareThreadTarget } from './ShareThreadDialog';
@@ -113,6 +114,11 @@ function NavigationPanel({
   const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
   const navTree = useNavTreeKit(rootRef);
+  const { data: botsData } = useBots();
+  const botsById = useMemo(
+    () => new Map((botsData?.bots ?? []).map((bot) => [bot.bot_id, bot])),
+    [botsData],
+  );
   const { TreeRoot } = navTree.kit;
   // Duplicate / move / delete are self-contained (mutations + dialogs) so
   // every host (sidebar tree, mobile drawer) gets the same menu as the
@@ -363,6 +369,7 @@ function NavigationPanel({
       )}
       <ScrollArea className="flex-1">
         <div className="py-2">
+          <NavBotsContext value={botsById}>
           <NavTreeContext value={navTree}>
           <TreeRoot
             ids={sortableIds}
@@ -433,6 +440,7 @@ function NavigationPanel({
               </span>
             </div>
           )}
+          </NavBotsContext>
         </div>
       </ScrollArea>
       {wsActions.dialogs}
