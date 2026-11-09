@@ -315,3 +315,29 @@ def test_a_log_row_stringifies_its_uuids_for_json():
     assert isinstance(row["room_id"], str)
     assert isinstance(row["round_id"], str)
     assert isinstance(row["created_at"], str)
+
+
+@pytest.mark.asyncio
+async def test_a_room_thread_is_named_for_its_room_and_bot():
+    from src.server.services.rooms import threads as room_threads
+
+    room = {"room_id": "r-1", "name": "量化团队"}
+    bot = {
+        "bot_id": "b-1",
+        "name": "风控官",
+        "workspace_id": "ws-1",
+        "user_id": "u-1",
+    }
+    with patch.object(
+        room_threads.room_db, "get_room_thread", AsyncMock(return_value=None)
+    ), patch.object(
+        room_threads.room_db, "bind_room_thread", AsyncMock(return_value="t-1")
+    ), patch.object(
+        room_threads.bot_db, "bind_thread_bot", AsyncMock()
+    ), patch(
+        "src.server.database.conversation.threads_write.ensure_thread_exists",
+        AsyncMock(),
+    ) as ensure:
+        thread_id = await room_threads.ensure_room_thread(room, bot)
+    assert thread_id == "t-1"
+    assert ensure.await_args.kwargs["initial_query"] == "量化团队 · 风控官"

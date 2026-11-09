@@ -1,0 +1,1 @@
+import{t as e}from"./infiniteQueryOptions-Dfvzj6n2.js";import{Ep as t,wf as n}from"./index-BlsIypTO.js";function r(r,i){return e({queryKey:t.threads.gallery(r,i),queryFn:({pageParam:e})=>n(r,20,e,null,i),initialPageParam:0,getNextPageParam:(e,t)=>{let n=t.reduce((e,t)=>e+(t.threads?.length??0),0);return n<(e.total??0)?n:void 0},staleTime:3e4})}export{r as t};

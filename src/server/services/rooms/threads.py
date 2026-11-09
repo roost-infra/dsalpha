@@ -29,7 +29,9 @@ async def ensure_room_thread(room: Dict[str, Any], bot: Dict[str, Any]) -> str:
         workspace_id=str(bot["workspace_id"]),
         conversation_thread_id=thread_id,
         user_id=str(bot["user_id"]),
-        initial_query="",
+        # The room page is the only reader of this thread, but a title keeps
+        # every surface that does show it (search, history tools) legible.
+        initial_query=f"{room['name']} · {bot['name']}",
         initial_status="in_progress",
         resume=False,
     )

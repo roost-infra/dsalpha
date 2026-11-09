@@ -1,0 +1,1 @@
+import{r as e}from"./rolldown-runtime-C0FnF6B9.js";import{ep as t}from"./index-BlsIypTO.js";var n=e({getBrokerages:()=>r,setBrokerageEnabled:()=>i});async function r(){let{data:e}=await t.get(`/api/v1/mcp/brokerages`);return e.brokerages??[]}async function i(e,n){let{data:r}=await t.patch(`/api/v1/mcp/brokerages/${e}/enabled`,{enabled:n});return r}export{r as n,i as r,n as t};

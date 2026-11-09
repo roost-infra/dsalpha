@@ -204,6 +204,14 @@ async def get_workspace_threads(
     if platform_prefix:
         where_extra = " AND platform LIKE %s ESCAPE '\\'"
         extra_params.append(f"{_like_escape(platform_prefix)}%")
+    # A room-member thread is the member's context boundary, not a
+    # conversation the user started: listing it would put one untitled row per
+    # bot in the sidebar. The room page is where it is read.
+    room_filter = (
+        " AND NOT EXISTS (SELECT 1 FROM bot_threads bt"
+        " WHERE bt.thread_id = conversation_threads.conversation_thread_id"
+        " AND bt.kind = 'room')"
+    )
 
     try:
         async with pool.get_db_connection() as conn:
@@ -213,7 +221,7 @@ async def get_workspace_threads(
                     f"""
                     SELECT COUNT(*) as total
                     FROM conversation_threads
-                    WHERE workspace_id = %s{archived_filter}{where_extra}
+                    WHERE workspace_id = %s{archived_filter}{where_extra}{room_filter}
                 """,
                     (workspace_id, *extra_params),
                 )
@@ -228,7 +236,7 @@ async def get_workspace_threads(
                     FROM (
                         SELECT {_sql._THREAD_COLUMNS}, last_seen_run_seq
                         FROM conversation_threads
-                        WHERE workspace_id = %s{archived_filter}{where_extra}
+                        WHERE workspace_id = %s{archived_filter}{where_extra}{room_filter}
                         ORDER BY {inner_order}{sort_by} {sort_order.upper()},
                                  conversation_thread_id DESC
                         LIMIT %s OFFSET %s
@@ -287,6 +295,11 @@ async def get_threads_for_user(
     if computer_id is not None:
         where_extra += " AND w.computer_id = %s::uuid AND w.workspace_id <> %s::uuid"
         extra_params += [computer_id, get_home_workspace_id(user_id)]
+    # Room-member threads are read on the room page, never as a conversation.
+    where_extra += (
+        " AND NOT EXISTS (SELECT 1 FROM bot_threads bt"
+        " WHERE bt.thread_id = t.conversation_thread_id AND bt.kind = 'room')"
+    )
 
     try:
         async with pool.get_db_connection() as conn:
