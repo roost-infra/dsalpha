@@ -14,6 +14,7 @@ import { ChatPanel } from './panels/ChatPanel';
 import { ArtifactsPanel } from './panels/ArtifactsPanel';
 import { AgentPanel } from './panels/AgentPanel';
 import { ModelsPanel } from './panels/ModelsPanel';
+import { SandboxPanel } from './panels/SandboxPanel';
 import { TradingPermissionSection } from './panels/TradingPermissionSection';
 import { ExperimentsPanel } from './panels/ExperimentsPanel';
 import { PlanPanel } from './panels/PlanPanel';
@@ -55,6 +56,7 @@ function SectionBody({ section }: { section: Section }) {
     case 'artifacts': return <ArtifactsPanel />;
     case 'agent': return <AgentPanel />;
     case 'model': return <ModelsPanel />;
+    case 'sandbox': return <SandboxPanel />;
     case 'integrations': return <IntegrationsPanel />;
     case 'trading': return <TradingPermissionSection />;
     case 'wechat': return <WeChatTab />;

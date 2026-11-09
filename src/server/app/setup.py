@@ -1428,6 +1428,9 @@ from src.gateway.agui.router import router as agui_router
 from src.server.app.calendar import router as calendar_router
 from src.server.app.sec_proxy import router as sec_proxy_router
 from src.server.app.api_keys import router as api_keys_router
+from src.server.app.sandbox_credentials import (
+    router as sandbox_credentials_router,
+)
 from src.server.app.automations import router as automations_router
 from src.server.app.insights import router as insights_router
 from src.server.app.oauth import OAuthRefusal, router as oauth_router
@@ -1535,6 +1538,9 @@ app.include_router(sec_proxy_router)  # /api/v1/sec-proxy/* - SEC EDGAR document
 app.include_router(
     api_keys_router
 )  # /api/v1/users/me/api-keys + /api/v1/models - BYOK & model config
+app.include_router(
+    sandbox_credentials_router
+)  # /api/v1/users/me/sandbox-credentials - user's own sandbox provider key
 app.include_router(
     automations_router
 )  # /api/v1/automations/* - Scheduled automation triggers

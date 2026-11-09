@@ -39,6 +39,10 @@ from src.server.database.computer import (
 )
 from src.server.database.computer_names import ComputerNameTaken, name_taken
 from src.server.database.home_workspace import get_home_workspace_id
+from src.server.database.sandbox_credentials import (
+    get_sandbox_credential,
+    list_sandbox_credentials,
+)
 from src.server.database.workspace import (
     count_live_workspaces_by_computer,
     get_live_workspace_folders_for_computer,
@@ -133,6 +137,9 @@ from src.server.utils.api import CurrentUserId
 from src.server.utils.error_sanitization import sandbox_failure_http
 
 logger = logging.getLogger(__name__)
+
+# The one cloud kind whose per-user credentials the settings page accepts.
+DAYTONA_KIND = "daytona"
 
 router = APIRouter(prefix="/api/v1/computers", tags=["Computers"])
 
@@ -461,6 +468,23 @@ async def create_computer(
                 f"This provider does not offer the {request.resource_tier!r} spec"
             )
         await assert_provider_allowed(x_user_id, kind, default_kind=sandbox.provider)
+
+        # The user's own account, when they configured one: the ciphertext goes
+        # into this computer's provider_config (never the plaintext), snapshots
+        # are off because they would be built in the user's account, and the
+        # machine does not count against the deployment's plan.
+        byok: Optional[Dict[str, Any]] = None
+        if kind == DAYTONA_KIND:
+            credential = await get_sandbox_credential(x_user_id, kind)
+            if credential is not None:
+                byok = {
+                    "api_key_encrypted": credential["api_key_encrypted"],
+                    "snapshot_enabled": False,
+                    "snapshot_auto_create": False,
+                }
+                if credential.get("base_url"):
+                    byok["base_url"] = credential["base_url"]
+
         plan: Optional[SSHCreatePlan] = None
         if request.ssh is not None:
             if request.name and (taken := await name_taken(x_user_id, request.name)):
@@ -484,9 +508,10 @@ async def create_computer(
                     raise taken
                 with _ssh_create_refusals():
                     await plan.recheck(x_user_id)
-            if provider_class(kind).metered:
+            if provider_class(kind).metered and byok is None:
                 # The cap first: a user at it who asked for a size their plan
-                # refuses would step down only to be refused again.
+                # refuses would step down only to be refused again. A machine
+                # the user pays for themselves is not the deployment's to cap.
                 await enforce_computer_count(x_user_id)
                 await assert_spec_allowed(x_user_id, request.resource_tier)
                 await enforce_computer_limit(x_user_id)
@@ -495,6 +520,7 @@ async def create_computer(
                 kind=kind,
                 name=request.name,
                 resource_tier=request.resource_tier,
+                provider_config=byok,
                 # The insert squashes this to FALSE when a live primary already
                 # exists, so it reads as "primary if they have none". Without it a
                 # user's first, named machine is not primary and their first project
@@ -590,6 +616,8 @@ async def list_computer_providers(x_user_id: ReadUserId):
     allowed = await get_provider_allowances(
         x_user_id, kinds, default_kind=sandbox.provider
     )
+    # A cloud kind may run on the caller's own key; the page labels each one.
+    own = {row["kind"] for row in await list_sandbox_credentials(x_user_id)}
     return ComputerProvidersResponse(
         providers=[
             ComputerProviderOption(
@@ -598,6 +626,13 @@ async def list_computer_providers(x_user_id: ReadUserId):
                 allowed=allowed[kind],
                 tiers=_tier_specs(sandbox, kind),
                 default_name=provider_class(kind).default_computer_name,
+                credential_source=(
+                    "user"
+                    if kind in own
+                    else "deployment"
+                    if getattr(sandbox.settings_for(kind), "api_key", "")
+                    else None
+                ),
             )
             for kind in kinds
         ],

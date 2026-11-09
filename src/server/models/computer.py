@@ -625,6 +625,13 @@ class ComputerProviderOption(BaseModel):
             "is numbered past the user's other computers' names"
         )
     )
+    credential_source: Optional[Literal["user", "deployment"]] = Field(
+        default=None,
+        description=(
+            "Where this provider's credentials come from: the caller's own "
+            "saved key, or the deployment's; null where a kind needs none"
+        ),
+    )
 
 
 class ComputerProvidersResponse(BaseModel):

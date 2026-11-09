@@ -115,7 +115,18 @@ class ProviderMixin:
                 f"provider_config for kind {kind!r} names unknown settings: "
                 f"{', '.join(unknown)}"
             )
-        return type(base).model_validate({**base.model_dump(), **overrides})
+        settings = type(base).model_validate({**base.model_dump(), **overrides})
+        # A computer created with the user's own key carries it encrypted
+        # (never as plaintext in provider_config). Decrypt here, at the one
+        # place every provider build passes through.
+        encrypted = getattr(settings, "api_key_encrypted", "")
+        if encrypted:
+            from src.server.database.encryption import decrypt_secret
+
+            settings = settings.model_copy(
+                update={"api_key": decrypt_secret(encrypted)}
+            )
+        return settings
 
     def tier_size(
         self, computer: Mapping[str, Any], tier: str | None
@@ -152,13 +163,20 @@ class ProviderMixin:
         core_config = self.config.to_core_config()
         if binding is None:
             return create_provider(core_config)
+        # A machine created with the user's own account must not receive the
+        # deployment's managed Secrets: those are the platform's credentials
+        # and there is no organization Secret in the user's account to hold
+        # them. The catalog still governs deployment-provided machines.
+        byok = bool((binding.provider_config or {}).get("api_key_encrypted"))
         return build_provider(
             binding.kind,
             self._provider_settings(binding.kind, binding.provider_config),
             working_dir=(
                 binding.root_dir or self.config.filesystem.working_directory
             ),
-            platform_secrets=core_config.sandbox.platform_secrets,
+            platform_secrets=(
+                () if byok else core_config.sandbox.platform_secrets
+            ),
         )
 
     def _host_unavailable_policy(

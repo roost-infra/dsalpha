@@ -108,6 +108,9 @@ dependencies = [
     "boto3>=1.42.28",
     "tavily-python>=0.7.18",
     "PyJWT[crypto]>=2.13",
+    # App-side AES-GCM for secrets that must be decrypted synchronously (a
+    # user's sandbox provider key at computer creation), which pgcrypto cannot.
+    "cryptography>=48.0.0",
     "langalpha-market-protocol",
     "certifi>=2026.1.4",
     "requests>=2.32.5",

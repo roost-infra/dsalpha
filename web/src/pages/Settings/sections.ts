@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import {
   Bot,
+  Box,
   CandlestickChart,
   CircleUser,
   Cpu,
@@ -41,6 +42,7 @@ export const SECTIONS = {
   artifacts: { labelKey: 'settings.section.artifacts', descKey: 'settings.definition.artifacts', icon: Globe },
   agent: { labelKey: 'settings.section.agent', descKey: 'settings.definition.agent', icon: Bot },
   model: { labelKey: 'settings.section.model', descKey: 'settings.definition.model', icon: Cpu },
+  sandbox: { labelKey: 'settings.section.sandbox', descKey: 'settings.definition.sandbox', icon: Box },
   integrations: { labelKey: 'settings.section.integrations', descKey: 'settings.definition.integrations', icon: Plug, platformOnly: true },
   trading: { labelKey: 'settings.section.trading', descKey: 'settings.definition.trading', icon: CandlestickChart },
   // The fork's WeChat channel: bound here, and kept out of the platformOnly
@@ -60,7 +62,7 @@ export function sectionShown(section: Section): boolean {
 export const GROUPS: readonly { labelKey: string; sections: readonly Section[] }[] = [
   { labelKey: 'settings.group.account', sections: ['account', 'preferences', 'plan'] },
   { labelKey: 'settings.group.app', sections: ['general', 'appearance', 'chat', 'artifacts'] },
-  { labelKey: 'settings.group.agent', sections: ['agent', 'model', 'integrations', 'trading', 'wechat'] },
+  { labelKey: 'settings.group.agent', sections: ['agent', 'model', 'sandbox', 'integrations', 'trading', 'wechat'] },
   { labelKey: 'settings.group.labs', sections: ['experiments'] },
 ];
 
