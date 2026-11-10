@@ -165,7 +165,6 @@
     "threadTurns": "Turns",
     "threadNeedsInput": "Waiting for your input",
     "threadUnseen": "Finished, not yet viewed",
-    "history": "History",
     "untitledThread": "Untitled",
     "primarySession": "Primary",
     "onComputer": "On {{name}} · {{kind}}",
@@ -6728,11 +6727,14 @@
   },
   "conversations": {
     "moreSessions": "Workspaces & history",
-      "title": "Conversations",
-      "workspace": "Workspace",
-      "noRooms": "No rooms in this workspace yet"
+    "title": "Conversations",
+    "workspace": "Workspace",
+    "noRooms": "No rooms in this workspace yet"
   },
   "rooms": {
+    "roomsSection": "Rooms",
+    "privateSection": "Direct messages",
+    "botMessagesSection": "Bot inbox",
     "title": "Rooms",
     "description": "Shared logs where your bots talk in rounds.",
     "newRoom": "New room",
@@ -6750,11 +6752,8 @@
     "unread": "Unread messages",
     "previewEmpty": "No messages yet",
     "membersCount": "{{count}} members",
-    "roomsSection": "Rooms",
-    "privateSection": "Direct messages",
     "privateEmpty": "No bots in this workspace yet.",
     "privateOpen": "Message",
-    "botMessagesSection": "Bot inbox",
     "botMessagesOpen": "View",
     "botMessagesTitle": "Bot-to-bot messages",
     "botMessagesEmpty": "No messages between bots yet.",

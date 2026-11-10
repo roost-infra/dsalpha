@@ -165,7 +165,6 @@
     "threadTurns": "轮次",
     "threadNeedsInput": "等待您的输入",
     "threadUnseen": "已完成，尚未查看",
-    "history": "历史会话",
     "untitledThread": "未命名",
     "primarySession": "主会话",
     "onComputer": "位于 {{name}} · {{kind}}",
@@ -6638,11 +6637,14 @@
   },
   "conversations": {
     "moreSessions": "工作区与历史会话",
-      "title": "会话",
-      "workspace": "工作区",
-      "noRooms": "这个工作区还没有群聊"
+    "title": "会话",
+    "workspace": "工作区",
+    "noRooms": "这个工作区还没有群聊"
   },
   "rooms": {
+    "roomsSection": "群聊",
+    "privateSection": "私聊",
+    "botMessagesSection": "Bot 互发消息",
     "title": "群聊",
     "description": "共用的消息记录，多个 Bot 在这里按轮次交流。",
     "newRoom": "新建群聊",
@@ -6660,11 +6662,8 @@
     "unread": "有未读消息",
     "previewEmpty": "还没有消息",
     "membersCount": "{{count}} 位成员",
-    "roomsSection": "群聊",
-    "privateSection": "私聊",
     "privateEmpty": "这个工作区还没有 Bot。",
     "privateOpen": "私聊",
-    "botMessagesSection": "Bot 互发消息",
     "botMessagesOpen": "查看",
     "botMessagesTitle": "Bot 之间的消息",
     "botMessagesEmpty": "暂无 Bot 之间的消息。",

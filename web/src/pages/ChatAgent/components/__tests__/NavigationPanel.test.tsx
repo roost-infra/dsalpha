@@ -48,6 +48,11 @@ function render(ui: React.ReactElement) {
   return rtlRender(ui, { wrapper: Providers });
 }
 
+// A workspace's conversation stream, the surface that appears when its row
+// opens. The old thread rows are gone, so expansion is asserted on this.
+const conversationAreas = (scope: ParentNode) =>
+  Array.from(scope.querySelectorAll('[aria-label="conversations.title"]'));
+
 const WS_ID = 'ws-1';
 const THREAD_ID = 'thread-1';
 
@@ -298,59 +303,6 @@ describe('NavigationPanel — workspace render order', () => {
   });
 });
 
-describe('NavigationPanel — show more threads', () => {
-  function renderWithThreads(threadsData: { threads: { thread_id: string; title: string }[]; loading: boolean; total?: number }, onLoadMoreThreads = vi.fn()) {
-    resetNavPanelExpansion();
-    render(
-      <NavigationPanel
-        workspaces={[{ workspace_id: WS_ID, name: 'Test workspace', is_home: false }]}
-        workspaceThreads={{ [WS_ID]: threadsData }}
-        currentWorkspaceId={WS_ID}
-        currentThreadId={null}
-        agents={[]}
-        activeAgentId={null}
-        expandWorkspace={vi.fn()}
-        onSelectAgent={vi.fn()}
-        onRemoveAgent={vi.fn()}
-        onNavigateThread={vi.fn()}
-        onLoadMoreThreads={onLoadMoreThreads}
-      />,
-    );
-    return onLoadMoreThreads;
-  }
-
-  it('renders a show-more row when more threads exist server-side and pages on click', async () => {
-    const user = userEvent.setup();
-    const onLoadMoreThreads = renderWithThreads({
-      threads: [
-        { thread_id: 't-1', title: 'Thread one' },
-        { thread_id: 't-2', title: 'Thread two' },
-      ],
-      loading: false,
-      total: 5,
-    });
-
-    const row = screen.getByText('nav.showMore');
-    await user.click(row);
-    expect(onLoadMoreThreads).toHaveBeenCalledWith(WS_ID);
-  });
-
-  it('hides the show-more row when every thread is already shown or total is unknown', () => {
-    renderWithThreads({
-      threads: [{ thread_id: 't-1', title: 'Thread one' }],
-      loading: false,
-      total: 1,
-    });
-    expect(screen.queryByText('nav.showMore')).toBeNull();
-
-    renderWithThreads({
-      threads: [{ thread_id: 't-1', title: 'Thread one' }],
-      loading: false,
-    });
-    expect(screen.queryByText('nav.showMore')).toBeNull();
-  });
-});
-
 describe('NavigationPanel — active-thread auto-reveal', () => {
   function renderWithActiveThread(opts: {
     threadsData: { threads: { thread_id: string; title: string }[]; loading: boolean; total?: number };
@@ -544,15 +496,15 @@ describe('NavigationPanel — expansion survives remounts', () => {
     const first = renderOrderPanel('ws-a');
 
     // ws-b starts collapsed; open it manually.
-    expect(screen.queryByText('Thread B1')).toBeNull();
+    expect(conversationAreas(document)).toHaveLength(1);
     await user.click(screen.getByText('Workspace B'));
-    expect(screen.getByText('Thread B1')).toBeInTheDocument();
+    expect(conversationAreas(document)).toHaveLength(2);
 
     // Thread switch remounts the panel (fresh ChatView instance) — the folder
     // the user opened must not auto-collapse.
     first.unmount();
     renderOrderPanel('ws-a');
-    expect(screen.getByText('Thread B1')).toBeInTheDocument();
+    expect(conversationAreas(document)).toHaveLength(2);
   });
 
   it('does not re-expand a forgotten (deleted) workspace on remount', async () => {
@@ -562,7 +514,7 @@ describe('NavigationPanel — expansion survives remounts', () => {
 
     // Open ws-b, then forget it as the delete path does.
     await user.click(screen.getByText('Workspace B'));
-    expect(screen.getByText('Thread B1')).toBeInTheDocument();
+    expect(conversationAreas(document)).toHaveLength(2);
     forgetNavPanelExpansion('ws-b');
 
     // On remount the mount-effect must not re-expand ws-b (no spurious 404) and
@@ -570,7 +522,7 @@ describe('NavigationPanel — expansion survives remounts', () => {
     first.unmount();
     const expandSpy = vi.fn();
     renderOrderPanel('ws-a', expandSpy);
-    expect(screen.queryByText('Thread B1')).toBeNull();
+    expect(conversationAreas(document)).toHaveLength(1);
     expect(expandSpy).not.toHaveBeenCalledWith('ws-b');
   });
 
@@ -633,22 +585,22 @@ describe('NavigationPanel — shared expansion across instances', () => {
     const b = renderInstance('ws-a');
 
     // ws-b starts collapsed in both panels.
-    expect(within(a.container).queryByText('Thread B1')).toBeNull();
-    expect(within(b.container).queryByText('Thread B1')).toBeNull();
+    expect(conversationAreas(a.container)).toHaveLength(1);
+    expect(conversationAreas(b.container)).toHaveLength(1);
 
     // Open ws-b in panel A only.
     await user.click(within(a.container).getByText('Workspace B'));
 
     // Both panels show it open — the store is shared and live, not snapshotted.
-    expect(within(a.container).getByText('Thread B1')).toBeInTheDocument();
-    expect(within(b.container).getByText('Thread B1')).toBeInTheDocument();
+    expect(conversationAreas(a.container)).toHaveLength(2);
+    expect(conversationAreas(b.container)).toHaveLength(2);
 
     // Collapsing in panel B also propagates back to panel A. Use waitFor: the
     // in-place collapse runs an AnimatePresence exit, so the row lingers in the
     // DOM for a tick before it's removed.
     await user.click(within(b.container).getByText('Workspace B'));
-    await waitFor(() => expect(within(a.container).queryByText('Thread B1')).toBeNull());
-    await waitFor(() => expect(within(b.container).queryByText('Thread B1')).toBeNull());
+    await waitFor(() => expect(conversationAreas(a.container)).toHaveLength(1));
+    await waitFor(() => expect(conversationAreas(b.container)).toHaveLength(1));
   });
 
   // Models the reported repro: expand a NON-current folder, then navigate to a
@@ -685,17 +637,18 @@ describe('NavigationPanel — shared expansion across instances', () => {
 
     // On a thread in ws-a; manually expand ws-b (not the current workspace).
     const first = renderInstanceWithThreeWorkspaces('ws-a');
-    expect(within(first.container).queryByText('Thread B1')).toBeNull();
+    expect(conversationAreas(first.container)).toHaveLength(1);
     await user.click(within(first.container).getByText('Workspace B'));
-    expect(within(first.container).getByText('Thread B1')).toBeInTheDocument();
+    expect(conversationAreas(first.container)).toHaveLength(2);
 
     // Navigate to a thread in ws-c: old ChatView's panel unmounts, a fresh panel
     // mounts with a different currentWorkspaceId.
     first.unmount();
     const second = renderInstanceWithThreeWorkspaces('ws-c');
 
-    // ws-b must still be expanded — manual expansion persists across navigation.
-    expect(within(second.container).getByText('Thread B1')).toBeInTheDocument();
+    // ws-a and ws-b stay expanded — manual expansion persists across
+    // navigation — and ws-c opens as the current workspace.
+    expect(conversationAreas(second.container)).toHaveLength(3);
   });
 });
 
