@@ -122,7 +122,7 @@
 
 /* The workspace/thread tree is secondary now: the conversation sections are
    the navigation, and the old tree opens on demand. */
-.tree-caret { width: 12px; height: 12px; transition: transform .15s ease; flex: none; }
+.tree-caret { width: 12px; height: 12px; transition: transform var(--motion-quick) var(--ease-out); flex: none; }
 .tree-caret.is-open { transform: rotate(90deg); }
 .conversation-tree-toggle {
   display: flex;
@@ -154,5 +154,8 @@
 .workspace-conversations__preview { overflow: hidden; font-size: 9.5px; color: var(--color-text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .workspace-conversations__when { flex: none; margin-left: auto; padding-left: 6px; font-size: 9px; font-variant-numeric: tabular-nums; color: var(--color-text-tertiary); }
 .workspace-conversations__quiet { padding: 2px 5px; font-size: 9.5px; color: var(--color-text-tertiary); }
+.workspace-conversations__more { display: block; width: 100%; margin-top: 2px; padding: 4px 5px; border: 0; background: transparent; text-align: left; cursor: pointer; font-size: 9.5px; color: var(--color-text-tertiary); }
+.workspace-conversations__more:hover { color: var(--color-text-primary); }
+.workspace-conversations__more:disabled { cursor: default; }
 .workspace-conversations__faces { display: inline-flex; flex: none; align-items: center; width: 27px; }
 .workspace-conversations__faces > :last-child { margin-left: -6px; }

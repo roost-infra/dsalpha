@@ -95,6 +95,39 @@ describe('buildConversationItems', () => {
     ]);
   });
 
+  it('keeps an ordinary thread in the stream and does not list a primary twice', () => {
+    const items = buildConversationItems(
+      [room('room', { updated_at: '2026-11-10T10:00:00Z' })],
+      [bot('b', { primary_thread_id: 'primary' })],
+      [],
+      [
+        thread('primary', '2026-11-10T12:00:00Z'),
+        thread('amd', '2026-11-10T11:00:00Z'),
+      ],
+    );
+
+    expect(items.map((item) => item.key)).toEqual([
+      'bot:b',
+      'thread:amd',
+      'room:room',
+    ]);
+    const ordinary = items.find((item) => item.key === 'thread:amd');
+    expect(ordinary?.kind).toBe('thread');
+    if (ordinary?.kind === 'thread') expect(ordinary.thread.title).toBe('amd title');
+  });
+
+  it('keeps a pinned thread above newer activity', () => {
+    const pinned = { ...thread('pinned', '2026-11-01T00:00:00Z'), is_pinned: true };
+    const items = buildConversationItems(
+      [room('fresh', { updated_at: '2026-11-10T12:00:00Z' })],
+      [],
+      [],
+      [pinned],
+    );
+
+    expect(items.map((item) => item.key)).toEqual(['thread:pinned', 'room:fresh']);
+  });
+
   it("stamps a bot with its private thread's activity and title row", () => {
     const items = buildConversationItems(
       [],

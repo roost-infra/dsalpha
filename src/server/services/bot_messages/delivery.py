@@ -62,9 +62,12 @@ async def ensure_private_thread(bot: Dict[str, Any]) -> str:
     usable = await bot_db.get_private_thread(bot["bot_id"])
     if usable:
         return usable
+    # A pointer at a shared or archived thread blocks the COALESCE pin below.
+    await bot_db.clear_unusable_primary(bot["bot_id"])
     # Older bots have private chat threads but no pointer (the pointer used to
     # be written only by this delivery path). Reuse the chat the user opened
-    # before minting an unnamed thread they never asked for.
+    # before minting an unnamed thread they never asked for. A shared chat is
+    # not that conversation: find_private_thread leaves it out.
     existing = await bot_db.find_private_thread(bot["bot_id"])
     if existing:
         await bot_db.set_primary_thread(bot["bot_id"], existing)

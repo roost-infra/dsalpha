@@ -1,10 +1,10 @@
 /**
  * A workspace's conversations, rendered inside its row in the navigation tree
- * as one recency-ordered stream: a bot's direct chat, a group chat and a
- * bot-to-bot exchange are peers, the way DS-Bot's home draws them. There is
- * no separate history list — a conversation is either a room or a bot.
+ * as one recency-ordered stream. A bot's direct chat, a group, a bot-to-bot
+ * exchange and an ordinary thread are peers. The thread row (rename, share,
+ * pin) is drawn by the caller so this list stays the only history.
  */
-import { useMemo } from 'react';
+import { Fragment, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import type { BotInfo } from '@/api/bots';
@@ -30,7 +30,7 @@ const EMPTY_THREADS: ConversationThread[] = [];
 
 function plainPreview(text: string | null | undefined): string {
   return (text ?? '')
-    .replace(/[#>*_`\[\]()]/g, ' ')
+    .replace(/[#>*_`[\]()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
@@ -40,11 +40,17 @@ export function WorkspaceConversations({
   workspaceId,
   threads = EMPTY_THREADS,
   onNavigate,
+  renderThread,
+  footer = null,
 }: {
   workspaceId: string;
-  /** The workspace's loaded threads, for a bot's private chat title and stamp. */
+  /** The workspace's loaded threads: bot primaries, and ordinary chats. */
   threads?: ConversationThread[];
   onNavigate?: () => void;
+  /** An ordinary thread, drawn with the nav row's actions. */
+  renderThread?: (thread: ConversationThread) => ReactNode;
+  /** Sits under the stream, inside the same inset (show more). */
+  footer?: ReactNode;
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -92,19 +98,19 @@ export function WorkspaceConversations({
     notifyNavigate();
   };
 
-  const open = (item: ConversationItem) => {
+  const open = (item: Exclude<ConversationItem, { kind: 'thread' }>) => {
     if (item.kind === 'room') openRoom(item.room.room_id);
     else if (item.kind === 'pair') openExchange(item.pair.key);
     else void openBot(item.bot.bot_id);
   };
 
-  const label = (item: ConversationItem) => {
+  const label = (item: Exclude<ConversationItem, { kind: 'thread' }>) => {
     if (item.kind === 'room') return item.room.name;
     if (item.kind === 'pair') return `${item.pair.left.name} ⇄ ${item.pair.right.name}`;
     return item.bot.name;
   };
 
-  const preview = (item: ConversationItem) => {
+  const preview = (item: Exclude<ConversationItem, { kind: 'thread' }>) => {
     if (item.kind === 'room') {
       return plainPreview(item.room.preview) || t('rooms.previewEmpty');
     }
@@ -117,7 +123,7 @@ export function WorkspaceConversations({
       : t('rooms.privateOpen');
   };
 
-  const avatar = (item: ConversationItem) => {
+  const avatar = (item: Exclude<ConversationItem, { kind: 'thread' }>) => {
     if (item.kind === 'room') {
       return <RoomAvatar members={item.room.members ?? []} size={24} />;
     }
@@ -132,18 +138,20 @@ export function WorkspaceConversations({
     return <BotMark bot={item.bot} size={19} decorative />;
   };
 
-  const loading = roomsQuery.isLoading || botsQuery.isLoading;
+  const rosterLoading = roomsQuery.isLoading || botsQuery.isLoading;
 
   return (
     <div className="workspace-conversations" aria-label={t('conversations.title')}>
-      {loading ? (
+      {items.length === 0 && rosterLoading ? (
         <div className="workspace-conversations__quiet" role="status">
           {t('common.loading')}
         </div>
       ) : items.length === 0 ? (
         <div className="workspace-conversations__quiet">{t('nav.noConversations')}</div>
       ) : (
-        items.map((item) => (
+        items.map((item) => item.kind === 'thread' ? (
+          <Fragment key={item.key}>{renderThread?.(item.thread)}</Fragment>
+        ) : (
           <button
             key={item.key}
             type="button"
@@ -162,6 +170,7 @@ export function WorkspaceConversations({
           </button>
         ))
       )}
+      {footer}
     </div>
   );
 }

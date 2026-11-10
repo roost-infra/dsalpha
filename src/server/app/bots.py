@@ -182,6 +182,7 @@ async def stream_bot_messages(
                 principal.user_id,
                 after=cursor,
                 workspace_id=workspace_id,
+                computer_id=principal.computer_id,
                 limit=100,
             )
             for row in rows:
@@ -210,7 +211,10 @@ async def list_bot_messages(
     from src.server.database import bot_messages as message_db
 
     rows = await message_db.list_for_user(
-        principal.user_id, workspace_id=workspace_id, limit=limit
+        principal.user_id,
+        workspace_id=workspace_id,
+        computer_id=principal.computer_id,
+        limit=limit,
     )
     return BotMessageListResponse(messages=[BotMessageInfo(**row) for row in rows])
 

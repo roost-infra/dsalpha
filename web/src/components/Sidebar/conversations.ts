@@ -1,10 +1,10 @@
 /**
  * One workspace's conversations as a single recency-ordered list.
  *
- * DS-Bot draws a workspace as one stream: a bot's direct chat and a group
- * chat sit at the same level, separated only by when they last moved. Bot
- * exchanges are conversations too, so they sort into the same stream rather
- * than under a heading of their own.
+ * A bot's direct chat, a group chat, a bot-to-bot exchange and an ordinary
+ * workspace thread sit at the same level, separated by when they last moved.
+ * A bot's primary thread is the bot row, not a second entry. A room member's
+ * execution thread never arrives here: the thread list leaves it out.
  */
 import type { BotInfo } from '@/api/bots';
 import type { RoomInfo } from '@/api/rooms';
@@ -15,6 +15,8 @@ export interface ConversationThread {
   thread_id: string;
   title?: string | null;
   updated_at?: string;
+  /** Pinned threads stay at the top of the stream; pin is a placement, not activity. */
+  is_pinned?: boolean;
 }
 
 export type ConversationItem =
@@ -27,7 +29,8 @@ export type ConversationItem =
       /** The bot's private chat, when the loaded page carries it. */
       thread: ConversationThread | null;
     }
-  | { kind: 'pair'; key: string; activity: number; pair: BotPair };
+  | { kind: 'pair'; key: string; activity: number; pair: BotPair }
+  | { kind: 'thread'; key: string; activity: number; thread: ConversationThread };
 
 /** Epoch ms of a timestamp, or 0 for a row that carries none. */
 export function timeOf(value: string | null | undefined): number {
@@ -43,6 +46,9 @@ export function buildConversationItems(
   threads: ConversationThread[],
 ): ConversationItem[] {
   const threadById = new Map(threads.map((thread) => [thread.thread_id, thread]));
+  const primaryIds = new Set(
+    bots.map((bot) => bot.primary_thread_id).filter((id): id is string => Boolean(id)),
+  );
   const items: ConversationItem[] = [];
 
   for (const room of rooms) {
@@ -78,9 +84,22 @@ export function buildConversationItems(
     });
   }
 
-  // Newest first; Array#sort is stable, so equal stamps keep rooms, then
-  // bots, then exchanges.
-  return items.sort((a, b) => b.activity - a.activity);
+  for (const thread of threads) {
+    if (primaryIds.has(thread.thread_id)) continue;
+    items.push({
+      kind: 'thread',
+      key: `thread:${thread.thread_id}`,
+      activity: timeOf(thread.updated_at),
+      thread,
+    });
+  }
+
+  // Pinned chats stay at the top. Otherwise newest first. Array#sort is
+  // stable, so equal stamps keep rooms, then bots, then exchanges, then
+  // threads in the order they were given.
+  const pinned = (item: ConversationItem) =>
+    item.kind === 'thread' && item.thread.is_pinned ? 1 : 0;
+  return items.sort((a, b) => pinned(b) - pinned(a) || b.activity - a.activity);
 }
 
 /** A compact sidebar stamp: the time today, the date before that. */

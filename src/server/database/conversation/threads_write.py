@@ -982,38 +982,47 @@ async def update_thread_sharing(
     """
     try:
         async with pool.get_db_connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                sets = ["is_shared = %s", "updated_at = NOW()"]
-                params: list = [is_shared]
+            async with conn.transaction():
+                async with conn.cursor(row_factory=dict_row) as cur:
+                    sets = ["is_shared = %s", "updated_at = NOW()"]
+                    params: list = [is_shared]
 
-                if is_shared:
-                    sets.append("share_token = COALESCE(share_token, %s)")
-                    params.append(mint_share_code())
+                    if is_shared:
+                        sets.append("share_token = COALESCE(share_token, %s)")
+                        params.append(mint_share_code())
 
-                if share_permissions is not None:
-                    sets.append("share_permissions = %s")
-                    params.append(Json(share_permissions))
+                    if share_permissions is not None:
+                        sets.append("share_permissions = %s")
+                        params.append(Json(share_permissions))
 
-                if shared_at is not None:
-                    sets.append("shared_at = %s")
-                    params.append(shared_at)
+                    if shared_at is not None:
+                        sets.append("shared_at = %s")
+                        params.append(shared_at)
 
-                params.append(conversation_thread_id)
+                    params.append(conversation_thread_id)
 
-                await cur.execute(
-                    f"""
-                    UPDATE conversation_threads
-                    SET {", ".join(sets)}
-                    WHERE conversation_thread_id = %s
-                    RETURNING conversation_thread_id, workspace_id, share_token,
-                              is_shared, share_permissions, shared_at,
-                              current_status, msg_type, title, created_at, updated_at
-                    """,
-                    tuple(params),
-                )
+                    await cur.execute(
+                        f"""
+                        UPDATE conversation_threads
+                        SET {", ".join(sets)}
+                        WHERE conversation_thread_id = %s
+                        RETURNING conversation_thread_id, workspace_id, share_token,
+                                  is_shared, share_permissions, shared_at,
+                                  current_status, msg_type, title, created_at, updated_at
+                        """,
+                        tuple(params),
+                    )
 
-                result = await cur.fetchone()
-                return dict(result) if result else None
+                    result = await cur.fetchone()
+                    if result is not None and is_shared:
+                        # Delivery pins with COALESCE, so a shared primary would
+                        # stay the bot's private chat until the pointer is cleared.
+                        await cur.execute(
+                            "UPDATE bots SET primary_thread_id = NULL, updated_at = NOW() "
+                            "WHERE primary_thread_id = %s",
+                            (conversation_thread_id,),
+                        )
+                    return dict(result) if result else None
 
     except Exception as e:
         logger.error(f"Error updating thread sharing: {e}")

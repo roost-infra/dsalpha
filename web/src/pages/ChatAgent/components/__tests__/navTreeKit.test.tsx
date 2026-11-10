@@ -146,6 +146,11 @@ describe('nav tree kits', () => {
     expect(handles()).toHaveLength(WORKSPACES.length);
     // Only dnd-kit's handle points into its DndContext: none yet, so this is the static kit.
     expect(handles().filter((handle) => handle.hasAttribute('aria-describedby'))).toEqual([]);
+    // Bot and room reads settle to empty. Snapshot after that, or the swap
+    // (which waits on the kit) would compare a loading row with a settled one.
+    await waitFor(() => {
+      expect(container.querySelector('.workspace-conversations__quiet[role="status"]')).toBeNull();
+    });
     const staticTree = snapshot(container);
 
     // The pointer arriving starts the kit's download, and the swap waits while
@@ -159,6 +164,11 @@ describe('nav tree kits', () => {
     await waitFor(() => {
       expect(handles().filter((handle) => !handle.hasAttribute('aria-describedby'))).toEqual([]);
     });
+    // Every thread row's pin springs in with the interactive kit. The snapshot
+    // treats a finished spring as no transform, so wait until they rest.
+    await waitFor(() => {
+      expect(container.querySelector('[style*="scale"]')).toBeNull();
+    });
 
     expect(snapshot(container)).toEqual(staticTree);
     expect(pin.isConnected).toBe(false);
@@ -166,8 +176,11 @@ describe('nav tree kits', () => {
     // The fixture reaches every keyed element a section can show, bar the rename field.
     expect(staticTree.find((section) => section.wsId === 'ws-main')?.keys).toEqual([
       'header', 'new-thread', 'options',
+      'thread:t-pinned:title', 'thread:t-pinned:pin', 'thread:t-pinned:archive',
       'thread:t-current:title', 'thread:t-current:agents', 'thread:t-current:pin', 'thread:t-current:archive',
       'agent:main', 'agent:sub-running', 'agent:sub-running:remove', 'agent:sub-done', 'agent:sub-done:remove',
+      'thread:t-other:title', 'thread:t-other:pin', 'thread:t-other:archive',
+      'show-more',
     ]);
   });
 
