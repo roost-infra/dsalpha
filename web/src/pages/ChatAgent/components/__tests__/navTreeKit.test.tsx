@@ -151,7 +151,7 @@ describe('nav tree kits', () => {
     // The pointer arriving starts the kit's download, and the swap waits while
     // it rests on a row. A click's focus does not match :focus-visible, so it
     // lets the swap through once the pointer has left.
-    const pin = navElement(container, 'ws-main', 'thread:t-pinned:pin')!;
+    const pin = navElement(container, 'ws-main', 'thread:t-current:pin')!;
     const user = userEvent.setup();
     await user.click(pin);
     expect(document.activeElement).toBe(pin);
@@ -162,14 +162,12 @@ describe('nav tree kits', () => {
 
     expect(snapshot(container)).toEqual(staticTree);
     expect(pin.isConnected).toBe(false);
-    expect(document.activeElement).toBe(navElement(container, 'ws-main', 'thread:t-pinned:pin'));
+    expect(document.activeElement).toBe(navElement(container, 'ws-main', 'thread:t-current:pin'));
     // The fixture reaches every keyed element a section can show, bar the rename field.
     expect(staticTree.find((section) => section.wsId === 'ws-main')?.keys).toEqual([
       'header', 'new-thread', 'options',
       'thread:t-current:title', 'thread:t-current:agents', 'thread:t-current:pin', 'thread:t-current:archive',
       'agent:main', 'agent:sub-running', 'agent:sub-running:remove', 'agent:sub-done', 'agent:sub-done:remove',
-      'thread:t-pinned:title', 'thread:t-pinned:pin', 'thread:t-pinned:archive',
-      'thread:t-other:title', 'thread:t-other:pin', 'thread:t-other:archive',
     ]);
   });
 

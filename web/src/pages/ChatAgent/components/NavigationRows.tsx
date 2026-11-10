@@ -13,7 +13,7 @@ import React, { createContext, memo, useCallback, useContext, useEffect, useRef,
 import { useTranslation } from 'react-i18next';
 import {
   ChevronRight, Folder, FolderOpen, Pin,
-  X, ChevronsDown, MoreHorizontal, SquarePen, Archive,
+  X, MoreHorizontal, SquarePen, Archive,
   ExternalLink, Pencil, Share2, Link2, Trash2,
   type LucideIcon,
 } from 'lucide-react';
@@ -692,7 +692,6 @@ function WorkspaceTreeRowImpl({
   onNavigateThread,
   onSelectAgent,
   onRemoveAgent,
-  onLoadMoreThreads,
   onPinWorkspace,
   onNewThread,
   onPinThread,
@@ -709,19 +708,20 @@ function WorkspaceTreeRowImpl({
   const isPinned = Boolean(ws.is_pinned);
   const machine = useRowMachine(ws);
   const threads = threadsData?.threads || [];
-  // A bot's primary thread is its private chat, already in the 私聊 list above;
-  // listing it again under 历史会话 is the same conversation twice.
+  const threadsLoading = threadsData?.loading || false;
+  // The active thread stays reachable (and carries its agent rows); it is not
+  // history, so it is drawn under the conversation stream, not as a list.
   const { data: botsData } = useBots(wsId);
   const primaryThreadIds = new Set(
     (botsData?.bots ?? [])
       .map((bot) => bot.primary_thread_id)
       .filter((id): id is string => Boolean(id)),
   );
-  const historyThreads = threads.filter((thread) => !primaryThreadIds.has(thread.thread_id));
-  // Row-order signature for the thread rows' glide: rows re-measure only when
-  // membership or order actually changes, not on every panel render.
-  const threadOrderSignature = historyThreads.map((th) => th.thread_id).join('|');
-  const threadsLoading = threadsData?.loading || false;
+  const currentThread = threads.find(
+    (thread) =>
+      thread.thread_id === currentThreadId &&
+      !primaryThreadIds.has(thread.thread_id),
+  );
   const isRenaming = rename.active;
   // The options menu isn't offered on Home (shared, immutable), mirroring
   // the gallery hiding its card menu there. New-thread stays available
@@ -874,27 +874,22 @@ function WorkspaceTreeRowImpl({
           )}
         </ContextMenu>
 
-        {/* Threads under this workspace — animated expand/collapse. Hidden
-            while this section is the one being dragged so the lifted item
-            shrinks to header height (clean gap), and the DragOverlay chip
-            carries the visual instead. */}
+        {/* One conversation stream under this workspace — animated
+            expand/collapse. Hidden while this section is the one being
+            dragged so the lifted item shrinks to header height (clean gap),
+            and the DragOverlay chip carries the visual instead. */}
         <kit.Collapse show={isExpanded && !isDragging}>
-          <WorkspaceConversations workspaceId={wsId} />
-          {historyThreads.length > 0 && (
-            <div className="workspace-conversations__section" style={{ paddingLeft: 34 }}>
-              {t('nav.history')}
-            </div>
-          )}
-          <kit.ThreadList>
-            {historyThreads.map((thread) => (
-              <kit.ThreadItem key={thread.thread_id} order={threadOrderSignature}>
+          <WorkspaceConversations workspaceId={wsId} threads={threads} />
+          {currentThread && (
+            <kit.ThreadList>
+              <kit.ThreadItem key={currentThread.thread_id} order={currentThread.thread_id}>
                 <ThreadTreeRow
                   wsId={wsId}
-                  thread={thread}
-                  isCurrentThread={thread.thread_id === currentThreadId}
-                  isExpanded={expandedThreadIds.has(thread.thread_id)}
+                  thread={currentThread}
+                  isCurrentThread
+                  isExpanded={expandedThreadIds.has(currentThread.thread_id)}
                   isMobile={isMobile}
-                  agents={thread.thread_id === currentThreadId ? agents : undefined}
+                  agents={agents}
                   activeAgentId={activeAgentId}
                   onToggleThread={onToggleThread}
                   onNavigateThread={onNavigateThread}
@@ -907,21 +902,7 @@ function WorkspaceTreeRowImpl({
                   onDeleteThread={onDeleteThread}
                 />
               </kit.ThreadItem>
-            ))}
-          </kit.ThreadList>
-          {/* Show more: the next page of threads for this workspace */}
-          {onLoadMoreThreads && typeof threadsData?.total === 'number'
-            && historyThreads.length < threadsData.total && !threadsLoading && (
-            <div
-              className="nav-panel-row"
-              style={{ paddingLeft: 44 }}
-              onClick={(e) => { e.stopPropagation(); onLoadMoreThreads(wsId); }}
-            >
-              <ChevronsDown className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-              <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-                {t('nav.showMore')}
-              </span>
-            </div>
+            </kit.ThreadList>
           )}
         </kit.Collapse>
       </>)}

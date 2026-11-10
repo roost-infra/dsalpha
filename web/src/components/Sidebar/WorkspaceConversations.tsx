@@ -1,11 +1,14 @@
 /**
- * A workspace's conversations, rendered inside its row in the navigation tree:
- * the room list, the workspace's bot chats and the bot-to-bot exchanges all
- * belong under the workspace they live in, not in a global strip above it.
+ * A workspace's conversations, rendered inside its row in the navigation tree
+ * as one recency-ordered stream: a bot's direct chat, a group chat and a
+ * bot-to-bot exchange are peers, the way DS-Bot's home draws them. There is
+ * no separate history list — a conversation is either a room or a bot.
  */
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import type { BotInfo } from '@/api/bots';
+import type { RoomInfo } from '@/api/rooms';
 import { useBots } from '@/hooks/useBots';
 import { useRooms } from '@/hooks/useRooms';
 import { BotMark } from '@/components/bots/BotMark';
@@ -13,7 +16,17 @@ import { RoomAvatar } from '@/pages/Rooms/components/RoomAvatar';
 import { buildBotPairs } from '@/pages/Rooms/botInbox';
 import { useBotInbox } from '@/pages/Rooms/useBotInbox';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
+import {
+  buildConversationItems,
+  formatActivity,
+  type ConversationItem,
+  type ConversationThread,
+} from './conversations';
 import './ConversationSections.css';
+
+const EMPTY_ROOMS: RoomInfo[] = [];
+const EMPTY_BOTS: BotInfo[] = [];
+const EMPTY_THREADS: ConversationThread[] = [];
 
 function plainPreview(text: string | null | undefined): string {
   return (text ?? '')
@@ -25,9 +38,12 @@ function plainPreview(text: string | null | undefined): string {
 
 export function WorkspaceConversations({
   workspaceId,
+  threads = EMPTY_THREADS,
   onNavigate,
 }: {
   workspaceId: string;
+  /** The workspace's loaded threads, for a bot's private chat title and stamp. */
+  threads?: ConversationThread[];
   onNavigate?: () => void;
 }) {
   const { t } = useTranslation();
@@ -35,10 +51,19 @@ export function WorkspaceConversations({
   const roomsQuery = useRooms(workspaceId, true);
   const botsQuery = useBots(workspaceId, true);
   const inbox = useBotInbox(workspaceId);
-  const rooms = roomsQuery.data?.rooms ?? [];
-  const bots = botsQuery.data?.bots ?? [];
+  const rooms = roomsQuery.data?.rooms ?? EMPTY_ROOMS;
+  const bots = botsQuery.data?.bots ?? EMPTY_BOTS;
   const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
   const pairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  const items = useMemo(
+    () => buildConversationItems(rooms, bots, pairs, threads),
+    [rooms, bots, pairs, threads],
+  );
+
+  const notifyNavigate = () => {
+    onNavigate?.();
+    window.dispatchEvent(new Event('sidebar:navigate'));
+  };
 
   const openBot = async (botId: string) => {
     const bot = botsById.get(botId);
@@ -58,11 +83,6 @@ export function WorkspaceConversations({
     notifyNavigate();
   };
 
-  const notifyNavigate = () => {
-    onNavigate?.();
-    window.dispatchEvent(new Event('sidebar:navigate'));
-  };
-
   const openRoom = (roomId: string) => {
     navigate(`/rooms?room=${encodeURIComponent(roomId)}`);
     notifyNavigate();
@@ -72,76 +92,72 @@ export function WorkspaceConversations({
     notifyNavigate();
   };
 
+  const open = (item: ConversationItem) => {
+    if (item.kind === 'room') openRoom(item.room.room_id);
+    else if (item.kind === 'pair') openExchange(item.pair.key);
+    else void openBot(item.bot.bot_id);
+  };
+
+  const label = (item: ConversationItem) => {
+    if (item.kind === 'room') return item.room.name;
+    if (item.kind === 'pair') return `${item.pair.left.name} ⇄ ${item.pair.right.name}`;
+    return item.bot.name;
+  };
+
+  const preview = (item: ConversationItem) => {
+    if (item.kind === 'room') {
+      return plainPreview(item.room.preview) || t('rooms.previewEmpty');
+    }
+    if (item.kind === 'pair') {
+      return plainPreview(item.pair.messages.at(-1)?.content) || t('rooms.previewEmpty');
+    }
+    if (item.thread?.title?.trim()) return item.thread.title.trim();
+    return item.bot.status === 'paused'
+      ? t('bots.pausedBadge')
+      : t('rooms.privateOpen');
+  };
+
+  const avatar = (item: ConversationItem) => {
+    if (item.kind === 'room') {
+      return <RoomAvatar members={item.room.members ?? []} size={24} />;
+    }
+    if (item.kind === 'pair') {
+      return (
+        <span className="workspace-conversations__faces" aria-hidden>
+          <BotMark bot={item.pair.left} size={16} decorative />
+          <BotMark bot={item.pair.right} size={16} decorative />
+        </span>
+      );
+    }
+    return <BotMark bot={item.bot} size={19} decorative />;
+  };
+
+  const loading = roomsQuery.isLoading || botsQuery.isLoading;
+
   return (
     <div className="workspace-conversations" aria-label={t('conversations.title')}>
-      <div className="workspace-conversations__section">{t('rooms.roomsSection')}</div>
-      {roomsQuery.isLoading ? (
-        <div className="workspace-conversations__quiet" role="status">{t('common.loading')}</div>
-      ) : rooms.length === 0 ? (
-        <div className="workspace-conversations__quiet">{t('conversations.noRooms')}</div>
+      {loading ? (
+        <div className="workspace-conversations__quiet" role="status">
+          {t('common.loading')}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="workspace-conversations__quiet">{t('nav.noConversations')}</div>
       ) : (
-        rooms.map((room) => (
+        items.map((item) => (
           <button
-            key={room.room_id}
+            key={item.key}
             type="button"
+            data-nav-key={item.key}
             className="workspace-conversations__row"
-            onClick={() => openRoom(room.room_id)}
+            onClick={() => open(item)}
           >
-            <RoomAvatar members={room.members ?? []} size={24} />
+            {avatar(item)}
             <span className="workspace-conversations__body">
-              <span className="workspace-conversations__name">{room.name}</span>
-              <span className="workspace-conversations__preview">
-                {plainPreview(room.preview) || t('rooms.previewEmpty')}
-              </span>
+              <span className="workspace-conversations__name">{label(item)}</span>
+              <span className="workspace-conversations__preview">{preview(item)}</span>
             </span>
-          </button>
-        ))
-      )}
-
-      <div className="workspace-conversations__section">{t('rooms.privateSection')}</div>
-      {bots.length === 0 ? (
-        <div className="workspace-conversations__quiet">{t('rooms.privateEmpty')}</div>
-      ) : (
-        bots.map((bot) => (
-          <button
-            key={bot.bot_id}
-            type="button"
-            className="workspace-conversations__row"
-            onClick={() => { void openBot(bot.bot_id); }}
-          >
-            <BotMark bot={bot} size={19} decorative />
-            <span className="workspace-conversations__body">
-              <span className="workspace-conversations__name">{bot.name}</span>
-              <span className="workspace-conversations__preview">
-                {bot.status === 'paused' ? t('bots.pausedBadge') : t('rooms.privateOpen')}
-              </span>
-            </span>
-          </button>
-        ))
-      )}
-
-      <div className="workspace-conversations__section">{t('rooms.botMessagesSection')}</div>
-      {pairs.length === 0 ? (
-        <div className="workspace-conversations__quiet">{t('rooms.botMessagesEmpty')}</div>
-      ) : (
-        pairs.map((pair) => (
-          <button
-            key={pair.key}
-            type="button"
-            className="workspace-conversations__row"
-            onClick={() => openExchange(pair.key)}
-          >
-            <span className="workspace-conversations__faces" aria-hidden>
-              <BotMark bot={pair.left} size={16} decorative />
-              <BotMark bot={pair.right} size={16} decorative />
-            </span>
-            <span className="workspace-conversations__body">
-              <span className="workspace-conversations__name">
-                {pair.left.name} ⇄ {pair.right.name}
-              </span>
-              <span className="workspace-conversations__preview">
-                {plainPreview(pair.messages.at(-1)?.content) || t('rooms.previewEmpty')}
-              </span>
+            <span className="workspace-conversations__when">
+              {formatActivity(item.activity)}
             </span>
           </button>
         ))
