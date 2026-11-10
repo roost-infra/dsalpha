@@ -1,5 +1,0 @@
-import{T as e}from"./selectionBounds-KrSzynLB.js";import{h as t,v as n}from"./Markdown-CmHy-x8i.js";function r(t){let n=e(t),r=n.flatMap(e=>e.kind===`text`?[e.text]:e.kind===`context`&&e.reply?[e.reply]:[]);if(r.length>0)return r.join(` `);let i=n.find(e=>e.kind===`context`);return i?.kind===`context`?i.chart?i.source??``:i.body:t}function i(t){let n=e(t);return n.some(e=>e.kind===`context`)?n.flatMap(e=>{if(e.kind===`break`)return[];if(e.kind===`text`)return[e.text];if(e.chart)return[e.source??``];let t=e.body.split(`
-`).map(e=>`> ${e}`).join(`
-`);return[e.reply?`${t}\n\n${e.reply}`:t]}).join(`
-
-`):t}var a=/^(?:\/[\w.-]+(?=\s|$)\s*)+/,o=/(^|\s)(@[\w./#:!-]*[\w/-])/g,s=/^(?: {4}|\t)/,c=e=>`<span class="draft-token">${e}</span>`;function l(e){let r=a.exec(e)?.[0]??``,i=t(e.slice(r.length),e=>n(e).map(e=>s.test(e)?e:e.replace(o,(e,t,n)=>`${t}${c(n)}`)).join(``));return r.replace(/\/[\w.-]+/g,c)+i}export{i as n,r,l as t};

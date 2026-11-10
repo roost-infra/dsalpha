@@ -74,6 +74,9 @@ Thumbs.db
 node_modules/
 .pnpm-store/
 
+# Generated frontend deploy bundle. The app builds into web/dist/.
+/web/dist-deploy/
+
 # Testing
 .pytest_cache/
 .coverage

@@ -1,1 +1,0 @@
-function e(){if(typeof navigator>`u`)return`other`;let e=navigator,t=e.userAgentData?.platform||e.platform||e.userAgent||``;return/mac/i.test(t)?e.maxTouchPoints>1?`other`:`mac`:/win/i.test(t)?`windows`:`other`}export{e as t};

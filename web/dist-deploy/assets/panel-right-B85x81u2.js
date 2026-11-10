@@ -1,1 +1,0 @@
-import{Hd as e}from"./index-BlsIypTO.js";var t={name:`panel-right`,size:24,node:[[`rect`,{width:`18`,height:`18`,x:`3`,y:`3`,rx:`2`,key:`afitv7`}],[`path`,{d:`M15 3v18`,key:`14nvp0`}]]};t.node;var n=e(t);export{n as t};
