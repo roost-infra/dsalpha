@@ -31,15 +31,19 @@ class ValidateRequest(BaseModel):
 @router.post("/api/auth/validate")
 async def validate(
     request: Request,
-    body: ValidateRequest,
+    body: Optional[ValidateRequest] = None,
     user_id: str = Depends(service_user),
 ):
     """Membership plus the named quota.
 
+    The body is optional: LangAlpha's membership-only check (``/users/me``)
+    posts no JSON at all, while the named-quota callers send one.
+
     LangAlpha sends ``check_quota`` per gate; an empty one only wants the
-    plan/tier (``/users/me``). The counts are read from the shared database,
-    so they always match what the backend itself would count.
+    plan/tier. The counts are read from the shared database, so they always
+    match what the backend itself would count.
     """
+    body = body or ValidateRequest()
     settings = request.app.state.settings
     counts = {}
     async with pool().connection() as conn:
@@ -77,12 +81,23 @@ async def validate(
 
 @router.get("/api/auth/billing/leases/capability")
 async def capability(request: Request):
-    """Readiness probe: LangAlpha checks this at boot before gating turns."""
+    """Readiness probe: LangAlpha checks this at boot before gating turns.
+
+    ``enabled`` and ``lease_ttl_seconds`` are the fields its startup assertion
+    reads; ``leases`` is kept for older clients.
+    """
+    settings = request.app.state.settings
     async with pool().connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute("SELECT 1")
             await cur.fetchone()
-    return {"name": "quota-service", "version": 1, "leases": True}
+    return {
+        "name": "quota-service",
+        "version": 1,
+        "leases": True,
+        "enabled": True,
+        "lease_ttl_seconds": settings.lease_ttl_seconds,
+    }
 
 
 class AcquireRequest(BaseModel):
