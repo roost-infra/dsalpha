@@ -2264,6 +2264,7 @@
       "commandStoppedEarly": "stopped early"
     },
     "botMessage": {
+      "openExchange": "Open full conversation",
       "prefix": {
         "message": "Message from",
         "request": "Request from",

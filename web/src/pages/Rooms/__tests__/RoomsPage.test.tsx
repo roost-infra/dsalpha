@@ -297,7 +297,7 @@ describe('Rooms page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('groups bot messages into pair exchanges and opens the conclusions', async () => {
+  it('opens a pair exchange from a deep link, not from the room list', async () => {
     h.botMessages = [
       {
         message_id: 'm-1',
@@ -326,9 +326,8 @@ describe('Rooms page', () => {
         delivered_at: null,
       },
     ];
-    renderWithProviders(<Rooms />);
-    const pair = await screen.findByRole('button', { name: /Macro analyst ⇄ Rates analyst/ });
-    fireEvent.click(pair);
+    renderWithProviders(<Rooms />, { route: '/rooms?exchange=bot-1%7Cbot-2' });
+    expect(screen.queryByRole('button', { name: /Macro analyst ⇄ Rates analyst/ })).toBeNull();
     const detail = await screen.findByRole('region', { name: 'Bot-to-bot messages' });
     expect(within(detail).getByText('Review the filings.')).toBeInTheDocument();
     expect(within(detail).getByText('Rates are on hold.')).toBeInTheDocument();
