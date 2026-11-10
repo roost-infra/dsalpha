@@ -41,3 +41,6 @@ dist-ssr
 
 # production builds the e2e suite serves on CI (E2E_BUILD)
 /dist-e2e/
+
+# A production bundle dropped beside the app. Source builds go to dist/.
+/dist-deploy/
