@@ -20,7 +20,7 @@ from typing import Any, Optional
 from psycopg import AsyncCursor
 
 from .config import Settings
-from .credits import add_credits, current_month, grant_month
+from .credits import add_credits, grant_month
 from .db import pool
 from .quota import Plan, plan_from_row
 
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 METERED_KINDS = ("daytona", "docker", "e2b")
 _INGEST_LOCK = 4821001  # advisory lock: one ingester across replicas
 _CONV_CURSOR = "conversation_usages"
-_GRANT_DAY = "monthly_grant_day"
 _PAGE = 1000
 
 
@@ -254,12 +253,35 @@ async def ingest_sandbox_runs(cur: AsyncCursor, settings: Settings) -> int:
 # ---------------------------------------------------------------------------
 
 
-async def maybe_grant_monthly(cur: AsyncCursor, settings: Settings) -> int:
-    """Grant each assigned plan's monthly credits once per month."""
-    today = current_month(settings.monthly_grant_tz)
-    if await _get_state(cur, _GRANT_DAY) == today:
-        return 0
+async def assign_default_plans(cur: AsyncCursor, settings: Settings) -> int:
+    """Give every user without a plan the deployment's current default.
 
+    During a free-trial month the default is the trial plan; after launch it is
+    free, so a new signup still has a row to grant against. ON CONFLICT makes
+    this safe to run every pass.
+    """
+    await cur.execute(
+        """
+        INSERT INTO billing.user_plans (user_id, plan_code, assigned_by, note)
+        SELECT u.user_id, %s, 'system', 'default plan auto-assignment'
+        FROM public.users u
+        LEFT JOIN billing.user_plans up ON up.user_id = u.user_id
+        WHERE up.user_id IS NULL
+        ON CONFLICT (user_id) DO NOTHING
+        """,
+        (settings.default_plan,),
+    )
+    return cur.rowcount
+
+
+async def maybe_grant_monthly(cur: AsyncCursor, settings: Settings) -> int:
+    """Grant each assigned plan's monthly credits once per user per month.
+
+    The grant is idempotent on ``(source='grant', source_id=user:month)``, so a
+    user assigned mid-month gets this month's credits on the next pass. The
+    query runs every pass rather than short-circuiting on one global cursor:
+    signups and trial-plan moves arrive between passes.
+    """
     await cur.execute(
         "SELECT up.user_id, p.monthly_credits "
         "FROM billing.user_plans up "
@@ -275,7 +297,6 @@ async def maybe_grant_monthly(cur: AsyncCursor, settings: Settings) -> int:
             tz=settings.monthly_grant_tz,
         ):
             granted += 1
-    await _set_state(cur, _GRANT_DAY, today)
     return granted
 
 
@@ -300,6 +321,7 @@ async def run_once(settings: Settings) -> dict[str, Any]:
                     stats.last_skip = "lock busy"
                     return {"skipped": "lock busy"}
 
+                assigned = await assign_default_plans(cur, settings)
                 conversations = await ingest_conversation_usages(cur, settings)
                 sandboxes = await ingest_sandbox_runs(cur, settings)
                 grants = await maybe_grant_monthly(cur, settings)
@@ -308,6 +330,7 @@ async def run_once(settings: Settings) -> dict[str, Any]:
     stats.last_success = time.time()
     stats.last_skip = ""
     return {
+        "assigned": assigned,
         "conversations": conversations,
         "sandboxes": sandboxes,
         "grants": grants,

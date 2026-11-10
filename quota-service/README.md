@@ -168,6 +168,17 @@ curl -s -X POST localhost:18080/admin/api/users/u1/plan \
   -d '{"plan_code":"pro","grant_month":true}'
 ```
 
+## 试用月 / 默认套餐
+
+试用期把 `DEFAULT_PLAN` 指到内置的 `trial` 套餐：
+
+- 限额与 `max` 相同
+- 每月 100000 credits，价格为 0
+- 后台 ingest 每轮会给 `public.users` 里没有 `billing.user_plans` 的用户自动分配 `trial`，并补发当月 credits
+
+一个月后把 `DEFAULT_PLAN` 改回 `free`，再给试用用户分配正式套餐即可。
+自动分配不会恢复或过期 `trial`，到期需要显式改套餐。
+
 ## 状态
 
 - [x] billing schema / 初始套餐（free/basic/pro/max）

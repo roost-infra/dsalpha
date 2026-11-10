@@ -126,3 +126,20 @@ VALUES
         15000, 299, 30
     )
 ON CONFLICT (code) DO NOTHING;
+
+-- The launch trial: Max limits and a large credit ceiling, but no price.
+-- Existing users and new signups are assigned this plan while DEFAULT_PLAN
+-- points at it. Switch DEFAULT_PLAN and assign paid plans after the trial.
+INSERT INTO billing.plans
+    (code, name, description, access_tier, scopes, limits, sandbox_pricing,
+     monthly_credits, price_cny, included_hours_month)
+VALUES
+    (
+        'trial', 'Trial', 'One-month free trial at Max limits, no charge.',
+        3, ARRAY['workspace:always_on', 'workspace:spec:performance',
+              'workspace:spec:max', 'workspace:spec:xlarge']::text[],
+        '{"computer_count": 5, "always_on": 2, "spec_computers": 2, "per_turn_credits": 1000}'::jsonb,
+        '{"standard": 166.7, "performance": 333.3, "max": 500}'::jsonb,
+        100000, 0, 0
+    )
+ON CONFLICT (code) DO NOTHING;

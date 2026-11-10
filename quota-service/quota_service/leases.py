@@ -105,6 +105,7 @@ async def acquire(
         "granted": granted,
         "ceiling_credits": ceiling if granted else 0.0,
         "ttl_seconds": settings.lease_ttl_seconds,
+        "expires_in_seconds": settings.lease_ttl_seconds,
         "generation": generation,
         "quota": quota,
     }
