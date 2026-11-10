@@ -329,8 +329,8 @@ describe('Rooms page', () => {
     renderWithProviders(<Rooms />);
     const pair = await screen.findByRole('button', { name: /Macro analyst ⇄ Rates analyst/ });
     fireEvent.click(pair);
-    const dialog = await screen.findByRole('dialog', { name: 'Bot-to-bot messages' });
-    expect(within(dialog).getByText('Review the filings.')).toBeInTheDocument();
-    expect(within(dialog).getByText('Rates are on hold.')).toBeInTheDocument();
+    const detail = await screen.findByRole('region', { name: 'Bot-to-bot messages' });
+    expect(within(detail).getByText('Review the filings.')).toBeInTheDocument();
+    expect(within(detail).getByText('Rates are on hold.')).toBeInTheDocument();
   });
 });
