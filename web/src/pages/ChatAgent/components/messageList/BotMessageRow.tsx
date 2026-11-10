@@ -9,10 +9,12 @@
  * it is not the user's message, and there is nothing here to edit, retry or
  * steer.
  */
-import React from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BotMark } from '@/components/bots/BotMark';
 import { useBot } from '@/hooks/useBots';
+import { useWorkspaceId } from '../../contexts/WorkspaceContext';
+import { BotExchangeDialog } from './BotExchangeDialog';
 import { cn } from '@/lib/utils';
 import type { MessageProvenance } from '@/types/chat';
 import { OverflowCollapse } from './OverflowCollapse';
@@ -45,6 +47,10 @@ export interface BotMessageRowProps {
 export function BotMessageRow({ id, provenance, content, together }: BotMessageRowProps): React.ReactElement {
   const { t } = useTranslation();
   const { data: bot } = useBot(provenance.fromBotId);
+  const workspaceId = useWorkspaceId();
+  const [exchangeOpen, setExchangeOpen] = useState(false);
+  const canOpenExchange = Boolean(workspaceId && provenance.messageId);
+  const openExchange = () => { if (canOpenExchange) setExchangeOpen(true); };
   const sender = provenance.fromName;
   const who = bot
     ? [t(bot.role === 'chief_of_staff' ? 'agents.chiefOfStaff' : 'agents.analyst'), bot.model]
@@ -57,8 +63,22 @@ export function BotMessageRow({ id, provenance, content, together }: BotMessageR
       data-message-id={id}
       data-message-role="user"
       data-bot-message
-      tabIndex={-1}
-      className={cn('group/bot-message min-w-0 outline-hidden', together && 'mt-0')}
+      tabIndex={canOpenExchange ? 0 : -1}
+      role={canOpenExchange ? 'button' : undefined}
+      aria-label={canOpenExchange ? t('chat.botMessage.openExchange') : undefined}
+      onClick={openExchange}
+      onKeyDown={(event) => {
+        if (!canOpenExchange) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openExchange();
+        }
+      }}
+      className={cn(
+        'group/bot-message min-w-0 outline-hidden',
+        canOpenExchange && 'bot-message-row--open',
+        together && 'mt-0',
+      )}
     >
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="mt-0.5 shrink-0">
@@ -78,6 +98,11 @@ export function BotMessageRow({ id, provenance, content, together }: BotMessageR
             >
               {sender}
             </span>
+            {canOpenExchange && (
+              <span className="bot-message-row__hint">
+                {t('chat.botMessage.openExchange')}
+              </span>
+            )}
           </div>
           {content && (
             <div
@@ -95,6 +120,13 @@ export function BotMessageRow({ id, provenance, content, together }: BotMessageR
           )}
         </div>
       </div>
+      {exchangeOpen && workspaceId && provenance.messageId && (
+        <BotExchangeDialog
+          workspaceId={workspaceId}
+          messageId={provenance.messageId}
+          onClose={() => setExchangeOpen(false)}
+        />
+      )}
     </div>
   );
 }

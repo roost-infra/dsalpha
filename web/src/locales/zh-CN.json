@@ -2280,6 +2280,7 @@
       "commandStoppedEarly": "已提前停止"
     },
     "botMessage": {
+      "openExchange": "查看完整对话",
       "prefix": {
         "message": "消息来自",
         "request": "请求来自",

@@ -61,8 +61,11 @@ export function WorkspaceConversations({
   const bots = botsQuery.data?.bots ?? EMPTY_BOTS;
   const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
   const pairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  // Bot-to-bot exchanges are not conversation entries: they open from the
+  // delivered message in a bot chat, where the reader meets them.
   const items = useMemo(
-    () => buildConversationItems(rooms, bots, pairs, threads),
+    () => buildConversationItems(rooms, bots, pairs, threads)
+      .filter((item) => item.kind !== 'pair'),
     [rooms, bots, pairs, threads],
   );
 

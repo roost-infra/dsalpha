@@ -297,44 +297,6 @@ export default function Rooms() {
               </button>
             ))
           )}
-
-          <div className="rooms-list__section">{t('rooms.botMessagesSection')}</div>
-          {inbox.isLoading && botPairs.length === 0 ? (
-            <div className="rooms-list__empty-body rooms-list__quiet" role="status">
-              {t('common.loading')}
-            </div>
-          ) : botPairs.length === 0 ? (
-            <div className="rooms-list__empty-body rooms-list__quiet">{t('rooms.botMessagesEmpty')}</div>
-          ) : (
-            botPairs.map((pair) => (
-              <button
-                key={pair.key}
-                type="button"
-                className={
-                  exchangeKey === pair.key
-                    ? 'rooms-list__row rooms-list__row--exchange is-active'
-                    : 'rooms-list__row rooms-list__row--exchange'
-                }
-                aria-current={exchangeKey === pair.key ? 'true' : undefined}
-                onClick={() => chooseExchange(pair.key)}
-              >
-                <span className="rooms-exchange__faces" aria-hidden>
-                  <BotMark bot={pair.left} size={20} decorative />
-                  <BotMark bot={pair.right} size={20} decorative />
-                </span>
-                <span className="rooms-list__body">
-                  <span className="rooms-list__name">
-                    <span className="rooms-list__name-text">
-                      {pair.left.name} ⇄ {pair.right.name}
-                    </span>
-                  </span>
-                  <span className="rooms-list__preview">
-                    {pair.messages.at(-1)?.content.replace(/\s+/g, ' ').trim() || t('rooms.previewEmpty')}
-                  </span>
-                </span>
-              </button>
-            ))
-          )}
         </aside>
 
         <section className="rooms-detail">

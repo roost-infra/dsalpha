@@ -10,3 +10,14 @@
   position: relative;
 }
 
+
+/* A delivered bot message is the door into the pair's full exchange. */
+.bot-message-row--open { cursor: pointer; border-radius: 10px; transition: background var(--motion-quick) var(--ease-out); }
+.bot-message-row--open:hover { background: var(--color-bg-card-hover); }
+.bot-message-row--open:focus-visible { outline: 2px solid var(--color-accent-primary); outline-offset: 2px; }
+.bot-message-row__hint { margin-left: auto; font-size: 10px; color: var(--color-text-tertiary); opacity: 0; transition: opacity var(--motion-quick) var(--ease-out); }
+.bot-message-row--open:hover .bot-message-row__hint,
+.bot-message-row--open:focus-visible .bot-message-row__hint { opacity: 1; }
+@media (hover: none) {
+  .bot-message-row__hint { opacity: .75; }
+}
