@@ -48,7 +48,7 @@ export function BotExchangePanel({
   let lastDay = '';
 
   return (
-    <aside className="rooms-bot-messages" role="dialog" aria-modal="true" aria-label={t('rooms.botMessagesTitle')}>
+    <section className="rooms-bot-messages" aria-label={t('rooms.botMessagesTitle')}>
       <header className="rooms-bot-messages__header">
         <span className="rooms-bot-messages__pair">
           <BotMark bot={pair.left} size={22} decorative />
@@ -97,6 +97,6 @@ export function BotExchangePanel({
         </div>
       )}
       {messages.length > 0 && <p className="rooms-ai-disclaimer">{t('chat.aiDisclaimer')}</p>}
-    </aside>
+    </section>
   );
 }

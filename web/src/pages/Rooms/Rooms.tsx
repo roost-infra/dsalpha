@@ -175,6 +175,8 @@ export default function Rooms() {
     const next = new URLSearchParams(searchParams);
     if (roomId) next.set('room', roomId);
     else next.delete('room');
+    next.delete('exchange');
+    setExchangeKey(null);
     setSearchParams(next, { replace: true });
   };
 
@@ -188,13 +190,17 @@ export default function Rooms() {
   const chooseExchange = (key: string | null) => {
     setExchangeKey(key);
     const next = new URLSearchParams(searchParams);
-    if (key) next.set('exchange', key);
-    else next.delete('exchange');
+    if (key) {
+      next.set('exchange', key);
+      next.delete('room');
+    } else {
+      next.delete('exchange');
+    }
     setSearchParams(next, { replace: true });
   };
 
   return (
-    <div className={selectedRoomId ? 'rooms-page rooms-page--detail' : 'rooms-page'}>
+    <div className={selectedRoomId || activePair ? 'rooms-page rooms-page--detail' : 'rooms-page'}>
       <header className="rooms-page__header">
         <div className="rooms-page__title">
           <UsersRound className="h-4.5 w-4.5 shrink-0" aria-hidden />
@@ -304,7 +310,12 @@ export default function Rooms() {
               <button
                 key={pair.key}
                 type="button"
-                className="rooms-list__row rooms-list__row--exchange"
+                className={
+                  exchangeKey === pair.key
+                    ? 'rooms-list__row rooms-list__row--exchange is-active'
+                    : 'rooms-list__row rooms-list__row--exchange'
+                }
+                aria-current={exchangeKey === pair.key ? 'true' : undefined}
                 onClick={() => chooseExchange(pair.key)}
               >
                 <span className="rooms-exchange__faces" aria-hidden>
@@ -327,7 +338,15 @@ export default function Rooms() {
         </aside>
 
         <section className="rooms-detail">
-          {selectedRoomId ? (
+          {activePair ? (
+            <BotExchangePanel
+              pair={activePair}
+              messages={activePair.messages}
+              loading={inbox.isLoading}
+              failed={inbox.isError}
+              onClose={() => chooseExchange(null)}
+            />
+          ) : selectedRoomId ? (
             <RoomPanel
               key={selectedRoomId}
               roomId={selectedRoomId}
@@ -342,16 +361,6 @@ export default function Rooms() {
           )}
         </section>
       </div>
-
-      {activePair && (
-        <BotExchangePanel
-          pair={activePair}
-          messages={activePair.messages}
-          loading={inbox.isLoading}
-          failed={inbox.isError}
-          onClose={() => chooseExchange(null)}
-        />
-      )}
 
       {creating && (
         <CreateRoomDialog
