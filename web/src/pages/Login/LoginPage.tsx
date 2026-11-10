@@ -99,7 +99,11 @@ function LoginPage() {
   } = useAuth();
   const [searchParams] = useSearchParams();
   const [view, setView] = useState<LoginView>(
-    searchParams.get('mode') === 'signup' ? 'signup' : 'method'
+    searchParams.get('mode') === 'signup'
+      ? 'signup'
+      : searchParams.get('mode') === 'login'
+        ? 'login'
+        : 'method'
   );
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
