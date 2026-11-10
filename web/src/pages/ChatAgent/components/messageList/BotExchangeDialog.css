@@ -5,13 +5,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  /* Center over the conversation pane, not the whole window: the left
+     padding leaves the sidebar out of the centering calculation. */
+  padding: 24px 24px 24px calc(var(--sidebar-width, 0px) + 24px);
   background: rgb(0 0 0 / 42%);
 }
 .bot-exchange-dialog__sheet {
   display: flex;
-  width: min(920px, 100%);
-  height: min(78dvh, 760px);
+  width: min(768px, 100%);
+  height: min(80dvh, 720px);
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--color-border-muted);

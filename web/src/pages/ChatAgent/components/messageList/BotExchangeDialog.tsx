@@ -51,7 +51,16 @@ export function BotExchangeDialog({
       role="dialog"
       aria-modal="true"
       aria-label={t('chat.botMessage.openExchange')}
-      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      // The dialog is rendered from inside the bot-message row, and React
+      // portals bubble through the React tree: without this every click
+      // inside (including the close button) would reach the row's onClick and
+      // immediately reopen the dialog.
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        if (event.target === event.currentTarget) onClose();
+      }}
+      onKeyDown={(event) => event.stopPropagation()}
     >
       <div className="bot-exchange-dialog__sheet">
         {pair ? (
