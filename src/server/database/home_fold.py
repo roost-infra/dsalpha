@@ -73,6 +73,37 @@ MOVES: dict[str, str] = {
               AND h.chart_id = a.chart_id AND h.annotation_id = a.annotation_id
         )
     """,
+    # Identity follows the account. A name Home already holds stays behind
+    # (UNIQUE workspace, name), and so does a second live Chief of Staff:
+    # the partial unique index is one per user, and a collision must not
+    # abort the fold. Members, logs and messages follow by bot id.
+    "bots": """
+        UPDATE bots b SET workspace_id = %(home)s
+        WHERE b.workspace_id = %(former)s
+          AND NOT EXISTS (
+            SELECT 1 FROM bots h
+            WHERE h.workspace_id = %(home)s AND h.name = b.name
+          )
+          AND NOT (
+            b.role = 'chief_of_staff' AND b.deleted_at IS NULL AND EXISTS (
+              SELECT 1 FROM bots h
+              WHERE h.user_id = b.user_id
+                AND h.role = 'chief_of_staff'
+                AND h.deleted_at IS NULL
+                AND h.workspace_id <> %(former)s
+            )
+          )
+    """,
+    # A group chat is the account's history, same as its threads. A name
+    # Home already holds stays on the retired row. The log follows by room id.
+    "rooms": """
+        UPDATE rooms r SET workspace_id = %(home)s
+        WHERE r.workspace_id = %(former)s
+          AND NOT EXISTS (
+            SELECT 1 FROM rooms h
+            WHERE h.workspace_id = %(home)s AND h.name = r.name
+          )
+    """,
 }
 
 _SANDBOX = "sandbox state, and a never-bound row has no sandbox"

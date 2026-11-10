@@ -302,8 +302,27 @@ async def set_status(
 
 
 
+def _computer_scope(computer_id: Optional[str], params: list[Any]) -> str:
+    """Keep a computer token to workspaces that computer holds.
+
+    Home belongs to no computer, so it is never in such a read. The predicate
+    is on the recipient bot's workspace: the inbox is that bot's.
+    """
+    if computer_id is None:
+        return ""
+    params.append(str(computer_id))
+    return (
+        " AND tb.workspace_id IN (SELECT workspace_id FROM workspaces "
+        "WHERE computer_id = %s::uuid)"
+    )
+
+
 async def list_for_user(
-    user_id: str, *, workspace_id: Optional[str] = None, limit: int = 50
+    user_id: str,
+    *,
+    workspace_id: Optional[str] = None,
+    computer_id: Optional[str] = None,
+    limit: int = 50,
 ) -> list[Dict[str, Any]]:
     """Recent bot-to-bot messages the user can see, newest first.
 
@@ -323,6 +342,7 @@ async def list_for_user(
     if workspace_id:
         sql += " AND tb.workspace_id = %s"
         params.append(normalize_uuid(str(workspace_id)))
+    sql += _computer_scope(computer_id, params)
     sql += " ORDER BY m.created_at DESC, m.message_id DESC LIMIT %s"
     params.append(max(1, min(int(limit), 200)))
     async with get_db_connection() as conn:
@@ -343,6 +363,7 @@ async def list_after(
     *,
     after,
     workspace_id: Optional[str] = None,
+    computer_id: Optional[str] = None,
     limit: int = 100,
 ) -> list[Dict[str, Any]]:
     """Messages newer than ``after``, oldest first (for an SSE tail)."""
@@ -358,6 +379,7 @@ async def list_after(
     if workspace_id:
         sql += " AND tb.workspace_id = %s"
         params.append(normalize_uuid(str(workspace_id)))
+    sql += _computer_scope(computer_id, params)
     sql += " ORDER BY m.created_at ASC, m.message_id ASC LIMIT %s"
     params.append(max(1, min(int(limit), 200)))
     async with get_db_connection() as conn:

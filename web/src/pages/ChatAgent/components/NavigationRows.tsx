@@ -37,7 +37,6 @@ import { BotMark } from '@/components/bots/BotMark';
 import { WorkspaceConversations } from '@/components/Sidebar/WorkspaceConversations';
 import { isHomeWorkspace } from '@/lib/homeWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
-import { useBots } from '@/hooks/useBots';
 import { sidebarAgentRowLabel, type SidebarAgentRow } from '../session/subagents/subagentStatus';
 import { SubagentStatusIcon } from './taskStatusUi';
 import type { NavWorkspace } from '../hooks/useNavigationData';
@@ -692,6 +691,7 @@ function WorkspaceTreeRowImpl({
   onNavigateThread,
   onSelectAgent,
   onRemoveAgent,
+  onLoadMoreThreads,
   onPinWorkspace,
   onNewThread,
   onPinThread,
@@ -709,19 +709,10 @@ function WorkspaceTreeRowImpl({
   const machine = useRowMachine(ws);
   const threads = threadsData?.threads || [];
   const threadsLoading = threadsData?.loading || false;
-  // The active thread stays reachable (and carries its agent rows); it is not
-  // history, so it is drawn under the conversation stream, not as a list.
-  const { data: botsData } = useBots(wsId);
-  const primaryThreadIds = new Set(
-    (botsData?.bots ?? [])
-      .map((bot) => bot.primary_thread_id)
-      .filter((id): id is string => Boolean(id)),
-  );
-  const currentThread = threads.find(
-    (thread) =>
-      thread.thread_id === currentThreadId &&
-      !primaryThreadIds.has(thread.thread_id),
-  );
+  const hasMoreThreads =
+    !!onLoadMoreThreads &&
+    typeof threadsData?.total === 'number' &&
+    threads.length < threadsData.total;
   const isRenaming = rename.active;
   // The options menu isn't offered on Home (shared, immutable), mirroring
   // the gallery hiding its card menu there. New-thread stays available
@@ -879,31 +870,47 @@ function WorkspaceTreeRowImpl({
             dragged so the lifted item shrinks to header height (clean gap),
             and the DragOverlay chip carries the visual instead. */}
         <kit.Collapse show={isExpanded && !isDragging}>
-          <WorkspaceConversations workspaceId={wsId} threads={threads} />
-          {currentThread && (
-            <kit.ThreadList>
-              <kit.ThreadItem key={currentThread.thread_id} order={currentThread.thread_id}>
-                <ThreadTreeRow
-                  wsId={wsId}
-                  thread={currentThread}
-                  isCurrentThread
-                  isExpanded={expandedThreadIds.has(currentThread.thread_id)}
-                  isMobile={isMobile}
-                  agents={agents}
-                  activeAgentId={activeAgentId}
-                  onToggleThread={onToggleThread}
-                  onNavigateThread={onNavigateThread}
-                  onSelectAgent={onSelectAgent}
-                  onRemoveAgent={onRemoveAgent}
-                  onPinThread={onPinThread}
-                  onArchiveThread={onArchiveThread}
-                  onRenameThread={onRenameThread}
-                  onShareThread={onShareThread}
-                  onDeleteThread={onDeleteThread}
-                />
-              </kit.ThreadItem>
-            </kit.ThreadList>
-          )}
+          <WorkspaceConversations
+            workspaceId={wsId}
+            threads={threads}
+            renderThread={(entry) => {
+              const thread = threads.find((row) => row.thread_id === entry.thread_id);
+              if (!thread) return null;
+              return (
+                <kit.ThreadItem order={thread.thread_id}>
+                  <ThreadTreeRow
+                    wsId={wsId}
+                    thread={thread}
+                    isCurrentThread={thread.thread_id === currentThreadId}
+                    isExpanded={expandedThreadIds.has(thread.thread_id)}
+                    isMobile={isMobile}
+                    agents={thread.thread_id === currentThreadId ? agents : undefined}
+                    activeAgentId={activeAgentId}
+                    onToggleThread={onToggleThread}
+                    onNavigateThread={onNavigateThread}
+                    onSelectAgent={onSelectAgent}
+                    onRemoveAgent={onRemoveAgent}
+                    onPinThread={onPinThread}
+                    onArchiveThread={onArchiveThread}
+                    onRenameThread={onRenameThread}
+                    onShareThread={onShareThread}
+                    onDeleteThread={onDeleteThread}
+                  />
+                </kit.ThreadItem>
+              );
+            }}
+            footer={hasMoreThreads ? (
+              <button
+                type="button"
+                data-nav-key="show-more"
+                className="workspace-conversations__more"
+                disabled={threadsLoading}
+                onClick={() => onLoadMoreThreads?.(wsId)}
+              >
+                {threadsLoading ? t('common.loading') : t('nav.showMore')}
+              </button>
+            ) : null}
+          />
         </kit.Collapse>
       </>)}
     </kit.Section>

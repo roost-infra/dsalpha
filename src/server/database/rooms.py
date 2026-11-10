@@ -200,7 +200,8 @@ async def list_rooms(
                           FROM room_members m JOIN bots b ON b.bot_id = m.member_id::uuid
                          WHERE m.room_id = rooms.room_id AND m.member_type = 'bot'), '[]'::json) AS members
                 FROM rooms WHERE {' AND '.join(where)}
-                ORDER BY created_at LIMIT %s OFFSET %s
+                ORDER BY updated_at DESC, created_at DESC, room_id
+                LIMIT %s OFFSET %s
                 """,
                 (*params, max(1, min(int(limit), 200)), max(0, int(offset))),
             )
@@ -464,7 +465,18 @@ async def append_log(
                     Json(metadata or {}),
                 ),
             )
-            return _log_row(await cur.fetchone())
+            raw = await cur.fetchone()
+            if raw is None:
+                return None
+            # The sidebar stream sorts a room by updated_at. A message is what
+            # moves it; a name or bulletin edit is not the only activity.
+            # A conflict that inserted nothing (ignore_conflict) leaves the
+            # stamp where it was.
+            await cur.execute(
+                "UPDATE rooms SET updated_at = NOW() WHERE room_id = %s",
+                (cleaned,),
+            )
+            return _log_row(raw)
 
 
 async def read_log(

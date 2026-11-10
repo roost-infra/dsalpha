@@ -523,6 +523,7 @@ async def find_private_thread(bot_id: Any) -> Optional[str]:
                   ON t.conversation_thread_id = bt.thread_id
                 WHERE bt.bot_id = %s AND bt.kind = 'private'
                   AND t.bot_id = %s AND t.archived_at IS NULL
+                  AND t.is_shared IS NOT TRUE
                 ORDER BY (COALESCE(t.title, '') <> '') DESC, t.created_at ASC
                 LIMIT 1
                 """,
@@ -546,6 +547,49 @@ async def get_thread_bot_id(thread_id: Any, *, conn=None) -> Optional[str]:
             )
             row = await cur.fetchone()
             return str(row["bot_id"]) if row and row["bot_id"] else None
+
+
+async def clear_unusable_primary(bot_id: Any, *, conn=None) -> None:
+    """Drop a primary pointer that no longer names a private chat.
+
+    ``set_primary_thread`` only fills a NULL. A pointer at a shared, archived
+    or missing thread would otherwise stay forever, and delivery would mint a
+    replacement it can never pin.
+    """
+    bot = _clean_bot_id(bot_id)
+    if bot is None:
+        return
+    async with get_db_connection(conn) as db:
+        async with db.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE bots b
+                SET primary_thread_id = NULL, updated_at = NOW()
+                WHERE b.bot_id = %s
+                  AND b.primary_thread_id IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM conversation_threads t
+                    WHERE t.conversation_thread_id = b.primary_thread_id
+                      AND t.archived_at IS NULL
+                      AND t.is_shared IS NOT TRUE
+                  )
+                """,
+                (bot,),
+            )
+
+
+async def clear_primary_pointing_at(thread_id: Any, *, conn=None) -> None:
+    """A thread that just became shared is no longer anyone's private chat."""
+    thread = normalize_uuid(str(thread_id)) if thread_id else None
+    if thread is None:
+        return
+    async with get_db_connection(conn) as db:
+        async with db.cursor() as cur:
+            await cur.execute(
+                "UPDATE bots SET primary_thread_id = NULL, updated_at = NOW() "
+                "WHERE primary_thread_id = %s",
+                (thread,),
+            )
 
 
 async def set_primary_thread(bot_id: Any, thread_id: Any, *, conn=None) -> None:

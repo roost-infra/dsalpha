@@ -212,4 +212,33 @@ async def test_the_bot_inbox_returns_names_for_both_sides():
         answer = await list_bot_messages(PRINCIPAL, workspace_id=None, limit=50)
     assert answer.messages[0].from_name == "Quant"
     assert answer.messages[0].to_name == "Macro"
-    read.assert_awaited_once_with(USER, workspace_id=None, limit=50)
+    read.assert_awaited_once_with(
+        USER, workspace_id=None, computer_id=None, limit=50
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_computer_token_reads_only_its_own_inbox():
+    """An unfiltered inbox is scoped to the computer, the way the bot list is."""
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    with patch(
+        "src.server.database.bot_messages.list_for_user", AsyncMock(return_value=[])
+    ) as read:
+        answer = await list_bot_messages(computer, workspace_id=None, limit=50)
+    assert answer.messages == []
+    assert read.await_args.kwargs["computer_id"] == "c-1"
+
+
+@pytest.mark.asyncio
+async def test_a_computer_token_tails_only_its_own_inbox():
+    from src.server.app.bots import stream_bot_messages
+
+    computer = Principal(user_id=USER, auth="pat", computer_id="c-1")
+    with patch(
+        "src.server.database.bot_messages.list_after", AsyncMock(return_value=[])
+    ) as read:
+        response = await stream_bot_messages(computer, workspace_id=None, after=None)
+        chunk = await response.body_iterator.__anext__()
+        await response.body_iterator.aclose()
+    assert "keepalive" in chunk
+    assert read.await_args.kwargs["computer_id"] == "c-1"

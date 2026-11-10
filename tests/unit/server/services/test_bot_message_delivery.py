@@ -189,6 +189,8 @@ async def test_an_existing_bot_chat_is_pinned_before_minting_a_new_thread():
     with patch(
         "src.server.database.bots.get_private_thread", AsyncMock(return_value=None)
     ), patch(
+        "src.server.database.bots.clear_unusable_primary", AsyncMock()
+    ) as clear, patch(
         "src.server.database.bots.find_private_thread",
         AsyncMock(return_value="existing-thread"),
     ), patch(
@@ -199,5 +201,6 @@ async def test_an_existing_bot_chat_is_pinned_before_minting_a_new_thread():
     ) as mint:
         thread = await ensure_private_thread(TARGET)
     assert thread == "existing-thread"
+    clear.assert_awaited_once_with("b-2")
     pin.assert_awaited_once_with("b-2", "existing-thread")
     mint.assert_not_awaited()
