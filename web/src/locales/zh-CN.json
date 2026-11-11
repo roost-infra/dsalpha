@@ -6103,13 +6103,15 @@
         "skills": "技能",
         "brokerages": "券商",
         "secrets": "密钥",
-        "subagents": "子 Agent"
+        "subagents": "子 Agent",
+        "pages": "页面插件"
       },
       "group": {
         "customize": "自定义",
         "accounts": "账户",
         "installed": "已安装",
-        "builtIn": "内置"
+        "builtIn": "内置",
+        "pages": "页面插件"
       },
       "railLabel": "插件分区",
       "needsAttention": "需要处理",
@@ -6167,7 +6169,8 @@
         "skills": "Agent 遵循的指令",
         "brokerages": "Agent 可以交易的账户",
         "secrets": "连接器使用的密钥",
-        "subagents": "Agent 分派工作的专家"
+        "subagents": "Agent 分派工作的专家",
+        "pages": "随应用内置的页面，启用后出现在侧栏。"
       }
     },
     "loadFailed": {
@@ -6509,6 +6512,19 @@
       "availableNextTurn": "从下一轮起可用。",
       "copyStartsOff": "与 {{name}} 一样默认关闭。创建后开启即可使用。",
       "atLimit": "你已有 {{count}} 个自己的子 Agent，已达上限。移除一个后才能再添加。"
+    },
+    "builtin": {
+      "intro": "这些页面随应用发布，不需要下载第三方代码。启用后才会出现在侧栏。",
+      "builtIn": "内置",
+      "enabled": "已启用",
+      "disabled": "未启用",
+      "enable": "启用",
+      "disable": "禁用",
+      "pageNotEnabled": "此页面插件尚未启用。",
+      "marketCenter": {
+        "name": "市场中心",
+        "description": "行情、自选、板块与财经新闻。"
+      }
     }
   },
   "timezone": {

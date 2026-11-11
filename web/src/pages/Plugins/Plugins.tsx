@@ -10,6 +10,7 @@ import { SkillsList } from './components/SkillsList';
 import { SubagentsList } from './components/subagents/SubagentsList';
 import { PluginSecrets } from './components/PluginSecrets';
 import { PluginsList } from './components/PluginsList';
+import { BuiltinPagePlugins } from './components/BuiltinPagePlugins';
 import { WorkspacesLoadNote } from './components/WorkspacesLoadNote';
 import { DiscoverSummary } from './components/discover/DiscoverSummary';
 import { PageHeader } from './components/shell/PageHeader';
@@ -81,6 +82,8 @@ function SectionBody({ section, view }: { section: Section; view: SectionView })
     );
   }
   switch (section) {
+    case 'pages':
+      return <BuiltinPagePlugins />;
     case 'plugins':
       return <PluginsList />;
     case 'mcp':

@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { FilePlus, KeyRound, Landmark, MessageSquarePlus, Package, Plug, SquareSlash } from 'lucide-react';
+import { FilePlus, KeyRound, Landmark, LayoutTemplate, MessageSquarePlus, Package, Plug, SquareSlash } from 'lucide-react';
 import { SubagentsRings } from '@/components/ui/subagents-rings';
 import type { AddIntent } from '../../utils/addParam';
 import { DETAIL_KIND_TAB, parseDetail, readView, type SectionView } from '../../utils/detailParam';
@@ -9,14 +9,16 @@ import { DETAIL_KIND_TAB, parseDetail, readView, type SectionView } from '../../
  * carry (`mcp` is Connectors). Customize holds what the agent can use, most
  * with a Yours and a Discover view; Accounts holds what it signs in with.
  */
-export type Section = 'plugins' | 'mcp' | 'skills' | 'subagents' | 'brokerages' | 'secrets';
+export type Section = 'pages' | 'plugins' | 'mcp' | 'skills' | 'subagents' | 'brokerages' | 'secrets';
 
+export const PAGES: readonly Section[] = ['pages'];
 export const CUSTOMIZE: readonly Section[] = ['plugins', 'mcp', 'skills', 'subagents'];
 export const ACCOUNTS: readonly Section[] = ['secrets'];
-const ALL: readonly Section[] = [...CUSTOMIZE, ...ACCOUNTS];
+const ALL: readonly Section[] = [...PAGES, ...CUSTOMIZE, ...ACCOUNTS];
 
 // Bare literals (not a template) so the locale parity test sees every label.
 export const SECTION_LABEL_KEYS: Record<Section, string> = {
+  pages: 'plugins.shell.section.pages',
   plugins: 'plugins.shell.section.plugins',
   mcp: 'plugins.shell.section.mcp',
   skills: 'plugins.shell.section.skills',
@@ -28,6 +30,7 @@ export const SECTION_LABEL_KEYS: Record<Section, string> = {
 // What each section holds, in a line under its title: a first visit cannot
 // tell a plugin from a connector from a skill by their names alone.
 export const SECTION_DEFINITION_KEYS: Record<Section, string> = {
+  pages: 'plugins.shell.definition.pages',
   plugins: 'plugins.shell.definition.plugins',
   mcp: 'plugins.shell.definition.mcp',
   skills: 'plugins.shell.definition.skills',
@@ -37,6 +40,7 @@ export const SECTION_DEFINITION_KEYS: Record<Section, string> = {
 };
 
 export const SECTION_ICONS: Record<Section, ComponentType<{ className?: string }>> = {
+  pages: LayoutTemplate,
   plugins: Package,
   mcp: Plug,
   skills: SquareSlash,
