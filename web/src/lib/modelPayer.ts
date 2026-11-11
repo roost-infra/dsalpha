@@ -43,7 +43,7 @@ export const paidByUser = (payer: Payer | undefined): boolean =>
   payer === 'own_key' || isSubscription(payer);
 
 // The plan a sign-in draws on, named as its maker sells it. A bare
-// "Subscription" beside "Credits" reads as the user's LangAlpha plan, which is
+// "Subscription" beside "Credits" reads as the user's dsalpha plan, which is
 // where credits come from.
 const SUBSCRIPTION_PLANS: Record<string, string> = {
   'claude-oauth': 'Claude',

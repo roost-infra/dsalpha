@@ -205,7 +205,7 @@ export interface ComputerSsh {
   tunnel: boolean;
   /** Whether the tunnel is up now; null when the computer has none. */
   tunnel_connected: boolean | null;
-  /** Answered by LangAlpha's helper (remote control of a Mac) rather than the machine's own sshd. */
+  /** Answered by dsalpha's helper (remote control of a Mac) rather than the machine's own sshd. */
   helper: boolean;
   /** The system as `uname -s` names it ("Darwin", "Linux"); null on a computer added before it was kept. */
   os?: string | null;
@@ -392,7 +392,7 @@ export interface ComputerActionResponse {
 export interface ComputerRemoveResponse {
   /** What happened to our key line on an SSH computer's machine; null for other kinds, and when remove_key was false. */
   key: ComputerKeyRemoval | null;
-  /** What happened to LangAlpha's files on an SSH computer's machine; null unless delete_files was asked. */
+  /** What happened to dsalpha's files on an SSH computer's machine; null unless delete_files was asked. */
   files?: ComputerFilesRemoval | null;
   /** A Claude Code token left on an SSH computer's machine; null when none is, absent from an older backend. */
   token?: ComputerTokenRemoval | null;
@@ -562,7 +562,7 @@ export interface SshProbeResult {
   hostname: string;
   /** A Mac's model name ("MacBook Pro"); empty elsewhere, and from an older server. */
   model?: string;
-  /** Answered by LangAlpha's helper (remote control of a Mac) rather than the machine's own sshd. */
+  /** Answered by dsalpha's helper (remote control of a Mac) rather than the machine's own sshd. */
   helper: boolean;
   /** Whether an organization's Claude Code policy is installed there, which
    *  keeps Claude Code from running. Absent from an older server. */

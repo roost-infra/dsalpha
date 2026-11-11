@@ -397,7 +397,7 @@ async def serve_workspace_file_endpoint(
         False, description="PDF only: draw an 'N / total' footer in the page margin."
     ),
     branding: bool = Query(
-        True, description="PDF only: stamp 'athena · <date>' in the footer."
+        True, description="PDF only: stamp 'dsalpha · <date>' in the footer."
     ),
     sec_fetch_dest: Annotated[str | None, Header(include_in_schema=False)] = None,
 ) -> Response:

@@ -5,7 +5,7 @@
       "title": "A new version is available",
       "description": "Reload now to update. Your agents keep working.",
       "blockedTitle": "This page needs a reload",
-      "blockedDescription": "LangAlpha was updated while this tab was open. Reload to continue.",
+      "blockedDescription": "dsalpha was updated while this tab was open. Reload to continue.",
       "reload": "Reload"
     },
     "networkBanner": {
@@ -82,8 +82,8 @@
     "confirming": "Confirming your email…",
     "confirmedSigningIn": "Email confirmed — signing you in…",
     "confirmError": "This link is invalid or has expired.",
-    "shellHandoffTitle": "Opening athena…",
-    "shellHandoffBody": "We handed this link to the athena app so you finish signing in there.",
+    "shellHandoffTitle": "Opening dsalpha…",
+    "shellHandoffBody": "We handed this link to the dsalpha app so you finish signing in there.",
     "shellHandoffFallback": "Continue in this browser",
     "requestNewLink": "Request a new link",
     "confirmPassword": "Confirm password",
@@ -472,7 +472,7 @@
     "definition": {
       "account": "Your name, photo and sign-in.",
       "preferences": "What you told the agent about how you invest, so its research fits you.",
-      "plan": "Your plan, your credits and billing, managed in your LangAlpha account.",
+      "plan": "Your plan, your credits and billing, managed in your dsalpha account.",
       "general": "Language, timezone and the in-app guides.",
       "appearance": "Theme, text size and how data cards look.",
       "chat": "How replies come in and what the chat shows while the agent works.",
@@ -497,11 +497,11 @@
     "photo": "Photo",
     "photoDesc": "PNG, JPEG, GIF or WebP.",
     "nameDesc": "Shown in the account menu.",
-    "logoutDesc": "You'll need to sign in again to use LangAlpha.",
+    "logoutDesc": "You'll need to sign in again to use dsalpha.",
     "investingAnswers": "Your answers",
     "resetPreferencesDesc": "Clears your investing answers, default models and other model settings. Conversations keep the models they use.",
     "regionGroup": "Language and region",
-    "localeDesc": "The language LangAlpha is shown in.",
+    "localeDesc": "The language dsalpha is shown in.",
     "timezoneDesc": "Dates and times are shown in this timezone.",
     "desktopGroup": "Desktop app",
     "helpGroup": "Help",
@@ -579,11 +579,11 @@
       "manage": "Manage",
       "open": "Open",
       "connectedApps": "Connected apps",
-      "connectedAppsDesc": "Apps you've signed in to with your LangAlpha account."
+      "connectedAppsDesc": "Apps you've signed in to with your dsalpha account."
     }
   },
   "dashboard": {
-    "title": "LangAlpha",
+    "title": "dsalpha",
     "searchLabel": "Search stocks by symbol or company name",
     "searchPlaceholder": "Search by symbol or company name...",
     "searching": "Searching...",
@@ -1162,7 +1162,7 @@
       "conversation": {
         "title": "Workbench",
         "description": "A chat-first console: greeting, live chat input, and one-click resume.",
-        "placeholder": "Put LangAlpha to work — a ticker to unpack, a filing to parse, a thesis to stress-test…",
+        "placeholder": "Put dsalpha to work — a ticker to unpack, a filing to parse, a thesis to stress-test…",
         "resume": "Resume",
         "untitledThread": "Untitled thread",
         "greetingLate": "Up late",
@@ -1551,9 +1551,9 @@
     "removeTitle": "Remove {{name}}?",
     "removeBody": "Its sandbox and everything on its disk are deleted. This can't be undone.",
     "removeBodyOwnMachine": "We stop using this machine and remove what we set up there for it. Your files in {{folder}} stay.",
-    "removeBodyOwnMachineDelete": "We stop using this machine and delete what LangAlpha put there.",
-    "alsoDeleteFiles": "Also delete LangAlpha's files from this machine",
-    "alsoDeleteFilesHint": "Deletes {{folder}}, its workspaces' folders included, and LangAlpha's runtime in ~/.langalpha (about 3 GB) unless another computer uses it. Files you put in {{folder}} yourself stay. The machine has to be connected.",
+    "removeBodyOwnMachineDelete": "We stop using this machine and delete what dsalpha put there.",
+    "alsoDeleteFiles": "Also delete dsalpha's files from this machine",
+    "alsoDeleteFilesHint": "Deletes {{folder}}, its workspaces' folders included, and dsalpha's runtime in ~/.langalpha (about 3 GB) unless another computer uses it. Files you put in {{folder}} yourself stay. The machine has to be connected.",
     "filesDeleted": "Its files were deleted from the machine.",
     "filesRootKept": "{{folder}} stays, since it holds files of yours.",
     "filesRuntimeKept": "~/.langalpha stays, since another computer uses it.",
@@ -1702,7 +1702,7 @@
       "previewLabel": "Preview",
       "previewNotice": "Connecting your own machine is new, so use it with care. The agent can do anything the account you connect can do, so connect an account made for it rather than your own.",
       "pairIntro": "Run this on the machine you are adding (Linux or macOS), as the user the agent should work as:",
-      "pairIntroLocal": "Run this in a terminal on the computer running LangAlpha, as the user the agent should work as. To add another machine, set it up by hand.",
+      "pairIntroLocal": "Run this in a terminal on the computer running dsalpha, as the user the agent should work as. To add another machine, set it up by hand.",
       "pairLoading": "Getting your command...",
       "viewScript": "View script",
       "waiting": "Waiting for your machine...",
@@ -1763,24 +1763,24 @@
     },
     "remoteControl": {
       "cardTitle": "This Mac",
-      "cardDesc": "Works even with LangAlpha closed",
+      "cardDesc": "Works even with dsalpha closed",
       "alreadyAdded": "Already added",
       "title": "Remote control of this Mac",
-      "intro": "LangAlpha's agent will work on this Mac as {{account}}, with everything that account can do.",
+      "intro": "dsalpha's agent will work on this Mac as {{account}}, with everything that account can do.",
       "meansLabel": "What it means",
       "meansAccess": "It can run any command and read or change any file {{account}} can, in any folder. Its work stays in the folder you pick, but nothing on this Mac holds it there.",
-      "meansBackground": "It keeps working after you close LangAlpha. Remote control runs in the background and starts again when you log in, until you turn it off.",
+      "meansBackground": "It keeps working after you close dsalpha. Remote control runs in the background and starts again when you log in, until you turn it off.",
       "meansCredentials": "It can read what command line tools keep for {{account}}, such as Git and cloud sign-ins, and reach your home or office network.",
-      "meansAccount": "Anyone who signs in to your LangAlpha account can direct it.",
+      "meansAccount": "Anyone who signs in to your dsalpha account can direct it.",
       "stopLabel": "Stopping it",
-      "stop": "Pause it any time from the LangAlpha menu, or in System Settings under General, Login Items. Removing this computer in LangAlpha turns it off and deletes its keys from this Mac.",
-      "folderPrompts": "macOS may ask whether LangAlpha can open folders such as Documents or Desktop. You can say no: the agent's own folder does not need it.",
+      "stop": "Pause it any time from the dsalpha menu, or in System Settings under General, Login Items. Removing this computer in dsalpha turns it off and deletes its keys from this Mac.",
+      "folderPrompts": "macOS may ask whether dsalpha can open folders such as Documents or Desktop. You can say no: the agent's own folder does not need it.",
       "previewNotice": "Remote control is in preview while we build more safeguards. Until then the agent has the same access you do, so turn it on only on a Mac where that is all right.",
-      "acknowledge": "I understand LangAlpha's agent can run commands and change files on this Mac as {{account}}.",
+      "acknowledge": "I understand dsalpha's agent can run commands and change files on this Mac as {{account}}.",
       "turnOn": "Turn on remote control",
       "turningOn": "Turning on remote control…",
       "connecting": "Connecting this Mac…",
-      "needsApproval": "macOS needs your OK. In System Settings, under General, Login Items, allow LangAlpha in the background, then continue.",
+      "needsApproval": "macOS needs your OK. In System Settings, under General, Login Items, allow dsalpha in the background, then continue.",
       "continue": "Continue",
       "tryAgain": "Try again",
       "failed": "Couldn't turn on remote control. Try again.",
@@ -1789,7 +1789,7 @@
       "provider": "Remote control",
       "asAccount": "as {{account}}",
       "notConnected": "Not connected",
-      "paused": "Remote control is paused. Resume it from the LangAlpha menu.",
+      "paused": "Remote control is paused. Resume it from the dsalpha menu.",
       "removeTurnsOff": "Remote control on this Mac turns off too.",
       "cardTitlePc": "This PC",
       "windowsSoon": "Windows support is coming soon",
@@ -1819,7 +1819,7 @@
       "reconnect": "Reconnect…"
     },
     "restartRefused": {
-      "folderMarked": "That folder is another computer's, possibly one from another LangAlpha account or server.",
+      "folderMarked": "That folder is another computer's, possibly one from another dsalpha account or server.",
       "folderOwned": "Another of your computers works in that folder. Remove it to free the folder.",
       "notStopped": "This computer is starting or running. Try again once it has stopped.",
       "specInProgress": "A spec change is running on this computer. Try again once it finishes.",
@@ -1833,7 +1833,7 @@
       "folderLabel": "Folder",
       "takeBack": "Take the folder back",
       "takeBackDesc": "Keep using {{folder}}. If another computer works in it now, that computer stops working on this machine. The files in the folder stay.",
-      "takeBackOwned": "Keep using {{folder}}. Another computer works in it now, possibly one from another LangAlpha account or server. That computer stops working on this machine. The files in the folder stay.",
+      "takeBackOwned": "Keep using {{folder}}. Another computer works in it now, possibly one from another dsalpha account or server. That computer stops working on this machine. The files in the folder stay.",
       "newFolder": "Use a new folder",
       "newFolderDesc": "Start again in another folder on this machine. The old folder is left as it is.",
       "newFolderLabel": "New folder",
@@ -1851,8 +1851,8 @@
       "desc": "Connect this computer to its machine again. Its folder and workspaces stay as they are.",
       "pairIntro": "Run this on the machine, as {{username}}:",
       "folderKept": "Workspaces stay in {{folder}}.",
-      "onThatMac": "{{name}} is connected by the LangAlpha app on its Mac. Open LangAlpha on that Mac and choose Reconnect there.",
-      "otherMac": "This Mac is already {{other}}. To reconnect {{name}}, open LangAlpha on the Mac it runs on and choose Reconnect there.",
+      "onThatMac": "{{name}} is connected by the dsalpha app on its Mac. Open dsalpha on that Mac and choose Reconnect there.",
+      "otherMac": "This Mac is already {{other}}. To reconnect {{name}}, open dsalpha on the Mac it runs on and choose Reconnect there.",
       "takeBackNote": "{{folder}} is this computer's folder. Taking it back stops the other computer working there. The files in it stay.",
       "submit": "Reconnect",
       "submitting": "Reconnecting...",
@@ -1945,7 +1945,7 @@
     "loadFailedBody": "Something went wrong on the way. Try again in a moment.",
     "retry": "Retry",
     "signIn": "Sign in",
-    "goToLangAlpha": "Go to LangAlpha"
+    "goToLangAlpha": "Go to dsalpha"
   },
   "publish": {
     "title": "Publish {{file}}",
@@ -2261,7 +2261,8 @@
         "report": "Report from",
         "question": "Question from",
         "notice": "Notice from"
-      }
+      },
+      "exchangeUnavailable": "Conversation unavailable"
     },
     "taskCard": {
       "statusRunning": "Running",
@@ -2593,7 +2594,7 @@
       "claudeCodeApiKeyEndpoint": "Clear the Base URL on your Anthropic API key in Settings to use it on cloud computers",
       "claudeCodePaused": "Paused on cloud computers on this server",
       "claudeCodeNeedsBiggerComputer": "Needs a Medium or larger cloud computer, or a computer of your own",
-      "claudeCodeNeedsBiggerComputerPlan": "Needs a Medium or larger cloud computer: change its spec or upgrade your LangAlpha plan, or use a computer of your own"
+      "claudeCodeNeedsBiggerComputerPlan": "Needs a Medium or larger cloud computer: change its spec or upgrade your dsalpha plan, or use a computer of your own"
     },
     "voice": {
       "start": "Start voice input",
@@ -2741,10 +2742,10 @@
         "too_many_turns": "You've reached the limit on Claude Code threads running at once on cloud computers ({{n}}). Try again when one finishes.",
         "hosted_paused": "Claude Code on cloud computers is paused on this server. It still runs on your own computers. Pick another model, or move this workspace to one of them.",
         "stored_blocked": "Storing a setup token isn't available for your account, so Claude Code runs only on your own computers. Pick another model, or move this workspace to one of them.",
-        "stored_unattended": "Automations, wakeups and turns another agent sends don't run on the setup token LangAlpha stores for you. Choose your Anthropic API key in Settings under Model access, or run this workspace on a computer of yours with its own token.",
+        "stored_unattended": "Automations, wakeups and turns another agent sends don't run on the setup token dsalpha stores for you. Choose your Anthropic API key in Settings under Model access, or run this workspace on a computer of yours with its own token.",
         "choice_changed": "How Claude Code runs on cloud computers changed as this turn started. Send your message again.",
         "needs_bigger_computer": "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change its spec, or move this workspace to a computer of your own.",
-        "needs_bigger_computer_plan": "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change its spec or upgrade your LangAlpha plan, or move this workspace to a computer of your own."
+        "needs_bigger_computer_plan": "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change its spec or upgrade your dsalpha plan, or move this workspace to a computer of your own."
       }
     }
   },
@@ -4530,15 +4531,15 @@
         },
         "desktopApp": {
           "title": "Get the desktop app",
-          "desc": "LangAlpha in a window of its own, and on a Mac, your Mac as a computer."
+          "desc": "dsalpha in a window of its own, and on a Mac, your Mac as a computer."
         },
         "remoteControl": {
           "title": "Turn on remote control",
-          "desc": "Let the agent work on this Mac, even with LangAlpha closed."
+          "desc": "Let the agent work on this Mac, even with dsalpha closed."
         },
         "integrations": {
           "title": "Connect a chat app",
-          "desc": "Talk to LangAlpha from Slack, Telegram, iMessage, and more."
+          "desc": "Talk to dsalpha from Slack, Telegram, iMessage, and more."
         }
       }
     },
@@ -4578,7 +4579,7 @@
       "chat": {
         "greeting": "Hi {{name}}.",
         "greetingNoName": "Hi there.",
-        "intro": "I'm your LangAlpha Chief of Staff. I help you coordinate your AI analysts and manage your workspaces.",
+        "intro": "I'm your dsalpha Chief of Staff. I help you coordinate your AI analysts and manage your workspaces.",
         "introNext": "First, a few questions about your portfolio and how you invest.",
         "editIntro": "Here's your investing profile. Change any answer, then save.",
         "lead": {
@@ -5507,7 +5508,7 @@
       "disconnectedDesc": "\"{{server}}\" is disconnected. Reconnect anytime; agent calls fail until then.",
       "disconnectedTitle": "Disconnected",
       "loopback": {
-        "no-listener": "LangAlpha could not open a local port to receive this broker's reply. Quit any other copy of the desktop app and try again.",
+        "no-listener": "dsalpha could not open a local port to receive this broker's reply. Quit any other copy of the desktop app and try again.",
         "not-minted": "This server has not been set up to send the reply back to the desktop app. Try again in a few minutes.",
         "not-bound": "Another connection was started before this one finished. Try connecting again.",
         "shell-outdated": "This version of the desktop app cannot receive the provider's reply. Update the desktop app, then try again."
@@ -5611,7 +5612,7 @@
       "uninstallFailed": "Uninstall failed",
       "uninstallConfirmYes": "Uninstall",
       "uninstallConfirmNo": "Keep",
-      "sourceBundled": "Ships with LangAlpha",
+      "sourceBundled": "Ships with dsalpha",
       "updateKeysTitle": "Update {{plugin}}",
       "updateKeysSubmit": "Check and update",
       "uninstalledRemoved": "Removed {{what}}.",
@@ -6863,7 +6864,7 @@
     "plan": "{{plan}} plan",
     "claudeCode": "Claude Code",
     "ownKey": "Your key",
-    "credits": "LangAlpha credits",
+    "credits": "dsalpha credits",
     "serverKey": "Server key",
     "locked": "locked"
   },
@@ -6931,7 +6932,7 @@
       "intro": "Sign in with your ChatGPT account using a short code.",
       "pickNote": "ChatGPT Plus, Pro, Business or Enterprise",
       "need": "A ChatGPT Plus, Pro, Business or Enterprise plan.",
-      "usage": "Usage counts against your ChatGPT plan, not your LangAlpha credits.",
+      "usage": "Usage counts against your ChatGPT plan, not your dsalpha credits.",
       "usageOss": "Usage counts against your ChatGPT plan.",
       "time": "About a minute.",
       "consent": "I'm connecting my own ChatGPT account. Usage counts against my ChatGPT plan, and my sign-in is stored encrypted.",
@@ -6973,8 +6974,8 @@
       "moreActions": "More actions",
       "addTitle": "Add a setup token",
       "replaceTitle": "Replace setup token",
-      "intro": "Claude Code mode runs your Claude threads on your own Claude plan. It signs in with a setup token made for LangAlpha.",
-      "separate": "This token is a separate credential made for LangAlpha, never your Claude Code sign-in. Usage counts against your Claude plan. It's stored encrypted and used only for your requests.",
+      "intro": "Claude Code mode runs your Claude threads on your own Claude plan. It signs in with a setup token made for dsalpha.",
+      "separate": "This token is a separate credential made for dsalpha, never your Claude Code sign-in. Usage counts against your Claude plan. It's stored encrypted and used only for your requests.",
       "stepInstall": "Install Claude Code if you don't have it yet.",
       "installLink": "Install guide",
       "stepRun": "In a terminal, on this computer or any other, run:",
@@ -6994,13 +6995,13 @@
         "redis_unavailable": "Saving a token isn't available right now. Try again in a moment.",
         "computer_not_found": "This computer isn't available anymore.",
         "needs_perl": "Claude Code needs perl on this computer. Install perl, then try again.",
-        "computer_unsupported": "This computer runs musl (for example Alpine Linux), which LangAlpha's runtime doesn't support yet.",
+        "computer_unsupported": "This computer runs musl (for example Alpine Linux), which dsalpha's runtime doesn't support yet.",
         "cli_unavailable": "Couldn't set up Claude Code on this computer. Try again.",
         "write_failed": "Couldn't save the token on this computer. Try again.",
         "unknown": "Couldn't save the token. Try again."
       },
       "removeTitle": "Remove the Claude Code setup token?",
-      "removeBody": "LangAlpha deletes the token. Claude Code models stay listed but won't run until you add a new token. Your own Claude Code sign-in isn't affected.",
+      "removeBody": "dsalpha deletes the token. Claude Code models stay listed but won't run until you add a new token. Your own Claude Code sign-in isn't affected.",
       "removeConfirm": "Remove token",
       "removeFailed": "Couldn't remove the token. Try again.",
       "turnsRunning": "Your token is deleted, but a Claude Code turn using it couldn't be stopped. Stop it in its thread.",
@@ -7009,7 +7010,7 @@
       "expired": "This token expired by <date>{{date}}</date>. Add a new one to keep using Claude Code.",
       "expiresSoon": "This token expires by <date>{{date}}</date>. Add a new one before then so Claude Code keeps running.",
       "signIn": {
-        "intro": "Sign in to Claude in a new tab. LangAlpha then makes a setup token for itself, so there's nothing to run in a terminal.",
+        "intro": "Sign in to Claude in a new tab. dsalpha then makes a setup token for itself, so there's nothing to run in a terminal.",
         "start": "Sign in with Claude",
         "codeHint": "After you approve, Claude shows a code. Copy all of it and paste it here.",
         "fieldLabel": "Code from Claude",
@@ -7018,7 +7019,7 @@
           "unavailable": "Claude Code isn't on for your account. Turn it on in Settings, under Model access.",
           "computer_not_found": "This computer isn't available anymore.",
           "needs_perl": "Claude Code needs perl on this computer. Install perl, then try again.",
-          "computer_unsupported": "This computer runs musl (for example Alpine Linux), which LangAlpha's runtime doesn't support yet.",
+          "computer_unsupported": "This computer runs musl (for example Alpine Linux), which dsalpha's runtime doesn't support yet.",
           "cli_unavailable": "Couldn't set up Claude Code on this computer. Send the code again.",
           "write_failed_spent": "Couldn't save the token on this computer, and the code can't be used again. Sign in again.",
           "redis_unavailable": "Signing in isn't available right now. Try again in a moment.",
@@ -7030,24 +7031,24 @@
           "check_unavailable": "Couldn't reach Claude to check the token. Send the code again.",
           "check_unavailable_spent": "Couldn't reach Claude to check the token, and the code can't be used again. Sign in again.",
           "token_rejected": "Claude made a token but refused a request on it. Your Claude plan may not include Claude Code.",
-          "unexpected_grant": "Claude answered in a way LangAlpha didn't expect. Sign in again.",
+          "unexpected_grant": "Claude answered in a way dsalpha didn't expect. Sign in again.",
           "check_in_progress": "A token is already being checked. Wait a moment, then try again.",
           "unknown": "Couldn't finish signing in. Try again."
         }
       },
       "computer": {
-        "intro": "Claude Code runs your Claude threads on {{name}}, on your own Claude plan. It signs in with a setup token made for LangAlpha, kept on that computer.",
-        "separate": "This token is a separate credential made for LangAlpha, never your Claude Code sign-in. Usage counts against your Claude plan. It stays on {{name}}, and LangAlpha doesn't keep a copy.",
-        "signInIntro": "Sign in to Claude in a new tab. LangAlpha then makes a setup token and puts it on {{name}}, so there's nothing to run in a terminal.",
+        "intro": "Claude Code runs your Claude threads on {{name}}, on your own Claude plan. It signs in with a setup token made for dsalpha, kept on that computer.",
+        "separate": "This token is a separate credential made for dsalpha, never your Claude Code sign-in. Usage counts against your Claude plan. It stays on {{name}}, and dsalpha doesn't keep a copy.",
+        "signInIntro": "Sign in to Claude in a new tab. dsalpha then makes a setup token and puts it on {{name}}, so there's nothing to run in a terminal.",
         "addTitle": "Add a setup token for {{name}}",
         "replaceTitle": "Replace the setup token on {{name}}",
         "removeTitle": "Remove the setup token from {{name}}?",
-        "removeBody": "LangAlpha deletes the token from {{name}}. Claude Code won't run there until you add a new one. Your own Claude Code sign-in isn't affected.",
-        "removeBodySaved": "LangAlpha deletes the token from {{name}}. Claude Code there then uses your saved token. Your own Claude Code sign-in isn't affected.",
+        "removeBody": "dsalpha deletes the token from {{name}}. Claude Code won't run there until you add a new one. Your own Claude Code sign-in isn't affected.",
+        "removeBodySaved": "dsalpha deletes the token from {{name}}. Claude Code there then uses your saved token. Your own Claude Code sign-in isn't affected.",
         "ownToken": "Uses its own token",
         "savedToken": "Uses your saved token",
         "noToken": "No setup token for this computer yet",
-        "policyBlocked": "Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here.",
+        "policyBlocked": "Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here.",
         "savedRejected": "Claude refused your saved token. It may have expired or been revoked.",
         "offline": "This computer isn't running, so its token can't be checked.",
         "addOwn": "Add its own token",
@@ -7061,34 +7062,34 @@
       "hosted": {
         "heading": "Where Claude Code runs",
         "local": "Only on your own computers",
-        "localDetail": "Claude Code runs on your own computers, each with its own setup token, and LangAlpha keeps no copy. Workspaces on cloud computers can't use Claude Code models.",
+        "localDetail": "Claude Code runs on your own computers, each with its own setup token, and dsalpha keeps no copy. Workspaces on cloud computers can't use Claude Code models.",
         "apiKey": "Also for cloud computers, with your Anthropic API key",
-        "apiKeyDetail": "For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself, and LangAlpha sends it your API key for each turn. Usage is billed to your Anthropic Console account, where Max, Ultra and Team plans include monthly API credits. Your Claude plan's limits aren't used.",
+        "apiKeyDetail": "For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself, and dsalpha sends it your API key for each turn. Usage is billed to your Anthropic Console account, where Max, Ultra and Team plans include monthly API credits. Your Claude plan's limits aren't used.",
         "apiKeyEndpoint": "Your Anthropic API key is set to a custom Base URL, so Claude Code can't use it on cloud computers. Clear the Base URL on the key to use it.",
         "needsApiKey": "Claude Code on cloud computers has no Anthropic API key to use. Add one, or save the one you have again, in Model access.",
-        "stored": "Also for cloud computers, with your setup token stored by LangAlpha",
-        "storedDetail": "For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself. Your own computers without a token of their own run Claude Code themselves too. For each turn, LangAlpha sends your setup token, kept encrypted, to the computer that runs it. Usage counts against your Claude plan.",
+        "stored": "Also for cloud computers, with your setup token stored by dsalpha",
+        "storedDetail": "For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself. Your own computers without a token of their own run Claude Code themselves too. For each turn, dsalpha sends your setup token, kept encrypted, to the computer that runs it. Usage counts against your Claude plan.",
         "paused": "Claude Code on cloud computers is paused on this server. Your choice is kept, and Claude Code still runs on your own computers.",
         "blocked": "Storing a setup token isn't available for your account. Claude Code still runs on your own computers."
       },
       "consent": {
-        "title": "Let LangAlpha store your setup token?",
-        "encrypted": "LangAlpha keeps your token encrypted and uses it only to run Claude Code for your threads. For each turn, it sends the token to the computer that runs the turn. LangAlpha's servers also use the token to check that it still works.",
+        "title": "Let dsalpha store your setup token?",
+        "encrypted": "dsalpha keeps your token encrypted and uses it only to run Claude Code for your threads. For each turn, it sends the token to the computer that runs the turn. dsalpha's servers also use the token to check that it still works.",
         "unattended": "Usage counts against your Claude plan. Automations, wakeups and turns another agent sends don't use this token.",
         "terms": "Anthropic's terms for your Claude plan apply to this use, and you're responsible for following them. Anthropic may limit or suspend accounts that it finds break them.",
-        "undo": "You can switch back at any time, and LangAlpha deletes the token right away.",
+        "undo": "You can switch back at any time, and dsalpha deletes the token right away.",
         "confirm": "Store my token",
         "termsLink": "Read Anthropic's terms"
       },
       "leaveStored": {
         "title": "Stop storing your setup token?",
-        "body": "LangAlpha deletes your stored setup token now, and Claude Code turns using it stop. Threads on cloud computers won't run on your Claude plan until you store a token again. Computers with their own token aren't affected.",
+        "body": "dsalpha deletes your stored setup token now, and Claude Code turns using it stop. Threads on cloud computers won't run on your Claude plan until you store a token again. Computers with their own token aren't affected.",
         "confirm": "Delete token",
         "failed": "Couldn't switch. Your token is still stored. Try again."
       },
       "setup": {
         "pickNote": "Claude Pro or Max, run on your computer",
-        "lead": "Claude Code mode runs Anthropic's Claude Code through the Claude Agent SDK, inside LangAlpha's harness and tools. Usage counts against your Claude plan.",
+        "lead": "Claude Code mode runs Anthropic's Claude Code through the Claude Agent SDK, inside dsalpha's harness and tools. Usage counts against your Claude plan.",
         "learnMore": "Learn more",
         "waysTitle": "Ways to connect a computer",
         "yourComputers": "Your computers",
@@ -7098,8 +7099,8 @@
         "turnOn": "Turn on Claude Code",
         "mac": {
           "name": "Your Mac, with Remote control",
-          "noteBrowser": "Get the LangAlpha app for Mac, then turn on Remote control in it.",
-          "noteDesktop": "Lets the LangAlpha Agent work on this Mac, where Claude Code then runs.",
+          "noteBrowser": "Get the dsalpha app for Mac, then turn on Remote control in it.",
+          "noteDesktop": "Lets the dsalpha Agent work on this Mac, where Claude Code then runs.",
           "getApp": "Get the Mac app",
           "turnOn": "Turn on Remote control"
         },
@@ -7110,7 +7111,7 @@
         },
         "noComputer": {
           "title": "Connect a computer of your own first",
-          "body": "Claude Code runs on a computer of your own, and none is connected to LangAlpha yet. Connect one either way below, then come back here to sign in to Claude.",
+          "body": "Claude Code runs on a computer of your own, and none is connected to dsalpha yet. Connect one either way below, then come back here to sign in to Claude.",
           "bodyCloud": "Claude Code runs on a computer of your own or a Medium or larger cloud computer, and none of yours can run it yet. Connect a computer of your own either way below, then come back here to sign in to Claude."
         },
         "unsupported": {
@@ -7120,9 +7121,9 @@
         "offline": {
           "title": "{{name}} is offline",
           "titleMany": "Your computers are offline",
-          "body": "Claude Code runs on a computer of your own, and LangAlpha can't reach yours right now. Once one is back online, you can sign in to Claude here.",
-          "helper": "Open LangAlpha on this Mac and check that Remote control is on.",
-          "ssh": "Check that it's on and accepts SSH from LangAlpha."
+          "body": "Claude Code runs on a computer of your own, and dsalpha can't reach yours right now. Once one is back online, you can sign in to Claude here.",
+          "helper": "Open dsalpha on this Mac and check that Remote control is on.",
+          "ssh": "Check that it's on and accepts SSH from dsalpha."
         },
         "ready": {
           "title": "Sign in to Claude to start",
@@ -7143,7 +7144,7 @@
         },
         "checking": {
           "title": "Checking your setup tokens",
-          "body": "LangAlpha is asking Claude whether each token works."
+          "body": "dsalpha is asking Claude whether each token works."
         },
         "refused": {
           "title": "Sign in to Claude again",
@@ -7166,9 +7167,9 @@
     "claude": {
       "name": "Claude",
       "intro": "Sign in on claude.ai, then paste the code it shows you.",
-      "pickNote": "Claude Pro or Max, called by LangAlpha",
+      "pickNote": "Claude Pro or Max, called by dsalpha",
       "need": "A Claude Pro or Max plan.",
-      "usage": "Usage counts against your Claude plan, not your LangAlpha credits.",
+      "usage": "Usage counts against your Claude plan, not your dsalpha credits.",
       "usageOss": "Usage counts against your Claude plan.",
       "time": "About a minute.",
       "consent": "I'm connecting my own Claude account. Usage counts against my Claude plan, and my sign-in is stored encrypted.",
@@ -7208,7 +7209,7 @@
       "intro": "Sign in with your Grok account using a short code.",
       "pickNote": "Grok plans that include API access",
       "need": "A Grok plan that includes API access.",
-      "usage": "Usage counts against your Grok plan, not your LangAlpha credits.",
+      "usage": "Usage counts against your Grok plan, not your dsalpha credits.",
       "usageOss": "Usage counts against your Grok plan.",
       "time": "About a minute.",
       "consent": "I'm connecting my own Grok account. Usage counts against my Grok plan, and my sign-in is stored encrypted.",
@@ -7280,12 +7281,12 @@
       "showAll": "Show all ({{count}} more)",
       "hideAll": "Hide the rest",
       "notTuned": "Not tuned",
-      "notTunedNote": "LangAlpha hasn't tuned these models. They may handle tools or long research less well.",
+      "notTunedNote": "dsalpha hasn't tuned these models. They may handle tools or long research less well.",
       "known": "Known",
       "filterPlaceholder": "Filter models",
       "searchLabel": "Find a model",
       "searchPlaceholder": "Search by name, e.g. sonnet or qwen",
-      "suggested": "Models LangAlpha knows:",
+      "suggested": "Models dsalpha knows:",
       "noResults": "No tool-capable model matches \"{{query}}\". Try one of these:",
       "moreResults": "{{count}} more. Narrow the search to see them.",
       "context": "{{size}} context",

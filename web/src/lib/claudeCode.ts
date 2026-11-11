@@ -26,7 +26,7 @@ export const CLAUDE_CODE_CONNECTION: ConfiguredProvider = {
 
 /** Where the user docs explain Claude Code mode, and the anchor of its
  *  requirements, which the states that cannot run it yet point at. */
-export const CLAUDE_CODE_DOCS_URL = 'https://docs.langalpha.ai/concepts/claude-code/';
+export const CLAUDE_CODE_DOCS_URL = 'https://code.claude.com/docs/en/setup';
 export const CLAUDE_CODE_REQUIREMENTS_URL = `${CLAUDE_CODE_DOCS_URL}#requirements`;
 
 /** Claude Code's status word on its row under Connect a subscription and in

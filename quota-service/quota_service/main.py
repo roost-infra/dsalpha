@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     await close_pool()
 
 
-app = FastAPI(title="LangAlpha quota service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="dsalpha quota service", version="0.1.0", lifespan=lifespan)
 app.include_router(langalpha_router)
 app.include_router(admin_api_router)
 app.include_router(admin_ui_router)
@@ -70,7 +70,7 @@ async def metrics():
 
 @app.exception_handler(Exception)
 async def unhandled_exception(request: Request, exc: Exception):
-    # A stack trace must never reach a caller; LangAlpha only logs the status.
+    # A stack trace must never reach a caller; dsalpha only logs the status.
     return JSONResponse(status_code=500, content={"detail": "internal error"})
 
 

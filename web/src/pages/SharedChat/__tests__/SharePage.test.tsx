@@ -137,13 +137,13 @@ describe('SharePage', () => {
   });
 
   it('titles the document after what the link opens, and gives the title back on leaving', async () => {
-    document.title = 'LangAlpha';
+    document.title = 'dsalpha';
     mockMetadata.mockResolvedValue(visitor({ title: 'Q3 report' }));
     const { unmount } = renderAt(`/a/${CODE}`);
     await screen.findByTestId('visitor-view');
     expect(document.title).toBe('Q3 report');
     unmount();
-    expect(document.title).toBe('LangAlpha');
+    expect(document.title).toBe('dsalpha');
   });
 
   it('a chat is titled too', async () => {

@@ -1,6 +1,6 @@
 """Credential checks for the two very different callers of this service.
 
-* LangAlpha calls ``/api/auth/*`` with the shared service token plus the user
+* dsalpha calls ``/api/auth/*`` with the shared service token plus the user
   id it is acting for (``X-Service-Token`` / ``X-User-Id``).
 * A human administrator calls ``/admin/*`` with a signed session cookie made
   from ``ADMIN_TOKEN`` (or a Bearer token, for scripts).
@@ -30,7 +30,7 @@ def settings_of(request: Request) -> Settings:
 
 
 def service_user(request: Request) -> str:
-    """The user LangAlpha is acting for. Raises 401 when the caller is not it."""
+    """The user dsalpha is acting for. Raises 401 when the caller is not it."""
     settings = settings_of(request)
     token = request.headers.get(SERVICE_HEADER, "")
     if not token or not _equal(token, settings.internal_service_token):

@@ -99,11 +99,11 @@ describe('the rail', () => {
     fireEvent.click(tab(dialog, 'Anthropic'));
     const paidBy = within(dialog).getByRole('radiogroup', { name: 'Paid by' });
     // A subscription is named by its plan, credits by whose they are, so
-    // neither reads as the user's LangAlpha plan.
+    // neither reads as the user's dsalpha plan.
     expect(within(paidBy).getByRole('radio', { name: 'Claude plan' })).toHaveAttribute('aria-checked', 'true');
     expect(rows(dialog)).toEqual(['claude-opus-oauth']);
 
-    fireEvent.click(within(paidBy).getByRole('radio', { name: 'LangAlpha credits' }));
+    fireEvent.click(within(paidBy).getByRole('radio', { name: 'dsalpha credits' }));
     expect(rows(dialog)).toEqual(['claude-opus']);
   });
 
@@ -149,7 +149,7 @@ describe('search', () => {
     expect(rows(dialog)).toEqual(['claude-opus-oauth', 'claude-opus']);
     // Two rows of one name, told apart by their tags.
     expect(within(dialog).getByText('Claude plan')).toBeInTheDocument();
-    expect(within(dialog).getByText('LangAlpha credits')).toBeInTheDocument();
+    expect(within(dialog).getByText('dsalpha credits')).toBeInTheDocument();
   });
 
   it('hands Down to the top row', () => {
@@ -240,7 +240,7 @@ describe('Claude Code', () => {
     },
     payers: codePayers,
   });
-  const SIGNED_OUT = 'Add a setup token for LangAlpha on the server to use this model';
+  const SIGNED_OUT = 'Add a setup token for dsalpha on the server to use this model';
   const openCode = (signedOut: (m: string) => boolean = () => false) => open({
     metadata: codeMetadata, payers: codePayers, groups: codeGroups,
     rowStatus: (m): ModelRowStatus => (signedOut(m) ? { unavailable: SIGNED_OUT } : {}),

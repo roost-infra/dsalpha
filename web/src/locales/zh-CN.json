@@ -5,7 +5,7 @@
       "title": "有新版本可用",
       "description": "请立即重新加载以完成更新，Agent 会继续运行。",
       "blockedTitle": "此页面需要重新加载",
-      "blockedDescription": "此标签页打开期间 LangAlpha 已更新，重新加载即可继续。",
+      "blockedDescription": "此标签页打开期间 dsalpha 已更新，重新加载即可继续。",
       "reload": "重新加载"
     },
     "networkBanner": {
@@ -82,8 +82,8 @@
     "confirming": "正在确认邮箱…",
     "confirmedSigningIn": "邮箱已确认，正在登录…",
     "confirmError": "链接无效或已过期。",
-    "shellHandoffTitle": "正在打开 athena…",
-    "shellHandoffBody": "此链接已交给 athena 应用，请在应用中完成登录。",
+    "shellHandoffTitle": "正在打开 dsalpha…",
+    "shellHandoffBody": "此链接已交给 dsalpha 应用，请在应用中完成登录。",
     "shellHandoffFallback": "在浏览器中继续",
     "requestNewLink": "重新获取链接",
     "confirmPassword": "确认密码",
@@ -218,7 +218,7 @@
       },
       "claude_code_runtime": {
         "label": "Claude Code 运行时（预览版）",
-        "description": "通过 Claude Code 运行你的 Claude 对话，用量计入你自己的 Claude 套餐。它用 setup token 登录，这是专为 LangAlpha 生成的独立凭据，不会影响你自己的 Claude Code 登录。Claude Code 在你自己的电脑上运行；如果此服务器提供该选项，也可以在云端计算机上运行，使用你的 setup token 或 Anthropic API 密钥。请在设置的“模型接入”中选择运行位置。"
+        "description": "通过 Claude Code 运行你的 Claude 对话，用量计入你自己的 Claude 套餐。它用 setup token 登录，这是专为 dsalpha 生成的独立凭据，不会影响你自己的 Claude Code 登录。Claude Code 在你自己的电脑上运行；如果此服务器提供该选项，也可以在云端计算机上运行，使用你的 setup token 或 Anthropic API 密钥。请在设置的“模型接入”中选择运行位置。"
       },
       "a_share_pack": {
         "label": "A 股市场包",
@@ -510,7 +510,7 @@
     "definition": {
       "account": "你的姓名、头像和登录。",
       "preferences": "你告诉 Agent 的投资方式，让它的研究更贴合你。",
-      "plan": "你的套餐、积分和账单，在 LangAlpha 账户中管理。",
+      "plan": "你的套餐、积分和账单，在 dsalpha 账户中管理。",
       "general": "语言、时区和应用内引导。",
       "appearance": "主题、字号和数据卡片的样式。",
       "chat": "回复如何呈现，以及 Agent 工作时对话里显示什么。",
@@ -535,11 +535,11 @@
     "photo": "头像",
     "photoDesc": "支持 PNG、JPEG、GIF 或 WebP。",
     "nameDesc": "显示在账户菜单中。",
-    "logoutDesc": "退出后需要重新登录才能使用 LangAlpha。",
+    "logoutDesc": "退出后需要重新登录才能使用 dsalpha。",
     "investingAnswers": "你的回答",
     "resetPreferencesDesc": "清除你的投资回答、默认模型和其他模型设置。已有对话保留各自使用的模型。",
     "regionGroup": "语言和地区",
-    "localeDesc": "LangAlpha 界面显示的语言。",
+    "localeDesc": "dsalpha 界面显示的语言。",
     "timezoneDesc": "日期和时间按此时区显示。",
     "desktopGroup": "桌面应用",
     "helpGroup": "帮助",
@@ -617,11 +617,11 @@
       "manage": "管理",
       "open": "打开",
       "connectedApps": "已连接的应用",
-      "connectedAppsDesc": "你用 LangAlpha 账户登录过的应用。"
+      "connectedAppsDesc": "你用 dsalpha 账户登录过的应用。"
     }
   },
   "dashboard": {
-    "title": "LangAlpha",
+    "title": "dsalpha",
     "searchLabel": "按代码或公司名称搜索股票",
     "searchPlaceholder": "搜索股票代码或公司名称...",
     "searching": "搜索中...",
@@ -1200,7 +1200,7 @@
       "conversation": {
         "title": "工作台",
         "description": "对话优先的控制台：问候语、实时输入框，一键继续。",
-        "placeholder": "把任务交给 LangAlpha — 拆解一只标的、解析一份财报、压力测试一条投资逻辑……",
+        "placeholder": "把任务交给 dsalpha — 拆解一只标的、解析一份财报、压力测试一条投资逻辑……",
         "resume": "继续对话",
         "untitledThread": "未命名对话",
         "greetingLate": "夜深了",
@@ -1586,8 +1586,8 @@
     "removeTitle": "移除 {{name}}？",
     "removeBody": "它的沙箱和磁盘上的所有内容都会被删除，此操作无法撤销。",
     "removeBodyOwnMachine": "我们将停止使用这台机器，并移除在上面为它设置的内容。{{folder}} 中的文件会保留。",
-    "removeBodyOwnMachineDelete": "我们将停止使用这台机器，并删除 LangAlpha 放在上面的内容。",
-    "alsoDeleteFiles": "同时从这台机器上删除 LangAlpha 的文件",
+    "removeBodyOwnMachineDelete": "我们将停止使用这台机器，并删除 dsalpha 放在上面的内容。",
+    "alsoDeleteFiles": "同时从这台机器上删除 dsalpha 的文件",
     "alsoDeleteFilesHint": "删除 {{folder}}（包括其中各工作区的文件夹），以及 ~/.langalpha 中约 3 GB 的运行环境（如果没有其他计算机在使用）。你自己放进 {{folder}} 的文件会保留。机器需要处于连接状态。",
     "filesDeleted": "已从这台机器上删除它的文件。",
     "filesRootKept": "{{folder}} 中有你自己的文件，因此保留。",
@@ -1737,7 +1737,7 @@
       "previewLabel": "预览",
       "previewNotice": "连接自己的机器是一项新功能，请谨慎使用。Agent 可以执行所连接账户能做的任何操作，建议为它单独创建一个账户，而不是使用你自己的账户。",
       "pairIntro": "请在要添加的机器（Linux 或 macOS）上，以 Agent 要使用的用户身份运行这条命令：",
-      "pairIntroLocal": "请在运行 LangAlpha 的这台电脑的终端里，以 Agent 要使用的用户身份运行这条命令。要添加其他机器，请手动设置。",
+      "pairIntroLocal": "请在运行 dsalpha 的这台电脑的终端里，以 Agent 要使用的用户身份运行这条命令。要添加其他机器，请手动设置。",
       "pairLoading": "正在获取命令...",
       "viewScript": "查看脚本",
       "waiting": "正在等待你的机器...",
@@ -1797,24 +1797,24 @@
     },
     "remoteControl": {
       "cardTitle": "这台 Mac",
-      "cardDesc": "关闭 LangAlpha 后仍可工作",
+      "cardDesc": "关闭 dsalpha 后仍可工作",
       "alreadyAdded": "已添加",
       "title": "远程控制这台 Mac",
-      "intro": "LangAlpha 的 Agent 将以 {{account}} 的身份在这台 Mac 上工作，拥有这个账户的全部权限。",
+      "intro": "dsalpha 的 Agent 将以 {{account}} 的身份在这台 Mac 上工作，拥有这个账户的全部权限。",
       "meansLabel": "这意味着",
       "meansAccess": "它可以运行任何命令，在任何文件夹中读取或修改 {{account}} 有权访问的任何文件。它的工作会放在你选择的文件夹里，但这台 Mac 上没有任何机制把它限制在那里。",
-      "meansBackground": "关闭 LangAlpha 后它仍会继续工作。远程控制在后台运行，每次登录都会自动启动，直到你将它关闭。",
+      "meansBackground": "关闭 dsalpha 后它仍会继续工作。远程控制在后台运行，每次登录都会自动启动，直到你将它关闭。",
       "meansCredentials": "它可以读取命令行工具为 {{account}} 保存的内容，例如 Git 和云服务的登录信息，也能访问你的家庭或办公网络。",
-      "meansAccount": "任何登录你的 LangAlpha 账号的人都可以指挥它。",
+      "meansAccount": "任何登录你的 dsalpha 账号的人都可以指挥它。",
       "stopLabel": "如何停止",
-      "stop": "你可以随时在 LangAlpha 菜单中暂停它，也可以在“系统设置 > 通用 > 登录项”中关闭。在 LangAlpha 中移除这台计算机会关闭远程控制，并从这台 Mac 上删除它的密钥。",
-      "folderPrompts": "macOS 可能会询问是否允许 LangAlpha 访问“文稿”“桌面”等文件夹。你可以拒绝：Agent 自己的文件夹不需要这项权限。",
+      "stop": "你可以随时在 dsalpha 菜单中暂停它，也可以在“系统设置 > 通用 > 登录项”中关闭。在 dsalpha 中移除这台计算机会关闭远程控制，并从这台 Mac 上删除它的密钥。",
+      "folderPrompts": "macOS 可能会询问是否允许 dsalpha 访问“文稿”“桌面”等文件夹。你可以拒绝：Agent 自己的文件夹不需要这项权限。",
       "previewNotice": "远程控制仍处于预览阶段，我们正在加入更多安全保护。在此之前，Agent 拥有与你相同的访问权限，因此请只在可以接受这一点的 Mac 上开启。",
-      "acknowledge": "我了解 LangAlpha 的 Agent 能以 {{account}} 的身份在这台 Mac 上运行命令、修改文件。",
+      "acknowledge": "我了解 dsalpha 的 Agent 能以 {{account}} 的身份在这台 Mac 上运行命令、修改文件。",
       "turnOn": "开启远程控制",
       "turningOn": "正在开启远程控制…",
       "connecting": "正在连接这台 Mac…",
-      "needsApproval": "需要你在 macOS 中确认。请在“系统设置 > 通用 > 登录项”中允许 LangAlpha 在后台运行，然后点击“继续”。",
+      "needsApproval": "需要你在 macOS 中确认。请在“系统设置 > 通用 > 登录项”中允许 dsalpha 在后台运行，然后点击“继续”。",
       "continue": "继续",
       "tryAgain": "重试",
       "failed": "无法开启远程控制，请重试。",
@@ -1823,7 +1823,7 @@
       "provider": "远程控制",
       "asAccount": "以 {{account}} 身份",
       "notConnected": "未连接",
-      "paused": "远程控制已暂停，可在 LangAlpha 菜单中恢复。",
+      "paused": "远程控制已暂停，可在 dsalpha 菜单中恢复。",
       "removeTurnsOff": "这台 Mac 上的远程控制也会随之关闭。",
       "cardTitlePc": "这台电脑",
       "windowsSoon": "即将支持 Windows",
@@ -1853,7 +1853,7 @@
       "reconnect": "重新连接…"
     },
     "restartRefused": {
-      "folderMarked": "该文件夹属于另一台计算机，可能来自另一个 LangAlpha 账户或服务器。",
+      "folderMarked": "该文件夹属于另一台计算机，可能来自另一个 dsalpha 账户或服务器。",
       "folderOwned": "你的另一台计算机正在使用该文件夹。移除那台计算机即可释放该文件夹。",
       "notStopped": "这台计算机正在启动或运行中。请在它停止后重试。",
       "specInProgress": "这台计算机正在更改配置。请在完成后重试。",
@@ -1867,7 +1867,7 @@
       "folderLabel": "文件夹",
       "takeBack": "收回该文件夹",
       "takeBackDesc": "继续使用 {{folder}}。如果另一台计算机正在使用它，那台计算机将无法再在这台机器上工作。文件夹中的文件会保留。",
-      "takeBackOwned": "继续使用 {{folder}}。另一台计算机正在使用它，可能来自另一个 LangAlpha 账户或服务器。那台计算机将无法再在这台机器上工作。文件夹中的文件会保留。",
+      "takeBackOwned": "继续使用 {{folder}}。另一台计算机正在使用它，可能来自另一个 dsalpha 账户或服务器。那台计算机将无法再在这台机器上工作。文件夹中的文件会保留。",
       "newFolder": "使用新文件夹",
       "newFolderDesc": "在这台机器上的另一个文件夹中重新开始。旧文件夹保持原样。",
       "newFolderLabel": "新文件夹",
@@ -1885,8 +1885,8 @@
       "desc": "将这台计算机重新连接到它的机器。它的文件夹和工作区保持不变。",
       "pairIntro": "以 {{username}} 身份在该机器上运行：",
       "folderKept": "工作区仍保存在 {{folder}} 中。",
-      "onThatMac": "{{name}} 由其 Mac 上的 LangAlpha 应用连接。请在那台 Mac 上打开 LangAlpha，并在那里选择重新连接。",
-      "otherMac": "这台 Mac 已是 {{other}}。要重新连接 {{name}}，请在它所在的 Mac 上打开 LangAlpha，并在那里选择重新连接。",
+      "onThatMac": "{{name}} 由其 Mac 上的 dsalpha 应用连接。请在那台 Mac 上打开 dsalpha，并在那里选择重新连接。",
+      "otherMac": "这台 Mac 已是 {{other}}。要重新连接 {{name}}，请在它所在的 Mac 上打开 dsalpha，并在那里选择重新连接。",
       "takeBackNote": "{{folder}} 是这台计算机的文件夹。收回后，另一台计算机将无法再在其中工作。其中的文件会保留。",
       "submit": "重新连接",
       "submitting": "正在重新连接...",
@@ -1979,7 +1979,7 @@
     "loadFailedBody": "加载过程中出了点问题，请稍后重试。",
     "retry": "重试",
     "signIn": "登录",
-    "goToLangAlpha": "前往 LangAlpha"
+    "goToLangAlpha": "前往 dsalpha"
   },
   "publish": {
     "title": "发布 {{file}}",
@@ -2288,7 +2288,8 @@
         "report": "汇报来自",
         "question": "提问来自",
         "notice": "通知来自"
-      }
+      },
+      "exchangeUnavailable": "对话暂不可用"
     },
     "taskCard": {
       "statusRunning": "运行中",
@@ -2618,7 +2619,7 @@
       "claudeCodeApiKeyEndpoint": "请在设置中清空 Anthropic API 密钥的 Base URL，才能在云端计算机上使用",
       "claudeCodePaused": "此服务器已暂停在云端计算机上运行",
       "claudeCodeNeedsBiggerComputer": "需要中型及以上规格的云端计算机，或你自己的电脑",
-      "claudeCodeNeedsBiggerComputerPlan": "需要中型及以上规格的云端计算机：可更改规格或升级 LangAlpha 套餐，或使用你自己的电脑"
+      "claudeCodeNeedsBiggerComputerPlan": "需要中型及以上规格的云端计算机：可更改规格或升级 dsalpha 套餐，或使用你自己的电脑"
     },
     "voice": {
       "start": "开启语音输入",
@@ -2766,10 +2767,10 @@
         "too_many_turns": "你在云端计算机上同时运行的 Claude Code 对话已达上限（{{n}} 个），请等其中一个结束后再试。",
         "hosted_paused": "此服务器已暂停在云端计算机上运行 Claude Code，在你自己的电脑上仍可运行。请选择其他模型，或把此工作区移到你自己的电脑上。",
         "stored_blocked": "你的账户无法保存 setup token，因此 Claude Code 只能在你自己的电脑上运行。请选择其他模型，或把此工作区移到你自己的电脑上。",
-        "stored_unattended": "自动化、唤醒以及其他 Agent 发来的对话不会使用 LangAlpha 为你保存的 setup token 运行。请在设置的“模型接入”中改用你的 Anthropic API 密钥，或在你自己的、有独立 token 的电脑上运行此工作区。",
+        "stored_unattended": "自动化、唤醒以及其他 Agent 发来的对话不会使用 dsalpha 为你保存的 setup token 运行。请在设置的“模型接入”中改用你的 Anthropic API 密钥，或在你自己的、有独立 token 的电脑上运行此工作区。",
         "choice_changed": "本轮开始时，云端计算机上 Claude Code 的运行方式发生了变化。请重新发送你的消息。",
         "needs_bigger_computer": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格，或把此工作区移到你自己的电脑上。",
-        "needs_bigger_computer_plan": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格或升级 LangAlpha 套餐，或把此工作区移到你自己的电脑上。"
+        "needs_bigger_computer_plan": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格或升级 dsalpha 套餐，或把此工作区移到你自己的电脑上。"
       }
     }
   },
@@ -4513,15 +4514,15 @@
         },
         "desktopApp": {
           "title": "下载桌面应用",
-          "desc": "在独立窗口中使用 LangAlpha；在 Mac 上还能把这台 Mac 用作计算机。"
+          "desc": "在独立窗口中使用 dsalpha；在 Mac 上还能把这台 Mac 用作计算机。"
         },
         "remoteControl": {
           "title": "开启远程控制",
-          "desc": "让 Agent 在这台 Mac 上工作，关闭 LangAlpha 后仍可继续。"
+          "desc": "让 Agent 在这台 Mac 上工作，关闭 dsalpha 后仍可继续。"
         },
         "integrations": {
           "title": "连接聊天应用",
-          "desc": "在 Slack、飞书、Telegram 等应用里和 LangAlpha 对话。"
+          "desc": "在 Slack、飞书、Telegram 等应用里和 dsalpha 对话。"
         }
       }
     },
@@ -4561,7 +4562,7 @@
       "chat": {
         "greeting": "你好，{{name}}。",
         "greetingNoName": "你好。",
-        "intro": "我是你在 LangAlpha 的 Chief of Staff Agent，帮你协调 AI 分析师、管理各个工作区。",
+        "intro": "我是你在 dsalpha 的 Chief of Staff Agent，帮你协调 AI 分析师、管理各个工作区。",
         "introNext": "先问你几个问题，了解一下你的投资组合和投资习惯。",
         "editIntro": "这是你的投资画像。修改任意一项后保存即可。",
         "lead": {
@@ -5573,7 +5574,7 @@
       "uninstallFailed": "卸载失败",
       "uninstallConfirmYes": "卸载",
       "uninstallConfirmNo": "保留",
-      "sourceBundled": "随 LangAlpha 提供",
+      "sourceBundled": "随 dsalpha 提供",
       "updateKeysTitle": "更新 {{plugin}}",
       "updateKeysSubmit": "检查并更新",
       "uninstalledRemoved": "已移除 {{what}}。",
@@ -6773,7 +6774,7 @@
     "plan": "{{plan}} 订阅",
     "claudeCode": "Claude Code",
     "ownKey": "你的密钥",
-    "credits": "LangAlpha 积分",
+    "credits": "dsalpha 积分",
     "serverKey": "服务器密钥",
     "locked": "未解锁"
   },
@@ -6841,7 +6842,7 @@
       "intro": "使用一个短代码登录您的 ChatGPT 账户。",
       "pickNote": "ChatGPT Plus、Pro、Business 或 Enterprise",
       "need": "ChatGPT Plus、Pro、Business 或 Enterprise 套餐。",
-      "usage": "用量计入您的 ChatGPT 套餐，不消耗 LangAlpha 积分。",
+      "usage": "用量计入您的 ChatGPT 套餐，不消耗 dsalpha 积分。",
       "usageOss": "用量计入您的 ChatGPT 套餐。",
       "time": "大约一分钟。",
       "consent": "我连接的是我自己的 ChatGPT 账户。用量计入我的 ChatGPT 套餐，登录信息将加密存储。",
@@ -6883,8 +6884,8 @@
       "moreActions": "更多操作",
       "addTitle": "添加 setup token",
       "replaceTitle": "替换 setup token",
-      "intro": "Claude Code 模式让你的 Claude 对话使用你自己的 Claude 套餐运行。它通过专为 LangAlpha 生成的 setup token 登录。",
-      "separate": "此 token 是专为 LangAlpha 生成的独立凭据，绝不是你的 Claude Code 登录。用量计入你的 Claude 套餐。它经加密存储，仅用于你自己的请求。",
+      "intro": "Claude Code 模式让你的 Claude 对话使用你自己的 Claude 套餐运行。它通过专为 dsalpha 生成的 setup token 登录。",
+      "separate": "此 token 是专为 dsalpha 生成的独立凭据，绝不是你的 Claude Code 登录。用量计入你的 Claude 套餐。它经加密存储，仅用于你自己的请求。",
       "stepInstall": "如果尚未安装 Claude Code，请先安装。",
       "installLink": "安装指南",
       "stepRun": "在本机或任意一台电脑的终端中运行：",
@@ -6904,13 +6905,13 @@
         "redis_unavailable": "暂时无法保存 token，请稍后重试。",
         "computer_not_found": "这台电脑已不可用。",
         "needs_perl": "这台电脑上的 Claude Code 需要 perl。请安装 perl 后重试。",
-        "computer_unsupported": "这台电脑运行的是 musl（例如 Alpine Linux），LangAlpha 的运行环境暂不支持。",
+        "computer_unsupported": "这台电脑运行的是 musl（例如 Alpine Linux），dsalpha 的运行环境暂不支持。",
         "cli_unavailable": "无法在这台电脑上设置 Claude Code，请重试。",
         "write_failed": "无法在这台电脑上保存 token，请重试。",
         "unknown": "无法保存 token，请重试。"
       },
       "removeTitle": "移除 Claude Code 的 setup token？",
-      "removeBody": "LangAlpha 将删除此 token。Claude Code 模型仍会列出，但在你添加新 token 前无法运行。你自己的 Claude Code 登录不受影响。",
+      "removeBody": "dsalpha 将删除此 token。Claude Code 模型仍会列出，但在你添加新 token 前无法运行。你自己的 Claude Code 登录不受影响。",
       "removeConfirm": "移除 token",
       "removeFailed": "无法移除 token，请重试。",
       "turnsRunning": "你的 token 已删除，但仍有一个使用它的 Claude Code 对话未能停止。请在该对话中手动停止。",
@@ -6919,7 +6920,7 @@
       "expired": "此 token 最晚已于 <date>{{date}}</date> 过期。请添加新的 token 以继续使用 Claude Code。",
       "expiresSoon": "此 token 最晚将于 <date>{{date}}</date> 过期。请在此之前添加新的 token，让 Claude Code 继续运行。",
       "signIn": {
-        "intro": "在新标签页中登录 Claude，LangAlpha 随后会为自己生成 setup token，无需在终端中运行任何命令。",
+        "intro": "在新标签页中登录 Claude，dsalpha 随后会为自己生成 setup token，无需在终端中运行任何命令。",
         "start": "使用 Claude 登录",
         "codeHint": "批准后，Claude 会显示一段代码。请完整复制并粘贴到这里。",
         "fieldLabel": "来自 Claude 的代码",
@@ -6928,7 +6929,7 @@
           "unavailable": "你的账户未开启 Claude Code。请在设置的模型接入中开启。",
           "computer_not_found": "这台电脑已不可用。",
           "needs_perl": "这台电脑上的 Claude Code 需要 perl。请安装 perl 后重试。",
-          "computer_unsupported": "这台电脑运行的是 musl（例如 Alpine Linux），LangAlpha 的运行环境暂不支持。",
+          "computer_unsupported": "这台电脑运行的是 musl（例如 Alpine Linux），dsalpha 的运行环境暂不支持。",
           "cli_unavailable": "无法在这台电脑上设置 Claude Code，请重新发送代码。",
           "write_failed_spent": "无法在这台电脑上保存 token，且此代码已无法再次使用。请重新登录。",
           "redis_unavailable": "登录暂时不可用，请稍后重试。",
@@ -6946,18 +6947,18 @@
         }
       },
       "computer": {
-        "intro": "Claude Code 在 {{name}} 上运行你的 Claude 对话，使用你自己的 Claude 套餐。它通过专为 LangAlpha 生成的 setup token 登录，token 保存在这台电脑上。",
-        "separate": "此 token 是专为 LangAlpha 生成的独立凭据，绝不是你的 Claude Code 登录。用量计入你的 Claude 套餐。它只保存在 {{name}} 上，LangAlpha 不保留副本。",
-        "signInIntro": "在新标签页中登录 Claude，LangAlpha 随后会生成 setup token 并放到 {{name}} 上，无需在终端中运行任何命令。",
+        "intro": "Claude Code 在 {{name}} 上运行你的 Claude 对话，使用你自己的 Claude 套餐。它通过专为 dsalpha 生成的 setup token 登录，token 保存在这台电脑上。",
+        "separate": "此 token 是专为 dsalpha 生成的独立凭据，绝不是你的 Claude Code 登录。用量计入你的 Claude 套餐。它只保存在 {{name}} 上，dsalpha 不保留副本。",
+        "signInIntro": "在新标签页中登录 Claude，dsalpha 随后会生成 setup token 并放到 {{name}} 上，无需在终端中运行任何命令。",
         "addTitle": "为 {{name}} 添加 setup token",
         "replaceTitle": "替换 {{name}} 上的 setup token",
         "removeTitle": "从 {{name}} 移除 setup token？",
-        "removeBody": "LangAlpha 将从 {{name}} 删除此 token。在你添加新 token 前，Claude Code 无法在这台电脑上运行。你自己的 Claude Code 登录不受影响。",
-        "removeBodySaved": "LangAlpha 将从 {{name}} 删除此 token，之后这台电脑上的 Claude Code 将使用你已保存的 token。你自己的 Claude Code 登录不受影响。",
+        "removeBody": "dsalpha 将从 {{name}} 删除此 token。在你添加新 token 前，Claude Code 无法在这台电脑上运行。你自己的 Claude Code 登录不受影响。",
+        "removeBodySaved": "dsalpha 将从 {{name}} 删除此 token，之后这台电脑上的 Claude Code 将使用你已保存的 token。你自己的 Claude Code 登录不受影响。",
         "ownToken": "使用这台电脑自己的 token",
         "savedToken": "使用你已保存的 token",
         "noToken": "这台电脑还没有 setup token",
-        "policyBlocked": "这台电脑上装有你所在组织的 Claude Code 策略，因此 LangAlpha 无法在这里运行 Claude Code。",
+        "policyBlocked": "这台电脑上装有你所在组织的 Claude Code 策略，因此 dsalpha 无法在这里运行 Claude Code。",
         "savedRejected": "Claude 拒绝了你已保存的 token，它可能已过期或被撤销。",
         "offline": "这台电脑未在运行，无法检查它的 token。",
         "addOwn": "为它添加 token",
@@ -6971,34 +6972,34 @@
       "hosted": {
         "heading": "Claude Code 在哪里运行",
         "local": "仅在你自己的电脑上",
-        "localDetail": "Claude Code 在你自己的电脑上运行，每台电脑各用自己的 setup token，LangAlpha 不保留副本。云端计算机上的工作区无法使用 Claude Code 模型。",
+        "localDetail": "Claude Code 在你自己的电脑上运行，每台电脑各用自己的 setup token，dsalpha 不保留副本。云端计算机上的工作区无法使用 Claude Code 模型。",
         "apiKey": "也用于云端计算机，使用你的 Anthropic API 密钥",
-        "apiKeyDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行，每轮对话由 LangAlpha 把你的 API 密钥发给它。用量计入你的 Anthropic Console 账户，Max、Ultra 和 Team 套餐每月含 API 额度，不占用你 Claude 套餐的用量限额。",
+        "apiKeyDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行，每轮对话由 dsalpha 把你的 API 密钥发给它。用量计入你的 Anthropic Console 账户，Max、Ultra 和 Team 套餐每月含 API 额度，不占用你 Claude 套餐的用量限额。",
         "apiKeyEndpoint": "你的 Anthropic API 密钥设置了自定义 Base URL，云端计算机上的 Claude Code 无法使用它。清空该密钥的 Base URL 后即可使用。",
         "needsApiKey": "云端计算机上的 Claude Code 没有可用的 Anthropic API 密钥。请在“模型接入”中添加，或重新保存已有的密钥。",
-        "stored": "也用于云端计算机，使用由 LangAlpha 保存的 setup token",
-        "storedDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行；没有独立 token 的你自己的电脑也在本机运行 Claude Code。每轮对话由 LangAlpha 把加密保存的 setup token 发给运行它的计算机。用量计入你的 Claude 套餐。",
+        "stored": "也用于云端计算机，使用由 dsalpha 保存的 setup token",
+        "storedDetail": "在中型及以上规格的云端计算机上，工作区的 Claude Code 直接在这台计算机上运行；没有独立 token 的你自己的电脑也在本机运行 Claude Code。每轮对话由 dsalpha 把加密保存的 setup token 发给运行它的计算机。用量计入你的 Claude 套餐。",
         "paused": "此服务器已暂停在云端计算机上运行 Claude Code。你的选择会保留，Claude Code 在你自己的电脑上照常运行。",
         "blocked": "你的账户无法保存 setup token。Claude Code 在你自己的电脑上照常运行。"
       },
       "consent": {
-        "title": "让 LangAlpha 保存你的 setup token？",
-        "encrypted": "LangAlpha 会加密保存你的 token，只用于为你的对话运行 Claude Code。每轮对话，LangAlpha 会把 token 发给运行这轮对话的计算机。LangAlpha 的服务器也会用它检查 token 是否仍然可用。",
+        "title": "让 dsalpha 保存你的 setup token？",
+        "encrypted": "dsalpha 会加密保存你的 token，只用于为你的对话运行 Claude Code。每轮对话，dsalpha 会把 token 发给运行这轮对话的计算机。dsalpha 的服务器也会用它检查 token 是否仍然可用。",
         "unattended": "用量计入你的 Claude 套餐。自动化、唤醒以及其他 Agent 发来的对话不会使用此 token。",
         "terms": "这种使用方式适用 Anthropic 为你的 Claude 套餐制定的条款，你需要自行确保遵守。Anthropic 可能会限制或停用它认定违反条款的账户。",
-        "undo": "你可以随时切换回来，LangAlpha 会立即删除此 token。",
+        "undo": "你可以随时切换回来，dsalpha 会立即删除此 token。",
         "confirm": "保存我的 token",
         "termsLink": "阅读 Anthropic 条款"
       },
       "leaveStored": {
         "title": "停止保存你的 setup token？",
-        "body": "LangAlpha 会立即删除你已保存的 setup token，正在使用它的 Claude Code 会停止运行。在你重新保存 token 之前，云端计算机上的对话不会使用你的 Claude 套餐运行。有自己 token 的电脑不受影响。",
+        "body": "dsalpha 会立即删除你已保存的 setup token，正在使用它的 Claude Code 会停止运行。在你重新保存 token 之前，云端计算机上的对话不会使用你的 Claude 套餐运行。有自己 token 的电脑不受影响。",
         "confirm": "删除 token",
         "failed": "切换失败，你的 token 仍处于保存状态。请重试。"
       },
       "setup": {
         "pickNote": "Claude Pro 或 Max，在你的电脑上运行",
-        "lead": "Claude Code 模式通过 Anthropic 的 Claude Agent SDK 运行 Claude Code，并接入 LangAlpha 的 Agent 框架和工具。用量计入你的 Claude 套餐。",
+        "lead": "Claude Code 模式通过 Anthropic 的 Claude Agent SDK 运行 Claude Code，并接入 dsalpha 的 Agent 框架和工具。用量计入你的 Claude 套餐。",
         "learnMore": "了解更多",
         "waysTitle": "连接电脑的方式",
         "yourComputers": "你的电脑",
@@ -7008,8 +7009,8 @@
         "turnOn": "开启 Claude Code",
         "mac": {
           "name": "通过远程控制连接你的 Mac",
-          "noteBrowser": "下载 LangAlpha Mac 版，然后在应用中开启远程控制。",
-          "noteDesktop": "让 LangAlpha 的 Agent 在这台 Mac 上工作，Claude Code 随后就在这里运行。",
+          "noteBrowser": "下载 dsalpha Mac 版，然后在应用中开启远程控制。",
+          "noteDesktop": "让 dsalpha 的 Agent 在这台 Mac 上工作，Claude Code 随后就在这里运行。",
           "getApp": "下载 Mac 版",
           "turnOn": "开启远程控制"
         },
@@ -7020,7 +7021,7 @@
         },
         "noComputer": {
           "title": "请先连接一台你自己的电脑",
-          "body": "Claude Code 在你自己的电脑上运行，但你还没有把任何电脑连接到 LangAlpha。用下面任一方式连接一台，再回到这里登录 Claude。",
+          "body": "Claude Code 在你自己的电脑上运行，但你还没有把任何电脑连接到 dsalpha。用下面任一方式连接一台，再回到这里登录 Claude。",
           "bodyCloud": "Claude Code 在你自己的电脑或中型及以上的云端计算机上运行，但你目前还没有能运行它的计算机。用下面任一方式连接一台你自己的电脑，再回到这里登录 Claude。"
         },
         "unsupported": {
@@ -7030,9 +7031,9 @@
         "offline": {
           "title": "{{name}} 处于离线状态",
           "titleMany": "你的电脑都处于离线状态",
-          "body": "Claude Code 在你自己的电脑上运行，但 LangAlpha 现在连接不到你的电脑。等其中一台重新上线，就可以在这里登录 Claude。",
-          "helper": "在这台 Mac 上打开 LangAlpha，确认远程控制已开启。",
-          "ssh": "确认它已开机，并允许 LangAlpha 通过 SSH 连接。"
+          "body": "Claude Code 在你自己的电脑上运行，但 dsalpha 现在连接不到你的电脑。等其中一台重新上线，就可以在这里登录 Claude。",
+          "helper": "在这台 Mac 上打开 dsalpha，确认远程控制已开启。",
+          "ssh": "确认它已开机，并允许 dsalpha 通过 SSH 连接。"
         },
         "ready": {
           "title": "登录 Claude 即可开始",
@@ -7053,7 +7054,7 @@
         },
         "checking": {
           "title": "正在检查 setup token",
-          "body": "LangAlpha 正在向 Claude 确认每个 token 是否有效。"
+          "body": "dsalpha 正在向 Claude 确认每个 token 是否有效。"
         },
         "refused": {
           "title": "请重新登录 Claude",
@@ -7076,9 +7077,9 @@
     "claude": {
       "name": "Claude",
       "intro": "在 claude.ai 登录，然后粘贴页面显示的代码。",
-      "pickNote": "Claude Pro 或 Max，由 LangAlpha 调用",
+      "pickNote": "Claude Pro 或 Max，由 dsalpha 调用",
       "need": "Claude Pro 或 Max 套餐。",
-      "usage": "用量计入您的 Claude 套餐，不消耗 LangAlpha 积分。",
+      "usage": "用量计入您的 Claude 套餐，不消耗 dsalpha 积分。",
       "usageOss": "用量计入您的 Claude 套餐。",
       "time": "大约一分钟。",
       "consent": "我连接的是我自己的 Claude 账户。用量计入我的 Claude 套餐，登录信息将加密存储。",
@@ -7118,7 +7119,7 @@
       "intro": "使用一个短代码登录您的 Grok 账户。",
       "pickNote": "包含 API 访问权限的 Grok 套餐",
       "need": "包含 API 访问权限的 Grok 套餐。",
-      "usage": "用量计入您的 Grok 套餐，不消耗 LangAlpha 积分。",
+      "usage": "用量计入您的 Grok 套餐，不消耗 dsalpha 积分。",
       "usageOss": "用量计入您的 Grok 套餐。",
       "time": "大约一分钟。",
       "consent": "我连接的是我自己的 Grok 账户。用量计入我的 Grok 套餐，登录信息将加密存储。",
@@ -7190,12 +7191,12 @@
       "showAll": "显示全部（另有 {{count}} 个）",
       "hideAll": "收起其余",
       "notTuned": "未调优",
-      "notTunedNote": "LangAlpha 尚未针对这些模型调优，它们在工具调用或长时间研究上可能表现较差。",
+      "notTunedNote": "dsalpha 尚未针对这些模型调优，它们在工具调用或长时间研究上可能表现较差。",
       "known": "已知",
       "filterPlaceholder": "筛选模型",
       "searchLabel": "查找模型",
       "searchPlaceholder": "按名称搜索，例如 sonnet 或 qwen",
-      "suggested": "LangAlpha 已知的模型：",
+      "suggested": "dsalpha 已知的模型：",
       "noResults": "没有支持工具调用的模型匹配“{{query}}”。可以试试这些：",
       "moreResults": "还有 {{count}} 个，缩小搜索范围即可查看。",
       "context": "{{size}} 上下文",

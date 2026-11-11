@@ -1,4 +1,4 @@
-"""What the server and LangAlpha's helper must agree on, read from both sides.
+"""What the server and dsalpha's helper must agree on, read from both sides.
 
 The helper is built and tested on its own, so nothing else would notice one
 side changing without the other.

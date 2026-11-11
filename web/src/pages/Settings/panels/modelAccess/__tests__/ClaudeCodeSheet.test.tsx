@@ -108,12 +108,12 @@ describe('ClaudeCodeSheet', () => {
   it('with no computer, says what the mode is, says so, and offers both ways to connect one', () => {
     show(setupOf({}));
     expect(screen.getByText('Connect a computer of your own first')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Get the Mac app/ })).toHaveAttribute('href', 'https://langalpha.ai/download');
+    expect(screen.getByRole('link', { name: /Get the Mac app/ })).toHaveAttribute('href', 'https://deepseek-alpha.com/app');
     fireEvent.click(screen.getByRole('button', { name: 'Add SSH computer' }));
     expect(h.opened).toEqual([{ view: 'create' }]);
     expect(screen.getByText(/runs Anthropic's Claude Code through the Claude Agent SDK/)).toBeInTheDocument();
     expect(screen.queryByText(/differs from the other sign-ins/)).toBeNull();
-    expect(screen.getByRole('link', { name: /Learn more/ })).toHaveAttribute('href', 'https://docs.langalpha.ai/concepts/claude-code/#requirements');
+    expect(screen.getByRole('link', { name: /Learn more/ })).toHaveAttribute('href', 'https://code.claude.com/docs/en/setup#requirements');
     expect(screen.queryByRole('button', { name: 'Turn off Claude Code' })).toBeNull();
   });
 
@@ -140,7 +140,7 @@ describe('ClaudeCodeSheet', () => {
     h.planUrl = 'https://console.example.com/plans';
     show(setupOf({ cloud: true, too_small: TOO_SMALL.slice(0, 1) }));
     const row = screen.getByText('Scratch').closest('li') as HTMLElement;
-    expect(within(row).getByText('Needs a Medium or larger cloud computer: change its spec or upgrade your LangAlpha plan, or use a computer of your own')).toBeInTheDocument();
+    expect(within(row).getByText('Needs a Medium or larger cloud computer: change its spec or upgrade your dsalpha plan, or use a computer of your own')).toBeInTheDocument();
     const link = within(row).getByRole('link', { name: /Upgrade plan/ });
     expect(link).toHaveAttribute('href', 'https://console.example.com/plans');
     expect(link).toHaveAttribute('target', '_blank');
@@ -205,7 +205,7 @@ describe('ClaudeCodeSheet', () => {
     show(setupOf({ state: 'offline', computers: [mac('offline')] }));
     expect(screen.getByText('MacBook Pro is offline')).toBeInTheDocument();
     const row = screen.getByText('MacBook Pro').closest('li') as HTMLElement;
-    expect(within(row).getByText('Open LangAlpha on this Mac and check that Remote control is on.')).toBeInTheDocument();
+    expect(within(row).getByText('Open dsalpha on this Mac and check that Remote control is on.')).toBeInTheDocument();
     fireEvent.click(within(row).getByRole('button', { name: 'View computer' }));
     expect(h.opened).toEqual([{ view: 'details', computerId: 'mac' }]);
   });
@@ -251,7 +251,7 @@ describe('ClaudeCodeSheet', () => {
   it('while a token is checked, leads with a title and a sentence as every other state does', () => {
     show(setupOf({ state: 'checking', on: true, computers: [mac('checking')] }));
     expect(screen.getByRole('heading', { name: 'Checking your setup tokens' })).toBeInTheDocument();
-    expect(screen.getByText('LangAlpha is asking Claude whether each token works.')).toBeInTheDocument();
+    expect(screen.getByText('dsalpha is asking Claude whether each token works.')).toBeInTheDocument();
   });
 
   it('warns that turning off removes the token stored for cloud computers', () => {

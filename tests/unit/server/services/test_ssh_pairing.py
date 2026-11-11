@@ -424,24 +424,24 @@ async def test_the_script_parses(monkeypatch, tunnels):
 # deployment (named ``tunnel``, the tunneled ones render as pinned before).
 _RENDERED = {
     ("https://langalpha.example.com", False): (
-        "164822f6f1dd3da3692d25d8303c49b61072679dcd8ca7f2cdaf75bb167738ea"
+        "54f3019c3d8ab15d12c60dfd636905ec6de1bd2c96d36760ea0bf5272f85e061"
     ),
     ("https://langalpha.example.com", True): (
-        "dc6bcf339ca15117ed8521385a2fbf840f38921ddf7d067fbcc0c97cbb6120cb"
+        "9e7b1f7c84e04b74c63d827e434c83879189202be83a4a04a9cc8750cae37edc"
     ),
     ("http://127.0.0.1:8000", False): (
-        "075b2891f7524801fa0f587509217b062dfac0790f4d8b04e9b5abfa77cac524"
+        "e37da24b6ceb1d40e1dc5708522877ec8c6c21cb6cfeaeecc470ac4958e4b85f"
     ),
     ("http://127.0.0.1:8000", True): (
-        "666c9d86ed18ad54bee6237ae08848a594a08adb32248e7422a10b1f24995965"
+        "c620053525f59081016fc3a9b522ae4181c2ed0cadb9e95ada8c7ce738a2ddee"
     ),
     ("http://[::1]:8000", False): (
-        "2b70537889e0496254c0999740ee53fc4bec8f71d9307c85dcde00e176327d1e"
+        "e8adf353794b7452fb521d5033e0c81ef2e73c6cb6f8ae8ed87a30bd614e2377"
     ),
     ("http://[::1]:8000", True): (
-        "953fbfde166535d4b1452d5be43f8d198a596e210f1ba7718fd7b285886cc3bf"
+        "28a824032a4d426a71d2a6e1fbc4e1d0fbe702ce31a5401058f78bb00dd350fd"
     ),
-    (None, False): "59d0a2e548d9fa61be969ee269ed92e8620e74903b4fc7f3357faf1a8c489c89",
+    (None, False): "57ce86ee407b0f2d9746490b86a75caf4e0ec9a2626f6233195c77778c3cd32c",
 }
 
 

@@ -1,1 +1,1 @@
-"""Self-hosted plan, quota and credit service for LangAlpha."""
+"""Self-hosted plan, quota and credit service for dsalpha."""

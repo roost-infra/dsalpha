@@ -431,7 +431,7 @@ export function SharedFileBar({ name }: { name: string }) {
         className={cn('title-font shrink-0 font-semibold', sm)}
         style={{ color: 'var(--color-text-primary)' }}
       >
-        LangAlpha
+        dsalpha
       </span>
       <span className={cn('shrink-0', sm)} style={{ color: 'var(--color-text-quaternary)' }}>
         /

@@ -189,7 +189,7 @@ describe("ChatInput: Claude Code rows by the workspace's computer", () => {
     const opened = vi.spyOn(window, 'open').mockReturnValue(null);
     mocks.where = { state: 'needs_bigger_computer', computerId: null, known: true };
     renderInput();
-    expect(codeRow()).toBe('claude-x-code:held:Needs a Medium or larger cloud computer: change its spec or upgrade your LangAlpha plan, or use a computer of your own:fix');
+    expect(codeRow()).toBe('claude-x-code:held:Needs a Medium or larger cloud computer: change its spec or upgrade your dsalpha plan, or use a computer of your own:fix');
     fireEvent.click(screen.getByRole('button', { name: 'fix' }));
     expect(opened).toHaveBeenCalledWith('/account/plans', '_blank', 'noopener,noreferrer');
     opened.mockRestore();

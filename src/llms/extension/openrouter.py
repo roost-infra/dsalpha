@@ -193,7 +193,7 @@ class ChatOpenRouterClient(ChatOpenRouter):
         thing, and what has no place on this wire is dropped with a warning rather
         than failing the turn.
         """
-        params = {"app_title": "LangAlpha", "app_url": _app_url(), **params}
+        params = {"app_title": "dsalpha", "app_url": _app_url(), **params}
         fields = _field_names()
         request_keys = _request_keys()
 

@@ -57,7 +57,7 @@ describe('ComputerClaudeCode', () => {
     mocks.entry = { ...MAC, state: 'policy_blocked' };
     const { rerender } = render();
     expect(screen.getByText('Unavailable')).toBeInTheDocument();
-    expect(screen.getByText("Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here.")).toBeInTheDocument();
+    expect(screen.getByText("Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here.")).toBeInTheDocument();
     expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Remove']);
     mocks.entry = { ...MAC, state: 'policy_blocked', source: null };
     rerender(<ComputerClaudeCode computerId="cmp-mac" actions={{} as MachineActions} />);

@@ -29,7 +29,7 @@ type Asking = { kind: 'consent' } | { kind: 'leave'; mode: Exclude<ClaudeCodeCus
 /**
  * How the user's Claude Code runs on cloud computers, where the server lets
  * them choose: only on their own computers, with their Anthropic API key, or
- * on a setup token they let LangAlpha store. Each is listed while the server
+ * on a setup token they let dsalpha store. Each is listed while the server
  * offers it or while it is the one chosen; a chosen one the server no longer
  * offers is paused, which a line under the choice says, and the user can
  * still move to another. Where storing is blocked for the user, a line says

@@ -190,7 +190,7 @@ describe('the rows', () => {
     getStatus.mockResolvedValue({ ...STATUS, service: 'off', helper: null });
     open();
     const mac = await rowNamed('alex-mac');
-    expect(await within(mac).findByText('Remote control is paused. Resume it from the LangAlpha menu.')).toBeInTheDocument();
+    expect(await within(mac).findByText('Remote control is paused. Resume it from the dsalpha menu.')).toBeInTheDocument();
     expect(within(await rowNamed('build box')).queryByText(/Remote control is paused/)).not.toBeInTheDocument();
   });
 
@@ -373,7 +373,7 @@ describe('adding a computer', () => {
     const view = open();
     await user.click(await screen.findByRole('button', { name: 'Add a computer' }));
     await user.click(await screen.findByRole('radio', { name: 'This Mac' }));
-    await user.click(screen.getByRole('checkbox', { name: /^I understand LangAlpha's agent/ }));
+    await user.click(screen.getByRole('checkbox', { name: /^I understand dsalpha's agent/ }));
     await user.click(screen.getByRole('button', { name: 'Turn on remote control' }));
     await waitFor(() => expect(enable).toHaveBeenCalledTimes(1));
     return view;
@@ -535,7 +535,7 @@ describe('reconnecting this Mac', () => {
     const view = open();
     await user.click(within(await rowNamed('alex-mac')).getByRole('button', { name: 'Reconnect…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Reconnect alex-mac' });
-    await user.click(within(dialog).getByRole('checkbox', { name: /^I understand LangAlpha's agent/ }));
+    await user.click(within(dialog).getByRole('checkbox', { name: /^I understand dsalpha's agent/ }));
     await user.click(within(dialog).getByRole('button', { name: 'Turn on remote control' }));
     await within(dialog).findByTestId('ssh-ready');
     expect(mockMint).toHaveBeenCalledWith({ computerId: 'c-mac' });

@@ -63,7 +63,7 @@ export interface RemoveComputerVariables {
   removeKey: boolean;
   /** The workspaces on it the user was shown, deleted before it is removed. */
   workspaceIds: readonly string[];
-  /** Also delete LangAlpha's files from a machine the user brought. */
+  /** Also delete dsalpha's files from a machine the user brought. */
   deleteFiles: boolean;
   /** Its root folder, named when the files' outcome is told. */
   folder?: string | null;
@@ -96,7 +96,7 @@ function reconnectedSsh(row: Computer, { ssh: target, fingerprint, helper }: Rec
   };
 }
 
-/** What became of LangAlpha's files on the machine; undefined when they were not asked to go. */
+/** What became of dsalpha's files on the machine; undefined when they were not asked to go. */
 function filesRemovalNote(
   files: ComputerRemoveResponse['files'],
   folder: string | null | undefined,

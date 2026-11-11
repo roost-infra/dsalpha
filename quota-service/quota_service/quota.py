@@ -50,7 +50,7 @@ def limit_of(plan: Plan, *names: str) -> Optional[int]:
     """The first limit the plan names, or None (unlimited) when it names none.
 
     A negative value is the platform's "unlimited" too, matching what
-    LangAlpha's own quota readers accept.
+    dsalpha's own quota readers accept.
     """
     for name in names:
         value = plan.limits.get(name)
@@ -94,9 +94,9 @@ def build_quota(
     counts: Mapping[str, int],
     byok: bool = False,
 ) -> dict:
-    """The ``quota`` object LangAlpha reads out of ``validate``.
+    """The ``quota`` object dsalpha reads out of ``validate``.
 
-    ``check_quota`` is one of the names LangAlpha sends: ``chat``,
+    ``check_quota`` is one of the names dsalpha sends: ``chat``,
     ``computer_count``, ``workspace``, ``always_on`` or ``spec_<tier>``.
     Anything else (or None) only carries membership, so it always allows.
     """

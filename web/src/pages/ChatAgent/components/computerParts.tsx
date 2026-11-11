@@ -145,7 +145,7 @@ export function ComputerNotes({ computer, thisMac, prepareHintId, primaryNote = 
       {failure && <StartFailureNote failure={failure} className="computer-card-note" />}
       {thisMac?.paused && (
         <p className="computer-card-note">
-          {t('computer.remoteControl.paused', 'Remote control is paused. Resume it from the LangAlpha menu.')}
+          {t('computer.remoteControl.paused', 'Remote control is paused. Resume it from the dsalpha menu.')}
         </p>
       )}
       {isComputerPreparing(computer) && (

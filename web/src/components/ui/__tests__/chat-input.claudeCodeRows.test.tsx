@@ -166,7 +166,7 @@ describe('ChatInput: Claude Code rows by state', () => {
       email: null, expires_at: null,
     }];
     renderInput();
-    expect(codeRow()).toBe(`claude-x-code:held:${"This computer runs musl (for example Alpine Linux), which LangAlpha's runtime doesn't support yet."}`);
+    expect(codeRow()).toBe(`claude-x-code:held:${"This computer runs musl (for example Alpine Linux), which dsalpha's runtime doesn't support yet."}`);
     mocks.computers = [];
   });
 

@@ -299,7 +299,7 @@ describe('WelcomeFlow: starting the chat', () => {
       const hello = screen.getByRole('heading', { level: 1 });
       expect(hello).toHaveTextContent(/^Hi Ada\.$/);
       expect(turn('brokerage')).toContainElement(hello);
-      expect(turn('brokerage')).toHaveTextContent("I'm your LangAlpha Chief of Staff.");
+      expect(turn('brokerage')).toHaveTextContent("I'm your dsalpha Chief of Staff.");
 
       fireEvent.click(screen.getByRole('button', { name: 'stand-in elsewhere' }));
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Hi Ada\.$/);

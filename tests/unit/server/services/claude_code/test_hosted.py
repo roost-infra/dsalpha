@@ -326,7 +326,7 @@ async def test_only_the_worker_placement_minds_an_organizations_policy_on_the_wo
 SMALL = {"computer_id": "c-3", "name": "Scratch", "kind": "daytona", "resource_tier": "standard"}
 TOO_SMALL = (
     "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. "
-    "Change its spec or upgrade your LangAlpha plan, or move this workspace to a computer of your own."
+    "Change its spec or upgrade your dsalpha plan, or move this workspace to a computer of your own."
 )
 TOO_SMALL_SELF_HOSTED = (
     "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. "

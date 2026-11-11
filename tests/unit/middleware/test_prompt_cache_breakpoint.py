@@ -194,7 +194,7 @@ class TestPromptCacheBreakpoint:
         # 2. Create initial request with static system prompt, the turn row
         #    already written into history, and a tool to complete the budget.
         request = _make_model_request(
-            "You are LangAlpha Agent, a research agent.",
+            "You are dsalpha Agent, a research agent.",
             rows=await _turn_rows(preferred_market="US", origin="automation"),
             tools=[_probe],
         )
@@ -217,7 +217,7 @@ class TestPromptCacheBreakpoint:
         # middleware sees and so carries breakpoint 2 itself.
         block0 = content[0]
         assert isinstance(block0, dict), f"Block 0 should be dict, got {type(block0)}"
-        assert "You are LangAlpha Agent" in block0["text"]
+        assert "You are dsalpha Agent" in block0["text"]
         assert block0["cache_control"]["type"] == "ephemeral", (
             "Block 0 (static prefix) MUST have cache_control, this is breakpoint 2"
         )

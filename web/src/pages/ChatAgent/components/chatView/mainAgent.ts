@@ -5,7 +5,7 @@ import type { AgentInfo } from './types';
 export const MAIN_AGENT: AgentInfo = {
   id: 'main',
   name: 'Lead Agent',
-  displayName: 'athena',
+  displayName: 'dsalpha',
   taskId: '',
   description: '',
   type: 'main',

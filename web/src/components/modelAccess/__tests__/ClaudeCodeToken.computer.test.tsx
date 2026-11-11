@@ -64,7 +64,7 @@ describe('ClaudeCodeTokenSheet for a computer', () => {
       <ClaudeCodeTokenSheet target={{ kind: 'computer', computerId: 'cmp-mac', name: 'Studio Mac' }} onSaved={onSaved} onCancel={() => {}} />,
       { queryClient: client() },
     );
-    expect(screen.getByText(/It stays on Studio Mac, and LangAlpha doesn't keep a copy/)).toBeInTheDocument();
+    expect(screen.getByText(/It stays on Studio Mac, and dsalpha doesn't keep a copy/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Sign in with Claude' }));
     fireEvent.change(await screen.findByLabelText('Code from Claude'), { target: { value: CODE } });
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));

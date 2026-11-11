@@ -15,7 +15,7 @@ describe('SubscriptionChoices', () => {
     );
     const names = screen.getAllByRole('button').map((b) => b.querySelector('.truncate')?.textContent);
     expect(names).toEqual(['ChatGPT', 'Claude', 'Claude Code', 'Grok']);
-    expect(screen.getByText('Claude Pro or Max, called by LangAlpha')).toBeInTheDocument();
+    expect(screen.getByText('Claude Pro or Max, called by dsalpha')).toBeInTheDocument();
     expect(screen.getByText('Claude Pro or Max, run on your computer')).toBeInTheDocument();
     fireEvent.click(screen.getByText('No computer'));
     expect(onPick).toHaveBeenCalled();

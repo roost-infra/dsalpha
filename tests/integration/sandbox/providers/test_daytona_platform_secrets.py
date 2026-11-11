@@ -62,7 +62,7 @@ def _resolved(
         source_env_var=env_var,
         sandbox_env_var=env_var,
         name_suffix=name,
-        description="LangAlpha Daytona Secret integration test",
+        description="dsalpha Daytona Secret integration test",
         hosts=hosts,
     )
     return (ResolvedPlatformSecret(definition=definition, name=name, value=value),)

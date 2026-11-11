@@ -1,13 +1,13 @@
-# LangAlpha quota service
+# dsalpha quota service
 
-自托管的套餐 / 额度 / 积分服务，替代闭源的 ginlix-platform 中 LangAlpha 用到的部分。
+自托管的套餐 / 额度 / 积分服务，替代闭源的 ginlix-platform 中 dsalpha 用到的部分。
 设计文档：`../docs/quota-service-design.md`。
 
 ## 它做什么
 
-- 给 LangAlpha 提供 `POST /api/auth/validate`（会员信息 + 6 类 quota 门禁）
+- 给 dsalpha 提供 `POST /api/auth/validate`（会员信息 + 6 类 quota 门禁）
 - 给长对话提供额度租约：`/api/auth/billing/leases/{acquire,release,capability}`
-- 读取 LangAlpha 的 Postgres（`public.conversation_usages` / `public.computer_runs` /
+- 读取 dsalpha 的 Postgres（`public.conversation_usages` / `public.computer_runs` /
   `public.computers`），在 `billing` schema 下维护套餐、钱包、流水、租约
 - 管理员网页/CLI 手动分配套餐、充值（当前 M1 正在实现）
 
@@ -24,7 +24,7 @@ quota-service/
 │   ├── quota.py        # 纯函数：套餐与额度判定（有单测）
 │   ├── store.py        # 共用读查询
 │   ├── leases.py       # 租约 acquire/release
-│   └── api.py          # LangAlpha 接口
+│   └── api.py          # dsalpha 接口
 ├── tests/
 │   └── test_quota_math.py
 └── pyproject.toml
@@ -34,8 +34,8 @@ quota-service/
 
 | 变量 | 必填 | 说明 |
 |---|---|---|
-| `DATABASE_URL` | ✅ | LangAlpha 的 Postgres（读写 `billing`，只读业务表） |
-| `INTERNAL_SERVICE_TOKEN` | ✅ | 与 LangAlpha 共享，`X-Service-Token` |
+| `DATABASE_URL` | ✅ | dsalpha 的 Postgres（读写 `billing`，只读业务表） |
+| `INTERNAL_SERVICE_TOKEN` | ✅ | 与 dsalpha 共享，`X-Service-Token` |
 | `ADMIN_TOKEN` | ✅ | 管理员页面/API 的登录凭据 |
 | `DEFAULT_PLAN` | | 未分配套餐时的默认值，默认 `free` |
 | `PER_TURN_CREDITS` | | 单轮对话默认预占上限，默认 500 |
@@ -82,7 +82,7 @@ docker run --rm -p 8080:8080 \
 
 ## 用量入账（M2）
 
-服务进程内每 60s 跑一次（`INGEST_ENABLED` 控制），直接读 LangAlpha 的库：
+服务进程内每 60s 跑一次（`INGEST_ENABLED` 控制），直接读 dsalpha 的库：
 
 - `public.conversation_usages` → 扣 `token_credits` / `infrastructure_credits`
 - `public.computer_runs` → 按 `resource_tier` 和运行秒数扣沙箱积分
@@ -109,7 +109,7 @@ quota-admin leases <user_id>
 
 ## Token 用量
 
-`conversation_usages.token_usage->'by_model'` 里 LangAlpha 已按模型记好
+`conversation_usages.token_usage->'by_model'` 里 dsalpha 已按模型记好
 input/output/total/cached token、调用次数和美元成本；quota-service 只读汇总，不重复计价：
 
 - `GET /admin/api/users/{user_id}/usage?days=30` — 汇总、按模型、按天三张表
@@ -128,7 +128,7 @@ uv run pytest -q
 
 纯函数的测试不依赖数据库与网络。
 
-## LangAlpha 侧
+## dsalpha 侧
 
 ```bash
 HOST_MODE=platform

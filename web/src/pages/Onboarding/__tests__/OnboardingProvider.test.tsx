@@ -60,6 +60,8 @@ vi.mock('@/hooks/useWorkspaces', () => ({
 // The onboarding chunk, behind which the intros' scenes and copy load: the
 // factory runs only if the host gate imports it.
 const hostChunkLoaded = vi.hoisted(() => vi.fn());
+vi.mock('../welcome/feature', () => ({ INVESTING_PROFILE_WELCOME_ENABLED: true }));
+
 vi.mock('../OnboardingHost', () => {
   hostChunkLoaded();
   return { OnboardingHost: () => null };

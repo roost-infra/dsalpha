@@ -5,7 +5,7 @@ import { RunAvatar } from '../messageList/runCard';
 const MARK = 'h-[15px] w-[15px]';
 
 /**
- * A workspace analyst is a whole LangAlpha agent, so it wears our mark: drawn
+ * A workspace analyst is a whole dsalpha agent, so it wears our mark: drawn
  * in the reading color on the round avatar a subagent's role glyph sits on,
  * and clear of the amber that means working. Which workspace it works in is
  * said in words beside it, never by the avatar. `quiet` dims it for a

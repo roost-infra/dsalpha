@@ -194,8 +194,8 @@ def test_the_kind_and_body_follow_the_run(payload, context, kind, body):
 
 def test_the_title_is_the_threads_cut_short_or_the_apps_name():
     assert notify.push_title("  NVDA  ") == "NVDA"
-    assert notify.push_title(None) == "LangAlpha"
-    assert notify.push_title("   ") == "LangAlpha"
+    assert notify.push_title(None) == "dsalpha"
+    assert notify.push_title("   ") == "dsalpha"
     long = notify.push_title("x" * 200)
     assert len(long) == 80 and long.endswith("…")
 

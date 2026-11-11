@@ -605,7 +605,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
               to="/"
               className="p-2 rounded-md transition-colors shrink-0"
               style={{ color: 'var(--color-text-primary)' }}
-              title="Back to LangAlpha"
+              title="Back to dsalpha"
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-border-muted)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
             >
@@ -701,7 +701,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
                       <span className="text-xs px-1" style={{ color: 'var(--color-text-tertiary)' }}>
                         Powered by{' '}
                         <Link to="/" className="hover:underline" style={{ color: 'var(--color-accent-primary)' }}>
-                          LangAlpha
+                          dsalpha
                         </Link>
                       </span>
                       <button

@@ -54,7 +54,7 @@ PAIRING_TTL_S = 15 * 60
 # Not the prefix a pairing stored as one JSON string had, so a worker still
 # reading those during a deploy finds no pairing rather than the wrong type.
 _KEY_PREFIX = "ssh:pairing-v2:"
-PRODUCT = "LangAlpha"
+PRODUCT = "dsalpha"
 EXPIRED = f"This command has expired. Copy a new one from {PRODUCT} and run it again."
 # The error code of a pairing whose script stopped on the machine.
 SCRIPT_FAILED = "script_failed"

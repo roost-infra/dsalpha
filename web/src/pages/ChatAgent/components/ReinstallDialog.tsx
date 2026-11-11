@@ -93,7 +93,7 @@ function ReinstallDialog({ computer, onClose, onSubmit, busy, error }: Reinstall
       description: failure?.owner
         ? t(
             'computer.reinstall.takeBackOwned',
-            'Keep using {{folder}}. Another computer works in it now, possibly one from another LangAlpha account or server. That computer stops working on this machine. The files in the folder stay.',
+            'Keep using {{folder}}. Another computer works in it now, possibly one from another dsalpha account or server. That computer stops working on this machine. The files in the folder stay.',
             { folder: root },
           )
         : t(

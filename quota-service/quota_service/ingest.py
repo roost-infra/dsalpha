@@ -3,7 +3,7 @@
 Runs on a timer inside the service process. Two sources, each idempotent via
 the ledger's ``(source, source_id)`` unique key:
 
-* ``public.conversation_usages`` — LangAlpha has already priced the turn
+* ``public.conversation_usages`` — dsalpha has already priced the turn
   (platform-key tokens plus per-tool infrastructure credits). We only book.
 * ``public.computer_runs`` — running intervals of metered machines. Priced
   here from the user's plan ``sandbox_pricing``, in whole-second increments.

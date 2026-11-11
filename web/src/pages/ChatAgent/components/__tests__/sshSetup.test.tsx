@@ -245,7 +245,7 @@ describe('pairing', () => {
         onClose={() => {}}
         onSubmit={onSubmit}
         busy={false}
-        error="/home/me/langalpha on devbox is the folder of a LangAlpha computer this account does not have."
+        error="/home/me/langalpha on devbox is the folder of a dsalpha computer this account does not have."
         takeOver="dd44d9d0ddb144d6b135d767eaecc5b7"
       />,
     );

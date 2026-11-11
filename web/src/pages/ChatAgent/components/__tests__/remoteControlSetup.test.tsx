@@ -144,7 +144,7 @@ async function pickThisMac(user: ReturnType<typeof userEvent.setup>) {
 
 async function agreeAndTurnOn(user: ReturnType<typeof userEvent.setup>) {
   await pickThisMac(user);
-  await user.click(screen.getByRole('checkbox', { name: /^I understand LangAlpha's agent/ }));
+  await user.click(screen.getByRole('checkbox', { name: /^I understand dsalpha's agent/ }));
   await user.click(screen.getByRole('button', { name: 'Turn on remote control' }));
 }
 
@@ -162,7 +162,7 @@ describe('the This Mac option', () => {
       card,
       screen.getByRole('radio', { name: 'Your machine (SSH)' }),
     ]);
-    expect(card).toHaveAccessibleDescription(/Preview.*Works even with LangAlpha closed/);
+    expect(card).toHaveAccessibleDescription(/Preview.*Works even with dsalpha closed/);
     expect(card).not.toBeChecked();
   });
 
@@ -233,8 +233,8 @@ describe('turning it on', () => {
     await pickThisMac(user);
 
     const disclosure = screen.getByTestId('remote-control-disclosure');
-    expect(disclosure).toHaveTextContent("LangAlpha's agent will work on this Mac as alex, with everything that account can do.");
-    expect(disclosure).toHaveTextContent('Anyone who signs in to your LangAlpha account can direct it.');
+    expect(disclosure).toHaveTextContent("dsalpha's agent will work on this Mac as alex, with everything that account can do.");
+    expect(disclosure).toHaveTextContent('Anyone who signs in to your dsalpha account can direct it.');
     expect(screen.getByTestId('remote-control-preview-notice')).toHaveTextContent('Remote control is in preview');
     // A Mac has no tier to pick, and the name field at the top says it is named after the machine.
     expect(screen.getByRole('textbox', { name: /^Name/ })).toHaveAttribute('placeholder', "Defaults to the machine's name");
@@ -242,7 +242,7 @@ describe('turning it on', () => {
 
     const turnOn = screen.getByRole('button', { name: 'Turn on remote control' });
     expect(turnOn).toBeDisabled();
-    await user.click(screen.getByRole('checkbox', { name: "I understand LangAlpha's agent can run commands and change files on this Mac as alex." }));
+    await user.click(screen.getByRole('checkbox', { name: "I understand dsalpha's agent can run commands and change files on this Mac as alex." }));
     expect(turnOn).toBeEnabled();
     expect(mockMint).not.toHaveBeenCalled();
     expect(enable).not.toHaveBeenCalled();
@@ -309,7 +309,7 @@ describe('turning it on', () => {
     await agreeAndTurnOn(user);
 
     expect(await screen.findByTestId('remote-control-approval')).toHaveTextContent(
-      'macOS needs your OK. In System Settings, under General, Login Items, allow LangAlpha in the background, then continue.',
+      'macOS needs your OK. In System Settings, under General, Login Items, allow dsalpha in the background, then continue.',
     );
     await user.click(screen.getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(enable).toHaveBeenCalledTimes(2));
@@ -424,7 +424,7 @@ describe('moving to another provider', () => {
     await waitFor(() => expect(disable).toHaveBeenCalledTimes(1));
     await pickThisMac(user);
     expect(screen.getByRole('button', { name: 'Turn on remote control' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /^I understand LangAlpha's agent/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /^I understand dsalpha's agent/ })).toBeChecked();
 
     unmount();
     await settle();
