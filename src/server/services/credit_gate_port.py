@@ -10,9 +10,11 @@ the factory returns None and the gate never engages.
 """
 
 import asyncio
+import json
 import logging
 import math
 import time
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -267,11 +269,13 @@ class PlatformCreditGatePort:
         }
         if byok:
             body["byok"] = True
+        raw_body = json.dumps(body, separators=(",", ":")).encode()
+        acquire_url = self._url("acquire")
         try:
             resp = await client.post(
-                self._url("acquire"),
+                acquire_url,
                 json=body,
-                headers=usage_limits.service_headers(),
+                headers=usage_limits.signed_service_headers("POST", urlsplit(acquire_url).path, raw_body),
             )
         except Exception as e:
             logger.warning("[CreditGate] lease service unreachable: %s", e)
@@ -327,11 +331,13 @@ class PlatformCreditGatePort:
             if remaining <= 0:
                 detail = f"{detail}; teardown budget spent"
                 break
+            raw_payload = json.dumps(payload, separators=(",", ":")).encode()
+            release_url = self._url("release")
             try:
                 resp = await client.post(
-                    self._url("release"),
+                    release_url,
                     json=payload,
-                    headers=usage_limits.service_headers(),
+                    headers=usage_limits.signed_service_headers("POST", urlsplit(release_url).path, raw_payload),
                     timeout=remaining,
                 )
                 if resp.status_code < 500:
@@ -359,9 +365,10 @@ class PlatformCreditGatePort:
         nothing."""
         client = await usage_limits.get_http_client()
         try:
+            capability_url = self._url("capability")
             resp = await client.get(
-                self._url("capability"),
-                headers=usage_limits.service_headers(),
+                capability_url,
+                headers=usage_limits.signed_service_headers("GET", urlsplit(capability_url).path, b""),
                 timeout=_CAPABILITY_TIMEOUT_SECONDS,
             )
         except Exception as e:

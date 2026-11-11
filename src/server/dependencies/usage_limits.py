@@ -14,8 +14,12 @@ answer 503 rather than guess.
 """
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 import os
+import secrets
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -108,6 +112,30 @@ def service_headers(user_id: Optional[str] = None) -> dict:
     token = os.getenv("INTERNAL_SERVICE_TOKEN", "")
     if token:
         headers["X-Service-Token"] = token
+    return headers
+
+
+def signed_service_headers(method: str, path: str, body: bytes, user_id: Optional[str] = None) -> dict:
+    """Headers for a signed service-to-service call to Roost Console.
+
+    The legacy X-Service-Token remains during migration; central accepts HMAC
+    once present. Signature is timestamp + nonce + method + request URI + body hash.
+    """
+    headers = service_headers(user_id)
+    secret = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+    if not secret:
+        return headers
+    ts = str(int(time.time()))
+    nonce = secrets.token_hex(16)
+    digest = hashlib.sha256(body).hexdigest()
+    signing_input = "\n".join(["dslpha", ts, nonce, method, path, digest]).encode()
+    signature = hmac.new(secret.encode(), signing_input, hashlib.sha256).hexdigest()
+    headers.update({
+        "X-Roost-Service": "dslpha",
+        "X-Roost-Timestamp": ts,
+        "X-Roost-Nonce": nonce,
+        "X-Roost-Signature": signature,
+    })
     return headers
 
 
@@ -385,8 +413,11 @@ async def _call_validate_for_user(
             if time.monotonic() + delay > give_up_at:
                 break
             await asyncio.sleep(delay)
+        raw_body = json.dumps(body, separators=(",", ":")).encode() if body else b""
+        path = "/api/auth/validate"
+        signed_headers = signed_service_headers("POST", path, raw_body, user_id)
         try:
-            resp = await client.post(url, json=body if body else None, headers=headers)
+            resp = await client.post(url, json=body if body else None, headers=signed_headers)
         except Exception as e:
             reason = f"unreachable: {e}"
             logger.warning("auth/quota service unreachable (attempt %d): %s", attempt + 1, e)
