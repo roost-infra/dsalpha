@@ -8,9 +8,9 @@ import { useWelcomeOffer } from './useWelcomeOffer';
  * before it existed and so never had it open by itself. Resumes a draft where
  * this browser has one.
  */
-export function WelcomeBanner({ onDismiss }: { onDismiss: () => void }) {
+export function WelcomeBanner({ onDismiss, enabled = false }: { onDismiss: () => void; enabled?: boolean }) {
   const { t } = useTranslation();
-  const offer = useWelcomeOffer();
+  const offer = useWelcomeOffer(enabled);
   if (!offer) return null;
   return (
     <div

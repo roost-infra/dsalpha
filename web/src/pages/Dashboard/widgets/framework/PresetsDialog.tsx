@@ -18,10 +18,15 @@ interface PresetsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onApply: (id: PresetId) => void;
+  /** Presets contributed by a disabled page plugin are hidden. */
+  enabledPlugins?: ReadonlySet<string>;
 }
 
-export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProps) {
+export function PresetsDialog({ open, onOpenChange, onApply, enabledPlugins }: PresetsDialogProps) {
   const { t } = useTranslation();
+  const presets = PRESETS_META.filter(
+    (preset) => !preset.pluginId || !enabledPlugins || enabledPlugins.has(preset.pluginId),
+  );
   const apply = (id: PresetId) => {
     onApply(id);
     onOpenChange(false);
@@ -42,7 +47,7 @@ export function PresetsDialog({ open, onOpenChange, onApply }: PresetsDialogProp
         <div className="flex-1 overflow-y-auto">
           <TermPanelContext value={true}>
             <div className="dash-presets-grid">
-              {PRESETS_META.map((preset) => (
+              {presets.map((preset) => (
                 // The card's title is its button: a click anywhere on the card
                 // applies it, and the keyboard reaches it once.
                 <TermCard

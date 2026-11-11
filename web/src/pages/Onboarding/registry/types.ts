@@ -94,6 +94,8 @@ export interface GettingStartedTaskDef {
   external?: boolean;
   /** Only offered on the hosted platform (e.g. channel integrations). */
   platformOnly?: boolean;
+  /** Offered only while this built-in page plugin is enabled. */
+  pluginId?: string;
   /**
    * Where else it is offered. `browser`: outside the desktop app. `thisMac`:
    * in the desktop app on a Mac this server can take as a computer (remote

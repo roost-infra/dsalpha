@@ -23,6 +23,7 @@ export const GETTING_STARTED_TASKS: GettingStartedTaskDef[] = [
   },
   {
     id: 'market',
+    pluginId: 'market-center',
     titleKey: 'onboarding.gettingStarted.tasks.market.title',
     descKey: 'onboarding.gettingStarted.tasks.market.desc',
     to: '/p/market',
@@ -30,6 +31,7 @@ export const GETTING_STARTED_TASKS: GettingStartedTaskDef[] = [
   },
   {
     id: 'profile',
+    pluginId: 'market-center',
     titleKey: 'onboarding.gettingStarted.tasks.profile.title',
     descKey: 'onboarding.gettingStarted.tasks.profile.desc',
     to: WELCOME_PATH,

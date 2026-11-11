@@ -1,6 +1,8 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getPagePlugins, setPagePlugin, type PagePluginList } from './api';
 import { PAGE_PLUGINS } from './registry';
+import { setEnabledPagePlugins } from './state';
 
 const KEY = ['page-plugins'] as const;
 
@@ -9,6 +11,8 @@ export function usePagePlugins() {
   const query = useQuery({ queryKey: KEY, queryFn: getPagePlugins });
   const states = query.data?.plugins ?? [];
   const enabled = new Set(states.filter((s) => s.enabled).map((s) => s.plugin_id));
+  // Publish the answer for surfaces that read it without their own query.
+  useEffect(() => { setEnabledPagePlugins(enabled); }, [enabled]);
   const toggle = useMutation({
     mutationFn: ({ pluginId, enabled }: { pluginId: string; enabled: boolean }) =>
       setPagePlugin(pluginId, enabled),

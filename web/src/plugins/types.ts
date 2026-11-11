@@ -18,4 +18,8 @@ export interface PagePlugin {
   icon: LucideIcon;
   defaultEnabled: boolean;
   pages: PagePluginPage[];
+  /** Dashboard contribution: the preset to use once this plugin is enabled. */
+  dashboard?: {
+    presetId: string;
+  };
 }

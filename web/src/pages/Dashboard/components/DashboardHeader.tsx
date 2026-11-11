@@ -10,6 +10,8 @@ import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
 import './DashboardHeader.css';
 
 interface DashboardHeaderProps {
+  /** The market-center plugin is on: show symbol search on the dashboard. */
+  marketEnabled?: boolean;
   onScrollToTop?: () => void;
   /** The layout's Edit button; absent where the layout can't be edited (a phone). */
   edit?: {
@@ -18,7 +20,7 @@ interface DashboardHeaderProps {
   };
 }
 
-const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, edit }) => {
+const DashboardHeader: React.FC<DashboardHeaderProps> = ({ marketEnabled = true, onScrollToTop, edit }) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const { t } = useTranslation();
@@ -121,7 +123,8 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, edit }
           onScrollToTop?.();
         }}
       >
-        {/* Search */}
+        {/* Search is a market-plugin affordance; the core dashboard is generic. */}
+        {marketEnabled ? (
         <div className="flex-1 min-w-0 max-w-xl">
           <div className="dashboard-search-wrapper" ref={dropdownRef}>
             <form
@@ -208,6 +211,16 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ onScrollToTop, edit }
             )}
           </div>
         </div>
+        ) : (
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              {t('dashboard.assistant.title')}
+            </h1>
+            <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              {t('dashboard.assistant.subtitle')}
+            </p>
+          </div>
+        )}
 
         {/* Right actions */}
         <div className="flex items-center gap-3 ml-3 shrink-0">

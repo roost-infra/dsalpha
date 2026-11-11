@@ -24,7 +24,7 @@ function isDashboardWrite(variables: unknown): boolean {
   return readDashboardPrefs(variables) !== null;
 }
 
-export function useDashboardPrefs() {
+export function useDashboardPrefs(defaultPresetId?: PresetId) {
   const { preferences, isLoading, isLoaded } = usePreferences();
   const { writeDashboardPrefs, isPending } = useDashboardPrefsWriter();
   const { toast } = useToast();
@@ -32,7 +32,7 @@ export function useDashboardPrefs() {
 
   const raw = readDashboardPrefs(preferences);
   const saved = useMemo(() => migrateDashboardPrefs(raw), [raw]);
-  const stored = useMemo<DashboardPrefs>(() => saved ?? defaultLayout(), [saved]);
+  const stored = useMemo<DashboardPrefs>(() => saved ?? defaultLayout(defaultPresetId), [saved, defaultPresetId]);
 
   const [local, setLocal] = useState<DashboardPrefs>(stored);
   const storedRef = useRef<DashboardPrefs>(stored);
@@ -259,8 +259,8 @@ export function useDashboardPrefs() {
   );
 
   const resetToDefault = useCallback(() => {
-    applyPreset('morning-brief');
-  }, [applyPreset]);
+    applyPreset(defaultPresetId ?? 'assistant');
+  }, [applyPreset, defaultPresetId]);
 
   return {
     prefs: local,

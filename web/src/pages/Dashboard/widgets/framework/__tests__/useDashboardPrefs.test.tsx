@@ -116,7 +116,7 @@ describe('useDashboardPrefs', () => {
   });
 
   it('shows the saved layout when there is one', () => {
-    const widgets = [{ id: 'saved-1', type: 'news.feed', config: {} }];
+    const widgets = [{ id: 'saved-1', type: 'threads.recent', config: {} }];
     prefsState.current = {
       other_preference: { dashboard: { version: DASHBOARD_PREFS_VERSION, widgets, layouts: {} } },
     };
@@ -124,8 +124,8 @@ describe('useDashboardPrefs', () => {
     expect(result.current.prefs.widgets.map((w) => w.id)).toEqual(['saved-1']);
   });
 
-  it('resetToDefault writes Morning brief at once and keeps the prior layout in history', () => {
-    const widgets = [{ id: 'saved-1', type: 'news.feed', config: {} }];
+  it('resetToDefault writes the assistant desk at once and keeps the prior layout in history', () => {
+    const widgets = [{ id: 'saved-1', type: 'threads.recent', config: {} }];
     prefsState.current = {
       other_preference: { dashboard: { version: DASHBOARD_PREFS_VERSION, widgets, layouts: {} } },
     };
@@ -135,7 +135,7 @@ describe('useDashboardPrefs', () => {
     });
     expect(mockMutate).toHaveBeenCalledTimes(1);
     const types = (prefs: { widgets: Array<{ type: string }> }) => prefs.widgets.map((w) => w.type);
-    expect(types(result.current.prefs)).toEqual(types(getPreset('morning-brief')));
+    expect(types(result.current.prefs)).toEqual(types(getPreset('assistant')));
     expect(result.current.prefs.history?.[0]?.widgets.map((w) => w.id)).toEqual(['saved-1']);
   });
 
@@ -307,7 +307,7 @@ describe('useDashboardPrefs', () => {
   });
 
   it('drops an adjustment made while an edit is saving when that edit is rejected', () => {
-    const widgets = [{ id: 'saved-1', type: 'news.feed', config: {} }];
+    const widgets = [{ id: 'saved-1', type: 'threads.recent', config: {} }];
     prefsState.current = {
       other_preference: { dashboard: { version: DASHBOARD_PREFS_VERSION, widgets, layouts: {} } },
     };
@@ -420,7 +420,7 @@ describe('useDashboardPrefs', () => {
   it('takes the saved layout back when a write is rejected', () => {
     // The rollback lands while the write still counts as pending, and the
     // refetch after it holds the same copy: only the write settling says so.
-    const widgets = [{ id: 'saved-1', type: 'news.feed', config: {} }];
+    const widgets = [{ id: 'saved-1', type: 'threads.recent', config: {} }];
     prefsState.current = {
       other_preference: { dashboard: { version: DASHBOARD_PREFS_VERSION, widgets, layouts: {} } },
     };
