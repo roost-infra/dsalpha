@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#10151c">
-<title>dsalpha · A 股研究 Agent 团队</title>
-<meta name="description" content="dsalpha 是一支面向 A 股研究的 Agent 团队：多 Bot 协作、A 股数据与工具、可交付报告、定时任务和微信通道，全部在你的工作区里完成。">
-<meta property="og:title" content="dsalpha · A 股研究 Agent 团队">
-<meta property="og:description" content="不是回答问题，而是把一份研究做完。多 Bot 协作、A 股数据、可交付报告与定时任务。">
+<title>dsalpha · 云端 Bot 助理</title>
+<meta name="description" content="dsalpha 是你的云端 Bot 助理：多个 Bot 分工协作、连接常用工具与文件、持续记住上下文，把任务做完并留下可复用的工作区。">
+<meta property="og:title" content="dsalpha · 云端 Bot 助理">
+<meta property="og:description" content="不是回答问题，而是把任务做完。多 Bot 协作、工具连接、可交付文件与定时任务。">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://deepseek-alpha.com/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2310151c'/%3E%3Cpath d='M8 20.5 15 8l3.2 6.1L22 10l2 12H8Z' fill='%237aa2ff'/%3E%3C/svg%3E">
@@ -25,8 +25,9 @@
     </a>
     <nav class="nav__links" aria-label="主导航">
       <a href="#capabilities">能力</a>
-      <a href="#workflow">研究流程</a>
-      <a href="#data">数据</a>
+      <a href="#cases">案例</a>
+      <a href="#workflow">工作流程</a>
+      <a href="#data">连接与工具</a>
       <a href="#automation">自动化</a>
       <a href="#faq">常见问题</a>
     </nav>
@@ -40,8 +41,9 @@
   </div>
   <div class="nav__mobile" data-mobile-menu hidden>
     <a href="#capabilities">能力</a>
-    <a href="#workflow">研究流程</a>
-    <a href="#data">数据</a>
+    <a href="#cases">案例</a>
+    <a href="#workflow">工作流程</a>
+    <a href="#data">连接与工具</a>
     <a href="#automation">自动化</a>
     <a href="#faq">常见问题</a>
     <a href="/app?mode=login">登录</a>
@@ -53,22 +55,22 @@
 <section class="hero">
   <div class="hero__inner">
     <div class="hero__copy">
-      <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>AGENTIC RESEARCH · A-SHARE FIRST</p>
-      <h1>把一份 A 股研究，<br><span>交给一支 Agent 团队。</span></h1>
-      <p class="hero__lead">不是一个更会聊天的 AI，而是一个会把事做完的研究台：数据、公告、财报和因子接进同一个工作区，多个 Bot 分工协作，最后交出一份可以打开、复核、继续改的报告。</p>
+      <p class="eyebrow"><span class="live-dot" aria-hidden="true"></span>CLOUD BOT ASSISTANT · YOUR WORK, DONE</p>
+      <h1>把工作交给一个<br><span>云端 Bot 团队。</span></h1>
+      <p class="hero__lead">不是一个更会聊天的 AI，而是一个真的会做事的助理：邮件、日历、文件、网页和业务系统接进同一个工作区，多个 Bot 分工协作，最后交出可以直接使用的文件、报告和下一步。</p>
       <div class="hero__actions">
         <a class="btn btn--accent" href="/app?mode=signup">免费开始 <span aria-hidden="true">→</span></a>
         <a class="text-link" href="#capabilities">看看它能做什么 <span aria-hidden="true">↓</span></a>
       </div>
       <dl class="hero__facts">
-        <div><dt>5,000+</dt><dd>A 股标的</dd></div>
-        <div><dt>多 Bot</dt><dd>协作会话室</dd></div>
-        <div><dt>5 种</dt><dd>可交付格式</dd></div>
-        <div><dt>微信</dt><dd>原生通道</dd></div>
+        <div><dt>24/7</dt><dd>云端在线</dd></div>
+        <div><dt>多 Bot</dt><dd>分工协作</dd></div>
+        <div><dt>5 种</dt><dd>可交付文件</dd></div>
+        <div><dt>微信</dt><dd>随时继续</dd></div>
       </dl>
     </div>
 
-    <div class="hero__visual" aria-label="全球市场示意">
+    <div class="hero__visual" aria-label="工具连接示意">
       <div class="globe-wrap">
         <svg class="globe-svg" viewBox="0 0 720 720" role="img" aria-label="全球市场点阵球示意">
           <defs>
@@ -105,19 +107,19 @@
           <circle cx="360" cy="360" r="326" fill="url(#globe-shade)"/>
           <circle cx="360" cy="360" r="326" fill="none" stroke="#3b3e44"/>
         </svg>
-        <div class="quote quote--cn"><span class="quote__flag" aria-hidden="true"></span><b>上证指数</b><strong>3,421.55</strong><em>+0.84%</em><i>LIVE</i></div>
-        <div class="quote quote--sz"><span class="quote__flag" aria-hidden="true"></span><b>深证成指</b><strong>10,762.18</strong><em>+1.21%</em><i>LIVE</i></div>
-        <div class="quote quote--hk"><span class="quote__flag" aria-hidden="true"></span><b>恒生指数</b><strong>24,184.65</strong><em class="is-down">−0.38%</em><i>CLOSE</i></div>
-        <div class="quote quote--us"><span class="quote__flag" aria-hidden="true"></span><b>纳斯达克</b><strong>21,363.02</strong><em>+0.57%</em><i>PRE</i></div>
-        <span class="globe-caption">全球市场 · A 股优先 <span>示意</span></span>
+        <div class="quote quote--cn"><span class="quote__flag" aria-hidden="true"></span><b>Gmail</b><strong>已连接</strong><em>OAuth</em><i>LIVE</i></div>
+        <div class="quote quote--sz"><span class="quote__flag" aria-hidden="true"></span><b>Calendar</b><strong>已授权</strong><em>OAuth</em><i>LIVE</i></div>
+        <div class="quote quote--hk"><span class="quote__flag" aria-hidden="true"></span><b>Drive</b><strong>已连接</strong><em>OAuth</em><i>OK</i></div>
+        <div class="quote quote--us"><span class="quote__flag" aria-hidden="true"></span><b>Notion</b><strong>已连接</strong><em>MCP</em><i>OK</i></div>
+        <span class="globe-caption">常用工具 · 按需连接 <span>示意</span></span>
       </div>
     </div>
   </div>
 
   <div class="hero__ticker" aria-hidden="true">
     <div class="ticker__track">
-      <span>A 股行情</span><i></i><span>财报三表</span><i></i><span>公告全文</span><i></i><span>龙虎榜</span><i></i><span>资金流</span><i></i><span>涨停池</span><i></i><span>行业对比</span><i></i><span>因子库</span><i></i><span>新闻与事件</span><i></i><span>ETF 期权</span><i></i>
-      <span>A 股行情</span><i></i><span>财报三表</span><i></i><span>公告全文</span><i></i><span>龙虎榜</span><i></i><span>资金流</span><i></i><span>涨停池</span><i></i><span>行业对比</span><i></i><span>因子库</span><i></i><span>新闻与事件</span><i></i><span>ETF 期权</span><i></i>
+      <span>邮件</span><i></i><span>日历</span><i></i><span>云盘</span><i></i><span>文档</span><i></i><span>网页</span><i></i><span>表格</span><i></i><span>数据</span><i></i><span>报告</span><i></i><span>自动化</span><i></i><span>连接器</span><i></i>
+      <span>邮件</span><i></i><span>日历</span><i></i><span>云盘</span><i></i><span>文档</span><i></i><span>网页</span><i></i><span>表格</span><i></i><span>数据</span><i></i><span>报告</span><i></i><span>自动化</span><i></i><span>连接器</span><i></i>
     </div>
   </div>
 </section>
@@ -126,181 +128,212 @@
   <div class="section__head">
     <p class="kicker">01 / 能力</p>
     <h2>一支团队，<br><span class="dim">而不是一个聊天框。</span></h2>
-    <p class="section__intro">把研究拆成可以分工的动作：有人看宏观，有人读公告，有人做技术面，有人守风控。每个 Bot 有自己的会话，也能在同一个房间里把结论对齐。</p>
+    <p class="section__intro">把任务拆成可以分工的动作：有人查资料，有人写文件，有人跑数据，有人检查交付。每个 Bot 有自己的会话，也能在同一个房间里把结论对齐。</p>
   </div>
   <div class="feature-grid">
     <article class="feature">
       <span class="feature__num">01</span>
       <h3>多 Bot 协作会话室</h3>
       <p>一个房间共享一份日志，成员按顺序发言；主持人先讲，其他人接着补充。用户插话随时打断并开启新一轮。</p>
-      <div class="feature__mock feature__mock--room"><span class="mini-avatar mini-avatar--teal">风</span><span class="mini-avatar mini-avatar--blue">技</span><span class="mini-avatar mini-avatar--sand">宏</span><span class="mini-avatar mini-avatar--red">策</span><span class="mock-count">+1</span></div>
+      <div class="feature__mock feature__mock--room"><span class="mini-avatar mini-avatar--teal">研</span><span class="mini-avatar mini-avatar--blue">编</span><span class="mini-avatar mini-avatar--sand">数</span><span class="mini-avatar mini-avatar--red">审</span><span class="mock-count">+1</span></div>
     </article>
     <article class="feature">
       <span class="feature__num">02</span>
       <h3>Bot 之间直接对话</h3>
-      <p>不经过用户转发。风控官可以把问题直接交给技术交易员；每对 Bot 有一条可追溯的 Exchange，消息有深度和次数预算，不会无限互聊。</p>
-      <div class="feature__mock feature__mock--exchange"><span class="mini-avatar mini-avatar--teal">风</span><span class="pair-arrow">⇄</span><span class="mini-avatar mini-avatar--blue">技</span><span class="mock-line">第三轮（终版）— 风控官</span></div>
+      <p>不经过用户转发。一个 Bot 可以把问题直接交给另一个 Bot；每对 Bot 有一条可追溯的 Exchange，消息有深度和次数预算，不会无限互聊。</p>
+      <div class="feature__mock feature__mock--exchange"><span class="mini-avatar mini-avatar--teal">研</span><span class="pair-arrow">⇄</span><span class="mini-avatar mini-avatar--blue">编</span><span class="mock-line">第三轮（终版）— 研究员</span></div>
     </article>
     <article class="feature">
       <span class="feature__num">03</span>
       <h3>每个 Bot 一条持续会话</h3>
       <p>私聊、定时任务、房间工作都落在同一个 Bot 的 primary session。再次打开不会另起炉灶，上下文自然续上。</p>
-      <div class="feature__mock feature__mock--thread"><span class="mock-pill">主会话</span><span class="mock-line">风控官 · 上下文连续</span></div>
+      <div class="feature__mock feature__mock--thread"><span class="mock-pill">主会话</span><span class="mock-line">项目助理 · 上下文连续</span></div>
     </article>
     <article class="feature">
       <span class="feature__num">04</span>
-      <h3>A 股数据，开箱即用</h3>
-      <p>行情、财报、公告、龙虎榜、资金流、涨停池、行业与新闻，都在 Agent 的工具面里；需要时直接取数、写代码、交叉核验。</p>
-      <div class="feature__mock feature__mock--data"><span class="mono">002371 · 北方华创</span><span class="mock-up">+3.42%</span><span class="mock-line">成交额 41.8 亿 · 换手 1.9%</span></div>
+      <h3>工具与文件，开箱即用</h3>
+      <p>邮件、日历、云盘、网页、文档和业务系统，在授权后进入 Agent 的工具面；需要时直接读取、写入、计算和交叉核验。</p>
+      <div class="feature__mock feature__mock--data"><span class="mono">Gmail · 收件箱</span><span class="mock-up">已连接</span><span class="mock-line">Calendar · 下周会议</span></div>
     </article>
     <article class="feature">
       <span class="feature__num">05</span>
       <h3>定时任务，持续投递</h3>
-      <p>每 5 分钟唤醒盯盘手、开盘前生成简报、盘后复盘。任务指定运行 Bot 后默认续用它的会话，而不是每次新建一条。</p>
-      <div class="feature__mock feature__mock--schedule"><span class="mock-clock">*/5</span><span>盯盘手 · 持续会话</span><span class="mock-pill mock-pill--live">运行中</span></div>
+      <p>每 5 分钟检查收件箱、周一生成周报、项目结束自动复盘。任务指定运行 Bot 后默认续用它的会话，而不是每次新建一条。</p>
+      <div class="feature__mock feature__mock--schedule"><span class="mock-clock">*/5</span><span>项目助理 · 持续会话</span><span class="mock-pill mock-pill--live">运行中</span></div>
     </article>
     <article class="feature">
       <span class="feature__num">06</span>
       <h3>微信直连</h3>
-      <p>绑定微信后，直接给机器人发消息就能继续研究工作；盘中不在电脑前，也能把问题丢给它。</p>
-      <div class="feature__mock feature__mock--wechat"><span class="mock-phone">微信</span><span class="mock-line">今天北向资金怎么看？</span></div>
+      <p>绑定微信后，直接给机器人发消息就能继续任务；不在电脑前，也能把问题丢给它。</p>
+      <div class="feature__mock feature__mock--wechat"><span class="mock-phone">微信</span><span class="mock-line">把今天的会议整理成纪要</span></div>
     </article>
   </div>
+</section>
+
+<section class="section" id="cases">
+  <div class="section__head section__head--split">
+    <div>
+      <p class="kicker">02 / 工作案例</p>
+      <h2>不是演示，<br><span class="dim">是每天都能发生的工作。</span></h2>
+    </div>
+    <p class="section__intro">一个助理不够时，就给它配一个团队。下面是三种最常见的用法，所有文件、来源和下一步都留在同一个工作区。</p>
+  </div>
+  <div class="feature-grid">
+    <article class="feature">
+      <span class="feature__num">CASE 01</span>
+      <h3>把一周的资料，变成一份简报</h3>
+      <p>一个 Bot 读取邮件、网页和上传的文档，另一个 Bot 负责核对来源、压缩结构；最后交付一份可以直接转发的周报和一张行动清单。</p>
+      <div class="feature__mock feature__mock--data"><span class="mono">weekly_brief.docx</span><span class="mock-up">ready</span><span class="mock-line">12 个来源 · 3 个待办</span></div>
+    </article>
+    <article class="feature">
+      <span class="feature__num">CASE 02</span>
+      <h3>把会议，变成下一步</h3>
+      <p>会议结束后，助理整理纪要、提取决定和负责人，把待办写进工作区；需要时发到邮箱或微信，下一次自动接着跟进。</p>
+      <div class="feature__mock feature__mock--schedule"><span class="mock-clock">15:30</span><span>meeting_notes.md</span><span class="mock-pill mock-pill--live">已整理</span></div>
+    </article>
+    <article class="feature">
+      <span class="feature__num">CASE 03</span>
+      <h3>让一个团队，持续盯住一件事</h3>
+      <p>一个 Bot 负责收件箱和日程，一个负责查资料，一个负责交付质量；在同一个房间里对齐，不用你来回转发。</p>
+      <div class="feature__mock feature__mock--room"><span class="mini-avatar mini-avatar--teal">收</span><span class="mini-avatar mini-avatar--blue">研</span><span class="mini-avatar mini-avatar--sand">审</span><span class="mock-line">同一工作区</span></div>
+    </article>
+  </div>
+  <div class="flow-foot"><span class="mono">CASE NOTES</span><span>所有案例均为工作方式示意，不构成专业建议</span><a class="text-link" href="/app?mode=signup">用你的任务试一次 <span aria-hidden="true">→</span></a></div>
 </section>
 
 <section class="section section--ink" id="workflow">
   <div class="section__head section__head--split">
     <div>
-      <p class="kicker">02 / 研究流程</p>
+      <p class="kicker">03 / 工作流程</p>
       <h2>从一句话，<br><span class="dim">到一份可交付。</span></h2>
     </div>
-    <p class="section__intro">你只需要提出目标。拆解、取数、建模、写报告、做图，Agent 在自己的工作区里完成；每一步都留下文件、脚本和来源。</p>
+    <p class="section__intro">你只需要提出目标。拆解、查资料、读文件、整理、写报告、做图，Agent 在自己的工作区里完成；每一步都留下文件、脚本和来源。</p>
   </div>
   <div class="flow-board">
     <div class="flow-col">
       <span class="flow-col__label">任务</span>
-      <div class="flow-card flow-card--task"><span class="flow-user" aria-hidden="true">你</span><p>002371 的仓位与触发条件重新核一遍，给出可执行卡。</p></div>
+      <div class="flow-card flow-card--task"><span class="flow-user" aria-hidden="true">你</span><p>把 Q3 竞品调研整理成一份可汇报的材料，并列出下一步。</p></div>
       <div class="flow-plan">
         <div class="flow-plan__head"><span>计划</span><span class="mono">6 / 6</span></div>
         <div class="flow-plan__line" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
         <div class="flow-plan__items">
-          <span><i>DONE</i> 行情与持仓</span><span><i>DONE</i> 财报拆解</span><span><i>DONE</i> 公告检索</span>
-          <span><i>DONE</i> 技术面</span><span><i>DONE</i> 风控约束</span><span><i>DONE</i> 执行卡</span>
+          <span><i>DONE</i> 收集资料</span><span><i>DONE</i> 读取文件</span><span><i>DONE</i> 交叉核验</span>
+          <span><i>DONE</i> 整理结构</span><span><i>DONE</i> 生成图表</span><span><i>DONE</i> 交付</span>
         </div>
       </div>
     </div>
     <div class="flow-col">
-      <span class="flow-col__label">阶段 1 · 研究与数据</span>
-      <div class="flow-card"><div class="flow-card__head"><span>data-prep</span><em>✓ 已完成</em><b>›</b></div><strong>拉取行情、财报与资金流</strong><small>3 次工具 · 5.2K tokens</small></div>
-      <div class="flow-card"><div class="flow-card__head"><span>research</span><em>✓ 已完成</em><b>›</b></div><strong>梳理公告、新闻与事件日历</strong><small>4 次工具 · 7.8K tokens</small></div>
-      <div class="flow-card"><div class="flow-card__head"><span>research</span><em>✓ 已完成</em><b>›</b></div><strong>核对技术位与量能结构</strong><small>3 次工具 · 5.6K tokens</small></div>
+      <span class="flow-col__label">阶段 1 · 收集与整理</span>
+      <div class="flow-card"><div class="flow-card__head"><span>data-prep</span><em>✓ 已完成</em><b>›</b></div><strong>读取网页、文档与邮件</strong><small>3 次工具 · 5.2K tokens</small></div>
+      <div class="flow-card"><div class="flow-card__head"><span>research</span><em>✓ 已完成</em><b>›</b></div><strong>梳理访谈、来源与关键事实</strong><small>4 次工具 · 7.8K tokens</small></div>
+      <div class="flow-card"><div class="flow-card__head"><span>research</span><em>✓ 已完成</em><b>›</b></div><strong>核对引用、数字与版本</strong><small>3 次工具 · 5.6K tokens</small></div>
     </div>
     <div class="flow-col">
-      <span class="flow-col__label">阶段 2 · 分析与报告</span>
-      <div class="flow-card"><div class="flow-card__head"><span>equity-analyst</span><em>✓ 已完成</em><b>›</b></div><strong>重估仓位、止损与情景</strong><small>6 次工具 · 11.4K tokens</small></div>
-      <div class="flow-card"><div class="flow-card__head"><span>risk-manager</span><em>✓ 已完成</em><b>›</b></div><strong>检查整手、风控与失效条件</strong><small>5 次工具 · 8.9K tokens</small></div>
-      <div class="flow-card"><div class="flow-card__head"><span>report-builder</span><em>✓ 已完成</em><b>›</b></div><strong>汇编执行卡、图表与来源</strong><small>6 次工具 · 11.2K tokens</small></div>
+      <span class="flow-col__label">阶段 2 · 分析与交付</span>
+      <div class="flow-card"><div class="flow-card__head"><span>analyst</span><em>✓ 已完成</em><b>›</b></div><strong>提炼结论、选项与建议</strong><small>6 次工具 · 11.4K tokens</small></div>
+      <div class="flow-card"><div class="flow-card__head"><span>reviewer</span><em>✓ 已完成</em><b>›</b></div><strong>检查结构、事实与交付边界</strong><small>5 次工具 · 8.9K tokens</small></div>
+      <div class="flow-card"><div class="flow-card__head"><span>builder</span><em>✓ 已完成</em><b>›</b></div><strong>汇编文档、图表与来源</strong><small>6 次工具 · 11.2K tokens</small></div>
     </div>
     <div class="flow-col">
       <span class="flow-col__label">交付成果</span>
-      <div class="flow-file"><span class="file-mock__icon">W</span><span>position_memo.docx</span><i>✓ 就绪</i></div>
-      <div class="flow-file"><span class="file-mock__icon file-mock__icon--green">X</span><span>position_model.xlsx</span><i>✓ 就绪</i></div>
-      <div class="flow-file"><span class="file-mock__icon file-mock__icon--blue">H</span><span>position_tech.html</span><i>✓ 就绪</i></div>
-      <div class="flow-file"><span class="file-mock__icon file-mock__icon--orange">P</span><span>position_deck.pptx</span><i>✓ 就绪</i></div>
+      <div class="flow-file"><span class="file-mock__icon">W</span><span>project_brief.docx</span><i>✓ 就绪</i></div>
+      <div class="flow-file"><span class="file-mock__icon file-mock__icon--green">X</span><span>project_plan.xlsx</span><i>✓ 就绪</i></div>
+      <div class="flow-file"><span class="file-mock__icon file-mock__icon--blue">H</span><span>summary.html</span><i>✓ 就绪</i></div>
+      <div class="flow-file"><span class="file-mock__icon file-mock__icon--orange">P</span><span>review_deck.pptx</span><i>✓ 就绪</i></div>
     </div>
   </div>
-  <div class="flow-foot"><span class="mono">ONE TASK · ONE WORKSPACE</span><span>每一步都有文件、脚本和引用可回看</span><a class="text-link" href="/app?mode=signup">开始一项研究 <span aria-hidden="true">→</span></a></div>
+  <div class="flow-foot"><span class="mono">ONE TASK · ONE WORKSPACE</span><span>每一步都有文件、脚本和引用可回看</span><a class="text-link" href="/app?mode=signup">开始一项任务 <span aria-hidden="true">→</span></a></div>
 </section>
 
 <section class="section" id="data">
   <div class="section__head section__head--split">
     <div>
-      <p class="kicker">03 / 数据面</p>
-      <h2>A 股的数据，<br><span class="dim">放在 Agent 手边。</span></h2>
+      <p class="kicker">04 / 连接与工具</p>
+      <h2>把工具接进来，<br><span class="dim">而不是来回切换。</span></h2>
     </div>
-    <p class="section__intro">不是让模型“回忆”一个数字，而是把数据接进可执行的工具链：取到、算过、写进报告，每个数字都能回到它的来源。</p>
+    <p class="section__intro">不是让模型猜，而是把邮件、日历、文件、网页和业务系统接入可执行工具链：读到、处理、写进交付物，每一步都能回看。</p>
   </div>
   <div class="data-board">
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><path d="M26 67 57 43 84 55 113 31 143 39 174 20"/><path d="M26 73h148" opacity=".35"/><g opacity=".55"><path d="M45 61v-9M66 53v-12M92 59v-6M122 41v-14M152 48v-8"/></g></g><g fill="#c7c9cc"><circle cx="26" cy="67" r="2"/><circle cx="57" cy="43" r="2"/><circle cx="84" cy="55" r="2"/><circle cx="113" cy="31" r="2"/><circle cx="143" cy="39" r="2"/><circle cx="174" cy="20" r="2"/></g></svg>
-      <div class="data-cell__body"><span class="data-cell__label">行情</span><strong>日线 / 实时 / 指数</strong><span>区间与快照</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">邮件</span><strong>Gmail / Outlook</strong><span>读取与发送</span></div>
     </div>
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><path d="m52 61 44-20 44 20-44 20-44-20Z"/><path d="m52 50 44-20 44 20M52 39l44-20 44 20M52 50v11M96 70V31M140 50v11" opacity=".65"/><path d="m66 55 30-14 30 14-30 14-30-14Z" opacity=".5"/></g><circle cx="96" cy="41" r="2.5" fill="#c7c9cc"/></svg>
-      <div class="data-cell__body"><span class="data-cell__label">财报</span><strong>三表 · 单季拆解</strong><span>营收 / 利润 / 现金流</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">日历</span><strong>Google Calendar</strong><span>会议与提醒</span></div>
     </div>
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><path d="m66 58 40-18 34 15-40 18-34-15Z"/><path d="m58 52 40-19 34 15M58 52l34 15M92 67l40-18M58 45v7M132 47v7" opacity=".55"/><path d="m76 51 30-13 25 11" opacity=".45"/></g><circle cx="108" cy="46" r="2" fill="#c7c9cc"/></svg>
-      <div class="data-cell__body"><span class="data-cell__label">公告</span><strong>巨潮全文</strong><span>公告与互动易</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">云盘</span><strong>Drive / Dropbox</strong><span>文件读取与交付</span></div>
     </div>
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><path d="M55 45h34M89 45l-7-7M89 45l-7 7M145 45h-34M111 45l7-7M111 45l7 7"/><circle cx="100" cy="45" r="12"/><circle cx="100" cy="45" r="3" fill="#c7c9cc" stroke="none"/><g opacity=".5"><circle cx="55" cy="45" r="4"/><circle cx="145" cy="45" r="4"/></g></g></svg>
-      <div class="data-cell__body"><span class="data-cell__label">资金</span><strong>主力 / 龙虎榜</strong><span>120 日资金流</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">文档</span><strong>Notion / Docs</strong><span>知识库与协作</span></div>
     </div>
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><path d="m72 55 28-15 28 15-28 15-28-15Z"/><path d="M72 47l28-15 28 15-28 15-28-15Z" opacity=".6"/><path d="M72 39l28-15 28 15-28 15-28-15Z" opacity=".35"/><path d="M72 47v8M128 47v8M100 62v-8" opacity=".55"/></g><g fill="#c7c9cc"><circle cx="86" cy="43" r="1.8"/><circle cx="100" cy="35" r="1.8"/><circle cx="114" cy="43" r="1.8"/></g></svg>
-      <div class="data-cell__body"><span class="data-cell__label">行业</span><strong>排名 · 概念 · 涨停池</strong><span>板块归属与情绪</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">网页</span><strong>搜索 · 抓取 · 解析</strong><span>公开信息与来源</span></div>
     </div>
     <div class="data-cell">
       <svg class="data-art" viewBox="0 0 200 90" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1"><rect x="73" y="25" width="54" height="48" rx="2"/><path d="M73 37h54M86 25v48M100 25v48M114 25v48M73 49h54M73 61h54" opacity=".5"/><path d="M126 64l10 10M136 74l-9 1M136 74l-1-9" opacity=".8"/></g><circle cx="100" cy="49" r="2.5" fill="#c7c9cc"/></svg>
-      <div class="data-cell__body"><span class="data-cell__label">事件</span><strong>新闻 · 解禁 · 期权</strong><span>公告外的变量</span></div>
+      <div class="data-cell__body"><span class="data-cell__label">数据</span><strong>表格 · API · 文件</strong><span>取数、计算与核验</span></div>
     </div>
   </div>
   <div class="data-foot">
-    <span class="mono">A-SHARE FIRST</span>
-    <p>US / HK 数据同样可用；A 股是默认语言。</p>
+    <span class="mono">CONNECT WHAT YOU USE</span>
+    <p>Gmail、Google Calendar、Drive、Notion、Slack 等按需连接；也可以使用内置工具。</p>
     <a class="text-link" href="/app">打开工作台试试 <span aria-hidden="true">→</span></a>
   </div>
 </section>
 
 <section class="section section--paper" id="deliverables">
   <div class="section__head">
-    <p class="kicker">04 / 产出物</p>
-    <h2>研究结束，<br><span class="dim">文件还在。</span></h2>
-    <p class="section__intro">不是一段读完就消失的对话。报告、模型、图表和因子都落在 workspace 里，下一次打开还能继续改。</p>
+    <p class="kicker">05 / 产出物</p>
+    <h2>任务结束，<br><span class="dim">文件还在。</span></h2>
+    <p class="section__intro">不是一段读完就消失的对话。文档、表格、报告、图表和代码都落在 workspace 里，下一次打开还能继续改。</p>
   </div>
   <div class="deliverables">
     <div class="deliverable deliverable--wide">
       <span class="deliverable__type">XLSX · 可追溯</span>
-      <h3>模型不是截图，公式能重跑。</h3>
-      <p>收入、利润、估值和情景都在同一份工作簿里；改一个假设，后面的数字自己变。</p>
-      <div class="sheet-mock" aria-label="估值模型示意">
-        <div class="sheet-mock__bar"><span class="sheet-mock__dots"><i></i><i></i><i></i></span><span>model_002371.xlsx</span><span class="mono">SHEET 1 / 4</span></div>
-        <div class="sheet-mock__formula"><span>fx</span>=EPS × (1 + g) / (r − g)</div>
+      <h3>不是截图，数字能复算。</h3>
+      <p>预算、计划、指标和情景都在同一份工作簿里；改一个假设，后面的数字自己变。</p>
+      <div class="sheet-mock" aria-label="计划表示意">
+        <div class="sheet-mock__bar"><span class="sheet-mock__dots"><i></i><i></i><i></i></span><span>project_plan.xlsx</span><span class="mono">SHEET 1 / 4</span></div>
+        <div class="sheet-mock__formula"><span>fx</span>=Plan × (1 + growth)</div>
         <div class="sheet-mock__grid">
           <span class="sheet-cell sheet-head"></span><span class="sheet-cell sheet-head">A</span><span class="sheet-cell sheet-head">B</span><span class="sheet-cell sheet-head">C</span>
-          <span class="sheet-cell sheet-label">Revenue</span><span class="sheet-cell">61,858</span><span class="sheet-cell">67,420</span><span class="sheet-cell sheet-ok">+9.0%</span>
-          <span class="sheet-cell sheet-label">Gross profit</span><span class="sheet-cell">38,754</span><span class="sheet-cell">42,510</span><span class="sheet-cell sheet-ok">+9.7%</span>
-          <span class="sheet-cell sheet-label">EBITDA</span><span class="sheet-cell">24,031</span><span class="sheet-cell">26,620</span><span class="sheet-cell sheet-ok">+10.8%</span>
-          <span class="sheet-cell sheet-label">FCF</span><span class="sheet-cell">18,200</span><span class="sheet-cell">20,140</span><span class="sheet-cell sheet-ok">+10.7%</span>
-          <span class="sheet-cell sheet-label">WACC</span><span class="sheet-cell">8.4%</span><span class="sheet-cell">8.1%</span><span class="sheet-cell sheet-muted">—</span>
+          <span class="sheet-cell sheet-label">Plan</span><span class="sheet-cell">120</span><span class="sheet-cell">132</span><span class="sheet-cell sheet-ok">+10.0%</span>
+          <span class="sheet-cell sheet-label">Actual</span><span class="sheet-cell">118</span><span class="sheet-cell">127</span><span class="sheet-cell sheet-ok">+7.6%</span>
+          <span class="sheet-cell sheet-label">Variance</span><span class="sheet-cell">−2</span><span class="sheet-cell">−5</span><span class="sheet-cell sheet-ok">check</span>
+          <span class="sheet-cell sheet-label">Owners</span><span class="sheet-cell">8</span><span class="sheet-cell">9</span><span class="sheet-cell sheet-ok">ok</span>
+          <span class="sheet-cell sheet-label">Status</span><span class="sheet-cell">draft</span><span class="sheet-cell">review</span><span class="sheet-cell sheet-muted">—</span>
         </div>
-        <div class="sheet-mock__foot"><span>假设：营收增速 / 毛利率 / WACC</span><span class="mono">公式可追溯 · 示意</span></div>
+        <div class="sheet-mock__foot"><span>假设：计划 / 实际 / 差异</span><span class="mono">公式可追溯 · 示意</span></div>
       </div>
     </div>
     <div class="deliverable">
       <span class="deliverable__type">DOCX</span>
-      <h3>研究备忘录</h3>
+      <h3>项目简报 / 会议纪要</h3>
       <p>带标题、正文和引用位置的 Word 文档。</p>
-      <div class="file-mock"><span class="file-mock__icon">W</span><span>memo_002371.docx</span></div>
+      <div class="file-mock"><span class="file-mock__icon">W</span><span>project_brief.docx</span></div>
     </div>
     <div class="deliverable">
       <span class="deliverable__type">HTML</span>
-      <h3>单页研究报告</h3>
+      <h3>单页总结</h3>
       <p>自包含 HTML，带图表与来源，断网也能打开。</p>
-      <div class="file-mock"><span class="file-mock__icon">H</span><span>position_tech.html</span></div>
+      <div class="file-mock"><span class="file-mock__icon">H</span><span>summary.html</span></div>
     </div>
     <div class="deliverable">
       <span class="deliverable__type">PPTX</span>
       <h3>汇报 Deck</h3>
       <p>从结论倒推页序，图表原生可编辑。</p>
-      <div class="file-mock"><span class="file-mock__icon file-mock__icon--orange">P</span><span>pitch_002371.pptx</span></div>
+      <div class="file-mock"><span class="file-mock__icon file-mock__icon--orange">P</span><span>review_deck.pptx</span></div>
     </div>
     <div class="deliverable">
-      <span class="deliverable__type">FACTOR</span>
-      <h3>因子与验证</h3>
-      <p>因子定义、回测、分层和可复用的研究记录。</p>
-      <div class="file-mock"><span class="file-mock__icon file-mock__icon--blue">F</span><span>factor_library/</span></div>
+      <span class="deliverable__type">WORKFLOW</span>
+      <h3>可复用工作流</h3>
+      <p>把一次任务沉淀成模板、检查清单和可复用的自动化。</p>
+      <div class="file-mock"><span class="file-mock__icon file-mock__icon--blue">F</span><span>workflows/</span></div>
     </div>
   </div>
 </section>
@@ -308,9 +341,9 @@
 <section class="section section--ink" id="workspace">
   <div class="workspace">
     <div class="workspace__copy">
-      <p class="kicker">05 / 工作区</p>
-      <h2>研究是连续的，<br><span class="dim">不是一次性的。</span></h2>
-      <p>每个工作区都有自己的文件、脚本、记忆和会话。今天读过的公告、跑过的数据、写下的判断，明天还在。上下文不需要重新交代。</p>
+      <p class="kicker">06 / 工作区</p>
+      <h2>工作是连续的，<br><span class="dim">不是一次性的。</span></h2>
+      <p>每个工作区都有自己的文件、脚本、记忆和会话。今天读过的资料、跑过的数据、写下的判断，明天还在。上下文不需要重新交代。</p>
       <ul class="check-list">
         <li>工作区文件跨会话保留</li>
         <li>Agent 记忆与用户偏好分层保存</li>
@@ -319,22 +352,22 @@
       </ul>
     </div>
     <div class="workspace__panel" aria-label="工作区文件示意">
-      <div class="panel__head"><span class="mono">~/research/002371</span><span class="mock-pill">workspace</span></div>
+      <div class="panel__head"><span class="mono">~/workspace/project-q3</span><span class="mock-pill">workspace</span></div>
       <div class="workspace__panel-body">
         <div class="tree">
           <div class="tree__row is-open"><span>▾</span><b>work/</b><span class="tree__meta">本次任务</span></div>
-          <div class="tree__row tree__row--child"><span>·</span>data/002371_daily.json</div>
-          <div class="tree__row tree__row--child"><span>·</span>results/position_tech.html</div>
+          <div class="tree__row tree__row--child"><span>·</span>data/brief.md</div>
+          <div class="tree__row tree__row--child"><span>·</span>results/summary.html</div>
           <div class="tree__row"><span>▸</span><b>memory/</b><span class="tree__meta">跨会话</span></div>
           <div class="tree__row"><span>▸</span><b>profile/</b><span class="tree__meta">你的偏好</span></div>
           <div class="tree__row"><span>▸</span><b>memo/</b><span class="tree__meta">按需生成</span></div>
         </div>
         <div class="workspace-context">
           <div class="workspace-context__head">本轮已载入的上下文</div>
-          <div class="context-row"><b>›</b><span><strong>你的投资档案、Agent 的笔记与两层记忆</strong>，完整载入，不需要重新交代。</span></div>
+          <div class="context-row"><b>›</b><span><strong>你的偏好、Agent 的笔记与两层记忆</strong>，完整载入，不需要重新交代。</span></div>
           <div class="context-row"><b>›</b><span><strong>work/ 与 results/ 里的每个文件</strong>，外加此前的对话和检查点。</span></div>
-          <div class="context-row"><b>›</b><span><strong>你上传的研究资料库</strong>，已完成摘要与索引，可随时引用。</span></div>
-          <div class="workspace-context__prompt"><span class="context-caret">›</span> 开始下一轮研究…</div>
+          <div class="context-row"><b>›</b><span><strong>你上传的资料库</strong>，已完成摘要与索引，可随时引用。</span></div>
+          <div class="workspace-context__prompt"><span class="context-caret">›</span> 开始下一轮工作…</div>
         </div>
       </div>
       <div class="panel__foot"><span>上下文已装配 · 本轮</span><span class="mono">persisted</span></div>
@@ -345,40 +378,40 @@
 <section class="section" id="automation">
   <div class="section__head section__head--split">
     <div>
-      <p class="kicker">06 / 自动化与通道</p>
-      <h2>盘前、盘中、盘后，<br><span class="dim">它自己会来。</span></h2>
+      <p class="kicker">07 / 自动化与通道</p>
+      <h2>定时的事，<br><span class="dim">它自己会来。</span></h2>
     </div>
     <p class="section__intro">定时任务可以指定某个 Bot 运行，并续用它的主会话；结果可以留在工作区，也可以推到微信。不是每次开一条新对话。</p>
   </div>
   <div class="automation">
     <div class="auto-card">
-      <div class="auto-card__head"><span class="auto-card__bot"><span class="mini-avatar mini-avatar--blue">技</span> 盯盘手</span><span class="mock-pill mock-pill--live">active</span></div>
+      <div class="auto-card__head"><span class="auto-card__bot"><span class="mini-avatar mini-avatar--blue">助</span> 项目助理</span><span class="mock-pill mock-pill--live">active</span></div>
       <div class="auto-row"><span>节奏</span><strong>每 5 分钟</strong></div>
-      <div class="auto-row"><span>会话</span><strong>继续盯盘手主会话</strong></div>
-      <div class="auto-row"><span>动作</span><strong>检查持仓 · 触发条件 · 记录结论</strong></div>
-      <div class="auto-log"><span class="mono">09:35</span><p>未触发，量能低于阈值；已记录。</p><span class="mono">09:40</span><p>维持观察，下一次检查 09:45。</p></div>
+      <div class="auto-row"><span>会话</span><strong>继续项目助理主会话</strong></div>
+      <div class="auto-row"><span>动作</span><strong>检查收件箱 · 标记待办 · 记录结论</strong></div>
+      <div class="auto-log"><span class="mono">09:35</span><p>发现 2 封待处理邮件；已记录。</p><span class="mono">09:40</span><p>已生成摘要，下一次检查 09:45。</p></div>
     </div>
     <div class="wechat-card">
       <div class="wechat-card__top"><span class="wechat-card__dot"></span><span>微信 · 与 Agent 的对话</span><span class="mono">online</span></div>
-      <div class="wechat-bubble wechat-bubble--user">002371 现在怎么看？</div>
-      <div class="wechat-bubble wechat-bubble--bot"><span class="mini-avatar mini-avatar--red">策</span><p>收盘 560.00，仍在上方供给带下方；先看 555–561 能否放量。完整执行卡在 `work/results/`。</p></div>
-      <div class="wechat-bubble wechat-bubble--user">把执行卡发我。</div>
+      <div class="wechat-bubble wechat-bubble--user">把今天的会议整理成纪要。</div>
+      <div class="wechat-bubble wechat-bubble--bot"><span class="mini-avatar mini-avatar--red">助</span><p>已整理完，纪要和待办都在 `results/`；需要我发到邮箱吗？</p></div>
+      <div class="wechat-bubble wechat-bubble--user">发到我的邮箱。</div>
       <div class="wechat-typing"><i></i><i></i><i></i> Agent 正在读取 workspace…</div>
     </div>
   </div>
   <div class="auto-table" aria-label="定时任务示意">
     <div class="auto-table__head"><span>任务</span><span>节奏</span><span>运行范围</span><span>下次运行</span><span>状态</span></div>
-    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--blue">技</span> 盯盘手 · 持仓检查</span><span>每 5 分钟</span><span>继续主会话</span><span>09:45</span><span class="auto-table__status">进行中</span></div>
-    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--sand">宏</span> 盘前简报</span><span>工作日 07:00</span><span>宏观事件分析师</span><span>明天 07:00</span><span class="auto-table__status">进行中</span></div>
-    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--red">策</span> 收盘复盘</span><span>工作日 15:30</span><span>量化策略师</span><span>今天 15:30</span><span class="auto-table__status">进行中</span></div>
-    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--teal">风</span> 风险条件扫描</span><span>收盘前 14:50</span><span>风控官</span><span>今天 14:50</span><span class="auto-table__status auto-table__status--pause">已暂停</span></div>
+    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--blue">助</span> 项目助理 · 收件箱检查</span><span>每 5 分钟</span><span>继续主会话</span><span>09:45</span><span class="auto-table__status">进行中</span></div>
+    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--sand">研</span> 周一早报</span><span>周一 08:00</span><span>研究助理</span><span>明天 07:00</span><span class="auto-table__status">进行中</span></div>
+    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--red">编</span> 项目复盘</span><span>周五 18:00</span><span>项目助理</span><span>今天 15:30</span><span class="auto-table__status">进行中</span></div>
+    <div class="auto-table__row"><span class="auto-table__name"><span class="mini-avatar mini-avatar--teal">审</span> 资料同步</span><span>每天 09:00</span><span>知识库助理</span><span>今天 14:50</span><span class="auto-table__status auto-table__status--pause">已暂停</span></div>
   </div>
   <div class="flow-foot"><span class="mono">BOT-OWNED · CONTINUING SESSION</span><span>任务默认续用 Bot 的主会话，不另开新对话</span></div>
 </section>
 
 <section class="section section--paper" id="private">
   <div class="section__head">
-    <p class="kicker">07 / 开放与边界</p>
+    <p class="kicker">08 / 开放与边界</p>
     <h2>你的数据，<br><span class="dim">你的边界。</span></h2>
   </div>
   <div class="trust-grid">
@@ -389,8 +422,8 @@
     </div>
     <div class="trust">
       <span class="trust__num">02</span>
-      <h3>不接券商账户</h3>
-      <p>它做研究，不替你下单。所有交易动作仍由你判断和执行，Agent 只负责把证据和方案准备好。</p>
+      <h3>不替你做决定</h3>
+      <p>它负责把资料、选项和下一步准备好；重要决定仍由你判断和执行，Agent 不会越过你的授权。</p>
     </div>
     <div class="trust">
       <span class="trust__num">03</span>
@@ -402,13 +435,13 @@
 
 <section class="section" id="faq">
   <div class="section__head section__head--split">
-    <div><p class="kicker">08 / 常见问题</p><h2>你可能想先知道的。</h2></div>
+    <div><p class="kicker">09 / 常见问题</p><h2>你可能想先知道的。</h2></div>
     <p class="section__intro">如果这里没有答案，直接进工作台问它。</p>
   </div>
   <div class="faq">
     <details open>
       <summary>这和 ChatGPT / Claude 有什么区别？</summary>
-      <p>聊天模型回答完就结束了。这里是一个带工具、文件系统和工作区的 Agent：它会取数、写代码、跑计算、生成报告，并把过程和结果留在 workspace 里，可以复跑、复核、继续改。</p>
+      <p>聊天模型回答完就结束了。这里是一个带工具、文件系统和工作区的 Agent：它会查资料、写代码、处理文件、生成交付物，并把过程和结果留在 workspace 里，可以复用、复核、继续改。</p>
     </details>
     <details>
       <summary>多个 Bot 会无限聊下去吗？</summary>
@@ -416,10 +449,10 @@
     </details>
     <details>
       <summary>定时任务会每次新开一个会话吗？</summary>
-      <p>不会。选择目标 Bot 后，任务默认续用它已有的主会话；每 5 分钟唤醒盯盘手、盘前生成简报，都是往同一个会话里追加，上下文连续。</p>
+      <p>不会。选择目标 Bot 后，任务默认续用它已有的主会话；每 5 分钟检查收件箱、周一生成早报，都是往同一个会话里追加，上下文连续。</p>
     </details>
     <details>
-      <summary>报告里的数字能核验吗？</summary>
+      <summary>文件里的数字能核验吗？</summary>
       <p>能。Agent 的取数脚本、结果文件、图表和引用都留在工作区；HTML / Markdown 报告可以直接打开，也可以回到脚本重新跑一遍。</p>
     </details>
     <details>
@@ -433,7 +466,7 @@
   <div class="cta__inner">
     <p class="kicker">READY WHEN YOU ARE</p>
     <h2>把下一个问题，<br><span class="dim">交给一支团队。</span></h2>
-    <p>从一份财报、一只股票或一个仓位问题开始。它会把活干完。</p>
+    <p>从一个邮箱、一份文件或一件拖了很久的事开始。它会把活干完。</p>
     <div class="cta__actions">
       <a class="btn btn--accent" href="/app?mode=signup">免费开始 <span aria-hidden="true">→</span></a>
       <a class="text-link" href="/legal">隐私与条款</a>
@@ -448,14 +481,15 @@
       <span class="brand__mark brand__mark--small" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="M7 21 15 7l3.4 6.3L22 9l2.4 12H7Z" fill="currentColor"/></svg></span>
       <span>dsalpha</span>
     </div>
-    <p class="footer__blurb">A 股研究 Agent 团队。数据、工具、文件与团队，在同一个工作区。</p>
+    <p class="footer__blurb">云端 Bot 助理。工具、文件、记忆与团队，在同一个工作区。</p>
     <div class="footer__links">
       <a href="/app">进入工作台</a>
       <a href="#capabilities">能力</a>
+      <a href="#cases">案例</a>
       <a href="#faq">常见问题</a>
       <a href="/legal">隐私与条款</a>
     </div>
-    <p class="footer__copy">© 2026 dsalpha · 研究信息，不构成投资建议</p>
+    <p class="footer__copy">© 2026 dsalpha · 产品信息，不构成专业建议</p>
   </div>
 </footer>
 <script src="/landing/landing.js" defer></script>
