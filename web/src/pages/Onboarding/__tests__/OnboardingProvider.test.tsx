@@ -70,6 +70,7 @@ vi.mock('../OnboardingHost', () => {
 import { OnboardingProvider, useOnboarding } from '../OnboardingProvider';
 import { OnboardingHostGate } from '../OnboardingHostGate';
 import { PAGE_INTROS } from '../registry';
+import { setEnabledPagePlugins } from '@/plugins/state';
 
 function Harness() {
   const {
@@ -148,6 +149,7 @@ const location = () => screen.getByTestId('location').textContent;
 
 describe('OnboardingProvider', () => {
   beforeEach(() => {
+    setEnabledPagePlugins(new Set());
     mockPrefs = emptyOnboardingPrefs();
     mockLoading = false;
     mockUser = { user_id: 'u1', onboarding_completed: true };
@@ -489,6 +491,15 @@ describe('OnboardingProvider', () => {
     expect(card()).toBe('visible');
     expect(screen.getByTestId('done').textContent).toBe('0');
     expect(screen.getByTestId('taskIds').textContent).toBe(
+      'dashboard,createWorkspace,firstChat,models'
+    );
+  });
+
+  it('getting-started: the market plugin brings back the market and profile tasks', () => {
+    setEnabledPagePlugins(new Set(['market-center']));
+    mockUser = { user_id: 'u1' };
+    renderAt('/settings');
+    expect(screen.getByTestId('taskIds').textContent).toBe(
       'dashboard,market,profile,createWorkspace,firstChat,models'
     );
   });
@@ -500,6 +511,7 @@ describe('OnboardingProvider', () => {
   });
 
   it('getting-started: the profile task reads the user row live, so a reset un-checks it', () => {
+    setEnabledPagePlugins(new Set(['market-center']));
     const { unmount } = renderAt('/settings');
     expect(screen.getByTestId('done').textContent).toBe('1');
     expect(markTaskDone).not.toHaveBeenCalledWith('profile');

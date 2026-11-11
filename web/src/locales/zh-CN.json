@@ -652,8 +652,8 @@
         "presets": "预设",
         "reset": "重置",
         "done": "完成",
-        "resetTitle": "重置为晨间简报？",
-        "resetMessage": "这将用默认预设替换当前的小组件和布局。此操作无法撤销。",
+        "resetTitle": "恢复默认助理工作台？",
+        "resetMessage": "这会用默认布局替换当前 widget 和布局，且无法撤销。",
         "resetConfirm": "重置布局",
         "deleteConfirm": "删除",
         "quantityLabel": "数量 *",
@@ -830,6 +830,18 @@
             "askConsole": "提问控制台",
             "recentThreads": "近期对话",
             "markets": "市场"
+          }
+        },
+        "assistant": {
+          "name": "助理工作台",
+          "tag": "推荐",
+          "description": "打开就能继续对话、进入工作区、查看最近线程和定时任务。不默认展示行情或持仓。",
+          "bestFor": "把它当作日常工作入口，而不是行情终端。",
+          "pills": {
+            "askConsole": "对话输入",
+            "workspaces": "工作区",
+            "recentThreads": "最近对话",
+            "automations": "定时任务"
           }
         }
       },
@@ -1200,14 +1212,15 @@
       "conversation": {
         "title": "工作台",
         "description": "对话优先的控制台：问候语、实时输入框，一键继续。",
-        "placeholder": "把任务交给 dsalpha — 拆解一只标的、解析一份财报、压力测试一条投资逻辑……",
+        "placeholder": "把任务交给 dsalpha。",
         "resume": "继续对话",
         "untitledThread": "未命名对话",
         "greetingLate": "夜深了",
         "greetingMorning": "早上好",
         "greetingAfternoon": "下午好",
         "greetingEvening": "晚上好",
-        "greetingStillAtIt": "还在工作"
+        "greetingStillAtIt": "还在工作",
+        "placeholderMarket": "拆解一只标的、解析一份财报、压力测试一条投资逻辑……"
       },
       "workspacePicker": {
         "title": "工作区",
@@ -1331,8 +1344,10 @@
       "suggestion2": "对比 TSLA 与 BYD",
       "suggestion3": "预测市场波动",
       "suggestion4": "分析我的投资组合风险",
-      "placeholderMobile": "向 AI 询问市场趋势……",
-      "placeholderDesktop": "向 AI 询问市场趋势、特定股票或投资组合分析……"
+      "placeholderMobile": "问 dslpha 任何问题…",
+      "placeholderDesktop": "问 dslpha 任何问题，或交给它一个任务…",
+      "placeholderMarketMobile": "询问市场趋势、股票或投资组合…",
+      "placeholderMarketDesktop": "询问市场趋势、特定股票或投资组合分析……"
     },
     "newsDetail": {
       "title": "文章",
@@ -1351,6 +1366,10 @@
         "loss": "利空",
         "muted": "中性"
       }
+    },
+    "assistant": {
+      "title": "dsalpha",
+      "subtitle": "你的云端 Bot 助理"
     }
   },
   "workspace": {

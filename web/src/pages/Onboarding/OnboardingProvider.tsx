@@ -12,6 +12,7 @@ import {
 import { useLocation, useNavigate } from 'react-router';
 import { useUser } from '@/hooks/useUser';
 import { useWorkspaces } from '@/hooks/useWorkspaces';
+import { useEnabledPagePlugins } from '@/plugins/state';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { isDesktopShell } from '@/lib/desktop';
 import {
@@ -25,7 +26,7 @@ import { shouldAutoOpenWelcome } from './welcome/autoOpen';
 import { INVESTING_PROFILE_WELCOME_ENABLED } from './welcome/feature';
 import { WELCOME_PATH, isLegacyOnboardingSearch, legacyOnboardingTarget } from './welcome/paths';
 import { readMirror, type OnboardingMirror } from './mirror';
-import { ANNOUNCEMENTS, DEPLOYED_INTROS, DEPLOYED_TASKS, GETTING_STARTED_TASKS } from './registry';
+import { ANNOUNCEMENTS, DEPLOYED_INTROS, DEPLOYED_TASKS } from './registry';
 import { unseenReleases, latestReleaseVersion } from './engine/whatsNew';
 import {
   useOnboardingOrchestrator,
@@ -79,6 +80,11 @@ export function useOnboarding(): OnboardingContextValue {
 
 export function OnboardingProvider({ children }: { children: ReactNode }) {
   const { pathname, search, state } = useLocation();
+  const enabledPlugins = useEnabledPagePlugins();
+  const deployedTasks = useMemo(
+    () => DEPLOYED_TASKS.filter((task) => !task.pluginId || enabledPlugins.has(task.pluginId)),
+    [enabledPlugins],
+  );
   const navigate = useNavigate();
   const { user } = useUser();
   const {
@@ -340,16 +346,16 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Every task, not only this app's: the desktop app stamps the task to get
     // it, which only a browser's list shows.
-    for (const task of GETTING_STARTED_TASKS) {
+    for (const task of deployedTasks) {
       // A saved profile is read live from the user row, so a reset un-checks it.
       if (!task.doneWhen || task.doneWhen === 'onboardingCompleted' || !signals[task.doneWhen]) continue;
       if (prefs.gettingStartedDoneAt[task.id] == null) markTaskDone(task.id);
     }
-  }, [signals, prefs, markTaskDone]);
+  }, [signals, prefs, markTaskDone, deployedTasks]);
 
   const gettingStarted = useMemo<GettingStartedState>(() => {
     // This Mac's task shows where this Mac can be a computer, and stays once done.
-    const offered = DEPLOYED_TASKS.filter((def) => def.offeredOn !== 'thisMac' || thisMac.offered || stamped(def.id));
+    const offered = deployedTasks.filter((def) => def.offeredOn !== 'thisMac' || thisMac.offered || stamped(def.id));
     const tasks = offered.map((def) => ({
       def,
       done:
@@ -371,7 +377,7 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
       dismiss: dismissGettingStarted,
       completeTask: markTaskDone,
     };
-  }, [prefs, onboardingCompleted, signals, thisMac.offered, isLoading, inWelcomeChat, dismissGettingStarted, markTaskDone]);
+  }, [prefs, onboardingCompleted, signals, thisMac.offered, isLoading, inWelcomeChat, dismissGettingStarted, markTaskDone, deployedTasks]);
 
   useOnboardingOrchestrator({
     isLoading,

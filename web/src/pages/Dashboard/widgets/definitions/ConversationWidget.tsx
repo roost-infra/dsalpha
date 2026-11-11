@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useEnabledPagePlugins } from '@/plugins/state';
 import { clockTime, relativeTime, weekdayMonthDay } from '@/lib/format';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
@@ -39,6 +40,7 @@ function formatDateStrip(now: number, locale: string): string {
 
 function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>) {
   const { t } = useTranslation();
+  const marketEnabled = useEnabledPagePlugins().has('market-center');
   const locale = useLocale();
   const now = useNow();
   const navigate = useNavigate();
@@ -163,7 +165,7 @@ function ConversationWidget({ instance }: WidgetRenderProps<ConversationConfig>)
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             onWorkspaceChange={setSelectedWorkspaceId}
-            placeholder={t('dashboard.widgets.conversation.placeholder')}
+            placeholder={t(marketEnabled ? 'dashboard.widgets.conversation.placeholderMarket' : 'dashboard.widgets.conversation.placeholder')}
             minRows={4}
           />
         </motion.div>

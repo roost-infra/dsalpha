@@ -49,12 +49,14 @@ interface AddWidgetDialogProps {
   onOpenChange: (open: boolean) => void;
   onAdd: (type: string) => void;
   existingWidgets: WidgetInstance[];
+  /** Plugin contributions not enabled are hidden from the gallery. */
+  enabledPlugins?: ReadonlySet<string>;
 }
 
-export function AddWidgetDialog({ open, onOpenChange, onAdd, existingWidgets }: AddWidgetDialogProps) {
+export function AddWidgetDialog({ open, onOpenChange, onAdd, existingWidgets, enabledPlugins }: AddWidgetDialogProps) {
   const { t } = useTranslation();
-  const grouped = useMemo(() => listWidgetsByCategory(), []);
-  const allWidgets = useMemo(() => listWidgets(), []);
+  const grouped = useMemo(() => listWidgetsByCategory(enabledPlugins), [enabledPlugins]);
+  const allWidgets = useMemo(() => listWidgets(enabledPlugins), [enabledPlugins]);
   const existingTypes = useMemo(() => new Set(existingWidgets.map((w) => w.type)), [existingWidgets]);
 
   const categoriesSorted = useMemo(

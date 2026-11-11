@@ -160,7 +160,7 @@ describe('Dashboard', () => {
       other_preference: {
         dashboard: {
           version: DASHBOARD_PREFS_VERSION,
-          widgets: [{ id: 'saved-1', type: 'news.feed', config: {} }],
+          widgets: [{ id: 'saved-1', type: 'threads.recent', config: {} }],
           layouts: {},
         },
       },

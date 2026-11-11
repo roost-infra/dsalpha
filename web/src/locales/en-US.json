@@ -614,8 +614,8 @@
         "presets": "Presets",
         "reset": "Reset",
         "done": "Done",
-        "resetTitle": "Reset to Morning Brief?",
-        "resetMessage": "This replaces your current widgets and layout with the default preset. This action can't be undone.",
+        "resetTitle": "Reset to the assistant desk?",
+        "resetMessage": "This replaces your current widgets and layout with the default preset. This action can’t be undone.",
         "resetConfirm": "Reset layout",
         "deleteConfirm": "Delete",
         "quantityLabel": "Quantity *",
@@ -792,6 +792,18 @@
             "askConsole": "Ask console",
             "recentThreads": "Recent threads",
             "markets": "Markets"
+          }
+        },
+        "assistant": {
+          "name": "Assistant desk",
+          "tag": "default",
+          "description": "Open into the conversation, workspaces, recent threads and automations. No markets or holdings by default.",
+          "bestFor": "Using dslpha as your daily assistant shell, not a market terminal.",
+          "pills": {
+            "askConsole": "Ask console",
+            "workspaces": "Workspaces",
+            "recentThreads": "Recent threads",
+            "automations": "Automations"
           }
         }
       },
@@ -1162,14 +1174,15 @@
       "conversation": {
         "title": "Workbench",
         "description": "A chat-first console: greeting, live chat input, and one-click resume.",
-        "placeholder": "Put dsalpha to work — a ticker to unpack, a filing to parse, a thesis to stress-test…",
+        "placeholder": "Ask dslpha to take on a task.",
         "resume": "Resume",
         "untitledThread": "Untitled thread",
         "greetingLate": "Up late",
         "greetingMorning": "Good morning",
         "greetingAfternoon": "Good afternoon",
         "greetingEvening": "Good evening",
-        "greetingStillAtIt": "Still at it"
+        "greetingStillAtIt": "Still at it",
+        "placeholderMarket": "Break down a stock, read an earnings report, stress-test an investment idea…"
       },
       "workspacePicker": {
         "title": "Workspaces",
@@ -1293,8 +1306,10 @@
       "suggestion2": "Compare TSLA vs BYD",
       "suggestion3": "Predict market volatility",
       "suggestion4": "Analyze my portfolio risk",
-      "placeholderMobile": "Ask AI about market trends...",
-      "placeholderDesktop": "Ask AI about market trends, specific stocks, or portfolio analysis..."
+      "placeholderMobile": "Ask dslpha anything…",
+      "placeholderDesktop": "Ask dslpha anything, or hand it a task…",
+      "placeholderMarketMobile": "Ask about markets, a stock, or your portfolio…",
+      "placeholderMarketDesktop": "Ask about markets, a specific stock, or portfolio analysis…"
     },
     "newsDetail": {
       "title": "Article",
@@ -1313,6 +1328,10 @@
         "loss": "Negative",
         "muted": "Neutral"
       }
+    },
+    "assistant": {
+      "title": "dsalpha",
+      "subtitle": "Your cloud bot assistant"
     }
   },
   "workspace": {

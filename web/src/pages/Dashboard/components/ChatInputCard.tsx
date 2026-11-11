@@ -1,5 +1,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useEnabledPagePlugins } from '@/plugins/state';
 import ChatInput, { type ChatInputHandle } from '../../../components/ui/chat-input';
 import type { ComposerSend } from '../../../components/ui/chat-input.types';
 import { useChatInput } from '../hooks/useChatInput';
@@ -14,6 +15,7 @@ import { staggerDelay } from '@/lib/motion';
  */
 function ChatInputCard() {
   const { t } = useTranslation();
+  const marketEnabled = useEnabledPagePlugins().has('market-center');
   const [focused, setFocused] = useState(false);
   const chatInputRef = useRef<ChatInputHandle>(null);
   const isMobile = useIsMobile();
@@ -67,7 +69,7 @@ function ChatInputCard() {
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             onWorkspaceChange={setSelectedWorkspaceId}
-            placeholder={t('dashboard.chatInputCard.placeholderMobile')}
+            placeholder={t(marketEnabled ? 'dashboard.chatInputCard.placeholderMarketMobile' : 'dashboard.chatInputCard.placeholderMobile')}
             minRows={2}
           />
         </div>
@@ -119,7 +121,7 @@ function ChatInputCard() {
             workspaces={workspaces}
             selectedWorkspaceId={selectedWorkspaceId}
             onWorkspaceChange={setSelectedWorkspaceId}
-            placeholder={t('dashboard.chatInputCard.placeholderDesktop')}
+            placeholder={t(marketEnabled ? 'dashboard.chatInputCard.placeholderMarketDesktop' : 'dashboard.chatInputCard.placeholderDesktop')}
             minRows={2}
           />
         </div>

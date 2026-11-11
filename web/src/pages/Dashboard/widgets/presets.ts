@@ -4,6 +4,7 @@ import { DASHBOARD_PREFS_VERSION } from './types';
 import { DEFAULT_BLUE_CHIPS } from './framework/defaults';
 
 export type PresetId =
+  | 'assistant'
   | 'morning-brief'
   | 'researcher'
   | 'trader'
@@ -14,6 +15,8 @@ export type PresetId =
 export interface PresetMeta {
   id: PresetId;
   popular?: boolean;
+  /** Built-in page plugin that contributes this preset; absent means core. */
+  pluginId?: 'market-center';
   /** i18n keys for the user-facing chrome. Required — render sites resolve
    *  via `t(key)`. Use a `dashboard.widgets.presets.<id>.<field>` shape so
    *  `keys.test.ts` picks them up automatically. */
@@ -36,6 +39,28 @@ function makePrefs(
     widgets,
     layouts: { lg: layoutsLg, md: layoutsLg },
   };
+}
+
+/**
+ * ASSISTANT — the generic default.
+ * The ask console is the top of the page, with the workspace picker and recent
+ * threads right beside it and automations below. No markets, holdings, news or
+ * earnings: those belong to the market-center plugin and arrive with it.
+ */
+export function assistantPreset(): Pick<DashboardPrefs, 'widgets' | 'layouts' | 'version'> {
+  const convo = { id: newId('cv'), type: 'agent.conversation', config: {} };
+  const picker = { id: newId('ws'), type: 'workspace.picker', config: { limit: 12 } };
+  const threads = { id: newId('th'), type: 'threads.recent', config: { limit: 10 } };
+  const automations = { id: newId('au'), type: 'automations.list', config: { limit: 8 } };
+
+  const widgets = [convo, picker, threads, automations];
+  const layouts: RGLItem[] = [
+    { i: convo.id, x: 0, y: 0, w: 12, h: 20 },
+    { i: picker.id, x: 0, y: 20, w: 8, h: 22 },
+    { i: threads.id, x: 8, y: 20, w: 4, h: 22 },
+    { i: automations.id, x: 0, y: 42, w: 12, h: 18 },
+  ];
+  return makePrefs(widgets, layouts);
 }
 
 /**
@@ -208,7 +233,22 @@ export function agentDeskPreset(): Pick<DashboardPrefs, 'widgets' | 'layouts' | 
 
 export const PRESETS_META: readonly PresetMeta[] = [
   {
+    id: 'assistant',
+    popular: true,
+    nameKey: 'dashboard.widgets.presets.assistant.name',
+    tagKey: 'dashboard.widgets.presets.assistant.tag',
+    descriptionKey: 'dashboard.widgets.presets.assistant.description',
+    bestForKey: 'dashboard.widgets.presets.assistant.bestFor',
+    pillKeys: [
+      'dashboard.widgets.presets.assistant.pills.askConsole',
+      'dashboard.widgets.presets.assistant.pills.workspaces',
+      'dashboard.widgets.presets.assistant.pills.recentThreads',
+      'dashboard.widgets.presets.assistant.pills.automations',
+    ],
+  },
+  {
     id: 'morning-brief',
+    pluginId: 'market-center',
     popular: true,
     nameKey: 'dashboard.widgets.presets.morningBrief.name',
     tagKey: 'dashboard.widgets.presets.morningBrief.tag',
@@ -224,6 +264,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
   },
   {
     id: 'agent-desk',
+    pluginId: 'market-center',
     nameKey: 'dashboard.widgets.presets.agentDesk.name',
     tagKey: 'dashboard.widgets.presets.agentDesk.tag',
     descriptionKey: 'dashboard.widgets.presets.agentDesk.description',
@@ -239,6 +280,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
   },
   {
     id: 'researcher',
+    pluginId: 'market-center',
     nameKey: 'dashboard.widgets.presets.researcher.name',
     tagKey: 'dashboard.widgets.presets.researcher.tag',
     descriptionKey: 'dashboard.widgets.presets.researcher.description',
@@ -254,6 +296,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
   },
   {
     id: 'trader',
+    pluginId: 'market-center',
     nameKey: 'dashboard.widgets.presets.trader.name',
     tagKey: 'dashboard.widgets.presets.trader.tag',
     descriptionKey: 'dashboard.widgets.presets.trader.description',
@@ -268,6 +311,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
   },
   {
     id: 'trader-tv',
+    pluginId: 'market-center',
     nameKey: 'dashboard.widgets.presets.traderTv.name',
     tagKey: 'dashboard.widgets.presets.traderTv.tag',
     descriptionKey: 'dashboard.widgets.presets.traderTv.description',
@@ -284,6 +328,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
   },
   {
     id: 'portfolio-steward',
+    pluginId: 'market-center',
     nameKey: 'dashboard.widgets.presets.portfolioSteward.name',
     tagKey: 'dashboard.widgets.presets.portfolioSteward.tag',
     descriptionKey: 'dashboard.widgets.presets.portfolioSteward.description',
@@ -300,6 +345,7 @@ export const PRESETS_META: readonly PresetMeta[] = [
 ];
 
 const PRESET_FACTORIES: Record<PresetId, () => Pick<DashboardPrefs, 'widgets' | 'layouts' | 'version'>> = {
+  assistant: assistantPreset,
   'morning-brief': morningBriefPreset,
   researcher: researcherPreset,
   trader: traderPreset,
@@ -309,13 +355,13 @@ const PRESET_FACTORIES: Record<PresetId, () => Pick<DashboardPrefs, 'widgets' | 
 };
 
 /**
- * The layout of a user who has saved none: Morning brief, with fixed widget
- * ids. It can be drawn many times before anything saves it, and the dashboard
- * remembers a widget's last loaded shape by its id, so the ids must not change
- * between loads.
+ * The layout of a user who has saved none. The assistant canvas is the core
+ * default; the market-center plugin asks for Morning brief explicitly. Fixed
+ * widget ids, because it can be drawn many times before anything saves it and
+ * the dashboard remembers a widget's last loaded shape by id.
  */
-export function defaultLayout(): Pick<DashboardPrefs, 'widgets' | 'layouts' | 'version'> {
-  const preset = morningBriefPreset();
+export function defaultLayout(presetId: PresetId = 'assistant'): Pick<DashboardPrefs, 'widgets' | 'layouts' | 'version'> {
+  const preset = getPreset(presetId);
   const ids = new Map(preset.widgets.map((w) => [w.id, `default-${w.type}`]));
   const rename = (items: RGLItem[] | undefined) => items?.map((l) => ({ ...l, i: ids.get(l.i) ?? l.i }));
   return {

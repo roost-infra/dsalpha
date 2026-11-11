@@ -14,6 +14,7 @@ export const PAGE_PLUGINS: PagePlugin[] = [
     descriptionKey: 'plugins.builtin.marketCenter.description',
     icon: CandlestickChart,
     defaultEnabled: false,
+    dashboard: { presetId: 'morning-brief' },
     pages: [
       {
         id: 'market',

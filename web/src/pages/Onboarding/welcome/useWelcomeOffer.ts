@@ -33,11 +33,11 @@ export interface WelcomeOffer {
  * where there is one. Settings' editor of a saved profile is another way in
  * (`welcomeUrl({ edit: true })`), open after completion too, and not an offer.
  */
-export function useWelcomeOffer(): WelcomeOffer | null {
+export function useWelcomeOffer(enabled: boolean = INVESTING_PROFILE_WELCOME_ENABLED): WelcomeOffer | null {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useUser();
-  if (!INVESTING_PROFILE_WELCOME_ENABLED) return null;
+  if (!enabled) return null;
   if (user?.onboarding_completed === true) return null;
   const resumable = readWelcomeDraft(user?.user_id) !== null;
   return {

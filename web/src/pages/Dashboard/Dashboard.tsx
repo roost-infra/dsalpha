@@ -18,7 +18,8 @@ import { DashboardGrid } from './widgets/framework/DashboardGrid';
 import { DashboardStack } from './widgets/framework/DashboardStack';
 import { AddWidgetDialog } from './widgets/framework/AddWidgetDialog';
 import { PresetsDialog } from './widgets/framework/PresetsDialog';
-import { getWidget } from './widgets/framework/WidgetRegistry';
+import { getWidget, widgetPlugin } from './widgets/framework/WidgetRegistry';
+import { defaultLayout } from './widgets/presets';
 import { placeAtBottom } from './widgets/framework/reconcile';
 import { newWidgetId } from './widgets/framework/ids';
 import { useDashboardPrefs } from './widgets/framework/useDashboardPrefs';
@@ -26,6 +27,8 @@ import type { DashboardPrefs, WidgetInstance } from './widgets/types';
 import type { PresetId } from './widgets/presets';
 import './widgets/index';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { PAGE_PLUGINS } from '@/plugins/registry';
+import { usePagePlugins } from '@/plugins/usePagePlugins';
 import { usePreferences } from '@/hooks/usePreferences';
 import { queryKeys } from '@/lib/queryKeys';
 import { isMinorUnitListingInMajor } from './utils/portfolioSummary';
@@ -36,11 +39,31 @@ import { useScrollMemory } from '@/lib/scrollMemory';
 import { scrollMotion } from '@/lib/reducedMotion';
 import './Dashboard.css';
 
-function DashboardPage() {
+interface DashboardPageProps {
+  marketEnabled: boolean;
+  enabledPlugins: ReadonlySet<string>;
+}
+
+function DashboardPage({ marketEnabled, enabledPlugins }: DashboardPageProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const { showPersonalizationBanner, setShowPersonalizationBanner } = useOnboarding();
-  const { prefs, update, applyPreset, resetToDefault, editable } = useDashboardPrefs();
+  const dashboardPlugin = PAGE_PLUGINS.find((plugin) => plugin.dashboard && enabledPlugins.has(plugin.id));
+  const dashboardPreset = (dashboardPlugin?.dashboard?.presetId ?? 'assistant') as PresetId;
+  const { prefs, update, applyPreset, resetToDefault, editable } = useDashboardPrefs(dashboardPreset);
+  // A user who turned the market plugin off still has its widgets in saved
+  // preferences. Hide those cells without rewriting the saved layout, so
+  // turning the plugin back on restores them.
+  const visiblePrefs = (() => {
+    if (marketEnabled) return prefs;
+    const widgets = prefs.widgets.filter((widget) => {
+      const owner = widgetPlugin(widget.type);
+      return !owner || enabledPlugins.has(owner);
+    });
+    if (widgets.length === prefs.widgets.length) return prefs;
+    if (widgets.length === 0) return defaultLayout('assistant');
+    return { ...prefs, widgets };
+  })();
   // Editing is a desktop affordance, and needs the saved layout read: after a
   // failed read the page shows the default, which no edit may be saved over.
   const canEdit = !isMobile && editable;
@@ -135,7 +158,7 @@ function DashboardPage() {
 
   // Hide the floating chat input if the user has placed the agent widget on the canvas,
   // or while the edit toolbar is open (they'd overlap).
-  const hasAgentWidget = prefs.widgets.some((w) => w.type === 'agent.conversation');
+  const hasAgentWidget = visiblePrefs.widgets.some((w) => w.type === 'agent.conversation');
   const showFloatingChat = !hasAgentWidget && !editMode;
 
   // Reserve a bottom gutter inside the page's scroll area when a floating overlay
@@ -157,13 +180,15 @@ function DashboardPage() {
       >
         <h1 className="sr-only">{t('sidebar.dashboard')}</h1>
         <DashboardHeader
+          marketEnabled={marketEnabled}
           onScrollToTop={handleScrollToTop}
           edit={canEdit ? { editMode, onEditModeChange: setEditMode } : undefined}
         />
         <div className="mx-auto max-w-[1920px] w-full p-3 sm:p-6 pb-6">
-          {/* The welcome flow, offered until an investing profile is saved */}
-          {showPersonalizationBanner && (
+          {/* Investing onboarding belongs to the market-center plugin. */}
+          {marketEnabled && showPersonalizationBanner && (
             <WelcomeBanner
+              enabled={marketEnabled}
               onDismiss={() => {
                 snoozePersonalization();
                 setShowPersonalizationBanner(false);
@@ -171,10 +196,10 @@ function DashboardPage() {
             />
           )}
           {isMobile ? (
-            <DashboardStack prefs={prefs} onConfigChange={handleConfigChange} />
+            <DashboardStack prefs={visiblePrefs} onConfigChange={handleConfigChange} />
           ) : (
             <DashboardGrid
-              prefs={prefs}
+              prefs={visiblePrefs}
               editMode={editMode}
               onChange={handleGridChange}
               onAdjust={handleGridAdjust}
@@ -259,13 +284,15 @@ function DashboardPage() {
         open={addOpen}
         onOpenChange={setAddOpen}
         onAdd={handleAddWidget}
-        existingWidgets={prefs.widgets}
+        existingWidgets={visiblePrefs.widgets}
+        enabledPlugins={enabledPlugins}
       />
 
       {/* Presets */}
       <PresetsDialog
         open={presetsOpen}
         onOpenChange={setPresetsOpen}
+        enabledPlugins={enabledPlugins}
         onApply={(id: PresetId) => {
           // Closing settings before swapping the widget set prevents the
           // settings dialog from referencing a stale id after the preset
@@ -446,6 +473,7 @@ function settledOf(read: Promise<unknown>): Promise<void> {
 export default function Dashboard() {
   const { isLoading } = usePreferences();
   const queryClient = useQueryClient();
+  const { enabled } = usePagePlugins();
   // Not after a failed read: an observer still shows a failed read as loading,
   // so waiting again would start another read, fail, and wait again for good.
   // The page renders instead, and its own read retries once as it mounts.
@@ -459,10 +487,11 @@ export default function Dashboard() {
     const read = queryClient.getQueryCache().find({ queryKey: key })?.promise;
     if (read) use(settledOf(read));
   }
+  const marketEnabled = enabled.has('market-center');
   return (
     <DashboardDataProvider>
       <MarketDataWSProvider>
-        <DashboardPage />
+        <DashboardPage marketEnabled={marketEnabled} enabledPlugins={enabled} />
       </MarketDataWSProvider>
     </DashboardDataProvider>
   );
