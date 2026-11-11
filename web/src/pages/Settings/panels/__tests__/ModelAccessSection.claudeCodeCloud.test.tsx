@@ -64,9 +64,9 @@ function render(custody: Partial<ClaudeCodeCustody> | null, route = '/settings?t
 // Hidden too: the sheet they are in is inert while a dialog is open over it.
 const ownComputers = () => screen.getByRole('radio', { name: 'Only on your own computers', hidden: true });
 const apiKey = () => screen.getByRole('radio', { name: 'Also for cloud computers, with your Anthropic API key', hidden: true });
-const stored = () => screen.queryByRole('radio', { name: 'Also for cloud computers, with your setup token stored by LangAlpha', hidden: true });
+const stored = () => screen.queryByRole('radio', { name: 'Also for cloud computers, with your setup token stored by dsalpha', hidden: true });
 const keySheet = () => screen.queryByRole('dialog', { name: 'Connect Anthropic' });
-const consentDialog = () => screen.queryByRole('dialog', { name: 'Let LangAlpha store your setup token?' });
+const consentDialog = () => screen.queryByRole('dialog', { name: 'Let dsalpha store your setup token?' });
 const leaveDialog = () => screen.queryByRole('dialog', { name: 'Stop storing your setup token?' });
 const tokenSheet = () => screen.queryByRole('dialog', { name: 'Add a setup token' });
 const STORING: Partial<ClaudeCodeCustody> = { offered: ['api_key', 'stored'] };
@@ -196,7 +196,7 @@ describe('ModelAccessSection: Claude Code on cloud computers', () => {
     await openClaudeCode();
     await screen.findByRole('radiogroup', { name: 'Where Claude Code runs' });
     expect(stored()).not.toBeChecked();
-    expect(stored()).toHaveAccessibleDescription(/^For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself\. .*LangAlpha sends your setup token/);
+    expect(stored()).toHaveAccessibleDescription(/^For workspaces on Medium or larger cloud computers, Claude Code runs on the cloud computer itself\. .*dsalpha sends your setup token/);
     unmount();
     render({ mode: 'stored', offered: ['stored'] });
     await openClaudeCode();
@@ -238,10 +238,10 @@ describe('ModelAccessSection: Claude Code on cloud computers', () => {
   it('asks for consent before storing the token, then opens the token sheet where none is saved', async () => {
     render({ ...STORING });
     await openClaudeCode();
-    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by LangAlpha'));
+    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by dsalpha'));
     const dialog = consentDialog()!;
     expect(dialog.closest('[inert]')).toBeNull();
-    expect(dialog).toHaveTextContent(/LangAlpha keeps your token encrypted.*servers also use the token to check.*Usage counts against your Claude plan.*Anthropic may limit or suspend accounts.*switch back at any time/);
+    expect(dialog).toHaveTextContent(/dsalpha keeps your token encrypted.*servers also use the token to check.*Usage counts against your Claude plan.*Anthropic may limit or suspend accounts.*switch back at any time/);
     const terms = within(dialog).getByRole('link', { name: "Read Anthropic's terms" });
     expect(terms).toHaveAttribute('href', 'https://www.anthropic.com/legal/consumer-terms');
     expect(terms).toHaveAttribute('target', '_blank');
@@ -258,7 +258,7 @@ describe('ModelAccessSection: Claude Code on cloud computers', () => {
     saved.current = true;
     render({ ...STORING });
     await openClaudeCode();
-    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by LangAlpha'));
+    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by dsalpha'));
     fireEvent.click(screen.getByRole('button', { name: 'Store my token' }));
     await waitFor(() => expect(stored()).toBeChecked());
     expect(tokenSheet()).toBeNull();
@@ -267,7 +267,7 @@ describe('ModelAccessSection: Claude Code on cloud computers', () => {
   it('stores nothing where consent is not given', async () => {
     render({ ...STORING });
     await openClaudeCode();
-    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by LangAlpha'));
+    fireEvent.click(await screen.findByText('Also for cloud computers, with your setup token stored by dsalpha'));
     fireEvent.click(within(consentDialog()!).getByRole('button', { name: 'Cancel' }));
     expect(consentDialog()).toBeNull();
     expect(ownComputers()).toBeChecked();
@@ -279,7 +279,7 @@ describe('ModelAccessSection: Claude Code on cloud computers', () => {
     render({ mode: 'stored', ...STORING });
     await openClaudeCode();
     fireEvent.click(await screen.findByText('Only on your own computers'));
-    expect(leaveDialog()).toHaveTextContent(/LangAlpha deletes your stored setup token now, and Claude Code turns using it stop\./);
+    expect(leaveDialog()).toHaveTextContent(/dsalpha deletes your stored setup token now, and Claude Code turns using it stop\./);
     expect(leaveDialog()!.closest('[inert]')).toBeNull();
     expect(setClaudeCodeCustody).not.toHaveBeenCalled();
     fireEvent.click(within(leaveDialog()!).getByRole('button', { name: 'Delete token' }));

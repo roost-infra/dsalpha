@@ -35,7 +35,7 @@ def _manifest(name: str, **extension) -> dict:
         "name": name,
         "description": f"the {name} bundle",
         "version": "1.2.3",
-        "author": {"name": "LangAlpha"},
+        "author": {"name": "dsalpha"},
         "keywords": ["finance", 7],
         "extensions": {"ai.langalpha": extension} if extension else {},
     }
@@ -84,7 +84,7 @@ class TestListing:
         assert (info.name, info.version, info.source_type) == (
             "market", "1.2.3", "bundled",
         )
-        assert info.author == "LangAlpha"
+        assert info.author == "dsalpha"
         assert info.enabled is True
         assert info.source_ref is None
         # Non-string keywords are dropped rather than failing the whole row.
@@ -252,7 +252,7 @@ class TestBothProjectionsAnswerTheSameQuestions:
         "name": "same",
         "description": "one description",
         "version": "1.2.3",
-        "author": {"name": "LangAlpha"},
+        "author": {"name": "dsalpha"},
         "homepage": "https://home.test",
         "repository": "https://repo.test",
         "license": "MIT",

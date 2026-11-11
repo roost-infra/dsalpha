@@ -14,11 +14,11 @@ function Legal() {
             className="text-sm hover:underline"
             style={{ color: 'var(--color-text-secondary)' }}
           >
-            &larr; Back to athena
+            &larr; Back to dsalpha
           </Link>
           <h1 className="mt-4 text-3xl font-semibold tracking-tight">Legal, Disclaimers &amp; Attribution</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            Important disclaimers, open-source licenses and third-party credits for the hosted athena service.
+            Important disclaimers, open-source licenses and third-party credits for the hosted dsalpha service.
           </p>
         </header>
 
@@ -31,7 +31,7 @@ function Legal() {
               在做出任何投资决策前，请自行核验原始数据并咨询合资格的专业人士。
             </p>
             <p className="mt-3">
-              athena 不连接您的银行或券商账户，不代为管理资产，不代客下单，也不对任何投资收益或损失承担责任。
+              dsalpha 不连接您的银行或券商账户，不代为管理资产，不代客下单，也不对任何投资收益或损失承担责任。
               所有交易决策和后果均由用户自行承担。
             </p>
             <p className="mt-3 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -39,7 +39,7 @@ function Legal() {
               service are for research and informational purposes only. They are
               <strong> not investment advice, an offer, or a solicitation to buy or sell any security</strong>.
               AI output may be inaccurate, incomplete or out of date. Verify source data and consult a
-              qualified professional before making any investment decision. athena does not connect to
+              qualified professional before making any investment decision. dsalpha does not connect to
               your bank or brokerage, does not manage assets or place orders, and accepts no liability for
               investment outcomes.
             </p>
@@ -117,7 +117,7 @@ Copyright (с) 2025 TradingView, Inc. https://www.tradingview.com/`}</pre>
           <section>
             <h2 className="text-xl font-semibold tracking-tight mb-3">Other credits</h2>
             <p>
-              athena is built on React, Vite, FastAPI, PostgreSQL, Redis, and many
+              dsalpha is built on React, Vite, FastAPI, PostgreSQL, Redis, and many
               other open-source projects. The complete list of dependencies and their
               licenses is available in the{' '}
               <a

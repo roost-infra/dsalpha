@@ -52,7 +52,7 @@ MINT_S = 30
 MACHINE_IO_S = 30
 #: Why Claude Code is refused where an organization's managed Claude Code settings are installed.
 POLICY_BLOCKED = (
-    "Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here."
+    "Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here."
 )
 
 
@@ -206,7 +206,7 @@ async def _mint(flow: PendingSignIn, raw: str, who: str) -> tuple[claude_oauth.S
     except claude_oauth.UnexpectedGrant as e:
         await flow.claim(stored)
         logger.error(f"[claude_code] sign-in got an unexpected grant for {who}: {e}")
-        raise OAuthRefusal(502, "unexpected_grant", "Claude answered in a way LangAlpha did not expect. Sign in again.", retryable=False) from None
+        raise OAuthRefusal(502, "unexpected_grant", "Claude answered in a way dsalpha did not expect. Sign in again.", retryable=False) from None
     except Exception as e:
         logger.warning(f"[claude_code] sign-in exchange failed for {who}: {type(e).__name__}")
         if exchange_failure("Claude", e).error["retryable"]:

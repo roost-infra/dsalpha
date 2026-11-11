@@ -77,7 +77,7 @@ function buildByteWalk(word: string, dwell: number): string[] {
   return frames;
 }
 
-const BYTE_WALK = buildByteWalk('LangAlpha', 6);
+const BYTE_WALK = buildByteWalk('dsalpha', 6);
 const BYTE_WALK_STYLE = { '--pl-frames': String(BYTE_WALK.length) } as React.CSSProperties;
 
 interface PageLoadingProps {

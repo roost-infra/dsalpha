@@ -44,7 +44,7 @@ export default function ShareUnavailable({ variant = 'unavailable', onRetry }: S
       className="flex flex-col items-center justify-center min-h-screen gap-4 px-4 text-center"
       style={{ backgroundColor: 'var(--color-bg-page)' }}
     >
-      <img src={logo} alt="LangAlpha" className="h-8 opacity-60" />
+      <img src={logo} alt="dsalpha" className="h-8 opacity-60" />
       <h1 className="text-lg font-semibold title-font" style={{ color: 'var(--color-text-primary)' }}>
         {variant === 'failed' ? t('shareLink.loadFailedTitle') : t('shareLink.unavailableTitle')}
       </h1>

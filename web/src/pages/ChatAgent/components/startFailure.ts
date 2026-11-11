@@ -91,7 +91,7 @@ export function restartRefusal(err: unknown, t: Translate, action: 'reinstall' |
       takeOver,
       message: t(
         'computer.restartRefused.folderMarked',
-        'That folder is another computer\'s, possibly one from another LangAlpha account or server.',
+        'That folder is another computer\'s, possibly one from another dsalpha account or server.',
       ),
     };
   }

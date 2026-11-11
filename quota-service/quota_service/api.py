@@ -1,4 +1,4 @@
-"""The contract LangAlpha calls: validate plus the runtime credit leases."""
+"""The contract dsalpha calls: validate plus the runtime credit leases."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .store import (
     wallet_balance,
 )
 
-router = APIRouter(tags=["LangAlpha"])
+router = APIRouter(tags=["dsalpha"])
 
 
 class ValidateRequest(BaseModel):
@@ -36,10 +36,10 @@ async def validate(
 ):
     """Membership plus the named quota.
 
-    The body is optional: LangAlpha's membership-only check (``/users/me``)
+    The body is optional: dsalpha's membership-only check (``/users/me``)
     posts no JSON at all, while the named-quota callers send one.
 
-    LangAlpha sends ``check_quota`` per gate; an empty one only wants the
+    dsalpha sends ``check_quota`` per gate; an empty one only wants the
     plan/tier. The counts are read from the shared database, so they always
     match what the backend itself would count.
     """
@@ -81,7 +81,7 @@ async def validate(
 
 @router.get("/api/auth/billing/leases/capability")
 async def capability(request: Request):
-    """Readiness probe: LangAlpha checks this at boot before gating turns.
+    """Readiness probe: dsalpha checks this at boot before gating turns.
 
     ``enabled`` and ``lease_ttl_seconds`` are the fields its startup assertion
     reads; ``leases`` is kept for older clients.

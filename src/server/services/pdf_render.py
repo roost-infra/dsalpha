@@ -517,8 +517,8 @@ _PDF_HEADER_TEMPLATE = "<span></span>"
 
 
 def _footer_template(branding: bool, page_numbers: bool, date_str: str) -> str:
-    """Footer HTML: branding ("athena · date") left, page count right."""
-    left = f"<span>athena · {date_str}</span>" if branding else "<span></span>"
+    """Footer HTML: branding ("dsalpha · date") left, page count right."""
+    left = f"<span>dsalpha · {date_str}</span>" if branding else "<span></span>"
     right = (
         '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span>'
         if page_numbers
@@ -627,7 +627,7 @@ async def render_workspace_pdf(
 
     ``internal_url`` is the server's own loopback wsfiles URL; subresource
     requests are SSRF-gated (``_is_request_allowed``). ``scale`` (clamped to 0.5 to 2.0) shrinks/enlarges the whole
-    rendering; ``branding`` (default on) stamps "athena · <date>" in the
+    rendering; ``branding`` (default on) stamps "dsalpha · <date>" in the
     footer and ``page_numbers`` adds ``N / total`` beside it. Raises
     ``PdfRenderUnavailable`` / ``PdfRenderTimeout`` / ``PdfRenderError`` for
     the corresponding failure classes.

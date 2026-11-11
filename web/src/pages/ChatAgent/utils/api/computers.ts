@@ -194,7 +194,7 @@ export async function setComputerSpec(computerId: string, tier: ResourceTier): P
  * in the query, and in the query too while they fit there, for a backend from
  * before the body and a proxy that drops a DELETE's body. `workspaces_deleted`
  * answers which went: one moved off it meanwhile still exists.
- * `deleteFiles`, on an SSH computer, also deletes LangAlpha's files from its
+ * `deleteFiles`, on an SSH computer, also deletes dsalpha's files from its
  * machine, the named workspaces' folders among them. It refuses
  * with a 409 whose `detail.code` says why: `primary`, `has_workspaces`, or
  * `busy` (moving between states, being prepared, changing spec, a workspace

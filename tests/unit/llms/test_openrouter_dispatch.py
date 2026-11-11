@@ -47,7 +47,7 @@ def test_custom_model_builds_chat_openrouter():
     assert client.streaming and client.stream_usage
     # Milliseconds on this client; seconds everywhere else in the factory.
     assert client.request_timeout == 600_000
-    assert client.app_title == "LangAlpha"
+    assert client.app_title == "dsalpha"
     assert client.metadata["provider_route"] == "openrouter"
 
 

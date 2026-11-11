@@ -1,5 +1,5 @@
 """What a removed ssh computer leaves on its machine: the folders its owner
-asked to have deleted, LangAlpha's files when they asked for those too, the
+asked to have deleted, dsalpha's files when they asked for those too, the
 key's line and the tunnel.
 
 The outcome reaches the owner as is, so each one is pinned to what happened
@@ -675,7 +675,7 @@ async def test_an_uninstall_on_an_open_connection_logs_in_to_nothing(monkeypatch
 
 @pytest.mark.asyncio
 async def test_files_go_before_the_tunnel_when_asked(machine):
-    """The tunnel's uninstall may take the connection with it, so LangAlpha's
+    """The tunnel's uninstall may take the connection with it, so dsalpha's
     files go first, by the computer's own root and sandbox id."""
     computer = _computer(tunnel="tun-1")
     machine["link"] = link = _Link(_said(""), _said("removed\n"))

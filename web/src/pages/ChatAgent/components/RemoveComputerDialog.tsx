@@ -35,7 +35,7 @@ interface RemoveComputerDialogProps {
   /**
    * `removeKey` is the box's state, and false where the box is not shown.
    * `workspaceIds` are the workspaces the dialog named, to delete first.
-   * `deleteFiles` takes LangAlpha's files off a machine the user brought.
+   * `deleteFiles` takes dsalpha's files off a machine the user brought.
    */
   onConfirm: (removeKey: boolean, workspaceIds: string[], deleteFiles: boolean) => void;
   /** The request is in flight. */
@@ -115,7 +115,7 @@ function RemoveComputerDialog({
       <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
         {filesKeptIn
           ? deleteFiles
-            ? t('computer.removeBodyOwnMachineDelete', 'We stop using this machine and delete what LangAlpha put there.')
+            ? t('computer.removeBodyOwnMachineDelete', 'We stop using this machine and delete what dsalpha put there.')
             : t(
                 'computer.removeBodyOwnMachine',
                 'We stop using this machine and remove what we set up there for it. Your files in {{folder}} stay.',
@@ -164,11 +164,11 @@ function RemoveComputerDialog({
           style={{ color: 'var(--color-text-primary)' }}
         >
           <span className="flex min-w-0 flex-col gap-0.5 break-words">
-            <span>{t('computer.alsoDeleteFiles', "Also delete LangAlpha's files from this machine")}</span>
+            <span>{t('computer.alsoDeleteFiles', "Also delete dsalpha's files from this machine")}</span>
             <span className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
               {t(
                 'computer.alsoDeleteFilesHint',
-                "Deletes {{folder}}, its workspaces' folders included, and LangAlpha's runtime in ~/.langalpha (about 3 GB) unless another computer uses it. Files you put in {{folder}} yourself stay. The machine has to be connected.",
+                "Deletes {{folder}}, its workspaces' folders included, and dsalpha's runtime in ~/.langalpha (about 3 GB) unless another computer uses it. Files you put in {{folder}} yourself stay. The machine has to be connected.",
                 { folder: filesKeptIn },
               )}
             </span>

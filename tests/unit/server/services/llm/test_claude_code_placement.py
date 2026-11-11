@@ -95,7 +95,7 @@ async def test_an_own_computer_with_any_organizations_policy_installed_is_refuse
         await _admit(OWN, backend=True, cache=_Cache(kept), saved="sk-ant-oat01-saved")
     assert _reason(refused) == "policy_blocked"
     assert refused.value.detail["message"] == CLAUDE_CODE_OFF["policy_blocked"] == (
-        "Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here."
+        "Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here."
     )
     stale = {answer_key("c-1"): _answer("policy", present=present, age=checks.SHORT_TTL_S + 1)}
     await _admit(OWN, backend=True, cache=_Cache(stale), saved="sk-ant-oat01-saved")

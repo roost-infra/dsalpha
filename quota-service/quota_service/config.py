@@ -59,7 +59,7 @@ def load_settings() -> Settings:
         raise RuntimeError("DATABASE_URL is required")
     internal = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
     if not internal:
-        raise RuntimeError("INTERNAL_SERVICE_TOKEN is required (shared with LangAlpha)")
+        raise RuntimeError("INTERNAL_SERVICE_TOKEN is required (shared with dsalpha)")
     admin = os.getenv("ADMIN_TOKEN", "").strip()
     if not admin:
         raise RuntimeError("ADMIN_TOKEN is required (admin page and admin API)")

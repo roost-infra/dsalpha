@@ -10,7 +10,7 @@ const FAB_SIZE = 52;
 const EDGE_MARGIN = 12;
 
 /**
- * Draggable floating action button with the LangAlpha logo.
+ * Draggable floating action button with the dsalpha logo.
  * Constrained to the lower half of the screen, snaps to nearest edge on release.
  * Tap (not drag) opens the chat input.
  */

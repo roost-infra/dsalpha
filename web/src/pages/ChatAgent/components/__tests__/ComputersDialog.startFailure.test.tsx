@@ -180,7 +180,7 @@ describe('Reinstall', () => {
     const dialog = await openReinstall(user);
     const takeBack = within(dialog).getByRole('radio', { name: 'Take the folder back' });
     expect(takeBack).toBeChecked();
-    expect(dialog).toHaveTextContent('possibly one from another LangAlpha account or server');
+    expect(dialog).toHaveTextContent('possibly one from another dsalpha account or server');
     expect(dialog).toHaveTextContent(`Keep using ${ROOT}.`);
 
     await user.click(within(dialog).getByRole('button', { name: 'Reinstall' }));
@@ -455,7 +455,7 @@ describe('Reconnect of a Mac from a browser', () => {
     await user.click(within(card).getByRole('button', { name: 'Reconnect…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Reconnect alex-mac' });
     expect(within(dialog).getByTestId('reconnect-elsewhere')).toHaveTextContent(
-      'Open LangAlpha on that Mac and choose Reconnect there.',
+      'Open dsalpha on that Mac and choose Reconnect there.',
     );
     expect(within(dialog).queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument();
     expect(mockMint).not.toHaveBeenCalled();

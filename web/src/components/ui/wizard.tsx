@@ -110,7 +110,7 @@ export function WizardTopBar({ progress, exit }: { progress?: ReactNode; exit?: 
       <div className="flex min-w-0 items-center gap-2 justify-self-start">
         <img src={logo} alt="" className="h-6 w-6 shrink-0 object-contain" />
         <span className="title-font truncate text-[0.9375rem] font-semibold text-(--color-text-primary)">
-          LangAlpha
+          dsalpha
         </span>
       </div>
       <div className="justify-self-center">{progress}</div>

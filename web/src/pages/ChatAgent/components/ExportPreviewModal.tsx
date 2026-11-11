@@ -331,7 +331,7 @@ export default function ExportPreviewModal({
     pageStyle: PRINT_PAGE_STYLE,
     // The browser print dialog names the file after `document.title`, which is
     // the app's, so every report saved from a browser landed in the user's
-    // downloads as `LangAlpha.pdf`. react-to-print swaps the title in for the
+    // downloads as `dsalpha.pdf`. react-to-print swaps the title in for the
     // duration of the print and puts it back after.
     documentTitle: pdfStem,
   });

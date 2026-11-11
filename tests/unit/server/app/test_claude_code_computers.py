@@ -635,7 +635,7 @@ async def test_a_machine_with_an_organizations_policy_installed_is_told_so_befor
     assert response.status_code == 400
     assert response.json()["error"] == {"code": "policy_blocked", "message": machines.POLICY_BLOCKED, "retryable": False}
     assert machines.POLICY_BLOCKED == (
-        "Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here."
+        "Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here."
     )
     mint.assert_not_awaited()
     assert world.machine.calls == ["facts"], "the CLI never installed"

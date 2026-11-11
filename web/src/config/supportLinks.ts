@@ -33,6 +33,6 @@ export const SUPPORT_EMAIL: string | null =
 
 /** Where to get the desktop app. The page offers both editions, the hosted one
  *  and the one that connects to a self-hosted server, so one link serves every build. */
-export const DESKTOP_DOWNLOAD_URL = 'https://langalpha.ai/download';
+export const DESKTOP_DOWNLOAD_URL = 'https://deepseek-alpha.com/app';
 
 export const PRIVACY_URL: string | null = import.meta.env.VITE_PRIVACY_URL || null;

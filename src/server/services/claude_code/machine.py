@@ -2,7 +2,7 @@
 machine, and what the backend knows of it.
 
 An own computer (the SSH provider's, a Mac reached through Remote control
-included) runs the CLI itself, signed in with the token LangAlpha keeps on
+included) runs the CLI itself, signed in with the token dsalpha keeps on
 that machine. With none there, the token the user saved in Settings is
 relayed where it signs in their turns (``hosted.saved_token_runs``): on a
 self-hosted server, and on the platform while the user stores it there. It
@@ -620,7 +620,7 @@ class MachineHome:
     @staticmethod
     def _write_failed(retryable: bool) -> OAuthRefusal:
         return OAuthRefusal(
-            502, "write_failed", "LangAlpha could not save the token on this computer. Try again.", retryable=retryable,
+            502, "write_failed", "dsalpha could not save the token on this computer. Try again.", retryable=retryable,
         )
 
     async def _discard(self, staged: str) -> None:
@@ -668,7 +668,7 @@ class MachineHome:
             logger.warning(f"[claude_code] token removal failed on computer_id={self.computer_id}: {type(e).__name__}")
             await forget_answer(self.computer_id)
             raise OAuthRefusal(
-                502, "remove_failed", "LangAlpha could not remove the token from this computer. Try again.",
+                502, "remove_failed", "dsalpha could not remove the token from this computer. Try again.",
                 retryable=True,
             ) from None
         try:

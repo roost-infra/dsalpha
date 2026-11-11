@@ -755,14 +755,14 @@ describe('ComputersDialog: removing a computer', () => {
       await waitFor(() => expect(mockDelete).toHaveBeenCalledWith(SECOND_ID, { removeKey: true, deleteWorkspaces: [], deleteFiles: false }));
     });
 
-    it("deletes LangAlpha's files only when asked, and says what stayed", async () => {
+    it("deletes dsalpha's files only when asked, and says what stayed", async () => {
       const user = userEvent.setup();
       mockDelete.mockResolvedValue({ key: null, files: { outcome: 'deleted', root_kept: false, runtime_kept: true } });
       mockGetComputers.mockResolvedValue(withSecond(SSH_ROW));
       open();
       await user.click(await secondRemove(user));
       const confirm = await screen.findByRole('dialog', { name: 'Remove Second machine?' });
-      const box = within(confirm).getByRole('checkbox', { name: /^Also delete LangAlpha's files from this machine/ });
+      const box = within(confirm).getByRole('checkbox', { name: /^Also delete dsalpha's files from this machine/ });
       expect(box).not.toBeChecked();
       await user.click(box);
       await user.click(within(confirm).getByRole('button', { name: 'Remove computer' }));

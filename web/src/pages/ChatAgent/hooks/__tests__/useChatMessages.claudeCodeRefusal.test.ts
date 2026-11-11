@@ -42,7 +42,7 @@ import { queryKeys } from '@/lib/queryKeys';
 const mockSendStream = sendChatMessageStream as Mock;
 
 
-const SIGNED_OUT = 'Add a setup token for LangAlpha on the server to use this model.';
+const SIGNED_OUT = 'Add a setup token for dsalpha on the server to use this model.';
 
 describe('useChatMessages: a Claude Code refusal', () => {
   beforeEach(() => {

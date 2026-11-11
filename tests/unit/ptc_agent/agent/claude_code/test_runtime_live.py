@@ -1,4 +1,4 @@
-"""The runtime on a real Claude plan, with a setup token made for LangAlpha read from ``TOKEN_FILE``.
+"""The runtime on a real Claude plan, with a setup token made for dsalpha read from ``TOKEN_FILE``.
 
 Integration tests, deselected by default. No sandbox and no command runs: the
 one tool is a stub. Each turn spawns the bundled CLI with that token, never the
@@ -35,7 +35,7 @@ from .harness import new_graph, run_turn, spec
 pytestmark = [pytest.mark.integration, pytest.mark.enable_socket, pytest.mark.asyncio]
 
 SPEC = spec(os.environ.get("CLAUDE_CODE_LIVE_MODEL", "claude-haiku-5-5"))
-#: Where these tests look for the token; LangAlpha itself keeps each user's in Settings.
+#: Where these tests look for the token; dsalpha itself keeps each user's in Settings.
 TOKEN_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "langalpha" / "claude-code-token"
 
 

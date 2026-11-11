@@ -167,7 +167,7 @@ describe('ModelAccessSection: Claude Code on own computers', () => {
 
   it("says Claude Code can't run on a computer an organization's policy is installed on, and invites no token there", async () => {
     render({ computers: [{ ...MAC, state: 'policy_blocked' }, { ...BOX, state: 'policy_blocked' }] });
-    const blocked = "Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here.";
+    const blocked = "Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here.";
     const mac = await rowOf('Studio Mac');
     expect(within(mac).getByText('Unavailable')).toBeInTheDocument();
     expect(within(mac).getByText(blocked)).toBeInTheDocument();
@@ -183,7 +183,7 @@ describe('ModelAccessSection: Claude Code on own computers', () => {
       render({ computers: [BOX], account: status({ state: 'policy_blocked', saved }) });
       const row = await savedRowOf();
       expect(within(row).getByText('Unavailable')).toBeInTheDocument();
-      expect(within(row).getByText("Your organization's Claude Code policy is installed on this computer, so LangAlpha can't run Claude Code here.")).toBeInTheDocument();
+      expect(within(row).getByText("Your organization's Claude Code policy is installed on this computer, so dsalpha can't run Claude Code here.")).toBeInTheDocument();
       expect(buttonsOf(row)).toEqual(buttons);
     },
   );
@@ -203,7 +203,7 @@ describe('ModelAccessSection: Claude Code on own computers', () => {
 
   it('says a computer on musl is unsupported, offers Remove only for a token left there, and invites no new token', async () => {
     render({ computers: [{ ...MAC, state: 'computer_unsupported' }, { ...BOX, state: 'computer_unsupported' }] });
-    const musl = "This computer runs musl (for example Alpine Linux), which LangAlpha's runtime doesn't support yet.";
+    const musl = "This computer runs musl (for example Alpine Linux), which dsalpha's runtime doesn't support yet.";
     const mac = await rowOf('Studio Mac');
     expect(within(mac).getByText('Unavailable')).toBeInTheDocument();
     expect(within(mac).getByText(musl)).toBeInTheDocument();

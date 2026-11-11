@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 PushKind = Literal["turn", "needs_input", "wakeup", "automation"]
 PUSH_KINDS: tuple[PushKind, ...] = get_args(PushKind)
 TITLE_LIMIT = 80
-FALLBACK_TITLE = "LangAlpha"
+FALLBACK_TITLE = "dsalpha"
 
 #: The surfaces the web app draws; any other surface a turn ran on is a chat
 #: app, which answers the user itself.

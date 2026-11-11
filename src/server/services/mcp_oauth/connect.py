@@ -109,7 +109,7 @@ STATE_TTL_SECONDS = 600
 _STATE_KEY_PREFIX = "mcp:oauth:state:"
 _INFLIGHT_KEY_PREFIX = "mcp:oauth:inflight:"
 
-CLIENT_NAME = "athena"
+CLIENT_NAME = "dsalpha"
 
 # The MCP endpoint probe advertises a protocol version so servers answer with
 # era-appropriate WWW-Authenticate hints.

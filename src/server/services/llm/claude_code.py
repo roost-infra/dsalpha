@@ -82,7 +82,7 @@ CLAUDE_CODE_OFF = {
         "Pick another model, or move this workspace to one of them."
     ),
     "stored_unattended": (
-        "Automations, wakeups and turns another agent sends don't run on the setup token LangAlpha stores for you. "
+        "Automations, wakeups and turns another agent sends don't run on the setup token dsalpha stores for you. "
         "Choose your Anthropic API key in Settings under Model access, or run this workspace on a computer of "
         "yours with its own token."
     ),
@@ -96,11 +96,11 @@ CLAUDE_CODE_OFF = {
 }
 
 #: The reasons the platform words otherwise, where a larger computer comes
-#: with the user's LangAlpha plan.
+#: with the user's dsalpha plan.
 _PLATFORM_OFF = {
     "needs_bigger_computer": (
         "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change "
-        "its spec or upgrade your LangAlpha plan, or move this workspace to a computer of your own."
+        "its spec or upgrade your dsalpha plan, or move this workspace to a computer of your own."
     ),
 }
 

@@ -115,7 +115,7 @@ describe('payerOfBilling', () => {
 describe('payerLabel', () => {
   const t = (key: string, opts?: Record<string, unknown>) => (opts ? `${key}:${JSON.stringify(opts)}` : key);
 
-  // "Subscription" beside "Credits" reads as the user's LangAlpha plan.
+  // "Subscription" beside "Credits" reads as the user's dsalpha plan.
   it('names a subscription by the plan its sign-in draws on, and an unknown one generically', () => {
     expect(payerLabel(t, 'subscription:codex-oauth')).toBe('payer.plan:{"plan":"ChatGPT"}');
     expect(payerLabel(t, 'subscription:')).toBe('payer.subscription');

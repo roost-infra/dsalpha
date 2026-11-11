@@ -66,9 +66,9 @@ async def reserved_credits(
 
 
 async def computer_counts(cur: AsyncCursor, user_id: str) -> Mapping[str, int]:
-    """The four counts LangAlpha's capacity gates ask about, read live.
+    """The four counts dsalpha's capacity gates ask about, read live.
 
-    The quota service shares the LangAlpha database, so these are the same
+    The quota service shares the dsalpha database, so these are the same
     rows the backend itself would count.
     """
     await cur.execute(
@@ -296,7 +296,7 @@ async def list_ledger(
 
 
 # ---------------------------------------------------------------------------
-# Token usage (read from LangAlpha's conversation_usages, never written here)
+# Token usage (read from dsalpha's conversation_usages, never written here)
 # ---------------------------------------------------------------------------
 
 _TOKEN_FIELDS = (
@@ -314,7 +314,7 @@ async def token_usage_report(
     """Per-user token usage over the last ``days`` days.
 
     ``token_usage.by_model`` is keyed by model name and holds the counters
-    LangAlpha already priced; summing it keeps BYOK and platform calls
+    dsalpha already priced; summing it keeps BYOK and platform calls
     together (``platform_cost`` is the part actually billed as credits).
     """
     await cur.execute(
