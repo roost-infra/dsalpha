@@ -13,7 +13,7 @@ describe('marketRoute', () => {
       threadId: 'thread-1',
       returnTo: '/chat/t/thread-1',
     });
-    expect(url.startsWith('/market?')).toBe(true);
+    expect(url.startsWith('/p/market?')).toBe(true);
     expect(readMarketViewRoute(paramsOf(url))).toEqual({
       symbol: 'AAPL',
       timeframe: '1hour',

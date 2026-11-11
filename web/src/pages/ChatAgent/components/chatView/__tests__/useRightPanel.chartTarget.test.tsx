@@ -78,7 +78,7 @@ describe('a chart opened from chat', () => {
     expect(result.current.panelTarget).toBeNull();
     expect(navigate).toHaveBeenCalledTimes(1);
     const url = new URL(navigate.mock.calls[0][0] as string, 'http://localhost');
-    expect(url.pathname).toBe('/market');
+    expect(url.pathname).toBe('/p/market');
     expect(url.searchParams.get('symbol')).toBe('GOOGL');
     expect(url.searchParams.get('tf')).toBe('1day');
     expect(url.searchParams.get('ws')).toBe('ws');

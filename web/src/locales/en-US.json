@@ -6612,7 +6612,10 @@
       "marketCenter": {
         "name": "Market Center",
         "description": "Quotes, watchlists, sectors and market news."
-      }
+      },
+      "open": "Open",
+      "loading": "Loading page plugins…",
+      "loadError": "Could not load page plugins. Try again."
     }
   },
   "timezone": {

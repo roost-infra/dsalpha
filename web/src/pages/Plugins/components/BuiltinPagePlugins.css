@@ -8,4 +8,5 @@
 .builtin-page-plugin-card__title { display: flex; align-items: center; gap: 8px; }
 .builtin-page-plugin-card__title h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .builtin-page-plugin-card__body p { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
-.builtin-page-plugin-card__state { display: inline-block; margin-top: 5px; color: var(--color-text-tertiary); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.builtin-page-plugin-card__actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.builtin-page-plugin-card__state { display: inline-block; margin-top: 5px; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }

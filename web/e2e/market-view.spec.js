@@ -30,7 +30,7 @@ test.describe('MarketView workspace restore', () => {
         }),
       });
 
-      await page.goto('/market?symbol=AAPL');
+      await page.goto('/p/market?symbol=AAPL');
       // The reconcile lands on the Chief of Staff and the first listed workspace,
       // after a first paint that can outlast the 5s default on a loaded machine.
       await expect.poll(() => storedPref(page, 'selectedWorkspaceId'), { timeout: 15000 }).toBe('"ws-mine"');

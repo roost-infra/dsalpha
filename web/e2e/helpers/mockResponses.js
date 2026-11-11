@@ -5,6 +5,8 @@
 
 // All endpoints the app calls on page load, with minimal valid responses.
 export const defaultResponses = {
+  // Page plugins ship with the app; existing market E2E starts enabled.
+  'GET /page-plugins': { plugins: [{ plugin_id: 'market-center', enabled: true }] },
   'GET /users/me': {
     user_id: 'local-dev-user',
     name: 'Test User',

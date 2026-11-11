@@ -6524,7 +6524,10 @@
       "marketCenter": {
         "name": "市场中心",
         "description": "行情、自选、板块与财经新闻。"
-      }
+      },
+      "open": "打开",
+      "loading": "正在加载页面插件…",
+      "loadError": "页面插件状态加载失败，请重试。"
     }
   },
   "timezone": {

@@ -73,7 +73,7 @@ export function resolveScriptSrc(key: string): string {
 
 /** Public site we send "view full chart" links to. */
 export function largeChartUrl(): string {
-  if (typeof window === 'undefined') return '/market';
+  if (typeof window === 'undefined') return '/p/market';
   return `${window.location.origin}/market`;
 }
 

@@ -1,6 +1,6 @@
-import { lazy } from 'react';
+import { lazyWithMotion } from '@/lib/lazyWithMotion';
 import { CandlestickChart } from 'lucide-react';
-import type { PagePlugin } from './types';
+import type { PagePlugin, PagePluginPage } from './types';
 
 /**
  * The built-in page plugins this build ships. A plugin is compiled into the
@@ -19,7 +19,7 @@ export const PAGE_PLUGINS: PagePlugin[] = [
         id: 'market',
         path: '/p/market',
         labelKey: 'plugins.builtin.marketCenter.name',
-        component: lazy(() => import('@/pages/MarketView/MarketView')),
+        component: lazyWithMotion(() => import('@/pages/MarketView/MarketView')),
       },
     ],
   },
@@ -33,13 +33,28 @@ export function pagePluginById(id: string): PagePlugin | null {
 
 /** Resolve `/p/:routeId`: plugin id first, then a page id/path inside one. */
 export function pagePluginForRoute(routeId: string): PagePlugin | null {
+  return pluginPageForRoute(routeId)?.plugin ?? null;
+}
+
+export interface ResolvedPluginPage {
+  plugin: PagePlugin;
+  page: PagePluginPage;
+}
+
+/**
+ * Resolve a `/p/:routeId` segment to both the plugin and the concrete page.
+ * `routeId` is normally a page id (`market`), but a plugin id is accepted and
+ * normalized to the plugin's first page by the host. Keeping the page in the
+ * result is what lets multi-page plugins render the page the URL names.
+ */
+export function pluginPageForRoute(routeId: string): ResolvedPluginPage | null {
+  for (const plugin of PAGE_PLUGINS) {
+    const page = plugin.pages.find(
+      (candidate) =>
+        candidate.id === routeId || candidate.path === `/p/${routeId}`,
+    );
+    if (page) return { plugin, page };
+  }
   const direct = pagePluginById(routeId);
-  if (direct) return direct;
-  return (
-    PAGE_PLUGINS.find((plugin) =>
-      plugin.pages.some(
-        (page) => page.id === routeId || page.path === `/p/${routeId}`,
-      ),
-    ) ?? null
-  );
+  return direct?.pages[0] ? { plugin: direct, page: direct.pages[0] } : null;
 }

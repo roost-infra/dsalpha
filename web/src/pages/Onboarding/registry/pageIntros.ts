@@ -46,7 +46,7 @@ export const PAGE_INTROS: PageIntroDef[] = [
   },
   {
     id: 'market',
-    matchRoute: (p) => p === '/market',
+    matchRoute: (p) => p === '/p/market',
     steps: [
       { id: 'ask', visual: 'marketAsk' },
       { id: 'draw', visual: 'marketDraw' },

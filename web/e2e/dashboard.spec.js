@@ -274,10 +274,11 @@ test.describe('Market Indices & News', () => {
     // Click the S&P 500 card: the whole card answers, not only its title
     await spx.click();
 
-    // Should navigate to /market?symbol=^GSPC
-    await page.waitForURL('**/market?symbol=*GSPC*');
-    expect(page.url()).toContain('/market');
-    expect(page.url()).toContain('GSPC');
+    // The legacy /market?symbol link lands on the plugin page; MarketView
+    // consumes the query into its selected stock and may clear the URL.
+    await page.waitForURL('**/p/market**');
+    expect(page.url()).toContain('/p/market');
+    await expect(page.getByText('S&P 500').first()).toBeVisible();
   });
 });
 

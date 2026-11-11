@@ -25,8 +25,8 @@ export const GETTING_STARTED_TASKS: GettingStartedTaskDef[] = [
     id: 'market',
     titleKey: 'onboarding.gettingStarted.tasks.market.title',
     descKey: 'onboarding.gettingStarted.tasks.market.desc',
-    to: '/market',
-    visitRoute: (p) => p === '/market',
+    to: '/p/market',
+    visitRoute: (p) => p === '/p/market',
   },
   {
     id: 'profile',

@@ -78,7 +78,7 @@ const E2E_WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 // isValidUuid and treats anything else as absent, so a readable placeholder
 // like `ws-e2e` silently lands back on the workspace gallery and the test
 // passes while measuring the route above the one it names.
-const APP_ROUTES = ['/dashboard', '/chat', `/chat/${E2E_WORKSPACE_ID}`, '/market', '/plugins', '/automations', '/settings', '/news/1'];
+const APP_ROUTES = ['/dashboard', '/chat', `/chat/${E2E_WORKSPACE_ID}`, '/p/market', '/plugins', '/automations', '/settings', '/news/1'];
 
 async function asDesktopShell(page, bridge = SHELL_BRIDGE) {
   await page.addInitScript((value) => {

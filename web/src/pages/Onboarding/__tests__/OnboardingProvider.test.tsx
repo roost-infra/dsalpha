@@ -667,7 +667,7 @@ describe('OnboardingProvider', () => {
       lastSeenReleaseVersion: '9999.1',
       pageIntrosSeen: Object.fromEntries(PAGE_INTROS.map((i) => [i.id, 1])),
     };
-    const routes = ['/chat', '/chat/t/a-thread', '/dashboard', '/market', '/automations'];
+    const routes = ['/chat', '/chat/t/a-thread', '/dashboard', '/p/market', '/automations'];
     // One route per intro, so an intro added later is covered or fails here.
     expect(PAGE_INTROS.filter((i) => !routes.some((r) => i.matchRoute(r)))).toEqual([]);
     for (const route of routes) {
@@ -680,7 +680,7 @@ describe('OnboardingProvider', () => {
 
     // The same page with its intro unseen does load it, so the spy can tell.
     mockPrefs = { ...mockPrefs, pageIntrosSeen: {} };
-    renderAt('/market', { withHost: true });
+    renderAt('/p/market', { withHost: true });
     await waitFor(() => expect(hostChunkLoaded).toHaveBeenCalled());
   });
 });
