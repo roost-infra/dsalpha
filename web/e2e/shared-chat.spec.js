@@ -175,8 +175,8 @@ test.describe('SharedChat page', () => {
       page.getByText("You don't have access, or this link is unavailable")
     ).toBeVisible({ timeout: 10000 });
 
-    // "Go to LangAlpha" link
-    const link = page.getByRole('link', { name: 'Go to LangAlpha' });
+    // The deployment's link home, renamed with the product.
+    const link = page.getByRole('link', { name: 'Go to dsalpha' });
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute('href', '/');
   });

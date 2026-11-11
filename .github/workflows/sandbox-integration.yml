@@ -176,6 +176,7 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: sandbox-daytona-results
           path: |
@@ -250,6 +251,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: sandbox-docker-results
           path: |
@@ -390,6 +392,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: sandbox-manual-results
           path: |

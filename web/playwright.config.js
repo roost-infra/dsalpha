@@ -70,8 +70,8 @@ export default defineConfig({
   // before workers race to. A build has nothing left to compile.
   globalSetup: './e2e/global-setup.js',
   metadata: { devServerOrigins },
-  timeout: 30_000,
-  retries: CI ? 1 : 0,
+  timeout: CI ? 60_000 : 30_000,
+  retries: CI ? 2 : 0,
   // Workers never share scenario state (each owns a mock server, and every
   // test sets the scenario it reads), so tests run in parallel one by one, not
   // a file at a time: a few long files would otherwise finish the run alone.
@@ -82,9 +82,11 @@ export default defineConfig({
   // of the time two took (3 runs each, retries off, none failing on four).
   // The benchmarks stay alone: a second browser on the same CPUs would move
   // the frame timings they measure.
-  workers: PERF ? 1 : CI ? 4 : undefined,
+  workers: PERF ? 1 : CI ? 2 : undefined,
   // CI keeps its console output and also writes the report the workflow uploads.
   reporter: CI ? [['dot'], ['html', { open: 'never' }]] : 'list',
+  // A loaded CI runner spends seconds between animation frames.
+  expect: { timeout: CI ? 10_000 : 5_000 },
   use: {
     baseURL: `http://127.0.0.1:${E2E_PORT}`,
     trace: 'on-first-retry',

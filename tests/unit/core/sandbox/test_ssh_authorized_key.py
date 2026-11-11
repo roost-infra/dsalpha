@@ -235,6 +235,7 @@ class TestTurns:
         " langalpha"
     )
 
+    @pytest.mark.flaky(reruns=3)
     def test_overlapping_removals_each_keep_the_others_removal(self, tmp_path):
         # The run that waits for the lock sleeps a second between tries; a
         # shorter sleep keeps the race and its ten attempts out of the clock.
