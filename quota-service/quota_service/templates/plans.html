@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}套餐 - LangAlpha 额度管理{% endblock %}
+{% block content %}
+<h1>套餐</h1>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>code</th><th>名称</th><th>tier</th><th>月费(¥)</th><th>含小时</th><th>月赠积分</th><th>沙箱单价</th><th>scopes</th><th>limits</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for p in plans %}
+      <tr>
+        <td class="mono">{{ p.code }}</td>
+        <td>{{ p.name }}</td>
+        <td>{{ p.access_tier }}</td>
+        <td>{{ "%.0f"|format(p.price_cny or 0) }}</td>
+        <td>{{ "%.0f"|format(p.included_hours_month or 0) }}</td>
+        <td>{{ "%.0f"|format(p.monthly_credits or 0) }}</td>
+        <td class="mono">{{ p.sandbox_pricing|tojson }}</td>
+        <td class="mono">{{ p.scopes|join(", ") }}</td>
+        <td class="mono">{{ p.limits|tojson }}</td>
+        <td>
+          <details>
+            <summary>编辑</summary>
+            <form method="post" action="/admin/plans/{{ p.code }}" style="margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+              <label>名称<input name="name" value="{{ p.name }}" required></label>
+              <label>描述<input name="description" value="{{ p.description or '' }}"></label>
+              <label>access_tier<input type="number" name="access_tier" value="{{ p.access_tier }}"></label>
+              <label>scopes（逗号分隔）<input name="scopes" value="{{ p.scopes|join(', ') }}"></label>
+              <label>limits（JSON）<textarea name="limits" rows="3">{{ p.limits|tojson }}</textarea></label>
+              <label>沙箱单价（JSON，credits/小时）<textarea name="sandbox_pricing" rows="3">{{ p.sandbox_pricing|tojson }}</textarea></label>
+              <label>月赠积分<input type="number" name="monthly_credits" step="0.01" value="{{ p.monthly_credits or 0 }}"></label>
+              <label>月费（¥）<input type="number" name="price_cny" step="0.01" value="{{ p.price_cny or 0 }}"></label>
+              <label>包含小时/月<input type="number" name="included_hours_month" step="0.01" value="{{ p.included_hours_month or 0 }}"></label>
+              <button class="primary" type="submit">保存</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>新建套餐</h2>
+<div class="card">
+  <form method="post" action="/admin/plans" style="display:flex; flex-direction:column; gap:6px;">
+    <label>code<input name="code" required placeholder="如 basic"></label>
+    <label>名称<input name="name" required placeholder="如 Basic"></label>
+    <label>描述<input name="description"></label>
+    <label>access_tier<input type="number" name="access_tier" value="0"></label>
+    <label>scopes（逗号分隔）<input name="scopes" placeholder="workspace:provider:daytona, workspace:always_on"></label>
+    <label>limits（JSON）<textarea name="limits" rows="3">{"computer_count": 1, "always_on": 0, "spec_computers": 0, "per_turn_credits": 200}</textarea></label>
+    <label>沙箱单价（JSON）<textarea name="sandbox_pricing" rows="2">{"standard": 166.7}</textarea></label>
+    <label>月赠积分<input type="number" name="monthly_credits" step="0.01" value="0"></label>
+    <label>月费（¥）<input type="number" name="price_cny" step="0.01" value="0"></label>
+    <label>包含小时/月<input type="number" name="included_hours_month" step="0.01" value="0"></label>
+    <button class="primary" type="submit">创建</button>
+  </form>
+</div>
+{% endblock %}

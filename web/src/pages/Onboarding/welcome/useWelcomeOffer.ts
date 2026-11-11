@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { useUser } from '@/hooks/useUser';
 import { readWelcomeDraft } from './draft';
 import { WELCOME_PATH } from './paths';
+import { INVESTING_PROFILE_WELCOME_ENABLED } from './feature';
 
 export interface WelcomeOffer {
   /**
@@ -36,6 +37,7 @@ export function useWelcomeOffer(): WelcomeOffer | null {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useUser();
+  if (!INVESTING_PROFILE_WELCOME_ENABLED) return null;
   if (user?.onboarding_completed === true) return null;
   const resumable = readWelcomeDraft(user?.user_id) !== null;
   return {

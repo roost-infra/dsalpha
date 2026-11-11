@@ -23,7 +23,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.config.settings import HOST_MODE
-from src.server.database.conversation import create_thread
+from src.server.database.conversation import create_thread, get_thread_by_id
 from src.server.services.turn_runtime import requested_workspace, turn_route
 from src.server.models.conversation import (
     ThreadCreateRequest,
@@ -44,6 +44,28 @@ _TITLE_WAIT_S = 20.0
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _payload_from_row(row: dict, bot_id: str | None) -> ThreadCreateResponse:
+    return ThreadCreateResponse(
+        thread_id=str(row["conversation_thread_id"]),
+        bot_id=bot_id,
+        workspace_id=str(row["workspace_id"]),
+        thread_index=row["thread_index"],
+        title=row.get("title"),
+        msg_type=row.get("msg_type") or "ptc",
+        subagents_allowed=row.get("subagents_allowed"),
+        reasoning_effort=row.get("reasoning_effort"),
+        fast_mode=row.get("fast_mode"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _respond(http_request: Request, payload: ThreadCreateResponse, title_task):
+    if "text/event-stream" in (http_request.headers.get("accept") or ""):
+        return _legacy_sse_response(payload, title_task)
+    return JSONResponse(status_code=201, content=payload.model_dump(mode="json"))
 
 
 def _legacy_sse_response(
@@ -117,12 +139,53 @@ async def create_thread_endpoint(
             x_user_id, byok=is_byok or has_oauth, surface=request.platform
         )
 
+    # The bot the thread answers as: the caller's live bot of this place.
+    from src.server.database import bots as bot_db
+    from src.server.database.home_workspace import get_home_workspace_id
+
+    turn_bot = None
+    if request.bot_id:
+        turn_bot = await bot_db.get_bot_for_user(x_user_id, request.bot_id)
+        target_ws = (
+            str(workspace["workspace_id"])
+            if workspace is not None
+            else get_home_workspace_id(x_user_id)
+        )
+        if turn_bot is None or str(turn_bot["workspace_id"]) != target_ws:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        await assert_reaches(principal, workspace_id=target_ws)
+        if turn_bot.get("status") != "active":
+            raise HTTPException(
+                status_code=409,
+                detail="This bot is paused. Resume it in Bots before chatting.",
+            )
+
     # Decided where the message path decides it, so the thread is born in the
     # workspace its runs will actually use.
-    route = turn_route(x_user_id, workspace)
+    route = turn_route(x_user_id, workspace, turn_bot)
     await assert_reaches(principal, workspace_id=route.workspace_id)
     await route.bind(x_user_id, workspace)
     workspace_id = route.workspace_id
+
+    # Opening a bot's chat returns the private thread it already has, when that
+    # thread is still usable. A shared or archived primary is not: the pointer
+    # is dropped and a new thread is minted below.
+    if turn_bot is not None:
+        usable = await bot_db.get_private_thread(turn_bot["bot_id"])
+        if usable:
+            existing = await get_thread_by_id(usable)
+            if (
+                existing is not None
+                and str(existing["workspace_id"]) == str(workspace_id)
+            ):
+                return _respond(
+                    http_request,
+                    _payload_from_row(existing, str(turn_bot["bot_id"])),
+                    None,
+                )
+            # A pointer in another workspace cannot be the chat this door opens.
+            await bot_db.clear_primary_pointing_at(usable)
+        await bot_db.clear_unusable_primary(turn_bot["bot_id"])
 
     # A title the caller named is the thread's own: nothing generates over it,
     # since the first message may be no words of the user's at all. Else the
@@ -148,6 +211,15 @@ async def create_thread_endpoint(
         logger.exception(f"Error pre-creating thread: {e}")
         raise HTTPException(status_code=500, detail="Failed to create thread")
 
+    if turn_bot is not None:
+        # The thread is the bot's from birth; the resolver would otherwise
+        # answer the first turn as the place's default.
+        await bot_db.bind_thread_bot(thread_id, turn_bot["bot_id"], force=True)
+        # The first chat a user opens with a bot is its private conversation.
+        # Pinning it here keeps bot-to-bot delivery from minting a second,
+        # unnamed thread the user never asked for (COALESCE keeps the first).
+        await bot_db.set_primary_thread(turn_bot["bot_id"], thread_id)
+
     title_task = None if named_title is not None else schedule_title_generation(
         thread_id=thread_id,
         user_id=x_user_id,
@@ -156,20 +228,8 @@ async def create_thread_endpoint(
         timezone=request.timezone,
     )
 
-    payload = ThreadCreateResponse(
-        thread_id=thread_id,
-        workspace_id=str(workspace_id),
-        thread_index=row["thread_index"],
-        title=title_stamp,
-        msg_type=row["msg_type"],
-        subagents_allowed=row["subagents_allowed"],
-        reasoning_effort=row.get("reasoning_effort"),
-        fast_mode=row.get("fast_mode"),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
+    payload = _payload_from_row(
+        {**row, "conversation_thread_id": thread_id, "title": title_stamp},
+        str(turn_bot["bot_id"]) if turn_bot is not None else None,
     )
-
-    if "text/event-stream" in (http_request.headers.get("accept") or ""):
-        return _legacy_sse_response(payload, title_task)
-
-    return JSONResponse(status_code=201, content=payload.model_dump(mode="json"))
+    return _respond(http_request, payload, title_task)

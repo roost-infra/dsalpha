@@ -97,3 +97,90 @@ def test_a_named_title_is_capped_like_a_rename():
 def test_a_reply_after_a_long_quote_survives_the_clip():
     message = '<quote source="Analyst">' + "word " * 1000 + "</quote>\n<reply>why?</reply>"
     assert ThreadCreateRequest(first_query=message).first_query == message
+
+
+@pytest.mark.asyncio
+async def test_a_named_bot_is_bound_to_the_new_thread():
+    bot = {
+        "bot_id": "b-1",
+        "workspace_id": "ws-1",
+        "status": "active",
+        "role": "analyst",
+    }
+    body = {"workspace_id": "ws-1", "bot_id": "b-1", "title": "T"}
+    with patch(
+        "src.server.database.bots.get_bot_for_user", AsyncMock(return_value=bot)
+    ), patch(
+        "src.server.database.bots.get_private_thread", AsyncMock(return_value=None)
+    ), patch(
+        "src.server.database.bots.clear_unusable_primary", AsyncMock()
+    ), patch(
+        "src.server.database.bots.bind_thread_bot", AsyncMock()
+    ) as bind, patch(
+        "src.server.database.bots.set_primary_thread", AsyncMock()
+    ) as pin:
+        resp, create, _ = await _create(body)
+    assert resp.status_code == 201
+    assert resp.json()["bot_id"] == "b-1"
+    create.assert_awaited_once()
+    bind.assert_awaited_once()
+    assert bind.await_args.kwargs["force"] is True
+    pin.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_opening_a_bot_reuses_its_usable_private_thread():
+    from datetime import UTC, datetime
+
+    now = datetime.now(UTC)
+    bot = {"bot_id": "b-1", "workspace_id": "ws-1", "status": "active", "role": "analyst"}
+    existing = {
+        "conversation_thread_id": "t-existing",
+        "workspace_id": "ws-1",
+        "thread_index": 4,
+        "title": "Quant",
+        "msg_type": "ptc",
+        "subagents_allowed": None,
+        "reasoning_effort": None,
+        "fast_mode": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    body = {"workspace_id": "ws-1", "bot_id": "b-1", "title": "Ignored"}
+    with patch(
+        "src.server.database.bots.get_bot_for_user", AsyncMock(return_value=bot)
+    ), patch(
+        "src.server.database.bots.get_private_thread", AsyncMock(return_value="t-existing")
+    ), patch(
+        "src.server.app.threads.create.get_thread_by_id", AsyncMock(return_value=existing)
+    ), patch(
+        "src.server.database.bots.clear_unusable_primary", AsyncMock()
+    ) as clear, patch(
+        "src.server.database.bots.bind_thread_bot", AsyncMock()
+    ) as bind:
+        resp, create, generate = await _create(body)
+    assert resp.status_code == 201
+    assert resp.json()["thread_id"] == "t-existing"
+    assert resp.json()["title"] == "Quant"
+    assert resp.json()["bot_id"] == "b-1"
+    create.assert_not_awaited()
+    bind.assert_not_awaited()
+    clear.assert_not_awaited()
+    generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_paused_bot_cannot_be_named_for_a_new_thread():
+    bot = {
+        "bot_id": "b-1",
+        "workspace_id": "ws-1",
+        "status": "paused",
+        "role": "analyst",
+    }
+    body = {"workspace_id": "ws-1", "bot_id": "b-1", "title": "T"}
+    with patch(
+        "src.server.database.bots.get_bot_for_user", AsyncMock(return_value=bot)
+    ):
+        resp, create, _ = await _create(body)
+    assert resp.status_code == 409
+    create.assert_not_awaited()

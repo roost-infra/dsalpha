@@ -52,12 +52,13 @@ function GitHubIcon() {
 type LoginView = 'method' | 'login' | 'signup' | 'magic-link' | 'forgot-password' | 'check-inbox';
 
 /**
- * Deployments that only accept email + password set this, and the ways in that
- * cannot work disappear rather than failing on click: an unconfigured OAuth
- * provider, and sign-up on a project with sign-ups disabled. Build-time
- * because it is a property of the auth backend, not of the visitor.
+ * Build-time facts about the auth backend, so a way in that cannot work
+ * disappears instead of failing on click. OAuth is off until its providers
+ * are configured; email sign-up stays on while the Supabase project allows
+ * new users. Defaults keep the upstream app's behavior.
  */
-const EMAIL_ONLY = import.meta.env.VITE_AUTH_EMAIL_ONLY === 'true';
+const OAUTH_ENABLED = import.meta.env.VITE_AUTH_OAUTH_ENABLED === 'true';
+const SIGNUP_ENABLED = import.meta.env.VITE_AUTH_SIGNUP_ENABLED !== 'false';
 
 interface SwitchPromptProps {
   i18nKey: string;
@@ -98,7 +99,11 @@ function LoginPage() {
   } = useAuth();
   const [searchParams] = useSearchParams();
   const [view, setView] = useState<LoginView>(
-    searchParams.get('mode') === 'signup' ? 'signup' : 'method'
+    searchParams.get('mode') === 'signup'
+      ? 'signup'
+      : searchParams.get('mode') === 'login'
+        ? 'login'
+        : 'method'
   );
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -286,7 +291,7 @@ function LoginPage() {
                 <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
                 <span>{t('auth.continueWithEmail')}</span>
               </button>
-              {!EMAIL_ONLY && (
+              {OAUTH_ENABLED && (
                 <>
                   <button
                     type="button"
@@ -317,7 +322,7 @@ function LoginPage() {
                 <span>{t('auth.magicLinkCta')}</span>
               </button>
             </div>
-            {!EMAIL_ONLY && (
+            {SIGNUP_ENABLED && (
               <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
             )}
           </div>
@@ -385,9 +390,9 @@ function LoginPage() {
                      read right for both cases. */
                   <AccountRecoveryHint
                     i18nKey={
-                      EMAIL_ONLY
-                        ? 'auth.invalidCredentialsHintEmailOnly'
-                        : 'auth.invalidCredentialsHint'
+                      OAUTH_ENABLED
+                        ? 'auth.invalidCredentialsHint'
+                        : 'auth.invalidCredentialsHintEmailOnly'
                     }
                     onPrimary={() => goToView('method')}
                     onMagic={() => void sendMagicLinkTo(loginEmail)}
@@ -407,7 +412,7 @@ function LoginPage() {
             >
               {isSubmitting ? t('auth.loggingIn') : t('auth.login')}
             </button>
-            {!EMAIL_ONLY && (
+            {SIGNUP_ENABLED && (
               <SwitchPrompt i18nKey="auth.noAccount" onSwitch={() => goToView('signup')} />
             )}
             <button type="button" className="login-page__back" onClick={() => goToView('method')}>

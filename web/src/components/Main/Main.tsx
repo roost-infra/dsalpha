@@ -9,9 +9,7 @@ import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
 import { lazyWithMotion, preloadableLazy } from '@/lib/lazyWithMotion';
 import type { AppSection } from '@/lib/appRoutes';
 
-// The fork's Factor Board is a route of its own, outside upstream's rail, so
-// its chunk is keyed here beside the sections without joining `APP_SECTIONS`.
-type RouteSection = AppSection | 'factors';
+type RouteSection = AppSection;
 
 // Chunk thunks shared by the lazy components and preloadRouteChunk — import()
 // is deduped by the module system, so a preload and the lazy mount share one
@@ -20,8 +18,8 @@ type RouteSection = AppSection | 'factors';
 const routeChunks = {
   dashboard: () => import('../../pages/Dashboard/Dashboard'),
   chat: () => import('../../pages/ChatAgent/ChatAgent'),
+  rooms: () => import('../../pages/Rooms/Rooms'),
   market: () => import('../../pages/MarketView/MarketView'),
-  factors: () => import('../../pages/FactorBoard/FactorBoard'),
   news: () => import('../../pages/Detail/NewsDetailPage'),
   automations: () => import('../../pages/Automations/Automations'),
   orders: () => import('../../pages/Orders/Orders'),
@@ -33,9 +31,9 @@ const routeChunks = {
 
 const Dashboard = lazyWithMotion(routeChunks.dashboard);
 const ChatAgent = lazyWithMotion(routeChunks.chat);
+// The Rooms page animates nothing, so it skips the framer download.
+const Rooms = preloadableLazy(routeChunks.rooms);
 const MarketView = lazyWithMotion(routeChunks.market);
-// Animates nothing, so it skips the framer download (see lib/lazyWithMotion).
-const FactorBoard = preloadableLazy(routeChunks.factors);
 // Animates nothing, so it skips the framer download (see lib/lazyWithMotion).
 const NewsDetailPage = preloadableLazy(routeChunks.news);
 const Automations = lazyWithMotion(routeChunks.automations);
@@ -49,8 +47,8 @@ const Settings = lazyWithMotion(routeChunks.settings);
 const routePreloads = {
   dashboard: Dashboard.preload,
   chat: ChatAgent.preload,
+  rooms: Rooms.preload,
   market: MarketView.preload,
-  factors: FactorBoard.preload,
   news: NewsDetailPage.preload,
   automations: Automations.preload,
   orders: Orders.preload,
@@ -75,7 +73,7 @@ export function preloadRouteChunk(pathname: string): void {
 }
 
 // Warmed in the order the rail lists them, the likeliest next stops first.
-const WARM_ORDER = ['dashboard', 'chat', 'market', 'automations', 'plugins', 'settings', 'orders', 'news'] as const satisfies readonly AppSection[];
+const WARM_ORDER = ['dashboard', 'chat', 'rooms', 'market', 'automations', 'plugins', 'settings', 'orders', 'news'] as const satisfies readonly AppSection[];
 const WARM_IDLE_TIMEOUT_MS = 2000;
 
 /** Warms every section's chunk once the shell is idle, one at a time so none
@@ -149,8 +147,8 @@ function Main() {
           <Route path="/chat/t/:threadId/:taskId" element={<ChatAgent />} />
           <Route path="/chat/t/:threadId" element={<ChatAgent />} />
           <Route path="/chat/:workspaceId" element={<ChatAgent />} />
+          <Route path="/rooms" element={<Rooms />} />
           <Route path="/market" element={<MarketView />} />
-          <Route path="/factors" element={<FactorBoard />} />
           <Route path="/automations" element={<Automations />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/plugins" element={<Plugins />} />

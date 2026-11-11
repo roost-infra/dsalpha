@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}LangAlpha 额度管理{% endblock %}</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+         background: #f6f7f9; color: #1b1d25; }
+  header.top { display: flex; align-items: center; gap: 24px; padding: 12px 24px;
+               background: #1b1d25; color: #fff; }
+  header.top strong { font-size: 15px; }
+  header.top nav { display: flex; gap: 16px; flex: 1; }
+  header.top a { color: #cfd2da; text-decoration: none; }
+  header.top a:hover { color: #fff; }
+  header.top form { margin: 0; }
+  header.top button { background: transparent; color: #cfd2da; border: 1px solid #4a4d57;
+                      border-radius: 6px; padding: 4px 12px; cursor: pointer; }
+  main { max-width: 1180px; margin: 24px auto; padding: 0 24px; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px;
+          margin-bottom: 16px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+  .stat { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
+  .stat .n { font-size: 22px; font-weight: 600; }
+  .stat .k { color: #6b7280; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+  th { color: #6b7280; font-weight: 500; font-size: 12px; }
+  tr:hover td { background: #fafbfc; }
+  .flash { background: #eef6ff; border: 1px solid #cfe3ff; color: #1e4f8f;
+           padding: 8px 12px; border-radius: 8px; margin-bottom: 16px; }
+  form.inline { display: inline; margin: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .row label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #6b7280; }
+  input, select, textarea { font: inherit; padding: 6px 8px; border: 1px solid #d1d5db;
+                            border-radius: 6px; background: #fff; }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  button.primary { background: #1b1d25; color: #fff; border: 0; border-radius: 6px;
+                   padding: 7px 14px; cursor: pointer; }
+  button.danger { background: #fff; color: #b42318; border: 1px solid #f0c2bd;
+                  border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  .muted { color: #6b7280; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  details summary { cursor: pointer; color: #1e4f8f; }
+  .pager { display: flex; gap: 12px; margin-top: 12px; }
+  .pager a { color: #1e4f8f; text-decoration: none; }
+</style>
+</head>
+<body>
+<header class="top">
+  <strong>LangAlpha 额度管理</strong>
+  <nav>
+    <a href="/admin">概览</a>
+    <a href="/admin/users">用户</a>
+    <a href="/admin/plans">套餐</a>
+    <a href="/admin/ledger">流水</a>
+    <a href="/admin/audit">审计</a>
+  </nav>
+  <form method="post" action="/admin/logout"><button type="submit">退出</button></form>
+</header>
+<main>
+  {% if msg %}<p class="flash">{{ msg }}</p>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

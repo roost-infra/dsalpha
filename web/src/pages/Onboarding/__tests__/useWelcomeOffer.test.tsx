@@ -16,6 +16,13 @@ const h = vi.hoisted(() => ({
   /** The users this browser holds a draft for; what a draft keeps is the
    *  draft module's own to test. */
   drafts: new Set<string>(),
+  enabled: true,
+}));
+
+vi.mock('../welcome/feature', () => ({
+  get INVESTING_PROFILE_WELCOME_ENABLED() {
+    return h.enabled;
+  },
 }));
 
 vi.mock('@/hooks/useUser', () => ({
@@ -35,11 +42,17 @@ function renderOffer() {
 }
 
 beforeEach(() => {
+  h.enabled = true;
   h.drafts.clear();
   h.user = { user_id: 'u1', email: 'tester@example.com', onboarding_completed: false };
 });
 
 describe('useWelcomeOffer', () => {
+  it('makes no offer while the investing-profile flow is off', () => {
+    h.enabled = false;
+    expect(renderOffer().result.current.offer).toBeNull();
+  });
+
   it('makes no offer once the profile is saved', () => {
     h.user = { ...h.user, onboarding_completed: true };
     expect(renderOffer().result.current.offer).toBeNull();

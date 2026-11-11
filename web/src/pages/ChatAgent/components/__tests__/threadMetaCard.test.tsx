@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { ThreadTreeRow } from '../NavigationRows';
+import { NavBotsContext, ThreadTreeRow } from '../NavigationRows';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -82,5 +82,26 @@ describe('thread row meta card', () => {
     wait(OPEN_DELAY);
 
     expect(row).toHaveAttribute('data-state', 'open');
+  });
+
+  it('draws the bot a session answers as, so a session reads as its bot', () => {
+    render(
+      <NavBotsContext value={new Map([['bot-1', { bot_id: 'bot-1', name: 'Rates analyst', avatar: {}, primary_thread_id: 'thread-1' }]])}>
+        <ThreadTreeRow
+          wsId="ws-1"
+          thread={{ thread_id: 'thread-1', title: 'Rate path', bot_id: 'bot-1' }}
+          isCurrentThread={false}
+          isExpanded={false}
+          isMobile={false}
+          onToggleThread={vi.fn()}
+          onNavigateThread={vi.fn()}
+          onSelectAgent={vi.fn()}
+          onPinThread={vi.fn()}
+          onArchiveThread={vi.fn()}
+        />
+      </NavBotsContext>,
+    );
+    expect(screen.getByTestId('nav-thread-bot-avatar')).toBeInTheDocument();
+    expect(screen.getByTestId('nav-primary-session')).toHaveTextContent('nav.primarySession');
   });
 });

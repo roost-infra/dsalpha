@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}流水 - LangAlpha 额度管理{% endblock %}
+{% block content %}
+<h1>流水</h1>
+
+<div class="card">
+  <form class="row" method="get" action="/admin/ledger">
+    <label>用户 ID<input type="text" name="user_id" value="{{ user_id }}" placeholder="精确 user_id"></label>
+    <label>类型
+      <select name="reason">
+        <option value="">全部</option>
+        {% for r in ["topup", "adjust", "grant", "token", "tool", "sandbox", "usage"] %}
+        <option value="{{ r }}" {% if r == reason %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="primary" type="submit">筛选</button>
+  </form>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>时间</th><th>用户</th><th>变动</th><th>类型</th><th>来源</th></tr></thead>
+    <tbody>
+      {% for e in entries %}
+      <tr>
+        <td class="muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M:%S") if e.created_at else "" }}</td>
+        <td class="mono"><a href="/admin/users/{{ e.user_id }}">{{ e.user_id }}</a></td>
+        <td>{{ "%.2f"|format(e.delta) }}</td>
+        <td class="mono">{{ e.reason }}</td>
+        <td class="mono muted">{{ e.source or "" }} {{ e.source_id or "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">暂无流水</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="pager">
+    {% if page > 1 %}
+    <a href="/admin/ledger?user_id={{ user_id|urlencode }}&reason={{ reason|urlencode }}&page={{ page - 1 }}">上一页</a>
+    {% endif %}
+    {% if entries|length == page_size %}
+    <a href="/admin/ledger?user_id={{ user_id|urlencode }}&reason={{ reason|urlencode }}&page={{ page + 1 }}">下一页</a>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

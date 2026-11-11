@@ -22,6 +22,7 @@ import { useOnboardingPrefs } from './useOnboardingPrefs';
 import { useFirstTurnThread } from './useFirstTurnThread';
 import { useThisMacTask } from './useThisMacTask';
 import { shouldAutoOpenWelcome } from './welcome/autoOpen';
+import { INVESTING_PROFILE_WELCOME_ENABLED } from './welcome/feature';
 import { WELCOME_PATH, isLegacyOnboardingSearch, legacyOnboardingTarget } from './welcome/paths';
 import { readMirror, type OnboardingMirror } from './mirror';
 import { ANNOUNCEMENTS, DEPLOYED_INTROS, DEPLOYED_TASKS, GETTING_STARTED_TASKS } from './registry';
@@ -154,6 +155,10 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   // as `firstRun`: another account signing in gets a first visit of its own.
   const welcomeOpenedForRef = useRef<string | null>(null);
   useEffect(() => {
+    // The core assistant does not interview new accounts about investing.
+    // That flow belongs to the optional research plugin; it is still reachable
+    // at /welcome, but never opened for a fresh account here.
+    if (!INVESTING_PROFILE_WELCOME_ENABLED) return;
     // Nothing is recorded without an account. The user is a dependency, so
     // a visit made while it loads is recorded once it arrives.
     if (!user) return;

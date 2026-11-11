@@ -132,8 +132,7 @@
     "resize": "调整侧边栏宽度",
     "plugins": "插件",
     "orders": "订单",
-    "menu": "菜单",
-    "factors": "因子看板"
+    "menu": "菜单"
   },
   "account": {
     "menuLabel": "账号菜单"
@@ -144,6 +143,7 @@
     "minimize": "最小化面板",
     "displayOptions": "显示选项",
     "newThread": "新建对话",
+    "rooms": "群聊",
     "orderBy": "排序方式",
     "workspacesShown": "显示的工作区数量",
     "threadsPerWorkspace": "每个工作区显示的对话数",
@@ -166,6 +166,7 @@
     "threadNeedsInput": "等待您的输入",
     "threadUnseen": "已完成，尚未查看",
     "untitledThread": "未命名",
+    "primarySession": "主会话",
     "onComputer": "位于 {{name}} · {{kind}}",
     "noConversations": "暂无会话",
     "workspaceFallback": "工作区",
@@ -499,6 +500,7 @@
       "chat": "对话",
       "artifacts": "Artifact",
       "agent": "行为",
+      "bots": "Bot",
       "model": "模型",
       "integrations": "集成",
       "trading": "交易",
@@ -514,6 +516,7 @@
       "chat": "回复如何呈现，以及 Agent 工作时对话里显示什么。",
       "artifacts": "评论 Agent 生成的文件时的默认设置。",
       "agent": "Agent 如何作答、哪些操作无需询问，以及如何搜索网页。",
+      "bots": "你的工作区以哪些命名身份作答：人设、模型与审批。",
       "model": "你可用的模型，以及 Agent 实际使用的模型。",
       "integrations": "在聊天应用中与你的 Agent 对话，并管理用你的账户登录的应用。",
       "trading": "Agent 在你的券商账户中下单的权限范围。",
@@ -2126,6 +2129,7 @@
     "worker": "工作者",
     "agentNotFound": "未找到 Agent",
     "stoppedChip": "已停止",
+    "aiDisclaimer": "AI 生成内容，仅供参考，不构成投资建议。",
     "workingFor": "工作中 {{duration}}",
     "workedFor": "已工作 {{duration}}",
     "worked": "工作过程",
@@ -2274,6 +2278,17 @@
       "taskFinished": "已完成",
       "taskFailed": "已失败",
       "commandStoppedEarly": "已提前停止"
+    },
+    "botMessage": {
+      "openExchange": "查看完整对话",
+      "prefix": {
+        "message": "消息来自",
+        "request": "请求来自",
+        "reply": "回复来自",
+        "report": "汇报来自",
+        "question": "提问来自",
+        "notice": "通知来自"
+      }
     },
     "taskCard": {
       "statusRunning": "运行中",
@@ -3265,6 +3280,13 @@
     "threadStrategy": "对话",
     "newThreadEachRun": "每次新建对话",
     "continueExisting": "继续现有对话",
+    "bot": "Bot",
+    "workspaceAnalyst": "工作区分析师（无 Bot）",
+    "botUnavailable": "该自动化已不再列出的 Bot",
+    "botTargetContinue": "在此 Bot 的持续会话中运行。",
+    "botTargetNew": "每次运行都新开一个会话。",
+    "botTargetContinueNamed": "在 {{name}} 的持续会话中运行。",
+    "botTargetNewNamed": "每次运行都以 {{name}} 的身份新开会话。",
     "maxFailures": "最大失败次数",
     "saveChanges": "保存更改",
     "namePlaceholder": "例如：每日市场摘要",
@@ -3721,6 +3743,8 @@
       "user": "账号",
       "sendMessage": "发送消息",
       "messageTargets": "发送目标",
+      "sendBotMessage": "给 Bot 发消息",
+      "reportTo": "汇报任务",
       "scheduleWakeup": "唤醒",
       "optionsChain": "期权链",
       "marketMovers": "市场异动"
@@ -3745,6 +3769,29 @@
       "updated_user": "已更新账号",
       "read_automations": "已读取自动化",
       "updated_automations": "已更新自动化"
+    },
+    "botMessage": {
+      "kind": {
+        "message": "消息",
+        "request": "请求",
+        "reply": "回复",
+        "report": "汇报",
+        "question": "提问",
+        "notice": "通知"
+      },
+      "messaging": "正在给 {{name}} 发{{kind}}",
+      "messagingBot": "正在给另一个 Bot 发{{kind}}",
+      "reporting": "正在汇报 · 汇报",
+      "messaged": "已给 {{name}} 发消息",
+      "messagedBot": "已给另一个 Bot 发消息",
+      "reported": "已向 {{name}} 汇报",
+      "reportedBack": "已汇报",
+      "delivered": "已送达",
+      "queued": "排队中",
+      "refused": "被拒绝",
+      "failed": "失败",
+      "missing": "未找到",
+      "already": "已完成过"
     },
     "inProgress": {
       "callingServer": "正在调用 {{server}}...",
@@ -6470,10 +6517,210 @@
     "thisDevice": "本设备",
     "common": "常用"
   },
+  "bots": {
+    "title": "你的 Bot",
+    "description": "Bot 是工作区作答时使用的身份：名称、人设、模型与审批级别。",
+    "create": "新建 Bot",
+    "addToWorkspace": "添加 Bot",
+    "emptyTitle": "还没有 Bot",
+    "emptyDescription": "工作区需要有自己的 Bot，才能以自己的身份作答。先创建一个开始。",
+    "noWorkspace": "这个账户还没有可以放 Bot 的工作区。请先创建工作区。",
+    "groupCount": "Bot 数：{{n}}",
+    "readOnly": "只读",
+    "pausedBadge": "已暂停",
+    "chiefOfStaffDesc": "派生自 Home，无法在这里编辑或删除。",
+    "summaryLine": "模型：{{model}} · 审批：{{approval}}",
+    "modelFollowsThread": "跟随会话的模型",
+    "skills": "技能",
+    "skillsPlaceholder": "以逗号分隔的技能名称",
+    "toolsAllow": "允许的工具",
+    "toolsAllowPlaceholder": "以逗号分隔的工具名称；留空则保持默认工具面",
+    "toolsDeny": "屏蔽的工具",
+    "toolsDenyPlaceholder": "以逗号分隔、需要屏蔽的工具名称",
+    "memoryScopes": "记忆范围",
+    "memoryScopeWorkspace": "工作区记忆",
+    "memoryScopeUser": "用户记忆",
+    "memoryScopeRoom": "群聊记忆",
+    "pauseNamed": "暂停 {{name}}",
+    "resumeNamed": "恢复 {{name}}",
+    "editNamed": "编辑 {{name}}",
+    "deleteNamed": "删除 {{name}}",
+    "name": "名称",
+    "namePlaceholder": "例如：宏观分析师",
+    "workspace": "工作区",
+    "persona": "人设",
+    "personaPlaceholder": "它该如何说话、用来做什么",
+    "approvalLabel": "审批",
+    "approval": {
+      "ask": "先询问我",
+      "edits": "自动批准编辑",
+      "auto": "自动批准更多操作",
+      "full": "完全自主"
+    },
+    "approvalDeferredNote": "仅保存并展示：v1 不会自动批准高风险操作。",
+    "avatar": {
+      "label": "头像",
+      "auto": "使用自动头像",
+      "mark": "几何标记",
+      "emoji": "表情",
+      "image": "图片",
+      "colorLabel": "颜色",
+      "colors": {
+        "amber": "琥珀",
+        "teal": "青绿",
+        "blue": "蓝色",
+        "violet": "紫色",
+        "rose": "玫红",
+        "moss": "苔绿",
+        "clay": "陶土",
+        "slate": "石板灰"
+      },
+      "shapeLabel": "形状",
+      "shapes": {
+        "circle": "圆形",
+        "squircle": "圆角方形",
+        "hex": "六边形",
+        "blob": "不规则圆"
+      },
+      "glyph": "字符（可选）",
+      "glyphHint": "留空则使用名字首字。",
+      "emojiPlaceholder": "例如 🦊",
+      "imageUrl": "图片链接",
+      "imagePlaceholder": "https://…",
+      "imageInvalid": "请使用 http(s) 或 data: 图片链接。"
+    },
+    "model": "模型",
+    "modelPlaceholder": "服务商的模型 ID；留空则跟随会话",
+    "provider": "服务商",
+    "providerPlaceholder": "例如：anthropic",
+    "createTitle": "新建 Bot",
+    "createDescription": "每个工作区最多 {{max}} 个 Bot。Bot 在它拥有的每个会话中以这个身份作答。",
+    "editTitle": "编辑 {{name}}",
+    "editDescription": "改动会影响之后的回复。",
+    "deleteTitle": "删除 Bot",
+    "deleteDescription": "删除 {{name}}？它的会话记录仍可查看，但 Bot 将不再作答。",
+    "deleteConfirmAction": "删除 Bot",
+    "failed": "没有保存成功，请重试。",
+    "summary_other": "{{count}} 个 Bot · {{workspaces}}",
+    "workspaceCount_other": "{{count}} 个工作区",
+    "memoryScopesDeferredNote": "仅保存并展示：v1 尚未按记忆范围限制访问。",
+    "loadFailed": "无法加载 Bot。",
+    "chat": "对话",
+    "chatNamed": "与 {{name}} 对话",
+    "chatPaused": "恢复该 Bot 后才能对话",
+    "chatFailed": "无法打开该对话，请重试。",
+    "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。"
+  },
+  "conversations": {
+    "moreSessions": "工作区与历史会话",
+    "title": "会话",
+    "workspace": "工作区",
+    "noRooms": "这个工作区还没有群聊"
+  },
+  "rooms": {
+    "roomsSection": "群聊",
+    "privateSection": "私聊",
+    "botMessagesSection": "Bot 互发消息",
+    "title": "群聊",
+    "description": "共用的消息记录，多个 Bot 在这里按轮次交流。",
+    "newRoom": "新建群聊",
+    "workspace": "工作区",
+    "listLabel": "群聊列表",
+    "loadFailed": "无法加载群聊，请重试。",
+    "workspaceRequired": "请先创建工作区，再开始群聊。",
+    "emptyTitle": "还没有群聊",
+    "emptyDescription": "群聊是一份共用的消息记录，里面有几个 Bot。你发一条消息就会开启一轮，它们依次作答。",
+    "archivedBadge": "已归档",
+    "selectTitle": "打开一个群聊",
+    "selectDescription": "从左侧选择一个群聊，或新建一个。",
+    "hostBadge": "主持",
+    "primarySession": "主会话",
+    "unread": "有未读消息",
+    "previewEmpty": "还没有消息",
+    "membersCount": "{{count}} 位成员",
+    "privateEmpty": "这个工作区还没有 Bot。",
+    "privateOpen": "私聊",
+    "botMessagesOpen": "查看",
+    "botMessagesTitle": "Bot 之间的消息",
+    "botMessagesEmpty": "暂无 Bot 之间的消息。",
+    "botMessagesFailed": "加载 Bot 消息失败。",
+    "pausedBadge": "已暂停",
+    "members": "成员",
+    "addMember": "添加 Bot",
+    "addMemberPlaceholder": "选择一个 Bot",
+    "allMembersAdded": "这个工作区的 Bot 已经全部在群里了。",
+    "removeMember": "移除 {{name}}",
+    "back": "返回群聊列表",
+    "live": "实时",
+    "reconnecting": "正在重新连接…",
+    "archiveRoom": "归档群聊",
+    "archiveTitle": "归档群聊",
+    "archiveDescription": "归档 {{name}}？记录仍可查看，但不能再发消息。",
+    "archiveConfirm": "归档",
+    "archivedNotice": "这个群聊已归档。记录仍可查看，但不能再发消息。",
+    "bulletin": "公告",
+    "bulletinPlaceholder": "每个成员作答前都会读到这条说明",
+    "bulletinAdd": "添加公告",
+    "bulletinEdit": "编辑",
+    "bulletinSave": "保存",
+    "responder": {
+      "label": "谁回复",
+      "everyone": "所有成员回复",
+      "mentions": "只有被 @ 的 Bot 回复",
+      "single": "只有一个 Bot 回复",
+      "singleNamed": "只有 {{name}} 回复"
+    },
+    "logLabel": "群聊记录",
+    "logEmpty": "还没有消息。发一条消息来开启一轮。",
+    "logLoadFailed": "无法加载群聊记录。",
+    "roomLoadFailed": "无法加载这个群聊。",
+    "you": "你",
+    "unknownSender": "Bot",
+    "round": {
+      "queued": "正在开始这一轮…",
+      "speaking": "{{name}} 正在发言…",
+      "wrapUp": "正在收尾…",
+      "finished": "本轮已结束",
+      "failed": "本轮失败"
+    },
+    "composer": {
+      "placeholder": "给群聊发消息…",
+      "send": "发送",
+      "sending": "发送中…"
+    },
+    "create": {
+      "title": "新建群聊",
+      "description": "每个群聊最多 {{max}} 个 Bot。你发一条消息会开启一轮，它们依次作答。",
+      "name": "名称",
+      "namePlaceholder": "例如：早间交易台",
+      "workspace": "工作区",
+      "members": "Bot",
+      "membersHint": "已选 {{n}} / {{max}}",
+      "noBots": "这个工作区还没有 Bot。请先到设置里创建一个。",
+      "host": "主持",
+      "hostNone": "由第一个成员主持",
+      "responder": "谁回复",
+      "bulletin": "公告",
+      "bulletinPlaceholder": "可选：每个 Bot 作答前都会读到的说明",
+      "create": "创建群聊",
+      "failed": "群聊没有创建成功，请重试。"
+    },
+    "failed": "操作没有成功，请重试。",
+    "connecting": "正在连接…",
+    "streamError": "房间的实时更新已停止。",
+    "memberCap": "一个群聊最多 {{max}} 个 Bot。",
+    "membersLoading": "正在加载工作区的 Bot…",
+    "membersError": "无法加载工作区的 Bot。",
+    "restoreRoom": "恢复群聊",
+    "newMessages": "有新消息",
+    "workspacesFailed": "无法加载工作区。",
+    "makeHost": "设为主持",
+    "makeHostNamed": "将 {{name}} 设为主持"
+  },
   "agents": {
     "chiefOfStaffHint": "统筹所有工作区的分析师，把每项任务交给合适的那一位。",
     "home": "Home",
-    "chiefOfStaff": "CoS Agent",
+    "chiefOfStaff": "Chief of Staff",
     "analyst": "分析师",
     "pickWhere": "选择 Agent 的工作范围",
     "backToChiefOfStaff": "返回 CoS Agent",
@@ -6983,164 +7230,6 @@
       "maxOutputPlaceholder": "如 8K",
       "maxOutputHint": "端点拒绝较长回复时再设置。留空则使用默认值。",
       "maxOutputInvalid": "请输入 token 数，如 8K。"
-    }
-  },
-  "factors": {
-    "title": "因子看板",
-    "subtitle": "因子检测 · IC · 样本外",
-    "health": {
-      "ok": "因子服务已连接（{{url}}）",
-      "down": "因子服务不可达",
-      "unconfigured": "未配置因子服务：请设置 FACTOR_MINER_URL 指向 factor-miner，或使用 hub 的 /hub/mcp/alpha 分组。",
-      "unreachable": "因子服务当前不可达：检测会失败，请检查容器 mcp-factor-miner 是否在运行。"
-    },
-    "editor": {
-      "label": "因子脚本",
-      "name": "因子名称",
-      "templates": "内置模板",
-      "run": "一键检测",
-      "running": "检测中…"
-    },
-    "report": {
-      "label": "检测报告",
-      "empty": "粘贴一个因子脚本，或选一个内置模板，然后点「一键检测」。",
-      "failed": "检测失败",
-      "noVerdict": "无结论",
-      "elapsed": "耗时 {{seconds}}s"
-    },
-    "progress": {
-      "title": "正在检测 {{name}}",
-      "meta": "{{done}}/{{total}} 阶段完成 · 已用 {{elapsed}}s",
-      "note": "IC 检测要扫描全量 A 股面板，通常需要几分钟；可以离开本页，回来后用运行 ID 继续查看。"
-    },
-    "contract": {
-      "title": "契约检查",
-      "unknown": "未执行契约检查"
-    },
-    "ic": {
-      "title": "截面 IC（近 N 个交易日）",
-      "window": "近 {{days}} 日",
-      "none": "无有效 IC",
-      "note": "IC 为因子值与次日收益的截面相关系数。|IC| ≥ 0.05 视为强，≥ 0.02 视为可用，低于 0.02 通常不足以覆盖交易成本。",
-      "last": "最新 {value}",
-      "peak": "峰值 {date} {value}",
-      "meanN": "日均 {value} 只",
-      "points": "{count} 个交易日",
-      "curveAria": "近 {days} 日逐日 IC 曲线，最新 {value}，共 {points} 个点"
-    },
-    "oos": {
-      "title": "样本外检验",
-      "metric": "指标",
-      "mining": "挖掘窗",
-      "oos": "样本外",
-      "ic": "IC",
-      "annualized": "年化收益",
-      "drawdown": "最大回撤",
-      "decay": "相对衰减：{{value}}",
-      "curve": {
-        "mining": "挖掘窗口",
-        "oos": "样本外",
-        "dayIndex": "第 {i} 个交易日",
-        "note": "两个窗口各自以自身首个净值归一化为 1.00×（起点不同、绝对资金量级不同，原始净值无法同轴比较）。OOS 相对挖掘窗口走平，就是衰减的直观表现。"
-      }
-    },
-    "tabs": {
-      "library": "因子库",
-      "detect": "因子检测"
-    },
-    "library": {
-      "listLabel": "因子库列表",
-      "detailLabel": "因子详情",
-      "search": "搜索名称或假设",
-      "filter": {
-        "all": "全部 {{count}}"
-      },
-      "columns": {
-        "name": "名称",
-        "hypothesis": "经济假设",
-        "source": "来源",
-        "status": "状态"
-      },
-      "status": {
-        "candidate": "候选",
-        "promoted": "已晋升",
-        "rejected": "已淘汰"
-      },
-      "source": {
-        "user": "用户",
-        "agent": "Agent",
-        "sota": "SOTA 基线",
-        "athena": "athena"
-      },
-      "empty": {
-        "title": "因子库还是空的。",
-        "hint": "点「新增」写一个带经济假设的因子；或到「因子检测」跑一个再存进来。"
-      },
-      "notEvaluated": "未评估",
-      "notMeasured": "未测出",
-      "monotonic": {
-        "yes": "单调 · {{direction}}",
-        "no": "不单调 · ρ {{rho}}",
-        "up": "递增",
-        "down": "递减"
-      },
-      "turnover": {
-        "top": "高分位",
-        "bottom": "低分位"
-      },
-      "detail": {
-        "hypothesis": "经济假设",
-        "hypothesisMissing": "（该因子未记录假设 —— 评估照跑，但入库本应要求它）",
-        "formulation": "公式",
-        "code": "代码",
-        "evidence": "评估证据",
-        "pick": "从左侧选一个因子查看详情。",
-        "dataset": "数据集",
-        "symbols": "标的数",
-        "dates": "交易日",
-        "window": "评估窗口",
-        "windowDays": "窗口",
-        "samples": "样本",
-        "halfLife": "半衰期",
-        "halfLifeNone": "不衰减",
-        "days": "{{value}} 天",
-        "period": "持有期"
-      },
-      "evaluation": {
-        "none": "尚未评估。点「跑评估」用 debug 面板快速跑一遍，或选 full 用全量面板。",
-        "running": "评估中…",
-        "runningNote": "正在扫描面板计算分层收益与 IC：debug 面板通常几十秒，full 通常一到几分钟。",
-        "failed": "评估失败",
-        "lost": "评估进程已消失（后端重启或超时）"
-      },
-      "actions": {
-        "new": "新增",
-        "evaluate": "跑评估",
-        "evaluating": "评估中…",
-        "datasetDebug": "debug（快）",
-        "datasetFull": "full（全量）",
-        "promote": "晋升",
-        "reject": "淘汰",
-        "delete": "删除",
-        "confirmDelete": "删除因子「{{name}}」？此操作不可撤销。"
-      },
-      "new": {
-        "save": "存入因子库",
-        "cancel": "取消",
-        "hypothesisPlaceholder": "为什么这个因子应该有效？没有假设的因子是数据挖掘。"
-      },
-      "charts": {
-        "none": "还没有评估结果。",
-        "quantiles": "分层收益（{{period}}）",
-        "quantilesNote": "各分位组合的平均期内收益；严格单调递增才是「因子与收益同向」的证据。",
-        "ic": "IC 与衰减",
-        "icNote": "横轴是持有期。IC 跌到一半所需的天数就是半衰期，它决定调仓频率。",
-        "icRising": "该因子 IC 随持有期上升（增强而非衰减），因此没有半衰期。",
-        "longShort": "多空价差",
-        "longShortNote": "最高分位减最低分位的平均期内收益。",
-        "turnover": "换手率",
-        "turnoverNote": "组合成分的日均变动比例，是成本侧的估计。"
-      }
     }
   },
   "wechat": {

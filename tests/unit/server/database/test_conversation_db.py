@@ -934,12 +934,18 @@ async def test_update_thread_sharing(mock_db_connection, mock_cursor):
     result = await update_thread_sharing("t-1", is_shared=True)
 
     assert result is not None
-    sql, params = mock_cursor.execute.call_args[0]
-    assert "is_shared = %s" in sql
-    assert "share_token = COALESCE(share_token, %s)" in sql
+    thread_sql, params = mock_cursor.execute.call_args_list[0][0]
+    assert "is_shared = %s" in thread_sql
+    assert "share_token = COALESCE(share_token, %s)" in thread_sql
     assert is_share_code(params[1])
+    # A shared primary must not stay the bot's private chat.
+    clear_sql, clear_params = mock_cursor.execute.call_args_list[1][0]
+    assert "primary_thread_id = NULL" in clear_sql
+    assert clear_params == ("t-1",)
 
+    mock_cursor.execute.reset_mock()
     await update_thread_sharing("t-1", is_shared=False)
+    assert mock_cursor.execute.await_count == 1
     assert "share_token" not in mock_cursor.execute.call_args[0][0].split("RETURNING")[0]
 
 

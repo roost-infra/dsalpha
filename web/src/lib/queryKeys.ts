@@ -323,6 +323,29 @@ export const queryKeys = {
     // Under `all` so an install anywhere refreshes each entry's `installed`.
     marketplace: () => [...queryKeys.plugins.all, 'marketplace'],
   },
+  // The user's Bots: the identities a workspace's turns answer as. One list
+  // answer carries every workspace's bots, so a null workspace id is "all of
+  // them" rather than "unknown"; the settings section groups that one answer
+  // by workspace.
+  bots: {
+    all:     ['bots'],
+    lists:   () => [...queryKeys.bots.all, 'list'],
+    list:    (workspaceId: string | null) => [...queryKeys.bots.lists(), workspaceId ?? 'all'],
+    details: () => [...queryKeys.bots.all, 'detail'],
+    detail:  (botId: string) => [...queryKeys.bots.details(), botId],
+  },
+  // The user's Rooms: shared logs whose members are bots. The list is one
+  // workspace's rooms (null = every room), and the log is its own family
+  // because a send appends to one room's log without touching the list.
+  rooms: {
+    all:     ['rooms'],
+    lists:   () => [...queryKeys.rooms.all, 'list'],
+    list:    (workspaceId: string | null) => [...queryKeys.rooms.lists(), workspaceId ?? 'all'],
+    details: () => [...queryKeys.rooms.all, 'detail'],
+    detail:  (roomId: string) => [...queryKeys.rooms.details(), roomId],
+    logs:    () => [...queryKeys.rooms.all, 'log'],
+    log:     (roomId: string) => [...queryKeys.rooms.logs(), roomId],
+  },
   // The user's order attempts. The list is paged by the server on a keyset
   // cursor, so a filter set is its own list rather than a client-side view of
   // one: the key carries the filters, and changing one starts a new page 1.
@@ -363,23 +386,7 @@ export const queryKeys = {
     // Today's market-wide brief, as markdown for the agent.
     marketBrief: () => [...queryKeys.insights.all, 'market-brief'],
   },
-  // Factor Board: the miner's reachability, its starter scripts, and one entry
-  // per detection. A detection is keyed by run id because each is polled on its
-  // own cadence — under a shared list key every poll would refetch every run.
-  factors: {
-    all:        ['factors'],
-    health:     () => [...queryKeys.factors.all, 'health'],
-    templates:  () => [...queryKeys.factors.all, 'templates'],
-    detections: () => [...queryKeys.factors.all, 'detections'],
-    detection:  (runId: string) => [...queryKeys.factors.detections(), runId],
-    // The library: `library()` is the invalidation prefix every write targets, so
-    // a save/evaluate/promote refreshes the list and the open factor at once
-    // without the caller naming either. The list is keyed by its filters (each
-    // filter set is its own page), the item by id (only the open factor polls).
-    library:     () => [...queryKeys.factors.all, 'library'],
-    libraryList: (filters: string) => [...queryKeys.factors.library(), 'list', filters],
-    libraryItem: (factorId: string) => [...queryKeys.factors.library(), 'item', factorId],
-  },
+
 };
 
 /**

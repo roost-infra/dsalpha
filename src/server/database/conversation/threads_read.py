@@ -165,6 +165,19 @@ _TITLE_OR_FIRST_QUERY = """
     ))"""
 
 
+def _exclude_room_threads(thread_id_expr: str) -> str:
+    """Hide a room member's execution thread from a user-facing list.
+
+    That thread is the member's context boundary, not a conversation the user
+    started. The room page is where it is read. ``thread_id_expr`` is the
+    thread id column of the query this predicate is appended to.
+    """
+    return (
+        " AND NOT EXISTS (SELECT 1 FROM bot_threads bt"
+        f" WHERE bt.thread_id = {thread_id_expr} AND bt.kind = 'room')"
+    )
+
+
 async def get_workspace_threads(
     workspace_id: str,
     limit: int = 20,
@@ -204,6 +217,9 @@ async def get_workspace_threads(
     if platform_prefix:
         where_extra = " AND platform LIKE %s ESCAPE '\\'"
         extra_params.append(f"{_like_escape(platform_prefix)}%")
+    room_filter = _exclude_room_threads(
+        "conversation_threads.conversation_thread_id"
+    )
 
     try:
         async with pool.get_db_connection() as conn:
@@ -213,7 +229,7 @@ async def get_workspace_threads(
                     f"""
                     SELECT COUNT(*) as total
                     FROM conversation_threads
-                    WHERE workspace_id = %s{archived_filter}{where_extra}
+                    WHERE workspace_id = %s{archived_filter}{where_extra}{room_filter}
                 """,
                     (workspace_id, *extra_params),
                 )
@@ -228,7 +244,7 @@ async def get_workspace_threads(
                     FROM (
                         SELECT {_sql._THREAD_COLUMNS}, last_seen_run_seq
                         FROM conversation_threads
-                        WHERE workspace_id = %s{archived_filter}{where_extra}
+                        WHERE workspace_id = %s{archived_filter}{where_extra}{room_filter}
                         ORDER BY {inner_order}{sort_by} {sort_order.upper()},
                                  conversation_thread_id DESC
                         LIMIT %s OFFSET %s
@@ -287,6 +303,7 @@ async def get_threads_for_user(
     if computer_id is not None:
         where_extra += " AND w.computer_id = %s::uuid AND w.workspace_id <> %s::uuid"
         extra_params += [computer_id, get_home_workspace_id(user_id)]
+    where_extra += _exclude_room_threads("t.conversation_thread_id")
 
     try:
         async with pool.get_db_connection() as conn:
@@ -367,6 +384,7 @@ async def get_recent_threads_for_user(
                       AND t.conversation_thread_id IS DISTINCT FROM %s::uuid
                       AND (t.metadata->'origin'->>'type')
                           IS DISTINCT FROM 'automation'
+                      {_exclude_room_threads("t.conversation_thread_id")}
                     ORDER BY t.updated_at DESC, t.conversation_thread_id DESC
                     LIMIT %s
                 ) t
@@ -448,6 +466,7 @@ _LIFECYCLE_SNAPSHOT_SQL = f"""
             LIMIT 1
         ) la ON TRUE
         WHERE w.user_id = %s AND w.status != 'deleted'
+          {_exclude_room_threads("ct.conversation_thread_id")}
     ),
     watermark AS (
         SELECT COALESCE(MAX(latest_run_seq), 0) AS as_of_seq FROM owned
@@ -673,7 +692,7 @@ async def list_computer_threads(
     changes whenever any of them does; ``rows=False`` returns the digest
     alone, for the price of one row.
     """
-    digest = """
+    digest = f"""
         WITH threads AS (
             SELECT t.conversation_thread_id, t.title, t.created_at,
                    t.updated_at, w.workspace_id,
@@ -685,6 +704,7 @@ async def list_computer_threads(
             FROM conversation_threads t
             JOIN workspaces w ON w.workspace_id = t.workspace_id
             WHERE w.computer_id = %s AND w.status <> 'deleted'
+              {_exclude_room_threads("t.conversation_thread_id")}
         ),
         digest AS (
             SELECT encode(sha256(convert_to(coalesce(string_agg(
@@ -765,7 +785,8 @@ async def get_thread_owner_id(thread_id: str, *, conn=None) -> Optional[str]:
 
 async def get_thread_auth_meta(thread_id: str, *, conn=None) -> Optional[Dict[str, Any]]:
     """Owner ``user_id`` + ``is_shared`` + ``msg_type`` + ``workspace_id`` +
-    ``llm_model`` + ``reasoning_effort`` + ``fast_mode`` in one query.
+    ``bot_id`` + ``llm_model`` + ``reasoning_effort`` + ``fast_mode`` in one
+    query.
 
     Lets ``/status`` authorize the caller and read share state from a single
     round-trip, and lets a send authorize, find its workspace and read the
@@ -783,7 +804,7 @@ async def get_thread_auth_meta(thread_id: str, *, conn=None) -> Optional[Dict[st
                 await cur.execute(
                     """
                     SELECT w.user_id, t.is_shared, t.msg_type, t.workspace_id,
-                           t.llm_model, t.reasoning_effort, t.fast_mode
+                           t.bot_id, t.llm_model, t.reasoning_effort, t.fast_mode
                     FROM conversation_threads t
                     JOIN workspaces w ON w.workspace_id = t.workspace_id
                     WHERE t.conversation_thread_id = %s

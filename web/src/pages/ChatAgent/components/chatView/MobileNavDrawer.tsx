@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Minus } from 'lucide-react';
@@ -58,6 +58,13 @@ export function MobileNavDrawer({ visible, onMinimize, isActive, workspaceId, th
   // Every pick shows something the drawer is covering, so it leaves with the
   // pick. Closed here as well as on activation because a pick can stay in this
   // view: the thread already open, or one of its subagents.
+  // Nested workspace conversations navigate themselves; close the drawer when
+  // one of them lands, since the drawer covers the page it opened.
+  useEffect(() => {
+    const close = () => onMinimize();
+    window.addEventListener('sidebar:navigate', close);
+    return () => window.removeEventListener('sidebar:navigate', close);
+  }, [onMinimize]);
   const { onNavigateThread, onNewThread, onSelectAgent } = navTreeProps;
   const picks = useMemo(() => {
     const closing = <Args extends unknown[]>(pick: (...args: Args) => void) => (...args: Args): void => {

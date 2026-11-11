@@ -6,6 +6,8 @@ import { useLocale } from '@/hooks/useLocale';
 import { useTitleFade } from '@/hooks/useTitleFade';
 import { shortMonthDay } from '@/lib/format';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
+import { BotMark } from '@/components/bots/BotMark';
+import { useBot } from '@/hooks/useBots';
 import { cn } from '@/lib/utils';
 
 
@@ -37,6 +39,9 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
   // user feed), falling back to the row's own enrichment for threads the
   // store hasn't observed yet.
   const tid = (thread.thread_id as string) || '';
+  const botId = typeof thread.bot_id === 'string' ? thread.bot_id : null;
+  const { data: bot } = useBot(botId);
+  const isPrimarySession = Boolean(bot && bot.primary_thread_id === tid);
   const { isRunning, needsInput, isUnseen, status: storeStatus } = useThreadFlags(tid);
   const runStatus =
     storeStatus !== 'idle' ? storeStatus : ((thread.run_status as string) ?? 'idle');
@@ -48,7 +53,7 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
       : runStatus === 'failed'
       ? 'var(--color-loss)'
       : 'var(--color-text-tertiary)';
-  const cardTitle = (thread.title as string) || `Thread ${(thread.thread_index as number | undefined) !== undefined ? (thread.thread_index as number) + 1 : ''}`;
+  const cardTitle = (thread.title as string) || bot?.name || `Thread ${(thread.thread_index as number | undefined) !== undefined ? (thread.thread_index as number) + 1 : ''}`;
   const titleFading = useTitleFade(cardTitle);
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent card click when clicking delete icon
@@ -88,10 +93,21 @@ function ThreadCard({ thread, onClick, onDelete, onRename, onArchive, onUnarchiv
         />
       )}
 
+      {bot && <BotMark bot={bot} size={22} decorative />}
+
       {/* Thread title and info */}
       <div className="flex-1 min-w-0">
         <h3 className={cn('flex items-center gap-1.5 text-sm font-normal', titleFading && 'animate-fade-in')} style={{ color: 'var(--color-text-primary)' }}>
           <span className="truncate min-w-0">{cardTitle}</span>
+          {isPrimarySession && (
+            <span
+              className="shrink-0 rounded px-1 text-[10px]"
+              data-testid="thread-primary-session"
+              style={{ background: 'var(--color-bg-card)', color: 'var(--color-text-tertiary)' }}
+            >
+              {t('nav.primarySession')}
+            </span>
+          )}
           {!!thread.is_shared && (
             <span
               role="img"
