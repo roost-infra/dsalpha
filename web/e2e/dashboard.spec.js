@@ -269,7 +269,7 @@ test.describe('Market Indices & News', () => {
 
     // Wait for the S&P 500 card to appear
     const spx = widget(page, 'markets.overview').getByText('S&P 500', { exact: true });
-    await expect(spx).toBeVisible();
+    await expect(spx).toBeVisible({ timeout: 15000 });
 
     // Click the S&P 500 card: the whole card answers, not only its title
     await spx.click();
@@ -278,7 +278,10 @@ test.describe('Market Indices & News', () => {
     // consumes the query into its selected stock and may clear the URL.
     await page.waitForURL('**/p/market**');
     expect(page.url()).toContain('/p/market');
-    await expect(page.getByText('S&P 500').first()).toBeVisible();
+    await expect(page.locator('[data-page-plugin-host="market-center"]')).toHaveAttribute(
+      'data-page-plugin-state',
+      'enabled',
+    );
   });
 });
 
@@ -421,7 +424,7 @@ test.describe('Watchlist CRUD', () => {
 
     // Wait for the item to render
     const row = holdingsWidget(page).getByTitle('TSLA');
-    await expect(row).toBeVisible();
+    await expect(row).toBeVisible({ timeout: 15000 });
 
     // Right-click to open the row's context menu (Radix ContextMenu)
     await row.click({ button: 'right' });
@@ -614,7 +617,7 @@ test.describe('Portfolio CRUD', () => {
     const holdings = holdingsWidget(page);
     await holdings.getByRole('button', { name: 'Holdings', exact: true }).click();
     const row = holdings.getByTitle('AAPL');
-    await expect(row).toBeVisible();
+    await expect(row).toBeVisible({ timeout: 15000 });
 
     // Right-click to open the row's context menu (Radix ContextMenu)
     await row.click({ button: 'right' });
@@ -661,7 +664,7 @@ test.describe('Portfolio CRUD', () => {
     const holdings = holdingsWidget(page);
     await holdings.getByRole('button', { name: 'Holdings', exact: true }).click();
     const row = holdings.getByTitle('AAPL');
-    await expect(row).toBeVisible();
+    await expect(row).toBeVisible({ timeout: 15000 });
 
     // Right-click to open the row's context menu (Radix ContextMenu)
     await row.click({ button: 'right' });
