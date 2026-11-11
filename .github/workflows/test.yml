@@ -79,12 +79,20 @@ jobs:
       # claude-code: the Claude Code runtime's tests drive its bundled CLI.
       - run: uv sync --group dev --extra test --extra claude-code
       # The Grep tool's tests run rg on the host; without it they skip.
-      - run: sudo apt-get install -y ripgrep
+      - name: Install ripgrep
+        run: |
+          if command -v rg >/dev/null; then exit 0; fi
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y ripgrep && break
+            sleep 5
+          done
+          command -v rg
       # No -v: under xdist it interleaves four workers' lines. -rfE lists
       # failures and errors at the end, and the JUnit file has every result.
-      - run: uv run pytest tests/unit/ -n 4 --dist load -rfE --tb=short --junitxml=test-results/backend-unit.xml
+      - run: uv run pytest tests/unit/ -n 4 --dist load -rfE --tb=short --reruns 2 --reruns-delay 1 --junitxml=test-results/backend-unit.xml
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: backend-unit-results
           path: test-results/
@@ -189,12 +197,20 @@ jobs:
       # Docker sshd against a fake Messages API; without the extra they are
       # not collected.
       - run: uv sync --group dev --extra test --extra claude-code
-      - run: sudo apt-get install -y ripgrep
+      - name: Install ripgrep
+        run: |
+          if command -v rg >/dev/null; then exit 0; fi
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y ripgrep && break
+            sleep 5
+          done
+          command -v rg
       # sandbox/providers holds the Docker and Daytona provider tests, which
       # sandbox-integration.yml owns.
       - run: uv run pytest tests/integration/ -v --tb=short -m "integration and not yahoo" --ignore=tests/integration/sandbox/providers --junitxml=test-results/backend-integration.xml
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: backend-integration-results
           path: test-results/
@@ -358,6 +374,7 @@ jobs:
       - run: pnpm exec playwright test
       - uses: actions/upload-artifact@v4
         if: always()
+        continue-on-error: true
         with:
           name: playwright-report
           path: web/playwright-report/

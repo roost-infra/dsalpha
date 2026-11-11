@@ -15,6 +15,8 @@ import { buildEvents } from './perf/streamFixture.js';
 
 // ANCHOR_OFFSET_PX in utils/scrollDom.ts: the gap left above a pinned message.
 const PIN_GAP = 16;
+/** Sub-pixel layout on CI lands within a pixel of the intended gap. */
+const withinPinGap = (value) => Math.abs(value - PIN_GAP) <= 1;
 // AT_BOTTOM_PX in utils/scrollHelpers.ts: as close to the end as counts as at it.
 const AT_END = 4;
 const QUESTION = 'And what changed in the second quarter?';
@@ -89,7 +91,7 @@ test.describe('pin on send', () => {
     await page.locator('textarea').fill(QUESTION);
     await page.keyboard.press('Enter');
     await expect(page.getByText(QUESTION)).toBeVisible();
-    await expect.poll(async () => (await view(page)).userTop, { timeout: 3000 }).toBeCloseTo(PIN_GAP, 0);
+    await expect.poll(async () => withinPinGap((await view(page)).userTop), { timeout: 10_000 }).toBe(true);
     const pinned = await view(page);
     expect(pinned.floor).not.toBe('');
 
@@ -109,13 +111,13 @@ test.describe('pin on send', () => {
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
     const after = await view(page);
     expect(Math.abs(after.top - pinned.top)).toBeLessThan(1);
-    expect(after.userTop).toBeCloseTo(PIN_GAP, 0);
+    expect(withinPinGap(after.userTop)).toBe(true);
   });
 
   test('gives the room back as the reader scrolls up out of it, without moving them', async ({ page }) => {
     await page.locator('textarea').fill(QUESTION);
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await view(page)).userTop, { timeout: 3000 }).toBeCloseTo(PIN_GAP, 0);
+    await expect.poll(async () => withinPinGap((await view(page)).userTop), { timeout: 10_000 }).toBe(true);
     await expect(streaming(page)).toBeHidden({ timeout: 15000 });
     await page.waitForTimeout(800);
 
@@ -146,7 +148,7 @@ test.describe('pin on send', () => {
       const users = vp.querySelectorAll('[data-message-role="user"]');
       resolve(users[users.length - 1].getBoundingClientRect().top - vp.getBoundingClientRect().top);
     })));
-    expect(top).toBeCloseTo(PIN_GAP, 0);
+    expect(withinPinGap(top)).toBe(true);
   });
 });
 

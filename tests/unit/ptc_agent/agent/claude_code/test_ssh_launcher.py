@@ -38,6 +38,26 @@ pytestmark = [
     pytest.mark.skipif(not (shutil.which("perl") and shutil.which("bash")), reason="the machine side needs perl and bash"),
 ]
 
+
+
+def _stand_in_cli(tmp_path: Path) -> Path:
+    """A runnable copy of sleep under a CLI's name, or skip.
+
+    macOS's code-signed /bin/sleep dies when copied, and Ubuntu's sleep is a
+    coreutils multicall binary that refuses a different argv[0]; neither host
+    can host the process test's stand-in.
+    """
+    cli = tmp_path / "bin dir" / "claude"
+    cli.parent.mkdir()
+    shutil.copy(shutil.which("sleep"), cli)
+    try:
+        probe = subprocess.run([str(cli), "0"], timeout=5)
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"a copied sleep cannot run here: {exc}")
+    if probe.returncode != 0:
+        pytest.skip("a copied sleep cannot run here")
+    return cli
+
 TOKEN = "sk-ant-oat01-" + "7" * 80
 CID = "0b9e6a7c-3f0e-4c47-9a53-2f4b1d1c8e21"
 STORED = "sk-ant-oat01-" + "5" * 80
@@ -391,9 +411,7 @@ async def test_a_turn_waits_out_commands_holding_every_command_slot_past_its_sta
 
 @pytest.mark.parametrize("named", ["cli", "other"])
 def test_the_cli_is_signalled_only_while_its_pid_still_runs_it(tmp_path, named):
-    cli = tmp_path / "bin dir" / "claude"
-    cli.parent.mkdir()
-    shutil.copy(shutil.which("sleep"), cli)
+    cli = _stand_in_cli(tmp_path)
     proc = subprocess.Popen([str(cli), "30"])
     try:
         asked = str(cli) if named == "cli" else str(tmp_path / "claude")
@@ -429,9 +447,7 @@ async def test_a_turns_layout_and_its_release_run_on_a_macs_userland(tmp_path, m
 @pytest.mark.parametrize("named", ["cli", "other"])
 def test_the_cli_is_signalled_by_ps_where_there_is_no_proc(tmp_path, named):
     """A Mac has no /proc, so the pid's command line comes from its ps."""
-    cli = tmp_path / "bin dir" / "claude"
-    cli.parent.mkdir()
-    shutil.copy(shutil.which("sleep"), cli)
+    cli = _stand_in_cli(tmp_path)
     proc = subprocess.Popen([str(cli), "30"])
     try:
         asked = str(cli) if named == "cli" else str(tmp_path / "claude")
