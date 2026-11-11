@@ -6177,13 +6177,15 @@
         "skills": "Skills",
         "brokerages": "Brokerages",
         "secrets": "Secrets",
-        "subagents": "Subagents"
+        "subagents": "Subagents",
+        "pages": "Page plugins"
       },
       "group": {
         "customize": "Customize",
         "accounts": "Accounts",
         "installed": "Installed",
-        "builtIn": "Built in"
+        "builtIn": "Built in",
+        "pages": "Page plugins"
       },
       "railLabel": "Plugin sections",
       "needsAttention": "needs attention",
@@ -6254,7 +6256,8 @@
         "skills": "Instructions the agent follows",
         "brokerages": "Accounts the agent can trade in",
         "secrets": "Keys your connectors use",
-        "subagents": "Specialists the agent hands work to"
+        "subagents": "Specialists the agent hands work to",
+        "pages": "Pages built into the app; enabling one adds it to the sidebar."
       }
     },
     "loadFailed": {
@@ -6597,6 +6600,22 @@
       "availableNextTurn": "Available from the next turn.",
       "copyStartsOff": "Starts switched off, like {{name}}. Switch it on after creating.",
       "atLimit": "You have {{count}} subagents of your own, the most there can be. Remove one to add another."
+    },
+    "builtin": {
+      "intro": "These pages ship with the app; no third-party code is downloaded. They appear in the sidebar only after you enable them.",
+      "builtIn": "Built in",
+      "enabled": "Enabled",
+      "disabled": "Not enabled",
+      "enable": "Enable",
+      "disable": "Disable",
+      "pageNotEnabled": "This page plugin is not enabled yet.",
+      "marketCenter": {
+        "name": "Market Center",
+        "description": "Quotes, watchlists, sectors and market news."
+      },
+      "open": "Open",
+      "loading": "Loading page plugins…",
+      "loadError": "Could not load page plugins. Try again."
     }
   },
   "timezone": {

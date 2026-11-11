@@ -52,7 +52,7 @@ export function buildMarketViewUrl({ symbol, timeframe, workspaceId, threadId, r
   if (workspaceId) sp.set(PARAM.workspaceId, workspaceId);
   if (threadId && threadId !== DEFAULT_MARKET_THREAD) sp.set(PARAM.threadId, threadId);
   if (returnTo) sp.set(PARAM.returnTo, returnTo);
-  return `/market?${sp.toString()}`;
+  return `/p/market?${sp.toString()}`;
 }
 
 export function readMarketViewRoute(searchParams: URLSearchParams): MarketViewRouteParams {

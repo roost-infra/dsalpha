@@ -11,6 +11,7 @@ import { StatusDot } from '../surface/Surface';
 import {
   ACCOUNTS,
   CUSTOMIZE,
+  PAGES,
   SECTION_ICONS,
   SECTION_LABEL_KEYS,
   type Section,
@@ -59,6 +60,7 @@ export function PluginsRail({
   const builtInAttention = builtIn.some((p) => problems?.has(p.name));
 
   const counts: Record<Section, number | null> = {
+    pages: null,
     plugins: data.plugins ? installed.length + builtIn.length : null,
     mcp: data.connectors?.total ?? null,
     skills: data.skills?.total ?? null,
@@ -67,6 +69,7 @@ export function PluginsRail({
     secrets: data.secrets,
   };
   const attention: Record<Section, boolean> = {
+    pages: false,
     // The installed entries carry each plugin's dot right below.
     plugins: false,
     mcp: !!data.connectors && connectorAttention(data.connectors) > 0,
@@ -81,7 +84,7 @@ export function PluginsRail({
   // desktop rail every entry already is, so this moves nothing. Again whenever
   // a count or a dot lands: each widens the pills before the current one and
   // pushes it back past the edge it was just brought inside.
-  const pillShape = [...CUSTOMIZE, ...ACCOUNTS]
+  const pillShape = [...PAGES, ...CUSTOMIZE, ...ACCOUNTS]
     .map((s) => `${counts[s] ?? ''}${attention[s] ? '*' : ''}`)
     .join('|');
   const navRef = useRef<HTMLElement>(null);
@@ -143,6 +146,8 @@ export function PluginsRail({
 
   return (
     <nav ref={navRef} className="plugins-rail" aria-label={t('plugins.shell.railLabel')}>
+      <div className="plugins-rail-label">{t('plugins.shell.group.pages')}</div>
+      {PAGES.map(sectionLink)}
       <div className="plugins-rail-label">{t('plugins.shell.group.customize')}</div>
       {CUSTOMIZE.map(sectionLink)}
       <div className="plugins-rail-label">{t('plugins.shell.group.accounts')}</div>

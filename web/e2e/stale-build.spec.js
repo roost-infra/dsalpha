@@ -53,7 +53,7 @@ test('a stale tab reloads on its next section switch, once', async ({ page }) =>
 
   // A switch that hands something to the next page (a message sent from the
   // dashboard into chat) leaves it to that page.
-  await navigate(page, '/market', { draftMessage: 'hello' });
+  await navigate(page, '/p/market', { draftMessage: 'hello' });
   await page.waitForTimeout(500);
   expect(loads).toBe(1);
   // A new thread learns its workspace from nothing but the route state.

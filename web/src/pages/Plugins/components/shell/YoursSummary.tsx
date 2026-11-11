@@ -106,6 +106,8 @@ function pluginClause(
 
 function summaryParts(t: TFunction, section: Section, data: ShellData): SummaryLine | null {
   switch (section) {
+    case 'pages':
+      return null;
     case 'plugins': {
       const p = data.plugins;
       if (!p) return null;

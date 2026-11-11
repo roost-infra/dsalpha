@@ -1,4 +1,4 @@
-import { Blocks, ChartCandlestick, LayoutDashboard, MessagesSquare, Receipt, Settings, Timer } from 'lucide-react';
+import { Blocks, LayoutDashboard, MessagesSquare, Settings, Timer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -17,15 +17,15 @@ export interface NavItem {
    * leads to is the one that explains an empty answer.
    */
   requires?: 'orders';
+  /** A page-plugin entry, drawn in its own group and not in the mobile tab bar. */
+  surface?: 'plugin';
 }
 
 // Single source of truth for primary navigation (rail + mobile tab bar).
 export const NAV_ITEMS: NavItem[] = [
   { key: '/dashboard', icon: LayoutDashboard, labelKey: 'sidebar.dashboard', match: 'exact-or-sub' },
   { key: '/chat', icon: MessagesSquare, labelKey: 'sidebar.chatAgent', match: 'prefix' },
-  { key: '/market', icon: ChartCandlestick, labelKey: 'sidebar.marketView', match: 'exact-or-sub' },
   { key: '/automations', icon: Timer, labelKey: 'sidebar.automations', match: 'exact-or-sub' },
-  { key: '/orders', icon: Receipt, labelKey: 'sidebar.orders', match: 'exact-or-sub', requires: 'orders' },
   { key: '/plugins', icon: Blocks, labelKey: 'sidebar.plugins', match: 'exact-or-sub' },
 ];
 

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { useOrdersVisible } from '@/hooks/useOrdersVisible';
 import { NAV_ITEMS, type NavItem } from './navItems';
+import { PAGE_PLUGINS } from '@/plugins/registry';
+import { usePagePlugins } from '@/plugins/usePagePlugins';
 
 /**
  * The primary nav items this user can see, in NAV_ITEMS order.
@@ -12,12 +13,19 @@ import { NAV_ITEMS, type NavItem } from './navItems';
  * app changing its mind, and the route behind it is reachable by URL anyway.
  */
 export function useNavItems(): NavItem[] {
-  const ordersVisible = useOrdersVisible();
-  return useMemo(
-    () =>
-      NAV_ITEMS.filter((item) =>
-        item.requires === 'orders' ? ordersVisible === true : true,
-      ),
-    [ordersVisible],
-  );
+  const { enabled } = usePagePlugins();
+  return useMemo(() => {
+    const core = NAV_ITEMS;
+    const pluginItems: NavItem[] = PAGE_PLUGINS.filter((plugin) => enabled.has(plugin.id)).flatMap(
+      (plugin) =>
+        plugin.pages.map((page) => ({
+          key: page.path,
+          icon: plugin.icon,
+          labelKey: page.labelKey,
+          match: 'exact-or-sub' as const,
+          surface: 'plugin' as const,
+        })),
+    );
+    return [...core, ...pluginItems];
+  }, [enabled]);
 }

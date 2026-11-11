@@ -12,7 +12,8 @@ export default function BottomTabBar() {
   const isActive = useNavActive();
   // Settings rides at the end of whichever primary items this user can see.
   const navItems = useNavItems();
-  const menuItems = [...navItems, SETTINGS_ITEM];
+  // Plugin pages live in the drawer/Plugins page; the tab bar stays core.
+  const menuItems = [...navItems.filter((item) => item.surface !== 'plugin'), SETTINGS_ITEM];
   const handleItemClick = (path: string) => {
     if (location.pathname === path) return;
     navigate(path);

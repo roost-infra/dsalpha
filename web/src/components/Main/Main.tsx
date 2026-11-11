@@ -4,12 +4,15 @@ import PageLoading from '@/components/PageLoading/PageLoading';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useSyncUserLocale } from '@/hooks/useSyncUserLocale';
 import { ContextOverflowPill } from '@/components/ui/ContextOverflowPill';
+import { PluginPageHost } from '@/plugins/PluginPageHost';
+import { MarketRedirect } from './MarketRedirect';
 import NetworkBanner from '@/components/NetworkBanner/NetworkBanner';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
 import { lazyWithMotion, preloadableLazy } from '@/lib/lazyWithMotion';
 import type { AppSection } from '@/lib/appRoutes';
 
 type RouteSection = AppSection;
+
 
 // Chunk thunks shared by the lazy components and preloadRouteChunk — import()
 // is deduped by the module system, so a preload and the lazy mount share one
@@ -148,7 +151,8 @@ function Main() {
           <Route path="/chat/t/:threadId" element={<ChatAgent />} />
           <Route path="/chat/:workspaceId" element={<ChatAgent />} />
           <Route path="/rooms" element={<Rooms />} />
-          <Route path="/market" element={<MarketView />} />
+          <Route path="/market" element={<MarketRedirect />} />
+          <Route path="/p/:pluginId/*" element={<PluginPageHost />} />
           <Route path="/automations" element={<Automations />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/plugins" element={<Plugins />} />
