@@ -308,6 +308,18 @@ class PlatformCreditGatePort:
         payload: dict[str, Any] = {"user_id": user_id, "run_ref": run_ref}
         if generation is not None:
             payload["generation"] = generation
+        # Roost's compatibility release settles the turn's measured spend at
+        # teardown. The old quota service ignores the extra field, so the same
+        # payload is safe against either endpoint.
+        try:
+            spent = await credit_ledger.in_flight_credits(run_ref)
+            if spent > 0:
+                payload["spent_credits"] = spent
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not read settle spend for %s", run_ref,
+                exc_info=True,
+            )
         detail = "no attempt made"
         deadline = time.monotonic() + _RELEASE_BUDGET_SECONDS
         for attempt in range(_RELEASE_ATTEMPTS):
