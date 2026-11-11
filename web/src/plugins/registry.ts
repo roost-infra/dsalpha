@@ -30,3 +30,16 @@ export const PAGE_PLUGINS_BY_ID = new Map(PAGE_PLUGINS.map((plugin) => [plugin.i
 export function pagePluginById(id: string): PagePlugin | null {
   return PAGE_PLUGINS_BY_ID.get(id) ?? null;
 }
+
+/** Resolve `/p/:routeId`: plugin id first, then a page id/path inside one. */
+export function pagePluginForRoute(routeId: string): PagePlugin | null {
+  const direct = pagePluginById(routeId);
+  if (direct) return direct;
+  return (
+    PAGE_PLUGINS.find((plugin) =>
+      plugin.pages.some(
+        (page) => page.id === routeId || page.path === `/p/${routeId}`,
+      ),
+    ) ?? null
+  );
+}
