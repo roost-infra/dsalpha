@@ -61,6 +61,13 @@ def _text(value: Any, limit: int) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
 
+def _clean_url(value: Any) -> str | None:
+    text = _text(value, 2000)
+    if not text:
+        return None
+    return text if text.startswith(("https://", "http://")) else None
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
@@ -95,6 +102,7 @@ def apply_ops(state: dict[str, Any], ops: list[Any]) -> dict[str, Any]:
                 "kind": raw.get("kind") if raw.get("kind") in KINDS else "note",
                 "status": raw.get("status") if raw.get("status") in STATUSES else "idea",
                 "platform": _text(raw.get("platform"), 40) or "小红书",
+                "url": _clean_url(raw.get("url")),
                 "tags": [str(tag)[:32] for tag in (raw.get("tags") or [])][:12] if isinstance(raw.get("tags"), list) else [],
                 "scheduledAt": _text(raw.get("scheduledAt"), 40) or None,
                 "draft": raw.get("draft") if isinstance(raw.get("draft"), dict) else None,
@@ -104,10 +112,10 @@ def apply_ops(state: dict[str, Any], ops: list[Any]) -> dict[str, Any]:
             next_state["items"].insert(0, item)
         elif op == "update_item":
             item = _find(next_state, "items", raw.get("id"))
-            for key, limit in (("title", 120), ("body", 60_000), ("platform", 40), ("scheduledAt", 40)):
+            for key, limit in (("title", 120), ("body", 60_000), ("platform", 40), ("scheduledAt", 40), ("url", 2000)):
                 if key in raw:
                     value = _text(raw.get(key), limit)
-                    item[key] = value or (None if key == "scheduledAt" else "")
+                    item[key] = _clean_url(value) if key == "url" else (value or (None if key == "scheduledAt" else ""))
             if "kind" in raw and raw["kind"] in KINDS:
                 item["kind"] = raw["kind"]
             if "status" in raw and raw["status"] in STATUSES:
