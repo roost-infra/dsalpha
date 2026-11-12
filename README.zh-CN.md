@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub 星标数" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub 星标数" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="许可证：Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="桌面应用" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="桌面应用" /></a>
 </p>
 
 <p align="center">
@@ -166,14 +166,14 @@ Robinhood 需要通过桌面应用连接，因为 Robinhood 只接受回跳到�
 
 **用你已经付费的模型**。可以用 Claude 或 ChatGPT 订阅登录，使用 Kimi、GLM、MiniMax 或 OpenCode Go 的 coding plan，接入任意 API key，自托管时还可以运行本地模型。
 
-**在你习惯的地方使用**。可以用浏览器、适用于 macOS、Windows 和 Linux 的[桌面应用](https://github.com/JingxuanC/dsalpha/releases)，在 [dsalpha](https://dsalpha.roostbots.com) 上还能用 Slack、Discord、Telegram、飞书和 iMessage。
+**在你习惯的地方使用**。可以用浏览器、适用于 macOS、Windows 和 Linux 的[桌面应用](https://github.com/roost-infra/dsalpha/releases)，在 [dsalpha](https://dsalpha.roostbots.com) 上还能用 Slack、Discord、Telegram、飞书和 iMessage。
 
 **托管版（beta）**。在 [dsalpha](https://dsalpha.roostbots.com) 注册，可以免费开始，也可以试用我们的某个套餐。行情数据、云端沙箱、券商连接和渠道都已为你配置好。beta 期间，套餐和功能可能调整。
 
 **自托管**。只需要 Docker：
 
 ```bash
-git clone https://github.com/ginlix-ai/langalpha.git && cd langalpha
+git clone https://github.com/roost-infra/dsalpha.git && cd langalpha
 make config   # wizard: model, data sources, sandbox, web search
 make up       # Postgres, Redis, backend and web app
 ```

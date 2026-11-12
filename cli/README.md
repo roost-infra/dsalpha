@@ -167,5 +167,5 @@ from this folder, so a release only reaches people's own machines.
 
 npm trusts the workflow by name, so no npm token is stored anywhere. That
 trust is set on npmjs.com, under the package's trusted publishers: GitHub
-Actions, repository `JingxuanC/dsalpha`, workflow `cli-release.yml`,
+Actions, repository `roost-infra/dsalpha`, workflow `cli-release.yml`,
 environment `npm`, with `npm publish` allowed.
