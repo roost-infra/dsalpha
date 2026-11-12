@@ -1,9 +1,9 @@
 """Content Desk page-plugin backend.
 
 The desk is a user-owned JSON document plus a small, server-side operation
-vocabulary. Both the UI and the assistant write through the same operations, so
-a model can never invent a field the page cannot render. Revisions are
-optimistic: a stale tab gets a 409 instead of overwriting newer work.
+vocabulary. The UI writes through the same operations; revisions are optimistic,
+so a stale tab gets a 409 instead of overwriting newer work. There is no second
+AI entry here: the page hands AI work to the main Chat entry.
 """
 
 import json
@@ -226,40 +226,6 @@ class OpsRequest(BaseModel):
     ops: list[Any] = Field(default_factory=list)
 
 
-class AssistantRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
-    focus_id: Optional[str] = None
-
-
-def _text_of(result: Any) -> str:
-    if isinstance(result, str):
-        return result
-    if isinstance(result, list):
-        return "".join(
-            str(block.get("text", ""))
-            for block in result
-            if isinstance(block, dict) and block.get("type") == "text"
-        )
-    return str(result or "")
-
-
-def _extract_json(text: str) -> dict[str, Any]:
-    body = text.strip()
-    fenced = body.find("```")
-    if fenced >= 0:
-        start = body.find("{", fenced)
-        end = body.rfind("}")
-        if start >= 0 and end > start:
-            body = body[start : end + 1]
-    start, end = body.find("{"), body.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("模型没有返回 JSON")
-    parsed = json.loads(body[start : end + 1])
-    if not isinstance(parsed, dict):
-        raise ValueError("模型没有返回对象")
-    return parsed
-
-
 @router.get("/state")
 @handle_api_exceptions("read content desk", logger)
 async def get_state(user_id: CurrentUserId):
@@ -276,96 +242,3 @@ async def write_ops(req: OpsRequest, user_id: CurrentUserId):
     next_state = apply_ops(state, req.ops)
     next_revision = await _write(user_id, next_state, revision)
     return {"state": next_state, "revision": next_revision}
-
-
-def _assistant_prompt(state: dict[str, Any], message: str, focus_id: Optional[str]) -> tuple[str, str]:
-    styles = state.get("styles") or []
-    active = next((s for s in styles if s.get("id") == state.get("activeStyleId")), None)
-    compact = {
-        "items": [
-            {k: row.get(k) for k in ("id", "title", "kind", "status", "platform", "scheduledAt", "body") if row.get(k)}
-            for row in (state.get("items") or [])[:80]
-        ],
-        "styles": [{"id": s.get("id"), "name": s.get("name")} for s in styles[:20]],
-        "activeStyleId": state.get("activeStyleId"),
-        "focusId": focus_id,
-    }
-    system = (
-        "你是 LangAlpha 内容工作台的助手。把用户的话变成结构化操作。"
-        "只输出一个 JSON 对象，不要解释，不要 Markdown 代码块："
-        '{"reply":"给用户的简短中文回复","ops":[...]}。'
-        "可用 ops："
-        "add_item {title,body?,kind?,platform?,tags?,status?}；"
-        "update_item {id,title?,body?,status?,platform?,tags?,scheduledAt?}；"
-        "delete_item {id}；"
-        "add_metric {itemId?,platform,date,views,likes,comments,saves}；"
-        "add_style {name,tone?,audience?,rules?}；set_active_style {id}。"
-        "规则：只使用数据里真实存在的 id；用户没有指定对象时用 focusId；"
-        "用户要写内容时用 update_item 填 body 或 add_item，不要长篇回复；"
-        "不确定时 ops 可以为空并在 reply 里问一句。"
-        f"当前风格：{active.get('name') if active else '无'}；"
-        f"风格规则：{active.get('rules') if active else '无'}。"
-    )
-    user = f"<data>{json.dumps(compact, ensure_ascii=False)}</data>\n用户说：{message}"
-    return system, user
-
-
-@router.post("/assistant")
-@handle_api_exceptions("content desk assistant", logger)
-async def assistant(req: AssistantRequest, user_id: CurrentUserId):
-    from src.server.app import setup
-    from src.server.services.llm.service import LLMService
-
-    state, revision = await _read(user_id)
-    system, user = _assistant_prompt(state, req.message, req.focus_id)
-    svc = LLMService(agent_config=setup.agent_config, logger=logger)
-    raw = await svc.complete(
-        user_id=user_id,
-        system_prompt=system,
-        user_prompt=user,
-        slot="primary",
-    )
-    text = _text_of(raw)
-    try:
-        plan = _extract_json(text)
-    except Exception:
-        return {"reply": text.strip()[:1200] or "我没理解，可以换个说法。", "ops": [], "state": state, "revision": revision}
-    reply = _text(plan.get("reply"), 1200) or "处理好了。"
-    ops = plan.get("ops") if isinstance(plan.get("ops"), list) else []
-    if not ops:
-        return {"reply": reply, "ops": [], "state": state, "revision": revision}
-    next_state = apply_ops(state, ops)
-    next_revision = await _write(user_id, next_state, revision)
-    return {"reply": reply, "ops": ops, "state": next_state, "revision": next_revision}
-
-
-class GenerateRequest(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
-    body: str = ""
-    kind: str = "note"
-    platform: str = "小红书"
-    style: str = ""
-
-@router.post("/generate")
-@handle_api_exceptions("generate content draft", logger)
-async def generate(req: GenerateRequest, user_id: CurrentUserId):
-    from src.server.app import setup
-    from src.server.services.llm.service import LLMService
-
-    style = f"\n写作风格要求：{req.style}" if req.style.strip() else ""
-    svc = LLMService(agent_config=setup.agent_config, logger=logger)
-    result = await svc.complete(
-        user_id=user_id,
-        system_prompt=(
-            "你是 Roost 内容工作台的写作者。把用户给的选题写成可以直接编辑的中文初稿。"
-            "只输出正文 Markdown，不要解释、不要复述任务、不要加 JSON。"
-            "内容要具体，有观点，避免空泛套话。"
-        ),
-        user_prompt=(
-            f"平台：{req.platform}\n类型：{req.kind}\n选题：{req.title}\n"
-            f"原始灵感：{req.body or '（无）'}{style}"
-        ),
-        slot="primary",
-    )
-    text = _text_of(result).strip()
-    return {"text": text, "model": "LangAlpha"}

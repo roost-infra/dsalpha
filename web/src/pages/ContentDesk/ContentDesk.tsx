@@ -1,7 +1,10 @@
 // @ts-nocheck
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { resolveChatWorkspace } from '@/hooks/useHomeWorkspace'
 import './ContentDesk.css'
 
 const STATUS = { idea: '灵感', draft: '初稿', ready: '待发布', published: '已发布' }
@@ -40,9 +43,8 @@ export default function ContentDesk() {
   const [editing, setEditing] = useState(null)
   const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [assistantOpen, setAssistantOpen] = useState(false)
-  const [assistantInput, setAssistantInput] = useState('')
-  const [messages, setMessages] = useState([])
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const flash = useCallback((text) => {
     setToast({ text, key: Date.now() })
@@ -73,16 +75,14 @@ export default function ContentDesk() {
     } finally { setBusy(false) }
   }
 
-  async function ask(message) {
-    if (!message.trim()) return
-    setAssistantOpen(true); setAssistantInput(''); setBusy(true)
-    setMessages(prev => [...prev, { role: 'user', text: message }])
+  async function askAI(prompt) {
+    if (!prompt.trim() || busy) return
+    setBusy(true)
     try {
-      const { data: next } = await api.post('/api/v1/content-desk/assistant', { message, focus_id: editing?.id || null })
-      setData(next.state); setRevision(next.revision)
-      setMessages(prev => [...prev, { role: 'assistant', text: next.reply || '处理好了。' }])
-    } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', text: e?.message || '助手暂时不可用' }])
+      const workspaceId = await resolveChatWorkspace(queryClient, 'all')
+      navigate('/chat/t/__default__', { state: { workspaceId, draftMessage: prompt } })
+    } catch {
+      flash(zh ? '无法打开主对话，请稍后再试' : 'Could not open the main chat')
     } finally { setBusy(false) }
   }
 
@@ -102,7 +102,7 @@ export default function ContentDesk() {
       <div className="rcd-page-head">
         <div><p className="rcd-kicker">ROOST CONTENT DESK</p><h1>{zh ? '内容工作台' : 'Content Desk'}</h1><p className="rcd-lead">{zh ? '灵感 → 初稿 → 排期 → 复盘。数据和风格保存在你的账号里。' : 'Ideas → drafts → schedule → review. Saved to your account.'}</p></div>
         <div className="rcd-actions">
-          <Btn quiet onClick={() => setAssistantOpen(v => !v)}><Icon name="chat" size={15} />{zh ? '助手' : 'Assistant'}</Btn>
+          <Btn quiet onClick={() => askAI(zh ? '帮我看看我的内容工作台，挑一个选题写成小红书初稿。' : 'Look at my Content Desk and turn one topic into a Xiaohongshu draft.')} disabled={busy}><Icon name="chat" size={15} />{zh ? '问 AI' : 'Ask AI'}</Btn>
           <Btn primary onClick={() => setEditing({ ...EMPTY })}><Icon name="plus" size={15} />{zh ? '新建' : 'New'}</Btn>
         </div>
       </div>
@@ -118,8 +118,7 @@ export default function ContentDesk() {
       {tab === 'insights' && <Insights state={data} zh={zh} onAdd={metric => applyOps([{ op: 'add_metric', ...metric }], zh ? '数据已记录' : 'Saved')} />}
       {tab === 'style' && <Voice state={data} zh={zh} onAdd={style => applyOps([{ op: 'add_style', ...style }], zh ? '风格已添加' : 'Style added')} onActive={id => applyOps([{ op: 'set_active_style', id }], zh ? '已切换风格' : 'Voice selected')} />}
     </div>
-    {editing && <Editor item={editing} state={data} zh={zh} onClose={() => setEditing(null)} applyOps={applyOps} flash={flash} busy={busy} />}
-    {assistantOpen && <Assistant zh={zh} messages={messages} input={assistantInput} setInput={setAssistantInput} onSend={ask} busy={busy} onClose={() => setAssistantOpen(false)} />}
+    {editing && <Editor item={editing} state={data} zh={zh} onClose={() => setEditing(null)} applyOps={applyOps} flash={flash} busy={busy} onAskAI={askAI} />}
     {toast && <div className="rcd-toast" key={toast.key}>{toast.text}</div>}
     <a className="rcd-console" href="https://www.roostbots.com/console/" target="_blank" rel="noreferrer" style={{ position: 'fixed', right: 20, bottom: 18 }}>Roost Console<Icon name="external" size={13} /></a>
   </div>
@@ -180,7 +179,7 @@ function Voice({ state, zh, onAdd, onActive }) {
   </>
 }
 
-function Editor({ item, state, zh, onClose, applyOps, flash, busy }) {
+function Editor({ item, state, zh, onClose, applyOps, flash, busy, onAskAI }) {
   const [form, setForm] = useState(() => ({ ...EMPTY, ...item, tags: Array.isArray(item.tags) ? item.tags.join(', ') : '', scheduledAt: item.scheduledAt ? item.scheduledAt.slice(0, 10) : '' }))
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -195,14 +194,10 @@ function Editor({ item, state, zh, onClose, applyOps, flash, busy }) {
   }
   const remove = async () => { if (!form.id || !window.confirm('删除这条内容？')) return; const result = await applyOps([{ op: 'delete_item', id: form.id }], zh ? '已删除' : 'Deleted'); if (result) onClose() }
   const makeDraft = async () => {
-    if (!form.id) { flash(zh ? '先保存这条内容再生成初稿' : 'Save this item before generating'); return }
-    setSaving(true)
-    try {
-      const { data } = await api.post('/api/v1/content-desk/generate', { title: form.title, body: form.body, kind: form.kind, platform: form.platform, style: state.styles.find(s => s.id === state.activeStyleId)?.rules || '' })
-      const draft = { body: data.text, model: data.model || 'LangAlpha' }
-      setForm(p => ({ ...p, draft, status: p.status === 'idea' ? 'draft' : p.status }))
-      await applyOps([{ op: 'update_item', id: form.id, draft, status: form.status === 'idea' ? 'draft' : form.status }], zh ? '初稿已生成' : 'Draft generated')
-    } catch (e) { flash(e?.message || '生成失败') } finally { setSaving(false) }
+    const prompt = zh
+      ? `请把下面这条内容写成一篇小红书初稿，风格按我的内容工作台风格来（${state.styles.find(s => s.id === state.activeStyleId)?.name || '默认'}）：\n标题：${form.title}\n原始灵感：${form.body || '（无）'}\n${form.tags ? `标签：${form.tags}\n` : ''}请写在主对话里，我复制回工作台。`
+      : `Write a Xiaohongshu draft from this Content Desk item in my current voice (${state.styles.find(s => s.id === state.activeStyleId)?.name || 'default'}):\nTitle: ${form.title}\nNotes: ${form.body || '(none)'}\nReturn it in the main chat.`
+    await onAskAI(prompt)
   }
   return <div className="rcd-overlay" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <section className="rcd-editor" role="dialog" aria-modal="true" aria-label={zh ? '编辑内容' : 'Edit content'}>
@@ -212,20 +207,12 @@ function Editor({ item, state, zh, onClose, applyOps, flash, busy }) {
         <div className="rcd-grid-3"><label className="rcd-field"><span>{zh ? '状态' : 'Status'}</span><select value={form.status} onChange={e => set('status', e.target.value)}>{Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label><label className="rcd-field"><span>{zh ? '平台' : 'Platform'}</span><input value={form.platform} onChange={e => set('platform', e.target.value)} /></label><label className="rcd-field"><span>{zh ? '排期' : 'Date'}</span><input type="date" value={form.scheduledAt} onChange={e => set('scheduledAt', e.target.value)} /></label></div>
         <label className="rcd-field"><span>{zh ? '灵感 / 备注' : 'Idea / notes'}</span><textarea rows={4} value={form.body} onChange={e => set('body', e.target.value)} /></label>
         <label className="rcd-field"><span>{zh ? '标签' : 'Tags'}</span><input value={form.tags} onChange={e => set('tags', e.target.value)} placeholder={zh ? '逗号分隔' : 'comma separated'} /></label>
-        <div className="rcd-draft-head"><div><span className="rcd-kicker">DRAFT</span><h3>{zh ? '初稿' : 'Draft'}</h3></div><div className="rcd-actions"><Btn onClick={makeDraft} disabled={saving || busy || !form.title.trim()}><Icon name="spark" size={15} />{saving ? '生成中…' : '生成初稿'}</Btn>{form.draft?.body && <Btn quiet onClick={() => navigator.clipboard?.writeText(form.draft.body).then(() => flash('正文已复制'))}><Icon name="download" size={15} />复制正文</Btn>}</div></div>
-        {form.draft?.body ? <div className="rcd-draft"><textarea rows={14} value={form.draft.body} onChange={e => set('draft', { ...form.draft, body: e.target.value })} /><p className="rcd-muted">{zh ? '生成模型' : 'Model'}：{form.draft.model || 'LangAlpha'} · {zh ? '风格' : 'Voice'}：{state.styles.find(s => s.id === state.activeStyleId)?.name || '—'}</p></div> : <p className="rcd-empty">{zh ? '还没有初稿。可以点「生成初稿」，也可以直接写。' : 'No draft yet. Generate one or write below.'}</p>}
+        <div className="rcd-draft-head"><div><span className="rcd-kicker">DRAFT</span><h3>{zh ? '初稿' : 'Draft'}</h3></div><div className="rcd-actions"><Btn onClick={makeDraft} disabled={saving || busy || !form.title.trim()}><Icon name="spark" size={15} />{saving ? '处理中…' : (zh ? '让 AI 写' : 'Ask AI')}</Btn>{form.draft?.body && <Btn quiet onClick={() => navigator.clipboard?.writeText(form.draft.body).then(() => flash('正文已复制'))}><Icon name="download" size={15} />复制正文</Btn>}</div></div>
+        {form.draft?.body ? <div className="rcd-draft"><textarea rows={14} value={form.draft.body} onChange={e => set('draft', { ...form.draft, body: e.target.value })} /><p className="rcd-muted">{zh ? '生成模型' : 'Model'}：{form.draft.model || 'LangAlpha'} · {zh ? '风格' : 'Voice'}：{state.styles.find(s => s.id === state.activeStyleId)?.name || '—'}</p></div> : <p className="rcd-empty">{zh ? '还没有初稿。可以让主对话帮你写，再复制回来；也可以直接写。' : 'No draft yet. Ask the main chat to write one, then paste it back, or write below.'}</p>}
       </div>
       <footer className="rcd-editor-foot">{form.id && <Btn quiet onClick={remove}><Icon name="trash" size={15} />{zh ? '删除' : 'Delete'}</Btn>}<span className="rcd-grow" /><Btn quiet onClick={onClose}>{zh ? '取消' : 'Cancel'}</Btn><Btn primary onClick={save} disabled={saving || !form.title.trim()}>{zh ? '保存' : 'Save'}</Btn></footer>
     </section>
   </div>
-}
-
-function Assistant({ zh, messages, input, setInput, onSend, busy, onClose }) {
-  return <aside className="rcd-assistant" aria-label={zh ? '内容助手' : 'Content assistant'}>
-    <header><div><span className="rcd-kicker">ASSISTANT</span><h3>{zh ? '内容助手' : 'Content assistant'}</h3></div><button type="button" className="rcd-icon-btn" onClick={onClose} aria-label="关闭"><Icon name="close" /></button></header>
-    <div className="rcd-assistant-log">{messages.length ? messages.map((m, i) => <div key={i} className={`rcd-msg is-${m.role}`}>{m.text}</div>) : <p className="rcd-muted">{zh ? '让助手帮你记灵感、改标题、排期或生成初稿。' : 'Ask it to capture, rewrite, schedule or draft.'}</p>}</div>
-    <form className="rcd-assistant-form" onSubmit={e => { e.preventDefault(); onSend(input) }}><textarea rows={3} value={input} onChange={e => setInput(e.target.value)} placeholder={zh ? '例如：把这条改成更口语的开头' : 'e.g. make this opener more conversational'} disabled={busy} /><Btn primary type="submit" disabled={busy || !input.trim()}><Icon name="send" size={15} />{busy ? '处理中…' : '发送'}</Btn></form>
-  </aside>
 }
 
 function Empty({ zh, title, body, action }) {

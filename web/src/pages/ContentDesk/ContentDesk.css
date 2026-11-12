@@ -152,14 +152,3 @@ button.rcd-row:hover { background: var(--rcd-layer2); }
   .rcd-overlay { padding: 0; }
   .rcd-editor { height: 100%; border-radius: 0; border: 0; }
 }
-.rcd-assistant { position: fixed; right: 20px; top: 76px; bottom: 56px; width: 360px; z-index: 30; display: flex; flex-direction: column; background: var(--rcd-layer); border: 1px solid var(--rcd-line); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.16); overflow: hidden; }
-.rcd-assistant header { display: flex; align-items: flex-start; justify-content: space-between; padding: 16px 16px 12px; border-bottom: 1px solid var(--rcd-line); }
-.rcd-assistant h3 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
-.rcd-assistant-log { flex: 1; overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 9px; }
-.rcd-msg { max-width: 92%; padding: 9px 11px; border-radius: 10px; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
-.rcd-msg.is-user { align-self: flex-end; background: var(--rcd-ink); color: var(--rcd-bg); }
-.rcd-msg.is-assistant { align-self: flex-start; background: var(--rcd-layer2); color: var(--rcd-ink); }
-.rcd-assistant-form { border-top: 1px solid var(--rcd-line); padding: 10px; display: flex; flex-direction: column; gap: 7px; }
-.rcd-assistant-form textarea { width: 100%; resize: none; border: 1px solid var(--rcd-line2); border-radius: 8px; background: var(--rcd-bg); color: var(--rcd-ink); padding: 8px; outline: none; }
-.rcd-assistant-form .rcd-btn { align-self: flex-end; }
-@media (max-width: 900px) { .rcd-assistant { right: 10px; left: 10px; width: auto; top: 10px; bottom: 10px; } }
