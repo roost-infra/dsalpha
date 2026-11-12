@@ -156,6 +156,7 @@ from src.tools.market_watch import watch_market
 from src.tools.knowledge_base.tool import knowledge_base_tools
 from src.tools.wechat.tool import wechat_tools
 from src.tools.chart_annotation import CHART_ANNOTATION_TOOLS
+from src.tools.content_desk import CONTENT_DESK_TOOLS
 from src.tools.messaging import build_messaging_tools, messaging_enabled
 from src.tools.wakeups.tool import build_schedule_wakeup_tool
 from src.tools.thread_status.tool import build_thread_status_tool
@@ -1092,6 +1093,10 @@ class PTCAgent:
         # answers the main agent, not the user.
         if chart_annotation:
             tools.extend(CHART_ANNOTATION_TOOLS)
+
+        # The user's Content Desk page, main agent only: the page has one
+        # persisted document, and a subagent has no reason to edit it.
+        tools.extend(CONTENT_DESK_TOOLS)
 
         # Messaging the user (send_message, list_message_targets), present only
         # when a channel gateway is configured. Main agent only, added after the
