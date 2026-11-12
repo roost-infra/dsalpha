@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "description": "How the agent reaches a conclusion. Valuation models and comps, coverage initiation and sector work, earnings preparation and post-mortems, and the trackers that keep a thesis honest as the facts move.",
   "author": {
-    "name": "LangAlpha",
-    "url": "https://langalpha.ai"
+    "name": "dsalpha",
+    "url": "https://dsalpha.roostbots.com"
   },
-  "homepage": "https://langalpha.ai",
+  "homepage": "https://dsalpha.roostbots.com",
   "repository": "https://github.com/ginlix/langalpha",
   "license": "Apache-2.0",
   "keywords": [

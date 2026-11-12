@@ -12,7 +12,7 @@ export function sshTarget(spec: string): { username: string; host: string; port:
 
 const add = command({
   words: ["computers", "add"],
-  summary: "add a computer; with --ssh, a machine LangAlpha logs in to",
+  summary: "add a computer; with --ssh, a machine dsalpha logs in to",
   flags: {
     name: { type: "string", value: "N" },
     kind: { type: "string", value: "K", help: "the sandbox provider (default: the server's)" },

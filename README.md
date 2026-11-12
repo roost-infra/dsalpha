@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="web/public/logo_words.png" alt="LangAlpha" height="110" />
-</p>
+<h1 align="center">dsalpha</h1>
 
-<h3 align="center">The harness for agentic trading.</h3>
+<h3 align="center">The AI research workspace for financial markets.</h3>
 
 <p align="center">
   Open-source AI agents that research the market, build the thesis,<br>
@@ -10,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://langalpha.ai"><strong>Try LangAlpha ↗</strong></a> ·
+  <a href="https://dsalpha.roostbots.com"><strong>Try dsalpha ↗</strong></a> ·
   <a href="#get-started"><strong>Get started</strong></a> ·
   <a href="#agentic-trading"><strong>Agentic trading</strong></a> ·
   <a href="#harness-design"><strong>Harness design</strong></a> ·
@@ -21,22 +19,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ginlix-ai/langalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub stars" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub stars" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="License: Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/ginlix-ai/langalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="Desktop app" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="Desktop app" /></a>
 </p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/hero-cbrs-research-dashboard.webp" alt="The demo-cbrs workspace: the agent checking the CBRS quote, pulling filings and running two analysts on the left, and on the right the CBRS dashboard built from that research, open on the price since the IPO with its event markers and a selected event's note and sources" width="900" />
 </p>
 
-## Why LangAlpha
+## Why dsalpha
 
 Most AI finance tools answer questions. We believe investment research is Bayesian: you write down a thesis and what would prove it wrong, then every earnings print, filing and price move raises or lowers your conviction, and your position with it. That loop runs for weeks or months, and no single prompt captures it.
 
-Coding agents got good once they had a harness built for code: a codebase that persists, where every commit builds on the last, plus the tools, memory and runtime around the model. LangAlpha brings that harness to markets, from vibe coding to vibe investing. It works with any model, so every better model makes it better. Two convictions shape it:
+Coding agents got good once they had a harness built for code: a codebase that persists, where every commit builds on the last, plus the tools, memory and runtime around the model. dsalpha brings that harness to markets, from vibe coding to vibe investing. It works with any model, so every better model makes it better. Two convictions shape it:
 
 - **A trade is a loop, not a tool call.** The thesis lives in a workspace, and research, sizing, the order and the watch that follows each feed new evidence back into it.
 - **Autonomy needs a boundary you set.** Agents act within the permissions you grant, and every order takes one governed path.
@@ -47,11 +45,11 @@ Coding agents got good once they had a harness built for code: a codebase that p
 
 ## Feature highlights
 
-Most of these examples come from one workspace on Cerebras (CBRS). See it work in action with [this shared conversation](https://app.langalpha.ai/s/z7rvgK3P9vZN), from the first question to the initiation report sent to Slack.
+Most of these examples come from one workspace on Cerebras (CBRS). See it work in action with [this shared conversation](https://dsalpha.roostbots.com/app/s/z7rvgK3P9vZN), from the first question to the initiation report sent to Slack.
 
 ### 🔎 Research with a team of agents
 
-Ask a question and LangAlpha splits it across parallel analysts that read filings, pull prices, options and macro data, and run the numbers in code. Send a follow-up at any time to redirect them mid-run. On CBRS, the run ended in [an HTML primer](https://app.langalpha.ai/a/lep06ly8Qjfa) on what Cerebras sells, how fast it grows and who pays for it.
+Ask a question and dsalpha splits it across parallel analysts that read filings, pull prices, options and macro data, and run the numbers in code. Send a follow-up at any time to redirect them mid-run. On CBRS, the run ended in [an HTML primer](https://dsalpha.roostbots.com/app/a/lep06ly8Qjfa) on what Cerebras sells, how fast it grows and who pays for it.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/chat-cbrs-research-subagents-primer.webp" alt="A CBRS question fanned out to four subagents, listed under the lead agent in the sidebar, next to the primer's section on who pays Cerebras" width="800" />
@@ -65,7 +63,7 @@ One workspace per thesis, sector or portfolio. Files, chats and the agent's own 
 
 > *"Build me an interactive dashboard on CBRS from what we've found so far in this workspace: the price with the key events, revenue growth, customer concentration, and how much rides on OpenAI. I want to click around it."*
 
-A new thread builds it from the research and files earlier threads left in the workspace: [a live dashboard you can play with](https://app.langalpha.ai/a/DB8NBmVeudB1).
+A new thread builds it from the research and files earlier threads left in the workspace: [a live dashboard you can play with](https://dsalpha.roostbots.com/app/a/DB8NBmVeudB1).
 
 <table align="center">
   <tr>
@@ -95,7 +93,7 @@ Excel models with live formulas, PDF and HTML reports, slide decks and interacti
 
 > *"Write it up like a sell-side initiation on CBRS: rating, price target, the thesis, what the market is pricing in, the scenarios, peers, key risks, and the charts. Use the research and the model we already have."*
 
-The initiating-coverage skill builds on the research and the reverse DCF workbook from earlier in the thread, and writes ten pages: a Sell with a $130 target, scenarios, peers, risks and seven charts, as a PDF with [an HTML version](https://app.langalpha.ai/a/eedVW2kllALZ). Select a range in the spreadsheet panel and send it back to the agent to ask about it. With Slack connected, ask it to send everything over and every file arrives in your DM, ready to open there.
+The initiating-coverage skill builds on the research and the reverse DCF workbook from earlier in the thread, and writes ten pages: a Sell with a $130 target, scenarios, peers, risks and seven charts, as a PDF with [an HTML version](https://dsalpha.roostbots.com/app/a/eedVW2kllALZ). Select a range in the spreadsheet panel and send it back to the agent to ask about it. With Slack connected, ask it to send everything over and every file arrives in your DM, ready to open there.
 
 <table align="center">
   <tr>
@@ -137,7 +135,7 @@ A Sources panel lists each filing, web page, data call and file the agent touche
 
 ## Agentic trading
 
-We are committed to making LangAlpha the best harness for agentic trading. Brokers now let AI agents trade real accounts, and the agents plugging in are general-purpose, so an order is one more tool call among many. In LangAlpha it is the one call the harness is built around:
+We are committed to making dsalpha the best harness for agentic trading. Brokers now let AI agents trade real accounts, and the agents plugging in are general-purpose, so an order is one more tool call among many. In dsalpha it is the one call the harness is built around:
 
 - **Limits that hold whatever the model does.** What each connection may do, which orders wait for your approval, and the rule that an approved order runs exactly once are enforced on the host, on the one [governed path](#governed-orders) every order takes. No prompt, and no script the agent writes, can widen them, and they stay the same for every model you run.
 - **An order path you can read.** Every check an order passes, from the model's call to the request your broker receives, is code in this repository. You can read it before trusting it with money, and run it on your own machine under the same controls.
@@ -168,9 +166,9 @@ When you connect one, you choose what it may do, from read-only to paper trading
 
 **Use the model you already pay for.** Sign in with a Claude or ChatGPT subscription, use a coding plan from Kimi, GLM, MiniMax or OpenCode Go, bring any API key, or run a local model when you self-host.
 
-**Work where you are.** Use the browser, the [desktop app](https://github.com/ginlix-ai/langalpha/releases) for macOS, Windows and Linux, or Slack, Discord, Telegram, Feishu and iMessage on [LangAlpha.ai](https://langalpha.ai).
+**Work where you are.** Use the browser, the [desktop app](https://github.com/JingxuanC/dsalpha/releases) for macOS, Windows and Linux, or Slack, Discord, Telegram, Feishu and iMessage on [dsalpha](https://dsalpha.roostbots.com).
 
-**Hosted (beta).** Sign up at [LangAlpha.ai](https://langalpha.ai) to start free or trial with one of our plans. Market data, cloud sandboxes, brokerage connections and channels are set up for you. Plans and features may change during the beta.
+**Hosted (beta).** Sign up at [dsalpha](https://dsalpha.roostbots.com) to start free or trial with one of our plans. Market data, cloud sandboxes, brokerage connections and channels are set up for you. Plans and features may change during the beta.
 
 **Self-host.** All you need is Docker:
 
@@ -204,8 +202,8 @@ Open [http://localhost:5173](http://localhost:5173). The API listens on port 800
 | `FMP_API_KEY` | Fundamentals, financial statements, macro and analyst data ([free tier](https://site.financialmodelingprep.com/)) |
 | `DAYTONA_API_KEY` | Cloud sandboxes from [Daytona](https://www.daytona.io/). Without it, sandboxes run in local Docker. Each resource tier builds its own snapshot on first use, or run `make daytona-snapshots` to prebuild them |
 | `E2B_API_KEY` | Cloud sandboxes from [E2B](https://e2b.dev/), used when no Daytona key is set. Stopping pauses the sandbox and it resumes in about a second. Each resource tier builds its own template on first use, or run `make e2b-templates` to prebuild them. Set `E2B_DOMAIN` (or `E2B_API_URL` and `E2B_SANDBOX_URL`) for a self-hosted E2B, and `sandbox.e2b.max_timeout` in `agent_config.yaml` to your plan's longest run (Hobby 3600 s, the default; Pro 86400 s). Archive is Daytona only. Platform secrets need `E2B_SECRET_NAMESPACE` and a `header` on each catalog entry |
-| `sandbox.offered_providers: ["ssh"]` in `agent_config.yaml`, with `BYOK_ENCRYPTION_KEY` and `PREVIEW_PROXY_BASE_URL` | Computers on your own Linux machines and Macs. Each user authorizes one client key on a VPS, cloud VM, server or Mac (with Remote Login on) and adds it by address or with a one-line command run there; the agent works there as the login user, in a folder of its own, with a Python runtime it installs under `~/.langalpha` on the first start, downloaded from GitHub and PyPI. The server connects only to public addresses unless `sandbox.ssh.allow_private_addresses` is on, which a machine on your own network, or the one running LangAlpha, needs. By default no key this server holds is sent to the machine, so the built-in data tools that need one (FMP) answer `client_unavailable` there, and the keyless ones (Yahoo Finance) work as anywhere. On a deployment you alone use, `sandbox.ssh.trusted_host: true` sends the machines the same keys as any other computer |
-| `features.claude_code_runtime.enabled: true` in `config.yaml`, with `BYOK_ENCRYPTION_KEY` set | Claude threads on your own Claude plan through Claude Code (preview). The backend needs the `claude-code` extra, which the Docker images leave out by default: run `uv sync --extra claude-code` on your host, or build the images with `INSTALL_CLAUDE_CODE=true` (set it in `.env` for `make up`; it adds about 400 MB to the backend image). Restart the backend, then open Settings → Model access → Connect a subscription → Claude Code and add a setup token: sign in with Claude there, or paste a token you made with `claude setup-token` on any machine. Choosing to add your first token turns Claude Code on for your account. That token is a separate credential made for LangAlpha, stored encrypted for your account: the runtime never reads, refreshes or writes your own Claude Code sign-in. Until a token is saved, the Claude Code models point you to Model access |
+| `sandbox.offered_providers: ["ssh"]` in `agent_config.yaml`, with `BYOK_ENCRYPTION_KEY` and `PREVIEW_PROXY_BASE_URL` | Computers on your own Linux machines and Macs. Each user authorizes one client key on a VPS, cloud VM, server or Mac (with Remote Login on) and adds it by address or with a one-line command run there; the agent works there as the login user, in a folder of its own, with a Python runtime it installs under `~/.langalpha` on the first start, downloaded from GitHub and PyPI. The server connects only to public addresses unless `sandbox.ssh.allow_private_addresses` is on, which a machine on your own network, or the one running dsalpha, needs. By default no key this server holds is sent to the machine, so the built-in data tools that need one (FMP) answer `client_unavailable` there, and the keyless ones (Yahoo Finance) work as anywhere. On a deployment you alone use, `sandbox.ssh.trusted_host: true` sends the machines the same keys as any other computer |
+| `features.claude_code_runtime.enabled: true` in `config.yaml`, with `BYOK_ENCRYPTION_KEY` set | Claude threads on your own Claude plan through Claude Code (preview). The backend needs the `claude-code` extra, which the Docker images leave out by default: run `uv sync --extra claude-code` on your host, or build the images with `INSTALL_CLAUDE_CODE=true` (set it in `.env` for `make up`; it adds about 400 MB to the backend image). Restart the backend, then open Settings → Model access → Connect a subscription → Claude Code and add a setup token: sign in with Claude there, or paste a token you made with `claude setup-token` on any machine. Choosing to add your first token turns Claude Code on for your account. That token is a separate credential made for dsalpha, stored encrypted for your account: the runtime never reads, refreshes or writes your own Claude Code sign-in. Until a token is saved, the Claude Code models point you to Model access |
 | `R2_*`, `S3_*` or `OSS_*`, with `storage.provider` | Object storage on Cloudflare R2, AWS S3, Alibaba OSS or MinIO. Holds workspace file snapshots, memos, attachments, skill archives, large transcripts and chat widget data, and serves downloads over signed links. Without a bucket these bytes stay in Postgres and chart image capture is off |
 | `TAVILY_API_KEY`, `SERPER_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `BOCHA_API_KEY` | Web search. The engine is chosen by `search_api` in `agent_config.yaml` (default `tavily`) or per user in Settings |
 | `FIRECRAWL_API_KEY` | Upgraded web fetch and site crawling. The built-in crawler needs no key |
@@ -220,7 +218,7 @@ With no data keys you still get Yahoo Finance prices, fundamentals, analyst data
 
 **What context reaches the model, in what form, and what it can act on define the harness.**
 
-Where a convention already exists, LangAlpha follows the one frontier labs ship in their own agents: file tools that read, write, edit and search, a Bash shell, skills as `SKILL.md` files, and a workspace `agent.md` in the style of `AGENTS.md`. Those shapes are likely in a model's training data, so it arrives knowing how to use them.
+Where a convention already exists, dsalpha follows the one frontier labs ship in their own agents: file tools that read, write, edit and search, a Bash shell, skills as `SKILL.md` files, and a workspace `agent.md` in the style of `AGENTS.md`. Those shapes are likely in a model's training data, so it arrives knowing how to use them.
 
 ### Workspaces and memory
 
@@ -241,7 +239,7 @@ Each folder holds an `agent.md` the agent maintains (goals, findings, an index o
 
 ### Programmatic tool calling
 
-LangAlpha has been built around programmatic tool calling since its first release in January 2026. Rather than calling tools one JSON call at a time, the agent writes Python that imports them: LangAlpha turns any [MCP](https://modelcontextprotocol.io) server into a Python module with its docs, and the code runs in the sandbox. Two reasons drive it:
+dsalpha has been built around programmatic tool calling since its first release in January 2026. Rather than calling tools one JSON call at a time, the agent writes Python that imports them: dsalpha turns any [MCP](https://modelcontextprotocol.io) server into a Python module with its docs, and the code runs in the sandbox. Two reasons drive it:
 
 - **Tools cost context before they are used.** Bound as JSON tools, every server's schemas ride along on every call, whether the turn needs them or not. Here the prompt carries one line per server, and the agent reads a server's full docs from a file the first time it needs them. That saves tokens, keeps noise out, and a new server costs one line.
 - **Financial data is tables, not prose.** Ten years of daily bars for a dozen tickers is about 30,000 rows. A model cannot work that as text, and pasting it in would fill the window. In code the agent aggregates and transforms it, charts it, and feeds it into a valuation model or a backtest, and only the result comes back to the context.
@@ -262,9 +260,9 @@ The sources span three kinds of data:
 - **Fundamentals and macro**: financial statements and ratios, analyst data, insider trades, earnings and economic calendars, macro series and the yield curve.
 - **Filings and text**: SEC filings and earnings call transcripts, X posts and web pages.
 
-LangAlpha's own data servers are made to be digested by code: every market-data tool returns the same envelope (`symbol`, `currency`, `timezone`, `count`, `data`, `source`), time series run oldest first, and failures come back as typed error codes, so agent code indexes the result instead of parsing prose.
+dsalpha's own data servers are made to be digested by code: every market-data tool returns the same envelope (`symbol`, `currency`, `timezone`, `count`, `data`, `source`), time series run oldest first, and failures come back as typed error codes, so agent code indexes the result instead of parsing prose.
 
-Providers fall back per market: the real-time feed on LangAlpha.ai for US data, FMP for fundamentals and macro, and Yahoo Finance as the free floor. Web search supports Tavily, Serper, Exa, Parallel and Bocha, and web fetch uses a built-in crawler with optional Firecrawl delegation behind per-provider circuit breakers.
+Providers fall back per market: the real-time feed on dsalpha for US data, FMP for fundamentals and macro, and Yahoo Finance as the free floor. Web search supports Tavily, Serper, Exa, Parallel and Bocha, and web fetch uses a built-in crawler with optional Firecrawl delegation behind per-provider circuit breakers.
 
 Beyond data, the agent works with these tools:
 
@@ -275,7 +273,7 @@ Beyond data, the agent works with these tools:
 | Output | Render an interactive widget in the chat, and draw annotations on a stock's live chart |
 | Coordination | Dispatch [subagents and workflows](#subagents-and-teams-of-agents), ask you a structured question, and keep a todo list if you turn it on |
 | Your connections | Brokerage and remote MCP servers over OAuth or header auth, and Agent Plugins |
-| Messaging | On LangAlpha.ai, message you on a connected channel, with files attached |
+| Messaging | On dsalpha, message you on a connected channel, with files attached |
 
 The **data provenance** layer records every source the agent touches, outside the model's context: market data and MCP calls, whether the model calls a tool directly or the agent's Python or Bash calls it in the sandbox, web searches and fetched pages, SEC filings, and the files, memos and memory the agent reads. Each record carries the provider, the redacted arguments, a timestamp and a fingerprint of the result, keeps the result itself up to 64 KB, and is tied to the turn and to the agent, main or subagent, that made the call. The Sources panel lists them per turn, and the API returns the same records, so an answer can be checked against what it was built on.
 
@@ -311,9 +309,9 @@ Every model call is assembled in layers, ordered from most stable to most volati
 
 ### Models
 
-LangAlpha isn't tuned only for frontier models. The same tools and middleware drive every model, so an open-weight model can get you comparable results at a fraction of the cost. Switch providers mid-thread, and a failed call retries, then falls back to a model you configure.
+dsalpha isn't tuned only for frontier models. The same tools and middleware drive every model, so an open-weight model can get you comparable results at a fraction of the cost. Switch providers mid-thread, and a failed call retries, then falls back to a model you configure.
 
-Most providers accept the Chat Completions format, but for several it is a compatibility layer that drops what matters. For each provider, LangAlpha picks the API format that serves its models best, such as the OpenAI [Responses API](https://platform.openai.com/docs/api-reference/responses) for OpenAI and Codex, and the Anthropic [Messages API](https://docs.anthropic.com/en/api/messages) for Claude, Kimi, MiniMax and DeepSeek. Two things drive the choice:
+Most providers accept the Chat Completions format, but for several it is a compatibility layer that drops what matters. For each provider, dsalpha picks the API format that serves its models best, such as the OpenAI [Responses API](https://platform.openai.com/docs/api-reference/responses) for OpenAI and Codex, and the Anthropic [Messages API](https://docs.anthropic.com/en/api/messages) for Claude, Kimi, MiniMax and DeepSeek. Two things drive the choice:
 
 - **Thinking is preserved.** Reasoning returns to the model within a turn and across turns, in its provider's own form: Anthropic's signed thinking blocks, OpenAI's encrypted reasoning items, GLM's reasoning text.
 - **Runtime context rides the right channel.** The harness feeds the model a lot of runtime context. It goes as a `developer` message on OpenAI-shaped APIs and a mid-conversation `system` message on Anthropic and GLM, which honor it, and inside the user message elsewhere.
@@ -335,12 +333,12 @@ Keys and OAuth tokens are encrypted at rest with pgcrypto.
 
 ### Skills and plugins
 
-Skills follow the [Agent Skills](https://agentskills.io/specification) specification and plugins the [Agent Plugins 1.0.0](https://agent-plugins.org) format. The built-in MCP servers and skills ship as plugin bundles in [`plugins/`](plugins/), the same format you upload or install from a git URL on the Plugins page. On top of the standards, LangAlpha adds:
+Skills follow the [Agent Skills](https://agentskills.io/specification) specification and plugins the [Agent Plugins 1.0.0](https://agent-plugins.org) format. The built-in MCP servers and skills ship as plugin bundles in [`plugins/`](plugins/), the same format you upload or install from a git URL on the Plugins page. On top of the standards, dsalpha adds:
 
 - **Skills load on demand.** The prompt carries one manifest line per skill, and the full skill loads by slash command or when the agent reads its `SKILL.md`. Tools a skill brings, such as the automation tools, stay hidden until it loads.
 - **Your skills, your commands.** Upload a skill as a zip and give it a slash command of your choosing, or have the agent install one from GitHub into a workspace.
-- **One extension block for plugins.** `mcp.json` stays closed to the format's own fields. Everything LangAlpha adds sits in `plugin.json` under `extensions["ai.langalpha"]`, the format's one extension point: a `description` and an `instruction` per server, which reach the prompt; a `tool_exposure_mode` of `summary` or `detailed`, for how much of each tool the agent sees up front; and `secrets`, naming each credential a server needs and where it binds. Strip the block and the package still installs in any Agent Plugins host. Details in [`plugins/README.md`](plugins/README.md).
-- **Third-party servers run isolated.** A server whose code LangAlpha does not own launches through pinned `uvx` or `npx`, never from the app's own environment, so an SDK upgrade on one side cannot break the other.
+- **One extension block for plugins.** `mcp.json` stays closed to the format's own fields. Everything dsalpha adds sits in `plugin.json` under `extensions["ai.langalpha"]`, the format's one extension point: a `description` and an `instruction` per server, which reach the prompt; a `tool_exposure_mode` of `summary` or `detailed`, for how much of each tool the agent sees up front; and `secrets`, naming each credential a server needs and where it binds. Strip the block and the package still installs in any Agent Plugins host. Details in [`plugins/README.md`](plugins/README.md).
+- **Third-party servers run isolated.** A server whose code dsalpha does not own launches through pinned `uvx` or `npx`, never from the app's own environment, so an SDK upgrade on one side cannot break the other.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/plugins-builtin-packages.webp" alt="Packages tab of the Plugins page, listing the six built-in plugin bundles" width="720" />
@@ -369,7 +367,7 @@ A turn runs as a background run, independent of the HTTP connection that started
 
 **Files outlive the sandbox.** After each turn, and whenever a computer stops, every workspace folder that changed is snapshotted. The manifest is one Postgres row per path. The bytes go from the sandbox straight to S3-compatible object storage, or stay in Postgres when you run without one. The file browser and downloads keep working while the computer is off, and a recreated sandbox is restored from the snapshot. A Daytona computer left stopped for a week also archives its whole disk to cold storage and resumes from it on the next start.
 
-The **channel gateway** is part of LangAlpha.ai. It carries Slack, Discord, Telegram, Feishu and iMessage conversations into the same chat API the web app uses, and posts automation results to the channel you pick.
+The **channel gateway** is part of dsalpha. It carries Slack, Discord, Telegram, Feishu and iMessage conversations into the same chat API the web app uses, and posts automation results to the channel you pick.
 
 ### Governed orders
 
@@ -394,10 +392,10 @@ An order moves real money, so it gets its own path. Order tools are pinned to di
 ## Roadmap
 
 - [x] Research harness: data in code, persistent workspaces, agent teams
-- [x] LangAlpha.ai and the desktop app
+- [x] dsalpha and the desktop app
 - [x] Brokerage connections with governed orders
 - [ ] Agents tuned for crypto and prediction markets
-- [ ] Let your own AI agent (ChatGPT, Claude) hand trades to LangAlpha
+- [ ] Let your own AI agent (ChatGPT, Claude) hand trades to dsalpha
 
 ## Contributing
 
@@ -412,7 +410,7 @@ Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Th
 
 ## Disclaimer
 
-LangAlpha is software, not a financial adviser. Nothing it produces is investment advice or a recommendation to buy or sell any security. Agents act only within the permissions you grant, and you are responsible for every order placed on your accounts. Do your own due diligence.
+dsalpha is software, not a financial adviser. Nothing it produces is investment advice or a recommendation to buy or sell any security. Agents act only within the permissions you grant, and you are responsible for every order placed on your accounts. Do your own due diligence.
 
 ## License
 

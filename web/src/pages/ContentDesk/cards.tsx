@@ -101,7 +101,7 @@ export function ProgressRail({ status, zh }) {
 export function DraftCard({ draft, zh, onCopy }) {
   if (!draft?.body) return <div className="rcd-draft-card is-empty"><span className="rcd-dash" /><p>{zh ? '还没有初稿。让主对话写一版，或直接在下方写。' : 'No draft yet. Ask the main chat, or write below.'}</p></div>
   return <article className="rcd-draft-card">
-    <header><span className="rcd-kicker">DRAFT</span><span className="rcd-pill">{draft.model || 'LangAlpha'}</span></header>
+    <header><span className="rcd-kicker">DRAFT</span><span className="rcd-pill">{draft.model || 'dsalpha'}</span></header>
     <div className="rcd-draft-preview">{draft.body.slice(0, 420)}</div>
     <footer><span>{draft.body.length} {zh ? '字' : 'chars'}</span><button type="button" className="rcd-link" onClick={onCopy}>{zh ? '复制正文' : 'Copy'}</button></footer>
   </article>

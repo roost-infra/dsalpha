@@ -27,7 +27,7 @@ const answer = (verdict: "approve" | "reject") =>
       const thread = args.op("id");
       const interrupt = await pendingInterrupt(api, thread, args.str("interrupt"));
       if (isOrder(interrupt)) {
-        throw new CliError(`Thread ${thread} is waiting on an order, which only the LangAlpha app approves or rejects`, Exit.auth);
+        throw new CliError(`Thread ${thread} is waiting on an order, which only the dsalpha app approves or rejects`, Exit.auth);
       }
       const decision = { type: verdict, message: args.str("message") };
       const decisions = interrupt.action_requests.map(() => decision);

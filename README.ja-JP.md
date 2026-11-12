@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="web/public/logo_words.png" alt="LangAlpha" height="110" />
-</p>
+<h1 align="center">dsalpha</h1>
 
-<h3 align="center">Agent トレーディングのための harness。</h3>
+<h3 align="center">金融市場のための AI リサーチワークスペース。</h3>
 
 <p align="center">
   市場をリサーチし、投資仮説を組み立て、<br>
@@ -10,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://langalpha.ai"><strong>LangAlpha を試す ↗</strong></a> ·
+  <a href="https://dsalpha.roostbots.com"><strong>dsalpha を試す ↗</strong></a> ·
   <a href="#使い始める"><strong>使い始める</strong></a> ·
   <a href="#agent-トレーディング"><strong>Agent トレーディング</strong></a> ·
   <a href="#harness-設計"><strong>Harness 設計</strong></a> ·
@@ -21,22 +19,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ginlix-ai/langalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub スター数" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub スター数" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="ライセンス：Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/ginlix-ai/langalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="デスクトップアプリ" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="デスクトップアプリ" /></a>
 </p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/hero-cbrs-research-dashboard.webp" alt="demo-cbrs workspace：左では agent が CBRS の株価を確認し、開示資料を取得し、2 人のアナリストを動かしている。右はそのリサーチから作った CBRS のダッシュボードで、IPO 以降の株価をイベントマーカー付きで表示し、選択したイベントのメモと出典を開いている" width="900" />
 </p>
 
-## LangAlpha を選ぶ理由
+## dsalpha を選ぶ理由
 
 AI 金融ツールの多くは、質問に答えるためのものです。私たちは、投資リサーチはベイズ的だと考えています。まず仮説と、何が起きればそれが誤りだと分かるかを書き出します。その後は決算発表、開示資料、値動きのたびに確信度が上下し、それに合わせてポジションも動きます。このループは数週間から数か月続き、1 回の prompt では捉えきれません。
 
-コーディング agent が実用的になったのは、コードのために作られた harness を得てからです。永続する codebase があり、各 commit が前の commit の上に積み上がり、さらにモデルの周りにツール、memory、runtime がそろっています。LangAlpha はその harness を市場に持ち込みます。vibe coding から vibe investing へ。どのモデルでも動くので、モデルが良くなるたびに LangAlpha も良くなります。設計の軸となる考え方は 2 つです。
+コーディング agent が実用的になったのは、コードのために作られた harness を得てからです。永続する codebase があり、各 commit が前の commit の上に積み上がり、さらにモデルの周りにツール、memory、runtime がそろっています。dsalpha はその harness を市場に持ち込みます。vibe coding から vibe investing へ。どのモデルでも動くので、モデルが良くなるたびに dsalpha も良くなります。設計の軸となる考え方は 2 つです。
 
 - **トレードは tool call ではなく、ループです。** 仮説は workspace に置かれ、リサーチ、ポジションサイジング、注文、その後の監視のそれぞれが、新しい証拠を仮説に返します。
 - **自律には、あなたが決める境界が必要です。** agent はあなたが与えた権限の範囲内で動き、すべての注文は統制された 1 本の経路を通ります。
@@ -47,11 +45,11 @@ AI 金融ツールの多くは、質問に答えるためのものです。私�
 
 ## 機能ハイライト
 
-ここでの例の多くは、Cerebras（CBRS）を扱う 1 つの workspace から取っています。最初の質問から Slack に送られた初回カバレッジレポートまで、実際の動きは[この共有会話](https://app.langalpha.ai/s/z7rvgK3P9vZN)で確認できます。
+ここでの例の多くは、Cerebras（CBRS）を扱う 1 つの workspace から取っています。最初の質問から Slack に送られた初回カバレッジレポートまで、実際の動きは[この共有会話](https://dsalpha.roostbots.com/app/s/z7rvgK3P9vZN)で確認できます。
 
 ### 🔎 Agent チームでリサーチする
 
-質問すると、LangAlpha はそれを並列のアナリストに振り分けます。アナリストは開示資料を読み、株価、オプション、マクロデータを取得し、コードで数字を計算します。実行中でもいつでも追加のメッセージを送って、方向を変えられます。CBRS では、Cerebras が何を売り、どれだけの速さで成長し、誰が支払っているのかをまとめた [HTML の入門資料](https://app.langalpha.ai/a/lep06ly8Qjfa)が最終的な成果になりました。
+質問すると、dsalpha はそれを並列のアナリストに振り分けます。アナリストは開示資料を読み、株価、オプション、マクロデータを取得し、コードで数字を計算します。実行中でもいつでも追加のメッセージを送って、方向を変えられます。CBRS では、Cerebras が何を売り、どれだけの速さで成長し、誰が支払っているのかをまとめた [HTML の入門資料](https://dsalpha.roostbots.com/app/a/lep06ly8Qjfa)が最終的な成果になりました。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/chat-cbrs-research-subagents-primer.webp" alt="CBRS についての質問を 4 つの subagent に振り分けた様子。subagent はサイドバーで lead agent の下に並び、隣には Cerebras に誰が支払っているかを扱う入門資料のセクションがある" width="800" />
@@ -65,7 +63,7 @@ AI 金融ツールの多くは、質問に答えるためのものです。私�
 
 > *「この workspace でここまでに分かったことをもとに、CBRS のインタラクティブなダッシュボードを作って。主要なイベント付きの株価、売上成長、顧客集中度、そして OpenAI にどれだけ依存しているか。あちこちクリックして見られるようにしたい。」*
 
-新しい thread が、それまでの thread が workspace に残したリサーチとファイルをもとにダッシュボードを作ります。完成したのは[実際に操作できるライブダッシュボード](https://app.langalpha.ai/a/DB8NBmVeudB1)です。
+新しい thread が、それまでの thread が workspace に残したリサーチとファイルをもとにダッシュボードを作ります。完成したのは[実際に操作できるライブダッシュボード](https://dsalpha.roostbots.com/app/a/DB8NBmVeudB1)です。
 
 <table align="center">
   <tr>
@@ -95,7 +93,7 @@ agent は workspace に 4 つの automation を設定します。毎週の前提
 
 > *「CBRS について、セルサイドの初回カバレッジのようにまとめて。レーティング、目標株価、投資仮説、市場が織り込んでいること、シナリオ、ピア、主なリスク、チャートを入れて。すでにあるリサーチとモデルを使って。」*
 
-初回カバレッジの skill は、thread の前半で作ったリサーチとリバース DCF のワークブックを土台に、10 ページのレポートを書きます。目標株価 $130 の Sell 判断、シナリオ、ピア、リスク、7 つのチャートを含み、PDF と [HTML 版](https://app.langalpha.ai/a/eedVW2kllALZ)で出力されます。スプレッドシートパネルで範囲を選んで agent に送り返せば、その部分について質問できます。Slack を接続していれば、すべて送るよう頼むだけで全ファイルが DM に届き、その場で開けます。
+初回カバレッジの skill は、thread の前半で作ったリサーチとリバース DCF のワークブックを土台に、10 ページのレポートを書きます。目標株価 $130 の Sell 判断、シナリオ、ピア、リスク、7 つのチャートを含み、PDF と [HTML 版](https://dsalpha.roostbots.com/app/a/eedVW2kllALZ)で出力されます。スプレッドシートパネルで範囲を選んで agent に送り返せば、その部分について質問できます。Slack を接続していれば、すべて送るよう頼むだけで全ファイルが DM に届き、その場で開けます。
 
 <table align="center">
   <tr>
@@ -137,7 +135,7 @@ Sources パネルには、1 つの turn で agent が触れた開示資料、Web
 
 ## Agent トレーディング
 
-私たちは、LangAlpha を agent トレーディングに最適な harness にすることに取り組んでいます。証券会社は今や AI agent が実際の口座で取引することを認めていますが、そこにつながる agent は汎用のものなので、注文は数ある tool call の 1 つにすぎません。LangAlpha では、注文こそが harness の設計の中心にある呼び出しです。
+私たちは、dsalpha を agent トレーディングに最適な harness にすることに取り組んでいます。証券会社は今や AI agent が実際の口座で取引することを認めていますが、そこにつながる agent は汎用のものなので、注文は数ある tool call の 1 つにすぎません。dsalpha では、注文こそが harness の設計の中心にある呼び出しです。
 
 - **モデルが何をしても崩れない制限。** 各接続に何を許可するか、どの注文があなたの承認を待つか、承認された注文は 1 回だけ実行されるというルールは、すべての注文が通る 1 本の[統制された経路](#統制された注文)上で、ホスト側で強制されます。どんな prompt も、agent が書くどんなスクリプトもこれらを広げることはできず、どのモデルを使っても同じです。
 - **読める注文経路。** モデルの呼び出しから証券会社が受け取るリクエストまで、注文が通るすべてのチェックはこのリポジトリ内のコードです。お金を預ける前にコードを読めますし、同じ制御のもとで自分のマシンで動かすこともできます。
@@ -168,9 +166,9 @@ Robinhood はローカルアプリに戻るサインインしか受け付けな�
 
 **すでに料金を払っているモデルを使えます。** Claude や ChatGPT のサブスクリプションでサインインする、Kimi、GLM、MiniMax、OpenCode Go の coding plan を使う、任意の API key を持ち込む、セルフホストならローカルモデルを動かす、のいずれも選べます。
 
-**いつもの場所で使えます。** ブラウザ、macOS、Windows、Linux 向けの[デスクトップアプリ](https://github.com/ginlix-ai/langalpha/releases)、そして [LangAlpha.ai](https://langalpha.ai) なら Slack、Discord、Telegram、Feishu、iMessage からも使えます。
+**いつもの場所で使えます。** ブラウザ、macOS、Windows、Linux 向けの[デスクトップアプリ](https://github.com/JingxuanC/dsalpha/releases)、そして [dsalpha](https://dsalpha.roostbots.com) なら Slack、Discord、Telegram、Feishu、iMessage からも使えます。
 
-**ホスト版（beta）。** [LangAlpha.ai](https://langalpha.ai) に登録すると、無料で始めるか、いずれかのプランを試用できます。市場データ、クラウド sandbox、証券口座の接続、チャネルはすべて設定済みです。beta 期間中はプランや機能が変わる可能性があります。
+**ホスト版（beta）。** [dsalpha](https://dsalpha.roostbots.com) に登録すると、無料で始めるか、いずれかのプランを試用できます。市場データ、クラウド sandbox、証券口座の接続、チャネルはすべて設定済みです。beta 期間中はプランや機能が変わる可能性があります。
 
 **セルフホスト。** 必要なのは Docker だけです。
 
@@ -217,7 +215,7 @@ make up       # Postgres, Redis, backend and web app
 
 **どの context を、どんな形でモデルに届け、モデルが何に対して行動できるか。それが harness を決めます。**
 
-すでに慣習があるところでは、LangAlpha はフロンティアラボが自社の agent に搭載しているものに従います。読み取り、書き込み、編集、検索を行うファイルツール、Bash シェル、`SKILL.md` ファイルとしての skill、そして `AGENTS.md` にならった workspace 用の `agent.md` です。こうした形はモデルの学習データに含まれている可能性が高く、モデルは最初から使い方を知っています。
+すでに慣習があるところでは、dsalpha はフロンティアラボが自社の agent に搭載しているものに従います。読み取り、書き込み、編集、検索を行うファイルツール、Bash シェル、`SKILL.md` ファイルとしての skill、そして `AGENTS.md` にならった workspace 用の `agent.md` です。こうした形はモデルの学習データに含まれている可能性が高く、モデルは最初から使い方を知っています。
 
 ### Workspace と Memory
 
@@ -238,9 +236,9 @@ make up       # Postgres, Redis, backend and web app
 
 ### Programmatic Tool Calling
 
-LangAlpha は 2026 年 1 月の最初のリリース以来、programmatic tool calling を中心に作られています。agent はツールを 1 回ずつ JSON で呼び出すのではなく、ツールを import する Python を書きます。LangAlpha は任意の [MCP](https://modelcontextprotocol.io) server をドキュメント付きの Python モジュールに変換し、そのコードは sandbox で実行されます。理由は 2 つあります。
+dsalpha は 2026 年 1 月の最初のリリース以来、programmatic tool calling を中心に作られています。agent はツールを 1 回ずつ JSON で呼び出すのではなく、ツールを import する Python を書きます。dsalpha は任意の [MCP](https://modelcontextprotocol.io) server をドキュメント付きの Python モジュールに変換し、そのコードは sandbox で実行されます。理由は 2 つあります。
 
-- **ツールは使う前から context を消費します。** JSON ツールとしてバインドすると、その turn で必要かどうかにかかわらず、すべての server のスキーマが毎回の呼び出しに乗ります。LangAlpha では prompt に載るのは server ごとに 1 行だけで、agent は server の完全なドキュメントを、初めて必要になったときにファイルから読みます。token を節約でき、ノイズも入らず、server を追加しても増えるのは 1 行です。
+- **ツールは使う前から context を消費します。** JSON ツールとしてバインドすると、その turn で必要かどうかにかかわらず、すべての server のスキーマが毎回の呼び出しに乗ります。dsalpha では prompt に載るのは server ごとに 1 行だけで、agent は server の完全なドキュメントを、初めて必要になったときにファイルから読みます。token を節約でき、ノイズも入らず、server を追加しても増えるのは 1 行です。
 - **金融データは文章ではなく表です。** 12 銘柄の 10 年分の日足は約 30,000 行になります。モデルはそれをテキストとして扱えず、そのまま貼り付ければ context window が埋まってしまいます。コードなら agent はデータを集計、変換し、チャートにし、バリュエーションモデルやバックテストに渡せます。context に戻るのは結果だけです。
 
 <p align="center">
@@ -259,9 +257,9 @@ LangAlpha は 2026 年 1 月の最初のリリース以来、programmatic tool c
 - **ファンダメンタルズとマクロ**：財務諸表と財務比率、アナリストデータ、インサイダー取引、決算カレンダーと経済カレンダー、マクロ系列、イールドカーブ。
 - **開示資料とテキスト**：SEC 開示資料と決算説明会のトランスクリプト、X の投稿、Web ページ。
 
-LangAlpha 独自のデータ server は、コードで扱いやすいように作られています。市場データツールはすべて同じエンベロープ（`symbol`、`currency`、`timezone`、`count`、`data`、`source`）を返し、時系列は古い順に並び、失敗は型付きのエラーコードとして返ります。そのため agent のコードは、文章を解析するのではなく、結果をそのままインデックスで参照できます。
+dsalpha 独自のデータ server は、コードで扱いやすいように作られています。市場データツールはすべて同じエンベロープ（`symbol`、`currency`、`timezone`、`count`、`data`、`source`）を返し、時系列は古い順に並び、失敗は型付きのエラーコードとして返ります。そのため agent のコードは、文章を解析するのではなく、結果をそのままインデックスで参照できます。
 
-provider は市場ごとにフォールバックします。米国データには LangAlpha.ai のリアルタイムフィード、ファンダメンタルズとマクロには FMP、無料のフォールバック先として Yahoo Finance を使います。Web 検索は Tavily、Serper、Exa、Parallel、Bocha に対応します。Web 取得は組み込みのクローラーを使い、オプションで Firecrawl に委譲でき、provider ごとのサーキットブレーカーで保護されています。
+provider は市場ごとにフォールバックします。米国データには dsalpha のリアルタイムフィード、ファンダメンタルズとマクロには FMP、無料のフォールバック先として Yahoo Finance を使います。Web 検索は Tavily、Serper、Exa、Parallel、Bocha に対応します。Web 取得は組み込みのクローラーを使い、オプションで Firecrawl に委譲でき、provider ごとのサーキットブレーカーで保護されています。
 
 データ以外に、agent は次のツールを使います。
 
@@ -272,7 +270,7 @@ provider は市場ごとにフォールバックします。米国データに�
 | 出力 | チャット内にインタラクティブなウィジェットを表示し、銘柄のライブチャートに注釈を描く |
 | 協調 | [subagent と workflow](#subagent-と-agent-チーム) を起動し、構造化された質問をあなたに投げ、有効にすれば todo リストも管理する |
 | あなたの接続 | OAuth またはヘッダー認証による証券口座とリモート MCP server、Agent Plugins |
-| メッセージ | LangAlpha.ai では、接続済みのチャネルで、ファイルを添付してあなたにメッセージを送る |
+| メッセージ | dsalpha では、接続済みのチャネルで、ファイルを添付してあなたにメッセージを送る |
 
 **データ来歴**レイヤーは、agent が触れたすべてのソースを、モデルの context の外で記録します。対象は、市場データと MCP の呼び出し（モデルがツールを直接呼んだ場合も、sandbox 内で agent の Python や Bash が呼んだ場合も含む）、Web 検索と取得したページ、SEC 開示資料、そして agent が読んだファイル、memo、memory です。各レコードには provider、マスク済みの引数、タイムスタンプ、結果のフィンガープリントが含まれ、結果そのものも 64 KB まで保存され、呼び出しを行った turn と agent（main agent か subagent か）に紐づけられます。Sources パネルは turn ごとにこれらを一覧表示し、API も同じレコードを返すので、回答をその根拠と突き合わせて確かめられます。
 
@@ -308,9 +306,9 @@ main agent は、それぞれ独自の context window を持つ **subagent** に
 
 ### モデル
 
-LangAlpha はフロンティアモデルだけに合わせて調整されているわけではありません。すべてのモデルを同じツールと middleware で動かすので、オープンウェイトのモデルでも、わずかなコストで同等の結果を得られます。thread の途中で provider を切り替えることもでき、失敗した呼び出しはリトライされ、その後は設定したモデルにフォールバックします。
+dsalpha はフロンティアモデルだけに合わせて調整されているわけではありません。すべてのモデルを同じツールと middleware で動かすので、オープンウェイトのモデルでも、わずかなコストで同等の結果を得られます。thread の途中で provider を切り替えることもでき、失敗した呼び出しはリトライされ、その後は設定したモデルにフォールバックします。
 
-多くの provider は Chat Completions 形式を受け付けますが、いくつかの provider では、重要な情報が落ちる互換レイヤーにすぎません。LangAlpha は provider ごとに、そのモデルを最もよく活かす API 形式を選びます。たとえば OpenAI と Codex には OpenAI の [Responses API](https://platform.openai.com/docs/api-reference/responses)、Claude、Kimi、MiniMax、DeepSeek には Anthropic の [Messages API](https://docs.anthropic.com/en/api/messages) を使います。選択の決め手は 2 つです。
+多くの provider は Chat Completions 形式を受け付けますが、いくつかの provider では、重要な情報が落ちる互換レイヤーにすぎません。dsalpha は provider ごとに、そのモデルを最もよく活かす API 形式を選びます。たとえば OpenAI と Codex には OpenAI の [Responses API](https://platform.openai.com/docs/api-reference/responses)、Claude、Kimi、MiniMax、DeepSeek には Anthropic の [Messages API](https://docs.anthropic.com/en/api/messages) を使います。選択の決め手は 2 つです。
 
 - **思考が保持されます。** reasoning は turn 内でも turn をまたいでも、各 provider 独自の形式でモデルに戻されます。Anthropic の署名付き thinking ブロック、OpenAI の暗号化された reasoning item、GLM の reasoning テキストです。
 - **runtime context は適切なチャネルで届きます。** harness はモデルに多くの runtime context を渡します。OpenAI 形式の API では `developer` メッセージとして、それを尊重する Anthropic と GLM では会話途中の `system` メッセージとして、それ以外では user メッセージの中に入れて送ります。
@@ -332,12 +330,12 @@ key と OAuth token は pgcrypto で保存時に暗号化されます。
 
 ### Skills と Plugins
 
-skill は [Agent Skills](https://agentskills.io/specification) 仕様に、plugin は [Agent Plugins 1.0.0](https://agent-plugins.org) 形式に従います。組み込みの MCP server と skill は [`plugins/`](plugins/) 内の plugin バンドルとして提供されます。これは、Plugins ページでアップロードしたり git URL からインストールしたりするものと同じ形式です。これらの標準に加えて、LangAlpha は次の機能を追加しています。
+skill は [Agent Skills](https://agentskills.io/specification) 仕様に、plugin は [Agent Plugins 1.0.0](https://agent-plugins.org) 形式に従います。組み込みの MCP server と skill は [`plugins/`](plugins/) 内の plugin バンドルとして提供されます。これは、Plugins ページでアップロードしたり git URL からインストールしたりするものと同じ形式です。これらの標準に加えて、dsalpha は次の機能を追加しています。
 
 - **skill は必要なときに読み込まれます。** prompt に載るのは skill ごとに 1 行のマニフェストだけで、skill 全体は slash command か、agent が `SKILL.md` を読んだときに読み込まれます。automation ツールのように skill が持ち込むツールは、その skill が読み込まれるまで隠れたままです。
 - **自分の skill を、自分のコマンドで。** skill を zip でアップロードして好きな slash command を割り当てたり、agent に GitHub から workspace へインストールさせたりできます。
-- **plugin の拡張は 1 つのブロックに。** `mcp.json` は形式自体のフィールドしか受け付けません。LangAlpha が追加するものはすべて、形式で唯一の拡張ポイントである `plugin.json` の `extensions["ai.langalpha"]` の下に置かれます。prompt に届く server ごとの `description` と `instruction`、agent が各ツールを最初にどこまで見るかを決める `tool_exposure_mode`（`summary` または `detailed`）、そして server が必要とする各 credential とそのバインド先を示す `secrets` です。このブロックを取り除いても、パッケージはどの Agent Plugins ホストにもインストールできます。詳細は [`plugins/README.md`](plugins/README.md) を参照してください。
-- **サードパーティの server は隔離して動きます。** LangAlpha が所有していないコードの server は、アプリ自身の環境からではなく、`uvx` か `npx` でバージョンを固定して起動します。そのため、どちらか一方で SDK をアップグレードしても、もう一方が壊れることはありません。
+- **plugin の拡張は 1 つのブロックに。** `mcp.json` は形式自体のフィールドしか受け付けません。dsalpha が追加するものはすべて、形式で唯一の拡張ポイントである `plugin.json` の `extensions["ai.langalpha"]` の下に置かれます。prompt に届く server ごとの `description` と `instruction`、agent が各ツールを最初にどこまで見るかを決める `tool_exposure_mode`（`summary` または `detailed`）、そして server が必要とする各 credential とそのバインド先を示す `secrets` です。このブロックを取り除いても、パッケージはどの Agent Plugins ホストにもインストールできます。詳細は [`plugins/README.md`](plugins/README.md) を参照してください。
+- **サードパーティの server は隔離して動きます。** dsalpha が所有していないコードの server は、アプリ自身の環境からではなく、`uvx` か `npx` でバージョンを固定して起動します。そのため、どちらか一方で SDK をアップグレードしても、もう一方が壊れることはありません。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/plugins-builtin-packages.webp" alt="Plugins ページの Packages タブ。6 つの組み込み plugin バンドルが並んでいる" width="720" />
@@ -366,7 +364,7 @@ turn は、それを開始した HTTP 接続から独立したバックグラウ
 
 **ファイルは sandbox より長く残ります。** 各 turn の後と computer が停止するたびに、変更のあった workspace フォルダはすべてスナップショットされます。マニフェストは、パスごとに 1 行の Postgres レコードです。データ本体は sandbox から S3 互換のオブジェクトストレージへ直接送られ、オブジェクトストレージなしで運用している場合は Postgres に保存されます。computer が停止している間もファイルブラウザとダウンロードは使え、作り直した sandbox はスナップショットから復元されます。1 週間停止したままの Daytona computer は、さらにディスク全体をコールドストレージにアーカイブし、次回の起動時にそこから再開します。
 
-**チャネルゲートウェイ**は LangAlpha.ai の一部です。Slack、Discord、Telegram、Feishu、iMessage の会話を Web アプリと同じチャット API に届け、automation の結果を選んだチャネルに投稿します。
+**チャネルゲートウェイ**は dsalpha の一部です。Slack、Discord、Telegram、Feishu、iMessage の会話を Web アプリと同じチャット API に届け、automation の結果を選んだチャネルに投稿します。
 
 ### 統制された注文
 
@@ -391,10 +389,10 @@ turn は、それを開始した HTTP 接続から独立したバックグラウ
 ## ロードマップ
 
 - [x] リサーチ harness：コードで扱うデータ、永続する workspace、agent チーム
-- [x] LangAlpha.ai とデスクトップアプリ
+- [x] dsalpha とデスクトップアプリ
 - [x] 統制された注文を備えた証券口座連携
 - [ ] 暗号資産と予測市場向けに調整した agent
-- [ ] あなた自身の AI agent（ChatGPT、Claude）から LangAlpha に取引を引き渡せるようにする
+- [ ] あなた自身の AI agent（ChatGPT、Claude）から dsalpha に取引を引き渡せるようにする
 
 ## コントリビュート
 
@@ -409,7 +407,7 @@ Issue と pull request を歓迎します。[CONTRIBUTING.md](CONTRIBUTING.md) �
 
 ## 免責事項
 
-LangAlpha はソフトウェアであり、金融アドバイザーではありません。LangAlpha が生成するものはいずれも、投資助言でも、証券の売買の推奨でもありません。agent はあなたが与えた権限の範囲内でのみ動作し、あなたの口座で出されたすべての注文の責任はあなたにあります。必ずご自身でデューデリジェンスを行ってください。
+dsalpha はソフトウェアであり、金融アドバイザーではありません。dsalpha が生成するものはいずれも、投資助言でも、証券の売買の推奨でもありません。agent はあなたが与えた権限の範囲内でのみ動作し、あなたの口座で出されたすべての注文の責任はあなたにあります。必ずご自身でデューデリジェンスを行ってください。
 
 ## ライセンス
 

@@ -1,14 +1,14 @@
 {
   "name": "langalpha",
   "version": "0.1.0",
-  "description": "Command-line client for LangAlpha: threads, workspaces, computers and automations",
+  "description": "Command-line client for dsalpha: threads, workspaces, computers and automations",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ginlix-ai/LangAlpha.git",
+    "url": "git+https://github.com/JingxuanC/dsalpha.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/ginlix-ai/LangAlpha/tree/main/cli#readme",
+  "homepage": "https://github.com/JingxuanC/dsalpha/tree/main/cli#readme",
   "type": "module",
   "bin": {
     "la": "dist/la.mjs",

@@ -15,7 +15,7 @@ interface ModelRow {
 export function billsTo(m: ModelRow): string {
   switch (m.payer) {
     case "credits":
-      return "LangAlpha credits";
+      return "dsalpha credits";
     case "server_key":
       return "the server's key";
     case "own_key":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive setup wizard for LangAlpha.
+# Interactive setup wizard for dsalpha.
 # Configures .env and agent_config.yaml based on your available services.
 set -euo pipefail
 
@@ -186,7 +186,7 @@ PYEOF
 
 # =============================================================================
 
-printf "\n${BOLD}${CYAN}LangAlpha Configuration Wizard${NC}\n"
+printf "\n${BOLD}${CYAN}dsalpha Configuration Wizard${NC}\n"
 printf "${DIM}Configures .env and agent_config.yaml for your setup.${NC}\n"
 printf "${DIM}Re-run anytime — previous values will be overwritten.${NC}\n"
 

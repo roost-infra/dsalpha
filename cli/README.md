@@ -1,6 +1,6 @@
 # langalpha
 
-The LangAlpha command line: threads, workspaces, computers and automations,
+The dsalpha command line: threads, workspaces, computers and automations,
 for a person at a terminal, a script, or the agent inside a computer.
 
 `langalpha` is its name and `la` the short one; both run the same program.
@@ -167,5 +167,5 @@ from this folder, so a release only reaches people's own machines.
 
 npm trusts the workflow by name, so no npm token is stored anywhere. That
 trust is set on npmjs.com, under the package's trusted publishers: GitHub
-Actions, repository `ginlix-ai/LangAlpha`, workflow `cli-release.yml`,
+Actions, repository `JingxuanC/dsalpha`, workflow `cli-release.yml`,
 environment `npm`, with `npm publish` allowed.
