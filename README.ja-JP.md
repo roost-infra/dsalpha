@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub スター数" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub スター数" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="ライセンス：Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="デスクトップアプリ" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="デスクトップアプリ" /></a>
 </p>
 
 <p align="center">
@@ -166,14 +166,14 @@ Robinhood はローカルアプリに戻るサインインしか受け付けな�
 
 **すでに料金を払っているモデルを使えます。** Claude や ChatGPT のサブスクリプションでサインインする、Kimi、GLM、MiniMax、OpenCode Go の coding plan を使う、任意の API key を持ち込む、セルフホストならローカルモデルを動かす、のいずれも選べます。
 
-**いつもの場所で使えます。** ブラウザ、macOS、Windows、Linux 向けの[デスクトップアプリ](https://github.com/JingxuanC/dsalpha/releases)、そして [dsalpha](https://dsalpha.roostbots.com) なら Slack、Discord、Telegram、Feishu、iMessage からも使えます。
+**いつもの場所で使えます。** ブラウザ、macOS、Windows、Linux 向けの[デスクトップアプリ](https://github.com/roost-infra/dsalpha/releases)、そして [dsalpha](https://dsalpha.roostbots.com) なら Slack、Discord、Telegram、Feishu、iMessage からも使えます。
 
 **ホスト版（beta）。** [dsalpha](https://dsalpha.roostbots.com) に登録すると、無料で始めるか、いずれかのプランを試用できます。市場データ、クラウド sandbox、証券口座の接続、チャネルはすべて設定済みです。beta 期間中はプランや機能が変わる可能性があります。
 
 **セルフホスト。** 必要なのは Docker だけです。
 
 ```bash
-git clone https://github.com/ginlix-ai/langalpha.git && cd langalpha
+git clone https://github.com/roost-infra/dsalpha.git && cd langalpha
 make config   # wizard: model, data sources, sandbox, web search
 make up       # Postgres, Redis, backend and web app
 ```

@@ -5,10 +5,10 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JingxuanC/dsalpha.git",
+    "url": "git+https://github.com/roost-infra/dsalpha.git",
     "directory": "cli"
   },
-  "homepage": "https://github.com/JingxuanC/dsalpha/tree/main/cli#readme",
+  "homepage": "https://github.com/roost-infra/dsalpha/tree/main/cli#readme",
   "type": "module",
   "bin": {
     "la": "dist/la.mjs",

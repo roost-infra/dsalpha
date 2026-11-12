@@ -19,11 +19,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub stars" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub stars" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="License: Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="Desktop app" /></a>
+  <a href="https://github.com/roost-infra/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="Desktop app" /></a>
 </p>
 
 <p align="center">
@@ -166,14 +166,14 @@ When you connect one, you choose what it may do, from read-only to paper trading
 
 **Use the model you already pay for.** Sign in with a Claude or ChatGPT subscription, use a coding plan from Kimi, GLM, MiniMax or OpenCode Go, bring any API key, or run a local model when you self-host.
 
-**Work where you are.** Use the browser, the [desktop app](https://github.com/JingxuanC/dsalpha/releases) for macOS, Windows and Linux, or Slack, Discord, Telegram, Feishu and iMessage on [dsalpha](https://dsalpha.roostbots.com).
+**Work where you are.** Use the browser, the [desktop app](https://github.com/roost-infra/dsalpha/releases) for macOS, Windows and Linux, or Slack, Discord, Telegram, Feishu and iMessage on [dsalpha](https://dsalpha.roostbots.com).
 
 **Hosted (beta).** Sign up at [dsalpha](https://dsalpha.roostbots.com) to start free or trial with one of our plans. Market data, cloud sandboxes, brokerage connections and channels are set up for you. Plans and features may change during the beta.
 
 **Self-host.** All you need is Docker:
 
 ```bash
-git clone https://github.com/ginlix-ai/langalpha.git && cd langalpha
+git clone https://github.com/roost-infra/dsalpha.git && cd langalpha
 make config   # wizard: model, data sources, sandbox, web search
 make up       # Postgres, Redis, backend and web app
 ```
