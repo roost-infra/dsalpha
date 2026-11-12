@@ -15,9 +15,15 @@ export const PLATFORM_URL: string | null = isPlatformMode
   ? import.meta.env.VITE_PLATFORM_URL || '/account'
   : null;
 
+/** The Roost Console is the account portal for this build. When set, every
+ *  console link opens its root: plans, usage and wallet all live there. */
+export const ROOST_CONSOLE_URL: string | null =
+  (import.meta.env.VITE_ROOST_CONSOLE_URL as string | undefined) || null;
+
 /** A page of the account portal, by its path (`plans`, `integrations`); null
  *  where there is no portal. */
 export function consoleUrl(path: string): string | null {
+  if (ROOST_CONSOLE_URL) return ROOST_CONSOLE_URL;
   return PLATFORM_URL && `${PLATFORM_URL}/${path}`;
 }
 

@@ -281,6 +281,39 @@ async def get_current_user(
     )
 
 
+@router.get("/billing/roost")
+@handle_api_exceptions("get Roost billing", logger)
+async def get_roost_billing(user_id: CurrentUserId):
+    """The caller's shared Roost wallet, for the account panel.
+
+    The chart of accounts lives in Roost Console; this service only proxies the
+    compatibility validate answer. When gating is off (OSS) or Console is
+    unreachable, return an explicit disabled/unavailable body rather than
+    inventing a balance.
+    """
+    from src.server.dependencies.usage_limits import (
+        _call_validate_for_user,
+        platform_gating_active,
+    )
+
+    if not platform_gating_active():
+        return {"enabled": False, "available": False}
+    result = await _call_validate_for_user(user_id, check_quota="chat")
+    if not result:
+        return {"enabled": True, "available": False}
+    quota = result.get("quota") if isinstance(result.get("quota"), dict) else {}
+    return {
+        "enabled": True,
+        "available": True,
+        "plan": result.get("plan_display_name"),
+        "access_tier": result.get("access_tier"),
+        "remaining_credits": quota.get("remaining_credits"),
+        "credit_limit": quota.get("credit_limit"),
+        "used_credits": quota.get("used_credits"),
+        "allowed": quota.get("allowed"),
+    }
+
+
 @router.put("/users/me", response_model=UserWithPreferencesResponse)
 @handle_api_exceptions("update user", logger)
 async def update_current_user(
