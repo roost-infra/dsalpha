@@ -2,26 +2,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/api/client'
-import { useUser } from '@/hooks/useUser'
 import './ContentDesk.css'
 
 const STATUS = { idea: '灵感', draft: '初稿', ready: '待发布', published: '已发布' }
 const KINDS = { note: '笔记', link: '链接', quote: '金句', topic: '选题', clip: '素材' }
 const EMPTY = { title: '', body: '', kind: 'note', status: 'idea', platform: '小红书', tags: '', scheduledAt: '', draft: null }
-const KEY = 'langalpha.content-desk.v1'
-
-function load(key: string) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(key) || 'null')
-    if (raw && Array.isArray(raw.items) && Array.isArray(raw.styles)) return raw
-  } catch {}
-  return { items: [], metrics: [], styles: [{ id: 'style-default', name: '我的默认风格', tone: '直接、具体、有自己的判断', audience: '', rules: '先说结论，再给理由；少用套话；每段只讲一件事。' }], activeStyleId: 'style-default' }
-}
 
 function Icon({ name, size = 18 }) {
   const p = {
     spark: <><path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z"/></>,
-    plus: <><path d="M12 5v14M5 12h14"/></>, undo: <><path d="M9 7 4 12l5 5"/><path d="M4 12h9a6 6 0 0 1 0 12"/></>,
+    plus: <><path d="M12 5v14M5 12h14"/></>,
+    chat: <><path d="M21 12a8 8 0 0 1-8 8H6l-3 2 1-5a8 8 0 1 1 17-5Z"/><path d="M8 10h8M8 14h5"/></>,
     calendar: <><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18"/></>,
     chart: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
     palette: <><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.8 2-1.7 0-1.3-1.2-1.8-1.2-3 0-1 .8-1.8 2-1.8h1.7A4.5 4.5 0 0 0 21 10c0-3.9-4-7-9-7Z"/><circle cx="7.5" cy="11" r=".8" fill="currentColor"/><circle cx="10" cy="7.5" r=".8" fill="currentColor"/><circle cx="14.5" cy="7.8" r=".8" fill="currentColor"/></>,
@@ -29,6 +20,7 @@ function Icon({ name, size = 18 }) {
     trash: <><path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3"/></>,
     close: <><path d="m6 6 12 12M18 6 6 18"/></>, download: <><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></>,
     external: <><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></>,
+    send: <><path d="m22 2-7 20-4-9-9-4 20-7Z"/><path d="M22 2 11 13"/></>,
   }[name] || null
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>{p}</svg>
 }
@@ -39,40 +31,60 @@ function Btn({ children, primary, quiet, ...props }) {
 
 export default function ContentDesk() {
   const { i18n } = useTranslation()
-  const { user } = useUser()
   const zh = i18n.language.startsWith('zh')
-  const storageKey = `${KEY}:${user?.user_id || user?.id || 'anon'}`
-  const [state, setState] = useState(() => load(storageKey))
+  const [data, setData] = useState(null)
+  const [revision, setRevision] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const [tab, setTab] = useState('ideas')
   const [editing, setEditing] = useState(null)
   const [toast, setToast] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [undoStack, setUndoStack] = useState([])
-
-  useEffect(() => { setState(load(storageKey)) }, [storageKey])
-  useEffect(() => { localStorage.setItem(storageKey, JSON.stringify(state)) }, [state, storageKey])
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantInput, setAssistantInput] = useState('')
+  const [messages, setMessages] = useState([])
 
   const flash = useCallback((text) => {
     setToast({ text, key: Date.now() })
-    window.setTimeout(() => setToast(null), 2800)
+    window.setTimeout(() => setToast(null), 3000)
   }, [])
-  const pushUndo = () => setUndoStack(prev => [...prev.slice(-29), JSON.parse(JSON.stringify(state))])
-  const mutate = (fn, label) => {
-    pushUndo()
-    setState(prev => fn(JSON.parse(JSON.stringify(prev))))
-    if (label) flash(label)
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('')
+    try {
+      const { data: next } = await api.get('/api/v1/content-desk/state')
+      setData(next.state); setRevision(next.revision)
+    } catch (e) { setError(e?.message || '加载失败') } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  async function applyOps(ops, label) {
+    if (!ops?.length) return null
+    setBusy(true)
+    try {
+      const { data: next } = await api.post('/api/v1/content-desk/ops', { base_revision: revision, ops })
+      setData(next.state); setRevision(next.revision)
+      if (label) flash(label)
+      return next
+    } catch (e) {
+      if (e?.status === 409) { flash(zh ? '其他页面已更新，已刷新' : 'Updated elsewhere; reloading'); await load() }
+      else flash(e?.message || '保存失败')
+      return null
+    } finally { setBusy(false) }
   }
-  const undo = () => {
-    setUndoStack(prev => {
-      if (!prev.length) return prev
-      setState(prev[prev.length - 1])
-      flash(zh ? '已撤销' : 'Undone')
-      return prev.slice(0, -1)
-    })
+
+  async function ask(message) {
+    if (!message.trim()) return
+    setAssistantOpen(true); setAssistantInput(''); setBusy(true)
+    setMessages(prev => [...prev, { role: 'user', text: message }])
+    try {
+      const { data: next } = await api.post('/api/v1/content-desk/assistant', { message, focus_id: editing?.id || null })
+      setData(next.state); setRevision(next.revision)
+      setMessages(prev => [...prev, { role: 'assistant', text: next.reply || '处理好了。' }])
+    } catch (e) {
+      setMessages(prev => [...prev, { role: 'assistant', text: e?.message || '助手暂时不可用' }])
+    } finally { setBusy(false) }
   }
-  const newId = p => `${p}_${Math.random().toString(36).slice(2, 10)}`
-  const open = item => setEditing(item || { ...EMPTY })
-  const close = () => setEditing(null)
 
   const nav = useMemo(() => [
     ['ideas', zh ? '灵感' : 'Ideas', 'spark'], ['content', zh ? '内容' : 'Content', 'edit'],
@@ -80,30 +92,34 @@ export default function ContentDesk() {
     ['style', zh ? '风格' : 'Voice', 'palette'],
   ], [zh])
 
-  if (!state) return null
+  if (loading) return <div className="rcd-root"><div className="rcd-loading">正在加载工作台…</div></div>
+  if (error || !data) return <div className="rcd-root"><div className="rcd-error"><h2>{zh ? '工作台加载失败' : 'Failed to load'}</h2><p>{error}</p><Btn onClick={load}>{zh ? '重试' : 'Retry'}</Btn></div></div>
+
+  const activeStyle = data.styles.find(s => s.id === data.activeStyleId)
 
   return <div className="rcd-root">
     <div className="rcd-page">
       <div className="rcd-page-head">
-        <div><p className="rcd-kicker">ROOST CONTENT DESK</p><h1>{zh ? '内容工作台' : 'Content Desk'}</h1><p className="rcd-lead">{zh ? '灵感 → 初稿 → 排期 → 复盘。数据保存在当前浏览器。' : 'Ideas → drafts → schedule → review. Stored in this browser.'}</p></div>
+        <div><p className="rcd-kicker">ROOST CONTENT DESK</p><h1>{zh ? '内容工作台' : 'Content Desk'}</h1><p className="rcd-lead">{zh ? '灵感 → 初稿 → 排期 → 复盘。数据和风格保存在你的账号里。' : 'Ideas → drafts → schedule → review. Saved to your account.'}</p></div>
         <div className="rcd-actions">
-          {undoStack.length > 0 && <Btn quiet onClick={undo}><Icon name="undo" size={15} />{zh ? '撤销' : 'Undo'}</Btn>}
-          <Btn primary onClick={() => open()}><Icon name="plus" size={15} />{zh ? '新建' : 'New'}</Btn>
+          <Btn quiet onClick={() => setAssistantOpen(v => !v)}><Icon name="chat" size={15} />{zh ? '助手' : 'Assistant'}</Btn>
+          <Btn primary onClick={() => setEditing({ ...EMPTY })}><Icon name="plus" size={15} />{zh ? '新建' : 'New'}</Btn>
         </div>
       </div>
       <div className="rcd-top" style={{ position: 'static', borderBottom: '1px solid var(--rcd-line)', borderRadius: 12, marginBottom: 20, padding: 5, display: 'inline-flex' }}>
         {nav.map(([id, label, icon]) => <button type="button" key={id} className={tab === id ? 'is-on' : ''} onClick={() => setTab(id)}><Icon name={icon} size={15} />{label}</button>)}
       </div>
-      {tab === 'ideas' && <Ideas state={state} zh={zh} onOpen={open} onNew={() => open()} onQuick={text => {
+      {tab === 'ideas' && <Ideas state={data} zh={zh} onOpen={setEditing} onNew={() => setEditing({ ...EMPTY })} onQuick={text => {
         const title = text.split(/[。！？\n]/)[0].slice(0, 60) || text.slice(0, 60)
-        mutate(d => { d.items.unshift({ id: newId('it'), title, body: text, kind: 'note', status: 'idea', platform: '小红书', tags: [], createdAt: new Date().toISOString() }) }, zh ? '已记下' : 'Saved')
+        void applyOps([{ op: 'add_item', title, body: text, kind: 'note' }], zh ? '已记下' : 'Saved')
       }} />}
-      {tab === 'content' && <Content state={state} zh={zh} onOpen={open} onNew={() => open()} />}
-      {tab === 'schedule' && <Schedule state={state} zh={zh} onOpen={open} />}
-      {tab === 'insights' && <Insights state={state} zh={zh} mutate={mutate} />}
-      {tab === 'style' && <Voice state={state} zh={zh} mutate={mutate} />}
+      {tab === 'content' && <Content state={data} zh={zh} onOpen={setEditing} onNew={() => setEditing({ ...EMPTY })} />}
+      {tab === 'schedule' && <Schedule state={data} zh={zh} onOpen={setEditing} />}
+      {tab === 'insights' && <Insights state={data} zh={zh} onAdd={metric => applyOps([{ op: 'add_metric', ...metric }], zh ? '数据已记录' : 'Saved')} />}
+      {tab === 'style' && <Voice state={data} zh={zh} onAdd={style => applyOps([{ op: 'add_style', ...style }], zh ? '风格已添加' : 'Style added')} onActive={id => applyOps([{ op: 'set_active_style', id }], zh ? '已切换风格' : 'Voice selected')} />}
     </div>
-    {editing && <Editor item={editing} state={state} zh={zh} setEditing={setEditing} mutate={mutate} flash={flash} onClose={close} busy={busy} setBusy={setBusy} newId={newId} />}
+    {editing && <Editor item={editing} state={data} zh={zh} onClose={() => setEditing(null)} applyOps={applyOps} flash={flash} busy={busy} />}
+    {assistantOpen && <Assistant zh={zh} messages={messages} input={assistantInput} setInput={setAssistantInput} onSend={ask} busy={busy} onClose={() => setAssistantOpen(false)} />}
     {toast && <div className="rcd-toast" key={toast.key}>{toast.text}</div>}
     <a className="rcd-console" href="https://www.roostbots.com/console/" target="_blank" rel="noreferrer" style={{ position: 'fixed', right: 20, bottom: 18 }}>Roost Console<Icon name="external" size={13} /></a>
   </div>
@@ -132,14 +148,14 @@ function Schedule({ state, zh, onOpen }) {
   const rows = [...state.items].filter(i => i.scheduledAt).sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt))
   return <><div className="rcd-page-head" style={{ marginTop: 0 }}><h2>{zh ? '排期' : 'Schedule'}</h2></div>{rows.length ? <div className="rcd-schedule">{rows.map(item => <button type="button" className="rcd-schedule-row" key={item.id} onClick={() => onOpen(item)}><time>{item.scheduledAt.slice(0, 10)}</time><span className="rcd-dot" /><span>{item.draft?.title || item.title}</span><small>{item.platform}</small></button>)}</div> : <Empty zh={zh} title={zh ? '还没有排期' : 'Nothing scheduled'} body={zh ? '在内容里设置日期。' : 'Set a date in a content item.'} />}</>}
 
-function Insights({ state, zh, mutate }) {
-  const totals = state.metrics.reduce((a, m) => ({ views: a.views + m.views, likes: a.likes + m.likes, comments: a.comments + m.comments, saves: a.saves + m.saves }), { views: 0, likes: 0, comments: 0, saves: 0 })
+function Insights({ state, zh, onAdd }) {
+  const totals = state.metrics.reduce((a, m) => ({ views: a.views + (m.views || 0), likes: a.likes + (m.likes || 0), comments: a.comments + (m.comments || 0), saves: a.saves + (m.saves || 0) }), { views: 0, likes: 0, comments: 0, saves: 0 })
   const [form, setForm] = useState({ platform: '小红书', date: new Date().toISOString().slice(0, 10), views: '', likes: '', comments: '', saves: '' })
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   return <>
     <div className="rcd-page-head" style={{ marginTop: 0 }}><h2>{zh ? '复盘' : 'Review'}</h2></div>
     <div className="rcd-metrics">{[['播放', totals.views], ['点赞', totals.likes], ['评论', totals.comments], ['收藏', totals.saves]].map(([l, v]) => <div className="rcd-metric" key={l}><span>{l}</span><strong>{v.toLocaleString()}</strong></div>)}</div>
-    <form className="rcd-metric-form" onSubmit={e => { e.preventDefault(); mutate(d => { d.metrics.unshift({ id: Math.random().toString(36).slice(2), ...form, views: Number(form.views) || 0, likes: Number(form.likes) || 0, comments: Number(form.comments) || 0, saves: Number(form.saves) || 0 }); d.metrics = d.metrics.slice(0, 500) }, zh ? '数据已记录' : 'Saved'); setForm(p => ({ ...p, views: '', likes: '', comments: '', saves: '' })) }}>
+    <form className="rcd-metric-form" onSubmit={async e => { e.preventDefault(); await onAdd({ ...form, views: Number(form.views) || 0, likes: Number(form.likes) || 0, comments: Number(form.comments) || 0, saves: Number(form.saves) || 0 }); setForm(p => ({ ...p, views: '', likes: '', comments: '', saves: '' })) }}>
       <label className="rcd-field"><span>{zh ? '平台' : 'Platform'}</span><input value={form.platform} onChange={e => set('platform', e.target.value)} /></label>
       <label className="rcd-field"><span>{zh ? '日期' : 'Date'}</span><input type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
       {['views', 'likes', 'comments', 'saves'].map(k => <label className="rcd-field" key={k}><span>{{ views: '播放', likes: '赞', comments: '评', saves: '藏' }[k]}</span><input type="number" min="0" value={form[k]} onChange={e => set(k, e.target.value)} /></label>)}
@@ -149,40 +165,44 @@ function Insights({ state, zh, mutate }) {
   </>
 }
 
-function Voice({ state, zh, mutate }) {
+function Voice({ state, zh, onAdd, onActive }) {
   const [form, setForm] = useState({ name: '', tone: '', audience: '', rules: '' })
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   return <>
     <div className="rcd-page-head" style={{ marginTop: 0 }}><h2>{zh ? '风格' : 'Voice'}</h2></div>
-    <form className="rcd-style-form" onSubmit={e => { e.preventDefault(); if (!form.name.trim()) return; mutate(d => { const s = { id: Math.random().toString(36).slice(2), ...form }; d.styles.unshift(s); d.activeStyleId ||= s.id }, zh ? '风格已添加' : 'Style added'); setForm({ name: '', tone: '', audience: '', rules: '' }) }}>
+    <form className="rcd-style-form" onSubmit={async e => { e.preventDefault(); if (!form.name.trim()) return; await onAdd(form); setForm({ name: '', tone: '', audience: '', rules: '' }) }}>
       <div className="rcd-grid-2"><label className="rcd-field"><span>{zh ? '名称' : 'Name'}</span><input required value={form.name} onChange={e => set('name', e.target.value)} placeholder={zh ? '我的口播风格' : 'My voice'} /></label><label className="rcd-field"><span>{zh ? '受众' : 'Audience'}</span><input value={form.audience} onChange={e => set('audience', e.target.value)} /></label></div>
       <label className="rcd-field"><span>{zh ? '语气' : 'Tone'}</span><input value={form.tone} onChange={e => set('tone', e.target.value)} /></label>
       <label className="rcd-field"><span>{zh ? '规则' : 'Rules'}</span><textarea rows={3} value={form.rules} onChange={e => set('rules', e.target.value)} /></label>
       <Btn primary type="submit">{zh ? '添加风格' : 'Add style'}</Btn>
     </form>
-    <div className="rcd-styles">{state.styles.map(s => <article className={`rcd-style${s.id === state.activeStyleId ? ' is-active' : ''}`} key={s.id}><div className="rcd-style-head"><h3>{s.name}</h3>{s.id === state.activeStyleId ? <span className="rcd-pill">{zh ? '当前' : 'Current'}</span> : <Btn quiet onClick={() => mutate(d => { d.activeStyleId = s.id }, zh ? '已切换' : 'Selected')}>{zh ? '设为当前' : 'Use'}</Btn>}</div><p>{s.tone || '—'}</p>{s.audience && <small>{s.audience}</small>}{s.rules && <p className="rcd-rules">{s.rules}</p>}</article>)}</div>
+    <div className="rcd-styles">{state.styles.map(s => <article className={`rcd-style${s.id === state.activeStyleId ? ' is-active' : ''}`} key={s.id}><div className="rcd-style-head"><h3>{s.name}</h3>{s.id === state.activeStyleId ? <span className="rcd-pill">{zh ? '当前' : 'Current'}</span> : <Btn quiet onClick={() => onActive(s.id)}>{zh ? '设为当前' : 'Use'}</Btn>}</div><p>{s.tone || '—'}</p>{s.audience && <small>{s.audience}</small>}{s.rules && <p className="rcd-rules">{s.rules}</p>}</article>)}</div>
   </>
 }
 
-function Editor({ item, state, zh, setEditing, mutate, flash, onClose, busy, setBusy, newId }) {
+function Editor({ item, state, zh, onClose, applyOps, flash, busy }) {
   const [form, setForm] = useState(() => ({ ...EMPTY, ...item, tags: Array.isArray(item.tags) ? item.tags.join(', ') : '', scheduledAt: item.scheduledAt ? item.scheduledAt.slice(0, 10) : '' }))
+  const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   useEffect(() => { const h = e => { if (e.key === 'Escape') onClose() }; window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h) }, [onClose])
-  const save = () => {
+  const save = async () => {
     if (!form.title.trim()) return
-    const item = { ...form, id: form.id || newId('it'), tags: form.tags.split(',').map(t => t.trim()).filter(Boolean), scheduledAt: form.scheduledAt || null, updatedAt: new Date().toISOString() }
-    mutate(d => { const i = d.items.findIndex(x => x.id === item.id); if (i >= 0) d.items[i] = item; else d.items.unshift(item) }, zh ? '已保存' : 'Saved')
-    onClose()
+    setSaving(true)
+    const payload = { title: form.title, body: form.body, kind: form.kind, status: form.status, platform: form.platform, tags: form.tags.split(',').map(t => t.trim()).filter(Boolean), scheduledAt: form.scheduledAt || null, ...(form.draft ? { draft: form.draft } : {}) }
+    const result = form.id ? await applyOps([{ op: 'update_item', id: form.id, ...payload }], zh ? '已保存' : 'Saved') : await applyOps([{ op: 'add_item', ...payload }], zh ? '已保存' : 'Saved')
+    setSaving(false)
+    if (result) onClose()
   }
-  const remove = () => { if (!form.id || !window.confirm('删除这条内容？')) return; mutate(d => { d.items = d.items.filter(x => x.id !== form.id) }, zh ? '已删除' : 'Deleted'); onClose() }
+  const remove = async () => { if (!form.id || !window.confirm('删除这条内容？')) return; const result = await applyOps([{ op: 'delete_item', id: form.id }], zh ? '已删除' : 'Deleted'); if (result) onClose() }
   const makeDraft = async () => {
-    if (!form.title.trim() || busy) return
-    setBusy(true)
+    if (!form.id) { flash(zh ? '先保存这条内容再生成初稿' : 'Save this item before generating'); return }
+    setSaving(true)
     try {
-      const { data } = await api.post('/api/v1/content-desk/generate', { title: form.title, body: form.body, kind: form.kind, platform: form.platform })
-      setForm(p => ({ ...p, draft: { body: data.text, model: data.model }, status: p.status === 'idea' ? 'draft' : p.status }))
-      flash(zh ? '初稿已生成' : 'Draft generated')
-    } catch (e) { flash(e?.message || (zh ? '生成失败' : 'Generation failed')) } finally { setBusy(false) }
+      const { data } = await api.post('/api/v1/content-desk/generate', { title: form.title, body: form.body, kind: form.kind, platform: form.platform, style: state.styles.find(s => s.id === state.activeStyleId)?.rules || '' })
+      const draft = { body: data.text, model: data.model || 'LangAlpha' }
+      setForm(p => ({ ...p, draft, status: p.status === 'idea' ? 'draft' : p.status }))
+      await applyOps([{ op: 'update_item', id: form.id, draft, status: form.status === 'idea' ? 'draft' : form.status }], zh ? '初稿已生成' : 'Draft generated')
+    } catch (e) { flash(e?.message || '生成失败') } finally { setSaving(false) }
   }
   return <div className="rcd-overlay" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <section className="rcd-editor" role="dialog" aria-modal="true" aria-label={zh ? '编辑内容' : 'Edit content'}>
@@ -192,12 +212,20 @@ function Editor({ item, state, zh, setEditing, mutate, flash, onClose, busy, set
         <div className="rcd-grid-3"><label className="rcd-field"><span>{zh ? '状态' : 'Status'}</span><select value={form.status} onChange={e => set('status', e.target.value)}>{Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label><label className="rcd-field"><span>{zh ? '平台' : 'Platform'}</span><input value={form.platform} onChange={e => set('platform', e.target.value)} /></label><label className="rcd-field"><span>{zh ? '排期' : 'Date'}</span><input type="date" value={form.scheduledAt} onChange={e => set('scheduledAt', e.target.value)} /></label></div>
         <label className="rcd-field"><span>{zh ? '灵感 / 备注' : 'Idea / notes'}</span><textarea rows={4} value={form.body} onChange={e => set('body', e.target.value)} /></label>
         <label className="rcd-field"><span>{zh ? '标签' : 'Tags'}</span><input value={form.tags} onChange={e => set('tags', e.target.value)} placeholder={zh ? '逗号分隔' : 'comma separated'} /></label>
-        <div className="rcd-draft-head"><div><span className="rcd-kicker">DRAFT</span><h3>{zh ? '初稿' : 'Draft'}</h3></div><div className="rcd-actions"><Btn onClick={makeDraft} disabled={busy || !form.title.trim()}><Icon name="spark" size={15} />{busy ? '生成中…' : '生成初稿'}</Btn>{form.draft?.body && <Btn quiet onClick={() => navigator.clipboard?.writeText(form.draft.body).then(() => flash('正文已复制'))}><Icon name="download" size={15} />复制正文</Btn>}</div></div>
+        <div className="rcd-draft-head"><div><span className="rcd-kicker">DRAFT</span><h3>{zh ? '初稿' : 'Draft'}</h3></div><div className="rcd-actions"><Btn onClick={makeDraft} disabled={saving || busy || !form.title.trim()}><Icon name="spark" size={15} />{saving ? '生成中…' : '生成初稿'}</Btn>{form.draft?.body && <Btn quiet onClick={() => navigator.clipboard?.writeText(form.draft.body).then(() => flash('正文已复制'))}><Icon name="download" size={15} />复制正文</Btn>}</div></div>
         {form.draft?.body ? <div className="rcd-draft"><textarea rows={14} value={form.draft.body} onChange={e => set('draft', { ...form.draft, body: e.target.value })} /><p className="rcd-muted">{zh ? '生成模型' : 'Model'}：{form.draft.model || 'LangAlpha'} · {zh ? '风格' : 'Voice'}：{state.styles.find(s => s.id === state.activeStyleId)?.name || '—'}</p></div> : <p className="rcd-empty">{zh ? '还没有初稿。可以点「生成初稿」，也可以直接写。' : 'No draft yet. Generate one or write below.'}</p>}
       </div>
-      <footer className="rcd-editor-foot">{form.id && <Btn quiet onClick={remove}><Icon name="trash" size={15} />{zh ? '删除' : 'Delete'}</Btn>}<span className="rcd-grow" /><Btn quiet onClick={onClose}>{zh ? '取消' : 'Cancel'}</Btn><Btn primary onClick={save} disabled={!form.title.trim()}>{zh ? '保存' : 'Save'}</Btn></footer>
+      <footer className="rcd-editor-foot">{form.id && <Btn quiet onClick={remove}><Icon name="trash" size={15} />{zh ? '删除' : 'Delete'}</Btn>}<span className="rcd-grow" /><Btn quiet onClick={onClose}>{zh ? '取消' : 'Cancel'}</Btn><Btn primary onClick={save} disabled={saving || !form.title.trim()}>{zh ? '保存' : 'Save'}</Btn></footer>
     </section>
   </div>
+}
+
+function Assistant({ zh, messages, input, setInput, onSend, busy, onClose }) {
+  return <aside className="rcd-assistant" aria-label={zh ? '内容助手' : 'Content assistant'}>
+    <header><div><span className="rcd-kicker">ASSISTANT</span><h3>{zh ? '内容助手' : 'Content assistant'}</h3></div><button type="button" className="rcd-icon-btn" onClick={onClose} aria-label="关闭"><Icon name="close" /></button></header>
+    <div className="rcd-assistant-log">{messages.length ? messages.map((m, i) => <div key={i} className={`rcd-msg is-${m.role}`}>{m.text}</div>) : <p className="rcd-muted">{zh ? '让助手帮你记灵感、改标题、排期或生成初稿。' : 'Ask it to capture, rewrite, schedule or draft.'}</p>}</div>
+    <form className="rcd-assistant-form" onSubmit={e => { e.preventDefault(); onSend(input) }}><textarea rows={3} value={input} onChange={e => setInput(e.target.value)} placeholder={zh ? '例如：把这条改成更口语的开头' : 'e.g. make this opener more conversational'} disabled={busy} /><Btn primary type="submit" disabled={busy || !input.trim()}><Icon name="send" size={15} />{busy ? '处理中…' : '发送'}</Btn></form>
+  </aside>
 }
 
 function Empty({ zh, title, body, action }) {
