@@ -896,7 +896,7 @@ class AutomationExecutor:
             peer = max(binding.peers.values(), key=lambda p: p.last_message_at).peer
             name = (automation.get("name") or "定时任务").strip()
             base = os.environ.get(
-                "PUBLIC_WEB_BASE_URL", "https://deepseek-alpha.com"
+                "PUBLIC_WEB_BASE_URL", "https://dsalpha.roostbots.com"
             ).rstrip("/")
             if event == "automation.completed":
                 text = f"✅ 「{name}」已完成，点击查看完整报告：\n{base}/chat/t/{thread_id}"

@@ -930,7 +930,7 @@ describe('the brokerages tab', () => {
       const links = screen.getAllByRole('link', { name: 'Download the desktop app' });
       expect(links).toHaveLength(1);
       const [onRow] = links;
-      expect(onRow).toHaveAttribute('href', 'https://deepseek-alpha.com/app');
+      expect(onRow).toHaveAttribute('href', 'https://dsalpha.roostbots.com/app');
       expect(onRow).toHaveAttribute('target', '_blank');
       expect(onRow).toHaveTextContent('Download');
       const bubbled = vi.fn();
