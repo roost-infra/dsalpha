@@ -123,7 +123,7 @@ describe('BrokerageStep', () => {
     const note = screen.getByTestId('welcome-desktop-note');
     expect(note).toHaveTextContent('Robinhood can only be connected from the desktop app.');
     const link = within(note).getByRole('link', { name: 'Download the desktop app' });
-    expect(link).toHaveAttribute('href', 'https://deepseek-alpha.com/app');
+    expect(link).toHaveAttribute('href', 'https://dsalpha.roostbots.com/app');
     expect(link).toHaveAttribute('target', '_blank');
     expect(screen.getByTestId('brokerage-ibkr')).toBeInTheDocument();
     expect(screen.queryByTestId('brokerage-robinhood')).not.toBeInTheDocument();

@@ -16,16 +16,16 @@ beforeEach(() => {
 
 describe('withShellReturn', () => {
   it('leaves a browser flow unmarked', () => {
-    expect(withShellReturn('https://deepseek-alpha.com/auth/confirm'))
-      .toBe('https://deepseek-alpha.com/auth/confirm');
+    expect(withShellReturn('https://dsalpha.roostbots.com/auth/confirm'))
+      .toBe('https://dsalpha.roostbots.com/auth/confirm');
   });
 
   // A path, never a query: the email template appends its own `?`, so a marker
   // in the query pushes the token into the previous parameter's value.
   it('marks a flow that began in the shell, leaving the query free', () => {
     shellScheme = 'langalpha';
-    expect(withShellReturn('https://deepseek-alpha.com/auth/confirm'))
-      .toBe('https://deepseek-alpha.com/auth/confirm/desktop');
+    expect(withShellReturn('https://dsalpha.roostbots.com/auth/confirm'))
+      .toBe('https://dsalpha.roostbots.com/auth/confirm/desktop');
   });
 
   // The two editions install side by side on one machine and answer on

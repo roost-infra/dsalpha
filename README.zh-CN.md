@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="web/public/logo_words.png" alt="LangAlpha" height="110" />
-</p>
+<h1 align="center">dsalpha</h1>
 
-<h3 align="center">面向 Agent 交易的 harness。</h3>
+<h3 align="center">面向金融市场的 AI 研究工作台。</h3>
 
 <p align="center">
   开源 AI Agent，研究市场、形成投资假设，<br>
@@ -10,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://langalpha.ai"><strong>试用 LangAlpha ↗</strong></a> ·
+  <a href="https://dsalpha.roostbots.com"><strong>试用 dsalpha ↗</strong></a> ·
   <a href="#快速开始"><strong>快速开始</strong></a> ·
   <a href="#agent-交易"><strong>Agent 交易</strong></a> ·
   <a href="#harness-设计"><strong>Harness 设计</strong></a> ·
@@ -21,22 +19,22 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ginlix-ai/langalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub 星标数" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/stargazers"><img src="https://img.shields.io/github/stars/ginlix-ai/langalpha?style=flat-square" alt="GitHub 星标数" /></a>
   <img src="https://img.shields.io/badge/license-Apache%202.0-green?style=flat-square" alt="许可证：Apache 2.0" />
   <img src="https://img.shields.io/badge/python-3.13+-blue?style=flat-square" alt="Python 3.13+" />
   <a href="https://github.com/langchain-ai/langchain"><img src="https://img.shields.io/badge/LangChain-1c3c3c?style=flat-square&logo=langchain&logoColor=white" alt="LangChain" /></a>
-  <a href="https://github.com/ginlix-ai/langalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="桌面应用" /></a>
+  <a href="https://github.com/JingxuanC/dsalpha/releases"><img src="https://img.shields.io/badge/desktop-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="桌面应用" /></a>
 </p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/hero-cbrs-research-dashboard.webp" alt="demo-cbrs 工作区：左侧是 Agent 查询 CBRS 报价、拉取披露文件并派出两个分析师，右侧是基于这些研究搭建的 CBRS 仪表盘，当前显示 IPO 以来的股价和事件标记，以及选中事件的注释和来源" width="900" />
 </p>
 
-## 为什么选择 LangAlpha
+## 为什么选择 dsalpha
 
 大多数 AI 金融工具只负责回答问题。我们认为投资研究是贝叶斯式的：先写下投资假设，以及什么情况能证伪它；之后每一份财报、每一份披露文件、每一次股价变动，都会提高或降低你的信心，仓位也随之调整。这个循环要持续数周乃至数月，单靠一条提示词无法承载。
 
-编程 Agent 是在有了专为代码设计的 harness 之后才变得好用的：一个持续存在的代码库，每次 commit 都建立在上一次之上，再加上围绕模型的工具、记忆和运行时。LangAlpha 把这套 harness 带到市场，从 vibe coding 走向 vibe investing。它适配任何模型，所以模型每进步一次，它也跟着变强。两条理念决定了它的设计：
+编程 Agent 是在有了专为代码设计的 harness 之后才变得好用的：一个持续存在的代码库，每次 commit 都建立在上一次之上，再加上围绕模型的工具、记忆和运行时。dsalpha 把这套 harness 带到市场，从 vibe coding 走向 vibe investing。它适配任何模型，所以模型每进步一次，它也跟着变强。两条理念决定了它的设计：
 
 - **一笔交易是一个循环，不是一次工具调用**。投资假设保存在工作区里，研究、仓位测算、下单以及之后的盯盘，每一步都会把新证据反馈回去。
 - **自主需要由你划定边界**。Agent 只在你授予的权限内行动，每一笔订单都走同一条受控路径。
@@ -47,11 +45,11 @@
 
 ## 功能亮点
 
-下面的示例大多出自同一个研究 Cerebras（CBRS）的工作区。可以通过[这段分享的对话](https://app.langalpha.ai/s/z7rvgK3P9vZN)看它的实际运行过程，从第一个问题一直到发往 Slack 的首次覆盖报告。
+下面的示例大多出自同一个研究 Cerebras（CBRS）的工作区。可以通过[这段分享的对话](https://dsalpha.roostbots.com/app/s/z7rvgK3P9vZN)看它的实际运行过程，从第一个问题一直到发往 Slack 的首次覆盖报告。
 
 ### 🔎 用 Agent 团队做研究
 
-提出一个问题，LangAlpha 会把它拆给多个并行的分析师：阅读披露文件，拉取价格、期权和宏观数据，再用代码完成计算。运行途中随时可以追加消息，调整它们的方向。在 CBRS 这个例子里，这次运行最终产出了[一份 HTML 入门报告](https://app.langalpha.ai/a/lep06ly8Qjfa)，讲清 Cerebras 卖什么、增长有多快、谁在付钱。
+提出一个问题，dsalpha 会把它拆给多个并行的分析师：阅读披露文件，拉取价格、期权和宏观数据，再用代码完成计算。运行途中随时可以追加消息，调整它们的方向。在 CBRS 这个例子里，这次运行最终产出了[一份 HTML 入门报告](https://dsalpha.roostbots.com/app/a/lep06ly8Qjfa)，讲清 Cerebras 卖什么、增长有多快、谁在付钱。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/chat-cbrs-research-subagents-primer.webp" alt="一个 CBRS 问题分派给四个子 Agent，在侧边栏中列于主 Agent 之下，旁边是入门报告中关于谁在为 Cerebras 付费的章节" width="800" />
@@ -65,7 +63,7 @@
 
 > *“根据这个工作区目前的研究成果，给我做一个 CBRS 的交互式仪表盘：带关键事件的股价、营收增长、客户集中度，以及有多少押在 OpenAI 身上。我想能点来点去地看。”*
 
-新开的一段对话会基于之前各段对话留在工作区里的研究和文件把它做出来：[一个可以上手操作的实时仪表盘](https://app.langalpha.ai/a/DB8NBmVeudB1)。
+新开的一段对话会基于之前各段对话留在工作区里的研究和文件把它做出来：[一个可以上手操作的实时仪表盘](https://dsalpha.roostbots.com/app/a/DB8NBmVeudB1)。
 
 <table align="center">
   <tr>
@@ -95,7 +93,7 @@ Agent 在工作区里创建了四个自动化：每周一次的假设检查，Q3
 
 > *“按卖方首次覆盖报告的格式把 CBRS 写出来：评级、目标价、投资逻辑、市场已经计入了什么、情景分析、可比公司、主要风险，还有图表。用我们已有的研究和模型。”*
 
-首次覆盖技能基于这段对话前面的研究和反向 DCF 工作簿，写出十页报告：卖出评级、目标价 $130，加上情景分析、可比公司、风险和七张图表，输出为 PDF，另附 [HTML 版本](https://app.langalpha.ai/a/eedVW2kllALZ)。在表格面板里选中一个区域，可以把它发回给 Agent 提问。连接 Slack 后，让它把所有内容发过来，每个文件都会出现在你的私信里，直接就能打开。
+首次覆盖技能基于这段对话前面的研究和反向 DCF 工作簿，写出十页报告：卖出评级、目标价 $130，加上情景分析、可比公司、风险和七张图表，输出为 PDF，另附 [HTML 版本](https://dsalpha.roostbots.com/app/a/eedVW2kllALZ)。在表格面板里选中一个区域，可以把它发回给 Agent 提问。连接 Slack 后，让它把所有内容发过来，每个文件都会出现在你的私信里，直接就能打开。
 
 <table align="center">
   <tr>
@@ -137,7 +135,7 @@ Agent 先弄清每个大幅波动日的驱动因素，再把它画到实时图�
 
 ## Agent 交易
 
-我们致力于把 LangAlpha 做成最好的 Agent 交易 harness。券商如今已经允许 AI Agent 操作真实账户交易，而接入的 Agent 都是通用型的，下单只是众多工具调用中的又一个。在 LangAlpha 里，整个 harness 正是围绕下单这一个调用设计的：
+我们致力于把 dsalpha 做成最好的 Agent 交易 harness。券商如今已经允许 AI Agent 操作真实账户交易，而接入的 Agent 都是通用型的，下单只是众多工具调用中的又一个。在 dsalpha 里，整个 harness 正是围绕下单这一个调用设计的：
 
 - **无论模型怎么做，限制都成立**。每个连接能做什么、哪些订单要等你批准，以及“批准后的订单只执行一次”这条规则，都在主机端强制执行，落在每笔订单都必须经过的那条[受控路径](#受控订单)上。任何提示词、任何 Agent 写的脚本都无法放宽这些限制，换用哪个模型也都一样。
 - **下单路径可供审阅**。一笔订单从模型发起调用到券商收到请求，途经的每一道检查都是这个仓库里的代码。把钱交给它之前，你可以先读一遍代码，也可以在自己的机器上以同样的管控运行它。
@@ -168,9 +166,9 @@ Robinhood 需要通过桌面应用连接，因为 Robinhood 只接受回跳到�
 
 **用你已经付费的模型**。可以用 Claude 或 ChatGPT 订阅登录，使用 Kimi、GLM、MiniMax 或 OpenCode Go 的 coding plan，接入任意 API key，自托管时还可以运行本地模型。
 
-**在你习惯的地方使用**。可以用浏览器、适用于 macOS、Windows 和 Linux 的[桌面应用](https://github.com/ginlix-ai/langalpha/releases)，在 [LangAlpha.ai](https://langalpha.ai) 上还能用 Slack、Discord、Telegram、飞书和 iMessage。
+**在你习惯的地方使用**。可以用浏览器、适用于 macOS、Windows 和 Linux 的[桌面应用](https://github.com/JingxuanC/dsalpha/releases)，在 [dsalpha](https://dsalpha.roostbots.com) 上还能用 Slack、Discord、Telegram、飞书和 iMessage。
 
-**托管版（beta）**。在 [LangAlpha.ai](https://langalpha.ai) 注册，可以免费开始，也可以试用我们的某个套餐。行情数据、云端沙箱、券商连接和渠道都已为你配置好。beta 期间，套餐和功能可能调整。
+**托管版（beta）**。在 [dsalpha](https://dsalpha.roostbots.com) 注册，可以免费开始，也可以试用我们的某个套餐。行情数据、云端沙箱、券商连接和渠道都已为你配置好。beta 期间，套餐和功能可能调整。
 
 **自托管**。只需要 Docker：
 
@@ -217,7 +215,7 @@ make up       # Postgres, Redis, backend and web app
 
 **送给模型哪些上下文、以什么形式送达、模型能对什么采取行动，这些定义了 harness。**
 
-凡是已有惯例的地方，LangAlpha 都沿用前沿实验室在自家 Agent 中采用的做法：能读、写、编辑和搜索的文件工具，一个 Bash shell，以 `SKILL.md` 文件形式提供的技能，以及仿照 `AGENTS.md` 风格的工作区 `agent.md`。这些形式很可能已经出现在模型的训练数据里，模型一上手就知道怎么用。
+凡是已有惯例的地方，dsalpha 都沿用前沿实验室在自家 Agent 中采用的做法：能读、写、编辑和搜索的文件工具，一个 Bash shell，以 `SKILL.md` 文件形式提供的技能，以及仿照 `AGENTS.md` 风格的工作区 `agent.md`。这些形式很可能已经出现在模型的训练数据里，模型一上手就知道怎么用。
 
 ### 工作区与记忆
 
@@ -238,9 +236,9 @@ make up       # Postgres, Redis, backend and web app
 
 ### 程序化工具调用
 
-LangAlpha 从 2026 年 1 月首次发布起，就围绕程序化工具调用（programmatic tool calling）构建。Agent 不是逐个通过 JSON 调用工具，而是编写导入这些工具的 Python 代码：LangAlpha 把任意 [MCP](https://modelcontextprotocol.io) server 转换成附带文档的 Python 模块，代码在沙箱中运行。这样做有两个原因：
+dsalpha 从 2026 年 1 月首次发布起，就围绕程序化工具调用（programmatic tool calling）构建。Agent 不是逐个通过 JSON 调用工具，而是编写导入这些工具的 Python 代码：dsalpha 把任意 [MCP](https://modelcontextprotocol.io) server 转换成附带文档的 Python 模块，代码在沙箱中运行。这样做有两个原因：
 
-- **工具还没用上，就已经占用了上下文**。如果以 JSON 工具的形式绑定，每个 server 的 schema 会随每次调用一起发送，不管这一轮用不用得到。在 LangAlpha 中，提示词里每个 server 只占一行，Agent 第一次需要某个 server 时，再从文件里读取它的完整文档。这样既节省 token，又减少干扰，新增一个 server 也只多一行。
+- **工具还没用上，就已经占用了上下文**。如果以 JSON 工具的形式绑定，每个 server 的 schema 会随每次调用一起发送，不管这一轮用不用得到。在 dsalpha 中，提示词里每个 server 只占一行，Agent 第一次需要某个 server 时，再从文件里读取它的完整文档。这样既节省 token，又减少干扰，新增一个 server 也只多一行。
 - **金融数据是表格，不是文字**。十来只股票十年的日线数据大约有 30,000 行。模型没法把这些当作文本来处理，直接贴进去也会占满上下文窗口。在代码里，Agent 可以对数据做聚合和转换、绘制图表，再输入估值模型或回测，只有结果会回到上下文中。
 
 <p align="center">
@@ -259,9 +257,9 @@ LangAlpha 从 2026 年 1 月首次发布起，就围绕程序化工具调用（p
 - **基本面与宏观**：财务报表和财务比率、分析师数据、内部人交易、财报日历和经济日历、宏观数据序列以及收益率曲线。
 - **披露文件与文本**：SEC 文件和财报电话会记录、X 帖子以及网页。
 
-LangAlpha 自己的数据 server 专为代码处理而设计：每个市场数据工具都返回同样的外层结构（`symbol`、`currency`、`timezone`、`count`、`data`、`source`），时间序列按从旧到新排列，失败时返回带类型的错误码，因此 Agent 代码直接按索引取用结果，不必解析文字。
+dsalpha 自己的数据 server 专为代码处理而设计：每个市场数据工具都返回同样的外层结构（`symbol`、`currency`、`timezone`、`count`、`data`、`source`），时间序列按从旧到新排列，失败时返回带类型的错误码，因此 Agent 代码直接按索引取用结果，不必解析文字。
 
-数据服务商按市场逐级回退：美股数据用 LangAlpha.ai 上的实时数据源，基本面和宏观用 FMP，Yahoo Finance 作为免费兜底。网页搜索支持 Tavily、Serper、Exa、Parallel 和博查；网页抓取使用内置爬虫，可选择交给 Firecrawl 处理，每个服务商都有各自的熔断器保护。
+数据服务商按市场逐级回退：美股数据用 dsalpha 上的实时数据源，基本面和宏观用 FMP，Yahoo Finance 作为免费兜底。网页搜索支持 Tavily、Serper、Exa、Parallel 和博查；网页抓取使用内置爬虫，可选择交给 Firecrawl 处理，每个服务商都有各自的熔断器保护。
 
 除了数据，Agent 还能使用以下工具：
 
@@ -272,7 +270,7 @@ LangAlpha 自己的数据 server 专为代码处理而设计：每个市场数�
 | 输出 | 在对话中渲染交互式小组件，在股票的实时图表上绘制标注 |
 | 协调 | 派发[子 Agent 和工作流](#子-agent-与-agent-团队)，以结构化问题向你提问，开启后还能维护待办清单 |
 | 你的连接 | 通过 OAuth 或 header 认证接入的券商和远程 MCP server，以及 Agent Plugins |
-| 消息 | 在 LangAlpha.ai 上，通过已连接的渠道给你发消息，可附带文件 |
+| 消息 | 在 dsalpha 上，通过已连接的渠道给你发消息，可附带文件 |
 
 **数据溯源**层在模型上下文之外，记录 Agent 接触过的每个来源：市场数据和 MCP 调用（无论是模型直接调用工具，还是 Agent 的 Python 或 Bash 在沙箱里调用），网页搜索和抓取的页面，SEC 文件，以及 Agent 读取的文件、备忘录和记忆。每条记录都包含服务商、脱敏后的参数、时间戳和结果指纹，保留不超过 64 KB 的结果本身，并关联到发起调用的那一轮和那个 Agent（主 Agent 或子 Agent）。数据来源面板按轮次列出这些记录，API 也返回同样的记录，因此每个回答都可以对照它所依据的材料来核查。
 
@@ -308,9 +306,9 @@ LangAlpha 自己的数据 server 专为代码处理而设计：每个市场数�
 
 ### 模型
 
-LangAlpha 并非只为前沿模型调优。所有模型都由同一套工具和中间件驱动，因此开放权重模型也能以低得多的成本取得相近的效果。可以在对话中途切换服务商；调用失败时会先重试，再回退到你配置的备用模型。
+dsalpha 并非只为前沿模型调优。所有模型都由同一套工具和中间件驱动，因此开放权重模型也能以低得多的成本取得相近的效果。可以在对话中途切换服务商；调用失败时会先重试，再回退到你配置的备用模型。
 
-大多数服务商都支持 Chat Completions 格式，但对其中一些来说，这只是一层兼容层，会丢掉关键信息。LangAlpha 为每家服务商选择最适合其模型的 API 格式，例如 OpenAI 和 Codex 使用 OpenAI [Responses API](https://platform.openai.com/docs/api-reference/responses)，Claude、Kimi、MiniMax 和 DeepSeek 使用 Anthropic [Messages API](https://docs.anthropic.com/en/api/messages)。选择依据有两点：
+大多数服务商都支持 Chat Completions 格式，但对其中一些来说，这只是一层兼容层，会丢掉关键信息。dsalpha 为每家服务商选择最适合其模型的 API 格式，例如 OpenAI 和 Codex 使用 OpenAI [Responses API](https://platform.openai.com/docs/api-reference/responses)，Claude、Kimi、MiniMax 和 DeepSeek 使用 Anthropic [Messages API](https://docs.anthropic.com/en/api/messages)。选择依据有两点：
 
 - **保留思考内容**。推理内容会在一轮之内和跨轮次回传给模型，并保持各服务商自己的格式：Anthropic 的签名 thinking block、OpenAI 的加密 reasoning item、GLM 的推理文本。
 - **运行时上下文走正确的通道**。harness 会向模型提供大量运行时上下文。在 OpenAI 风格的 API 上，它以 `developer` 消息发送；Anthropic 和 GLM 支持对话中途的 `system` 消息，就以这种形式发送；其他服务商则放进用户消息里。
@@ -332,12 +330,12 @@ Key 和 OAuth token 都使用 pgcrypto 静态加密存储。
 
 ### 技能与插件
 
-技能遵循 [Agent Skills](https://agentskills.io/specification) 规范，插件遵循 [Agent Plugins 1.0.0](https://agent-plugins.org) 格式。内置的 MCP server 和技能以插件包的形式放在 [`plugins/`](plugins/) 中，和你在插件页面上传或通过 git URL 安装的格式完全相同。在这些标准之上，LangAlpha 还增加了：
+技能遵循 [Agent Skills](https://agentskills.io/specification) 规范，插件遵循 [Agent Plugins 1.0.0](https://agent-plugins.org) 格式。内置的 MCP server 和技能以插件包的形式放在 [`plugins/`](plugins/) 中，和你在插件页面上传或通过 git URL 安装的格式完全相同。在这些标准之上，dsalpha 还增加了：
 
 - **技能按需加载**。提示词中每个技能只占一行清单条目，完整技能在使用斜杠命令或 Agent 读取其 `SKILL.md` 时才加载。技能自带的工具（例如自动化工具）在技能加载前保持隐藏。
 - **你的技能，你的命令**。把技能打包成 zip 上传，为它指定你想要的斜杠命令；也可以让 Agent 从 GitHub 安装技能到某个工作区。
-- **插件只有一个扩展块**。`mcp.json` 只接受该格式自身定义的字段。LangAlpha 增加的所有内容都放在 `plugin.json` 的 `extensions["ai.langalpha"]` 下，这是该格式唯一的扩展点：每个 server 的 `description` 和 `instruction`，会进入提示词；`tool_exposure_mode`，取值 `summary` 或 `detailed`，决定 Agent 预先能看到每个工具的多少信息；以及 `secrets`，列出 server 需要的每项凭据及其绑定位置。去掉这个扩展块，包仍然可以安装到任何 Agent Plugins 宿主中。详见 [`plugins/README.md`](plugins/README.md)。
-- **第三方 server 隔离运行**。代码不归 LangAlpha 所有的 server 通过 `uvx` 或 `npx` 以固定版本启动，从不使用应用自身的环境，因此一侧的 SDK 升级不会影响另一侧。
+- **插件只有一个扩展块**。`mcp.json` 只接受该格式自身定义的字段。dsalpha 增加的所有内容都放在 `plugin.json` 的 `extensions["ai.langalpha"]` 下，这是该格式唯一的扩展点：每个 server 的 `description` 和 `instruction`，会进入提示词；`tool_exposure_mode`，取值 `summary` 或 `detailed`，决定 Agent 预先能看到每个工具的多少信息；以及 `secrets`，列出 server 需要的每项凭据及其绑定位置。去掉这个扩展块，包仍然可以安装到任何 Agent Plugins 宿主中。详见 [`plugins/README.md`](plugins/README.md)。
+- **第三方 server 隔离运行**。代码不归 dsalpha 所有的 server 通过 `uvx` 或 `npx` 以固定版本启动，从不使用应用自身的环境，因此一侧的 SDK 升级不会影响另一侧。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/plugins-builtin-packages.webp" alt="插件页面的软件包标签页，列出六个内置插件包" width="720" />
@@ -366,7 +364,7 @@ Key 和 OAuth token 都使用 pgcrypto 静态加密存储。
 
 **文件不随沙箱消失**。每一轮结束后以及每次计算机停止时，所有发生变化的工作区文件夹都会生成快照。清单（manifest）在 Postgres 中按路径记录，每个路径一行。文件内容从沙箱直接写入兼容 S3 的对象存储；没有配置对象存储时，则保存在 Postgres 中。计算机关机时，文件浏览器和下载功能照常可用，重新创建的沙箱会从快照恢复。停止满一周的 Daytona 计算机还会把整块磁盘归档到冷存储，下次启动时从中恢复。
 
-**渠道网关**是 LangAlpha.ai 的一部分。它把 Slack、Discord、Telegram、飞书和 iMessage 中的对话接入 Web 应用所用的同一个聊天 API，并把自动化结果发到你选定的渠道。
+**渠道网关**是 dsalpha 的一部分。它把 Slack、Discord、Telegram、飞书和 iMessage 中的对话接入 Web 应用所用的同一个聊天 API，并把自动化结果发到你选定的渠道。
 
 ### 受控订单
 
@@ -391,10 +389,10 @@ Key 和 OAuth token 都使用 pgcrypto 静态加密存储。
 ## 路线图
 
 - [x] 研究 harness：在代码中处理数据、持久化工作区、Agent 团队
-- [x] LangAlpha.ai 和桌面应用
+- [x] dsalpha 和桌面应用
 - [x] 券商连接与受控订单
 - [ ] 针对加密货币和预测市场调优的 Agent
-- [ ] 让你自己的 AI Agent（ChatGPT、Claude）把交易交给 LangAlpha
+- [ ] 让你自己的 AI Agent（ChatGPT、Claude）把交易交给 dsalpha
 
 ## 参与贡献
 
@@ -409,7 +407,7 @@ Key 和 OAuth token 都使用 pgcrypto 静态加密存储。
 
 ## 免责声明
 
-LangAlpha 是软件，不是投资顾问。它产出的任何内容都不构成投资建议，也不构成买卖任何证券的推荐。Agent 只在你授予的权限内行动，你需要为账户中下的每一笔订单负责。请自行做好尽职调查。
+dsalpha 是软件，不是投资顾问。它产出的任何内容都不构成投资建议，也不构成买卖任何证券的推荐。Agent 只在你授予的权限内行动，你需要为账户中下的每一笔订单负责。请自行做好尽职调查。
 
 ## 许可证
 

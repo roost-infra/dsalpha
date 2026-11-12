@@ -254,9 +254,33 @@ async def list_credit_stopped_for_resume(
             return [dict(r) for r in rows]
 
 
+
+async def in_flight_credits(run_id: str) -> float:
+    """The last heartbeat spend for a main run, or 0 when it is unreadable.
+
+    The Roost compatibility release path uses this to settle the turn's actual
+    spend at teardown: the product has no other durable figure at that point,
+    and the lease is about to be retired. Read-only and best-effort; a missing
+    row (finalized by older code) settles nothing rather than guessing.
+    """
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT in_flight_credits FROM conversation_responses WHERE conversation_response_id = %s",
+                (run_id,),
+            )
+            row = await cur.fetchone()
+            if not row or row[0] is None:
+                return 0.0
+            try:
+                return max(float(row[0]), 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
 __all__ = [
     "RunKind",
     "heartbeat",
+    "in_flight_credits",
     "list_credit_stopped_for_resume",
     "settle_abandoned",
     "settle_task_run",

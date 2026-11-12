@@ -6546,7 +6546,11 @@
       },
       "open": "打开",
       "loading": "正在加载页面插件…",
-      "loadError": "页面插件状态加载失败，请重试。"
+      "loadError": "页面插件状态加载失败，请重试。",
+      "contentDesk": {
+        "name": "内容工作台",
+        "description": "灵感、初稿、排期、复盘和写作风格。"
+      }
     }
   },
   "timezone": {

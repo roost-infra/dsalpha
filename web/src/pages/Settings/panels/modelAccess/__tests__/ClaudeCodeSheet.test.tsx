@@ -108,7 +108,7 @@ describe('ClaudeCodeSheet', () => {
   it('with no computer, says what the mode is, says so, and offers both ways to connect one', () => {
     show(setupOf({}));
     expect(screen.getByText('Connect a computer of your own first')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Get the Mac app/ })).toHaveAttribute('href', 'https://deepseek-alpha.com/app');
+    expect(screen.getByRole('link', { name: /Get the Mac app/ })).toHaveAttribute('href', 'https://dsalpha.roostbots.com/app');
     fireEvent.click(screen.getByRole('button', { name: 'Add SSH computer' }));
     expect(h.opened).toEqual([{ view: 'create' }]);
     expect(screen.getByText(/runs Anthropic's Claude Code through the Claude Agent SDK/)).toBeInTheDocument();

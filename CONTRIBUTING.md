@@ -1,6 +1,6 @@
-# Contributing to LangAlpha
+# Contributing to dsalpha
 
-Thanks for your interest in contributing to LangAlpha! This guide covers how to
+Thanks for your interest in contributing to dsalpha! This guide covers how to
 set up your environment and submit changes.
 
 > **Working language:** English is our preferred language for communication.
@@ -109,7 +109,7 @@ email [contact@ginlix.ai](mailto:contact@ginlix.ai).
 
 ## License
 
-LangAlpha is licensed under the [Apache License 2.0](LICENSE). By submitting a
+dsalpha is licensed under the [Apache License 2.0](LICENSE). By submitting a
 contribution, you agree that it is licensed under those same Apache-2.0 terms
 (the standard "inbound = outbound" model — see Apache-2.0 §5). Please only submit
 work you have the right to license under those terms.

@@ -201,7 +201,7 @@ export function describeInterrupt(thread: string, interrupt: Interrupt): string 
   const requests = interrupt.action_requests;
   if (isOrder(interrupt)) {
     const orders = requests.map((r) => `  ${String(r.description ?? r.name ?? "an order")}\n`).join("");
-    return `The agent is waiting for you to approve an order:\n${orders}Approve or reject it in the LangAlpha app.\n`;
+    return `The agent is waiting for you to approve an order:\n${orders}Approve or reject it in the dsalpha app.\n`;
   }
   const question = requests.find((r) => r.type === "ask_user_question");
   if (question) {

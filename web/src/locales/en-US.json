@@ -6634,7 +6634,11 @@
       },
       "open": "Open",
       "loading": "Loading page plugins…",
-      "loadError": "Could not load page plugins. Try again."
+      "loadError": "Could not load page plugins. Try again.",
+      "contentDesk": {
+        "name": "Content Desk",
+        "description": "Ideas, drafts, schedule, review and voice."
+      }
     }
   },
   "timezone": {

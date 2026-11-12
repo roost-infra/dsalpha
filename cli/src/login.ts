@@ -181,7 +181,7 @@ function callback(server: Server, state: string): Promise<string> {
       const code = url.searchParams.get("code");
       const ok = !error && code;
       res.writeHead(ok ? 200 : 400, { "content-type": "text/plain; charset=utf-8" });
-      res.end(ok ? "Signed in to LangAlpha. You can close this tab." : "Sign-in failed. Return to the terminal.");
+      res.end(ok ? "Signed in to dsalpha. You can close this tab." : "Sign-in failed. Return to the terminal.");
       clearTimeout(timer);
       if (ok) resolve(code);
       else reject(new CliError(`Sign-in failed: ${error ? (why ? `${error}: ${why}` : error) : "no code"}`, Exit.auth));

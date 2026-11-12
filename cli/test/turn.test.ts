@@ -79,7 +79,7 @@ describe("answering an order", () => {
     const api = sseApi(["interrupt", { interrupt_id: "i1", kind: "order_approval", action_requests: [order] }]);
     for (const verdict of ["approve", "reject"]) {
       const answer = threads.find((c) => c.words[1] === verdict)!;
-      await expect(answer.run(ctx(api, {}, { id: "t1" }))).rejects.toThrow(/only the LangAlpha app/);
+      await expect(answer.run(ctx(api, {}, { id: "t1" }))).rejects.toThrow(/only the dsalpha app/);
     }
     // Only the replay was read; nothing was answered.
     expect(vi.mocked(api.send).mock.calls.every(([method]) => method === "GET")).toBe(true);
@@ -92,7 +92,7 @@ describe("answering an order", () => {
       action_requests: [{ name: "place_order", description: "Buy 10 AAPL" }],
     });
     expect(text).toContain("Buy 10 AAPL");
-    expect(text).toContain("in the LangAlpha app");
+    expect(text).toContain("in the dsalpha app");
     expect(text).not.toContain("threads approve");
   });
 });
@@ -146,7 +146,7 @@ describe("describeInterrupt", () => {
 describe("billsTo", () => {
   const row = (fields: object) => ({ name: "m", provider: "p", custom: false, payer: null, ...fields }) as Parameters<typeof billsTo>[0];
   it("names who a turn is billed to", () => {
-    expect(billsTo(row({ payer: "credits" }))).toBe("LangAlpha credits");
+    expect(billsTo(row({ payer: "credits" }))).toBe("dsalpha credits");
     expect(billsTo(row({ payer: "own_key" }))).toBe("your API key");
     expect(billsTo(row({ payer: "subscription", plan: "Claude", signed_in: true }))).toBe("your Claude subscription");
     expect(billsTo(row({ payer: "subscription", plan: "GLM Coding Plan", signed_in: true }))).toBe("your GLM Coding Plan");

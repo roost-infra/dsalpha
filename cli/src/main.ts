@@ -22,7 +22,7 @@ function help(): string {
   // One-word commands (login, logout, whoami) stand together.
   const group = (c: Command) => (c.words.length > 1 ? c.words[0] : "");
   const groups = [...new Set(COMMANDS.map(group))].map((g) => commandLines(COMMANDS.filter((c) => group(c) === g)));
-  return `langalpha ${VERSION}: LangAlpha from the command line
+  return `langalpha ${VERSION}: dsalpha from the command line
 
 Usage: ${CLI_NAME} <command> [options]          ${CLI_NAME} <command> --help shows its options
        la is the short name, where your shell does not alias it to ls

@@ -1,5 +1,5 @@
 import { lazyWithMotion } from '@/lib/lazyWithMotion';
-import { CandlestickChart } from 'lucide-react';
+import { CandlestickChart, NotebookPen } from 'lucide-react';
 import type { PagePlugin, PagePluginPage } from './types';
 
 /**
@@ -8,6 +8,21 @@ import type { PagePlugin, PagePluginPage } from './types';
  * remote plugin loading, so this list is the complete page-plugin surface.
  */
 export const PAGE_PLUGINS: PagePlugin[] = [
+  {
+    id: 'content-desk',
+    nameKey: 'plugins.builtin.contentDesk.name',
+    descriptionKey: 'plugins.builtin.contentDesk.description',
+    icon: NotebookPen,
+    defaultEnabled: false,
+    pages: [
+      {
+        id: 'content-desk',
+        path: '/p/content-desk',
+        labelKey: 'plugins.builtin.contentDesk.name',
+        component: lazyWithMotion(() => import('@/pages/ContentDesk/ContentDesk')),
+      },
+    ],
+  },
   {
     id: 'market-center',
     nameKey: 'plugins.builtin.marketCenter.name',
