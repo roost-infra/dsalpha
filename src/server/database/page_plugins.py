@@ -11,7 +11,7 @@ from src.server.database.pool import get_db_connection
 #: The page plugins this build can offer. The frontend ships their manifests;
 #: the backend only records the switch and refuses unknown ids, so a stale
 #: client cannot grow the table with arbitrary names.
-PAGE_PLUGIN_IDS: tuple[str, ...] = ("market-center",)
+PAGE_PLUGIN_IDS: tuple[str, ...] = ("market-center", "content-desk")
 
 
 async def list_user_page_plugins(user_id: str) -> List[Dict[str, Any]]:

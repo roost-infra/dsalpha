@@ -1461,6 +1461,7 @@ from src.server.app.mcp_icons import router as mcp_icons_router
 from src.server.app.mcp_oauth import router as mcp_oauth_router
 from src.server.app.plugins import router as plugins_router
 from src.server.app.page_plugins import router as page_plugins_router
+from src.server.app.content_desk import router as content_desk_router
 from src.server.app.marketplace import router as marketplace_router
 from src.server.app.user_vault import router as user_vault_router
 from src.server.app.mcp_servers import router as mcp_servers_router
@@ -1610,6 +1611,9 @@ app.include_router(
 app.include_router(
     page_plugins_router
 )  # /api/v1/page-plugins/* - Built-in page plugin switches
+app.include_router(
+    content_desk_router
+)  # /api/v1/content-desk/* - Content Desk page-plugin helpers
 app.include_router(
     plugins_router
 )  # /api/v1/plugins/* - Agent Plugins packages (install/manage/export)

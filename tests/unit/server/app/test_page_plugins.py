@@ -42,7 +42,7 @@ async def test_lists_every_known_plugin_with_unset_ones_off(client, db):
     db["list_user_page_plugins"].return_value = [{"plugin_id": "market-center", "enabled": False}]
     response = await client.get("/api/v1/page-plugins")
     assert response.status_code == 200
-    assert response.json() == {"plugins": [{"plugin_id": "market-center", "enabled": False}]}
+    assert response.json() == {"plugins": [{"plugin_id": "market-center", "enabled": False}, {"plugin_id": "content-desk", "enabled": False}]}
 
 
 @pytest.mark.asyncio
