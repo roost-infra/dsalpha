@@ -404,7 +404,7 @@ function MarketScanlines() {
       ctx.font = `10px ${MONO}`;
       ctx.textAlign = 'left';
       ctx.fillStyle = `rgba(${ink}, 0.3)`;
-      ctx.fillText('S&P 500 · trailing two years', 16, height - 12);
+      ctx.fillText('A research workspace · trailing two years', 16, height - 12);
 
       // Field-colored pillow keeps the focal cluster legible over the swell.
       if (glow) ctx.drawImage(glow, lead - 120, liveY - 55, 180, 110);

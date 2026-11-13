@@ -16,6 +16,16 @@ export default defineConfig(({ mode }) => {
   // process.env entries, so `VITE_FOO=bar pnpm dev` keeps working too.
   const env = loadEnv(mode, process.cwd())
   const backendTarget = env.VITE_PROXY_BACKEND || 'http://localhost:8000'
+  // Dev-only escape hatch for a machine whose DNS cannot resolve the
+  // deployment: dial the IP with the deployment's Host/SNI.
+  const proxyHost = env.VITE_PROXY_HOST
+  const proxySecure = env.VITE_PROXY_INSECURE !== '1'
+  const proxyOptions = {
+    target: backendTarget,
+    changeOrigin: true,
+    secure: proxySecure,
+    ...(proxyHost ? { headers: { Host: proxyHost } } : {}),
+  }
   // Only honor a well-formed port; a non-numeric VITE_HMR_CLIENT_PORT would
   // otherwise yield NaN and silently break the HMR socket.
   const hmrClientPort = Number(env.VITE_HMR_CLIENT_PORT)
@@ -89,11 +99,12 @@ export default defineConfig(({ mode }) => {
         ? { clientPort: hmrClientPort, path: '/vite-hmr' }
         : undefined,
       proxy: {
-        '/api/v1': {
-          target: backendTarget,
-          changeOrigin: true,
-        },
+        '/api/v1': proxyOptions,
+        // Supabase auth goes through our origin in the deployed app; the dev
+        // server forwards the same path so a local login exercises it.
+        '/sb': proxyOptions,
         '/ws/v1': {
+          ...proxyOptions,
           target: backendTarget.replace(/^http/, 'ws'),
           ws: true,
         },
