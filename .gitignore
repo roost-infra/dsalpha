@@ -162,3 +162,5 @@ docs/pr_context/
 
 # Generated per deployment by `python -m scripts.data_probe` against its own data tokens
 data_routing.yaml
+.env.sg
+dist-sg/
