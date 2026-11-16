@@ -72,6 +72,8 @@ export interface CommentPopoverProps {
    * focus elsewhere (`onAskDiscard` asks instead).
    */
   draft?: { words: boolean; onLeave: () => void; onAskDiscard: () => void } | null;
+  /** Fades and lets clicks through to the page under it: Cmd is held to add a part the box may cover. */
+  seeThrough?: boolean;
   onDismiss: () => void;
   /** Its exit has played; whoever holds it can let it go. */
   onGone: () => void;
@@ -90,7 +92,7 @@ export interface CommentPopoverProps {
  * the corner Radix places beside the anchor.
  */
 export function CommentPopover({
-  open, point, narrow, boundary, width, label, focusSelf, arrival, replaced, draft, onDismiss, onGone, children,
+  open, point, narrow, boundary, width, label, focusSelf, arrival, replaced, draft, seeThrough, onDismiss, onGone, children,
 }: CommentPopoverProps): React.ReactElement | null {
   const at = useKeptWhileFading(open ? point : null, samePoint);
 
@@ -118,6 +120,7 @@ export function CommentPopover({
         updatePositionStrategy="always"
         aria-label={label}
         data-arrival={arrival || undefined}
+        data-see-through={seeThrough || undefined}
         className="page-comment-box flex flex-col overflow-hidden rounded-xl p-0 shadow-lg"
         style={{
           width,
