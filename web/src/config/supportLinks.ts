@@ -20,10 +20,23 @@ export const PLATFORM_URL: string | null = isPlatformMode
 export const ROOST_CONSOLE_URL: string | null =
   (import.meta.env.VITE_ROOST_CONSOLE_URL as string | undefined) || null;
 
+/** Where each account path lives inside the one-page Roost Console. */
+const CONSOLE_SECTIONS: Record<string, string> = {
+  plans: 'plans',
+  usage: 'products',
+  billing: 'billing',
+};
+
 /** A page of the account portal, by its path (`plans`, `integrations`); null
- *  where there is no portal. */
+ *  where there is no portal. The Roost Console is one page, so its paths become
+ *  section anchors (`#plans`, `#products`, `#billing`); a path it has no
+ *  section for opens its root. */
 export function consoleUrl(path: string): string | null {
-  if (ROOST_CONSOLE_URL) return ROOST_CONSOLE_URL;
+  if (ROOST_CONSOLE_URL) {
+    const root = ROOST_CONSOLE_URL.replace(/#.*$/, '');
+    const section = CONSOLE_SECTIONS[path];
+    return section ? `${root.replace(/\/+$/, '')}/#${section}` : root;
+  }
   return PLATFORM_URL && `${PLATFORM_URL}/${path}`;
 }
 
