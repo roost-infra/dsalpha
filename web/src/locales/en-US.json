@@ -6748,7 +6748,10 @@
     "moreSessions": "Workspaces & history",
     "title": "Conversations",
     "workspace": "Workspace",
-    "noRooms": "No rooms in this workspace yet"
+    "noRooms": "No rooms in this workspace yet",
+    "roomsSection": "Rooms",
+    "botsSection": "Bots",
+    "threadsSection": "Chats"
   },
   "rooms": {
     "roomsSection": "Rooms",

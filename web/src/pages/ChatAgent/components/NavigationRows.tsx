@@ -35,6 +35,7 @@ import { useWorkspaceLabel } from '@/hooks/useWorkspaceLabel';
 import { HomeRowIcon } from '@/hooks/useHomeWorkspace';
 import { BotMark } from '@/components/bots/BotMark';
 import { WorkspaceConversations } from '@/components/Sidebar/WorkspaceConversations';
+import { formatActivity, timeOf, titleWithoutRunDate } from '@/components/Sidebar/conversations';
 import { isHomeWorkspace } from '@/lib/homeWorkspace';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import { sidebarAgentRowLabel, type SidebarAgentRow } from '../session/subagents/subagentStatus';
@@ -144,7 +145,7 @@ function ThreadRowTitle({ tid, title, active, onActivate }: {
         e.preventDefault();
         onActivate();
       }}
-      className={`text-sm truncate${fading ? ' animate-fade-in' : ''}`}
+      className={`nav-thread-title text-sm truncate${fading ? ' animate-fade-in' : ''}`}
       style={{ color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)' }}
     >
       {title}
@@ -302,6 +303,13 @@ export interface ThreadTreeRowProps {
   isCurrentThread: boolean;
   isExpanded: boolean;
   isMobile: boolean;
+  /**
+   * Draw the row as a compact entry inside the workspace's conversation
+   * stream: a 13px title, the run date dropped from an automation title, and
+   * the row's own recency stamp at the right. Outside that stream (the
+   * sidebar's standalone tree) the row keeps its roomier default.
+   */
+  compact?: boolean;
   /** Subagent rows for the CURRENT thread only; absent on every other row. */
   agents?: SidebarAgentRow[];
   activeAgentId?: string | null;
@@ -394,6 +402,7 @@ function ThreadTreeRowImpl({
   isCurrentThread,
   isExpanded,
   isMobile,
+  compact = false,
   agents,
   activeAgentId,
   onToggleThread,
@@ -419,6 +428,9 @@ function ThreadTreeRowImpl({
   // A bot's private conversation has no user-typed title until it is named;
   // the bot's own name is the honest fallback, not "Untitled".
   const title = seedTitle || bot?.name || t('nav.untitledThread');
+  // In the compact stream an automation run's trailing run date is redundant:
+  // the row already stamps its own recency at the right.
+  const displayTitle = compact ? titleWithoutRunDate(title) : title;
   const isPinned = Boolean(thread.is_pinned);
 
   // The metadata card is held shut while the right-click menu is up, so the
@@ -496,7 +508,7 @@ function ThreadTreeRowImpl({
           <HoverCardTrigger asChild>
             <ContextMenuTrigger asChild disabled={renaming}>
               <div
-                className={`nav-panel-row group relative ${isCurrentThread ? 'nav-panel-row-active' : ''}${menuOpen ? ' is-menu-open' : ''}`}
+                className={`nav-panel-row group relative${compact ? ' nav-thread-row-compact' : ''} ${isCurrentThread ? 'nav-panel-row-active' : ''}${menuOpen ? ' is-menu-open' : ''}`}
                 style={{ paddingLeft: 28 }}
                 onClick={activateRow}
               >
@@ -525,7 +537,12 @@ function ThreadTreeRowImpl({
                     aria-label={t('nav.threadTitle')}
                   />
                 ) : (<>
-                  <ThreadRowTitle tid={tid} title={title} active={isCurrentThread} onActivate={activateRow} />
+                  <ThreadRowTitle tid={tid} title={displayTitle} active={isCurrentThread} onActivate={activateRow} />
+                  {compact && (
+                    <span className="nav-thread-when">
+                      {formatActivity(timeOf(thread.updated_at))}
+                    </span>
+                  )}
                   {isPrimarySession && (
                     <span className="nav-primary-badge" data-testid="nav-primary-session">
                       {t('nav.primarySession')}
@@ -884,6 +901,7 @@ function WorkspaceTreeRowImpl({
                     isCurrentThread={thread.thread_id === currentThreadId}
                     isExpanded={expandedThreadIds.has(thread.thread_id)}
                     isMobile={isMobile}
+                    compact
                     agents={thread.thread_id === currentThreadId ? agents : undefined}
                     activeAgentId={activeAgentId}
                     onToggleThread={onToggleThread}

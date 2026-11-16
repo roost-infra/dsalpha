@@ -4,7 +4,7 @@ import type { BotInfo } from '@/api/bots';
 import type { RoomInfo } from '@/api/rooms';
 import type { BotPair } from '@/pages/Rooms/botInbox';
 import type { Thread } from '@/types/api';
-import { buildConversationItems, formatActivity, timeOf } from '../conversations';
+import { buildConversationItems, formatActivity, timeOf, titleWithoutRunDate } from '../conversations';
 
 function bot(id: string, overrides: Partial<BotInfo> = {}): BotInfo {
   return {
@@ -164,5 +164,22 @@ describe('timeOf / formatActivity', () => {
 
   it('draws nothing for a row with no stamp', () => {
     expect(formatActivity(0)).toBe('');
+  });
+});
+
+describe('titleWithoutRunDate', () => {
+  it('drops the run stamp an automation writes on its thread title', () => {
+    expect(titleWithoutRunDate('缠论买点扫描 15:30 — 2026-11-16')).toBe('缠论买点扫描 15:30');
+    expect(titleWithoutRunDate('A股盘前简报 08:45 – 2026-11-13')).toBe('A股盘前简报 08:45');
+  });
+
+  it('leaves an ordinary title, including one that ends in a date itself, alone', () => {
+    expect(titleWithoutRunDate('Message 111')).toBe('Message 111');
+    expect(titleWithoutRunDate('2026-11-16')).toBe('2026-11-16');
+    expect(titleWithoutRunDate('复盘 — 我先说说')).toBe('复盘 — 我先说说');
+  });
+
+  it('keeps the original when the whole title is the stamp', () => {
+    expect(titleWithoutRunDate(' — 2026-11-16')).toBe(' — 2026-11-16');
   });
 });

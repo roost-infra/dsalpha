@@ -6658,7 +6658,10 @@
     "moreSessions": "工作区与历史会话",
     "title": "会话",
     "workspace": "工作区",
-    "noRooms": "这个工作区还没有群聊"
+    "noRooms": "这个工作区还没有群聊",
+    "roomsSection": "群聊",
+    "botsSection": "Bot",
+    "threadsSection": "对话"
   },
   "rooms": {
     "roomsSection": "群聊",

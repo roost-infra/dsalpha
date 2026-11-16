@@ -1,9 +1,10 @@
 /**
- * One workspace's conversations as a single recency-ordered list.
+ * One workspace's conversations as one recency-ordered stream, ready to be
+ * split into the sidebar's sections (group chats, bots, threads).
  *
- * A bot's direct chat, a group chat, a bot-to-bot exchange and an ordinary
- * workspace thread sit at the same level, separated by when they last moved.
- * A bot's primary thread is the bot row, not a second entry. A room member's
+ * A bot's direct chat, a group chat and an ordinary workspace thread are
+ * built from one source, so the caller can order them together. A bot's
+ * primary thread is the bot row, not a second entry. A room member's
  * execution thread never arrives here: the thread list leaves it out.
  */
 import type { BotInfo } from '@/api/bots';
@@ -15,6 +16,8 @@ export interface ConversationThread {
   thread_id: string;
   title?: string | null;
   updated_at?: string;
+  /** The bot a bot-owned thread answers as, when the row carries one. */
+  bot_id?: string | null;
   /** Pinned threads stay at the top of the stream; pin is a placement, not activity. */
   is_pinned?: boolean;
 }
@@ -111,4 +114,20 @@ export function formatActivity(activity: number): string {
     return when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   return when.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
+}
+
+/**
+ * A thread title without the run stamp an automation writes on it.
+ *
+ * Every scheduled run names its thread "<automation name> — <date>" on the
+ * server. The sidebar already carries the row's own recency stamp at the
+ * right, so repeating the date in the title doubles the line and makes six
+ * runs of one automation read as six near-identical titles. Only that exact
+ * trailing shape is dropped: any other use of the dash stays as written.
+ */
+const RUN_STAMP = /\s+[—–]\s+\d{4}-\d{2}-\d{2}$/;
+
+export function titleWithoutRunDate(title: string): string {
+  const stripped = title.replace(RUN_STAMP, '').trim();
+  return stripped || title;
 }
