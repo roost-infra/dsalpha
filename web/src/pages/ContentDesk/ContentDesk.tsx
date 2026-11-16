@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router'
+import { ROOST_CONSOLE_URL } from '@/config/supportLinks'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { resolveChatWorkspace } from '@/hooks/useHomeWorkspace'
@@ -120,7 +121,9 @@ export default function ContentDesk() {
     </div>
     {editing && <Editor item={editing} state={data} zh={zh} onClose={() => setEditing(null)} applyOps={applyOps} flash={flash} busy={busy} onAskAI={askAI} />}
     {toast && <div className="rcd-toast" key={toast.key}>{toast.text}</div>}
-    <a className="rcd-console" href="https://www.roostbots.com/console/" target="_blank" rel="noreferrer" style={{ position: 'fixed', right: 20, bottom: 18 }}>Roost Console<Icon name="external" size={13} /></a>
+    {ROOST_CONSOLE_URL && (
+      <a className="rcd-console" href={ROOST_CONSOLE_URL} target="_blank" rel="noreferrer" style={{ position: 'fixed', right: 20, bottom: 18 }}>Roost Console<Icon name="external" size={13} /></a>
+    )}
   </div>
 }
 
