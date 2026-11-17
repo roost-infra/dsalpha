@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import Callable, Collection
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, NamedTuple, Optional
+from typing import Any, Dict, NamedTuple, Optional, Sequence
 
 from ptc_agent.core.sandbox.runtime import RuntimeState, SandboxTransientError
 from ptc_agent.core.session import Session
@@ -592,6 +592,51 @@ class WorkspaceManager(ComputerManager):
             # A workspace landed on it meanwhile; the ones deleted stay so.
             raise ComputerRemovalRefused(e.code, deleted=deleted) from None
         return deleted
+
+    async def maybe_stop_after_run(
+        self,
+        computer_id: str,
+        *,
+        user_id: str,
+        workspace_ids: Sequence[str] = (),
+        reason: str = "turn_end",
+    ) -> bool:
+        """Stop a computer once the turn that used it has finished.
+
+        Only for the lifecycle rollout: unset rollout lists make this a no-op.
+        ``always-on`` machines keep running by design; a machine with another
+        active workflow is left for the next turn or the idle sweep to settle.
+        """
+        from src.server.services.sandbox_lifecycle import (
+            grace_seconds,
+            lifecycle_rolled_out,
+        )
+
+        if not computer_id or not lifecycle_rolled_out(user_id, workspace_ids):
+            return False
+        grace = grace_seconds()
+        if grace > 0:
+            await asyncio.sleep(grace)
+        computer = await get_computer(computer_id)
+        if computer is None or computer.get("is_always_on"):
+            return False
+        try:
+            if await self._machine_has_active_tasks(computer_id):
+                return False
+            await self._stop_machine(
+                computer_id,
+                unchanged_since=computer.get("updated_at"),
+                reason=reason,
+            )
+            logger.info(
+                f"[sandbox-lifecycle] stopped computer {computer_id} after {reason}"
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"[sandbox-lifecycle] could not stop computer {computer_id}: {e}"
+            )
+            return False
 
     async def cleanup_idle_workspaces(self) -> int:
         """Stop computers that have gone quiet, and reconcile always-on.

@@ -1005,6 +1005,20 @@ async def astream_ptc_workflow(
                     session.computer_id,
                     min_age_s=TURN_MEASURE_MIN_INTERVAL_SECONDS,
                 )
+                # Bind the sandbox's lifetime to its tasks: once the last turn
+                # ends, stop the machine after the rollout's grace window.
+                # always-on machines opt out inside the manager.
+                try:
+                    await ws_manager.maybe_stop_after_run(
+                        session.computer_id,
+                        user_id=user_id,
+                        workspace_ids=[workspace_id],
+                        reason="turn_end",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[PTC_COMPLETE] sandbox lifecycle stop failed: {e}"
+                    )
 
         # Start workflow in background with event buffering
         await manager.start_run(
