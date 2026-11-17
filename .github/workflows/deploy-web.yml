@@ -1,0 +1,129 @@
+name: deploy-web
+
+# Ships the built web app to the app host. Builds run here because the host
+# serves static files only. The account-portal and Supabase URLs are compiled
+# in at build time, so they live next to the build and are asserted before
+# anything is uploaded: a bundle pointing at a decommissioned proxy must fail
+# here instead of surfacing as a broken sign-in.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dslpha-web
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  VITE_HOST_MODE: platform
+  # Same origin: nginx on the app host proxies /sb/ to the Supabase project.
+  VITE_SUPABASE_URL: https://dsalpha.roostbots.com/sb
+  VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_D7qAz5YQCUwZHgOMcgPYNQ_1jXOM1-E
+  VITE_ROOST_CONSOLE_URL: https://www.roostbots.com/console/
+  VITE_DESKTOP_DOWNLOAD_URL: https://dsalpha.roostbots.com/app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: web/package.json
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Assert the deployed configuration
+        run: |
+          set -euo pipefail
+          asset=$(grep -oE 'assets/index-[^"]+\.js' dist/index.html)
+          test -n "$asset"
+          entry="dist/$asset"
+          grep -q 'dsalpha.roostbots.com/sb' "$entry"
+          if grep -q 'athena.causal-memory.com' dist/assets/*.js; then
+            echo "::error::bundle still points at the retired athena Supabase proxy"
+            exit 1
+          fi
+          grep -q 'roostbots.com/console' "$entry"
+          mkdir -p "$GITHUB_WORKSPACE/build"
+          echo "$asset" > "$GITHUB_WORKSPACE/build/index-asset.txt"
+          tar -czf "$GITHUB_WORKSPACE/build/dslpha-web.tgz" -C dist .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dslpha-web
+          path: |
+            build/dslpha-web.tgz
+            build/index-asset.txt
+          retention-days: 3
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: build
+          merge-multiple: true
+      - name: Configure SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Upload artifact
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          scp -q -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts \
+            build/dslpha-web.tgz "$USER@$HOST:/tmp/dslpha-web-${{ github.sha }}.tgz"
+      - name: Deploy
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          SHA: ${{ github.sha }}
+        run: |
+          ASSET=$(cat build/index-asset.txt)
+          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- $SHA $ASSET" <<'REMOTE'
+          set -euo pipefail
+          SHA="$1"
+          ASSET="$2"
+          TS=$(date +%Y%m%d-%H%M%S)
+          cd /opt/langalpha/web
+
+          rm -rf dist.new
+          mkdir dist.new
+          tar -xzf "/tmp/dslpha-web-$SHA.tgz" -C dist.new
+
+          if [ -d dist ]; then mv dist "dist-prev-$TS"; fi
+          mv dist.new dist
+
+          if ! grep -q "$ASSET" dist/index.html; then
+            echo "::error::web health check failed; rolling back"
+            rm -rf dist
+            mv "dist-prev-$TS" dist
+            exit 1
+          fi
+          for _ in $(seq 1 5); do
+            if curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' https://127.0.0.1/chat 2>/dev/null | grep -q "$ASSET"; then break; fi
+            sleep 1
+          done
+          # Keep the three newest backups of the previous dist.
+          ( ls -1dt dist-prev-* 2>/dev/null | tail -n +4 | xargs -r rm -rf -- ) || true
+          rm -f "/tmp/dslpha-web-$SHA.tgz"
+          echo "web deployed ($SHA)"
+          REMOTE
+      - name: Verify the public entry
+        run: |
+          curl -fsS https://dsalpha.roostbots.com/chat | grep -q "$(cat build/index-asset.txt)"
