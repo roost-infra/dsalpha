@@ -50,6 +50,7 @@ export interface ReleasedArea {
 
 export interface PressHost {
   mode(): boolean;
+  drawOnTouch: boolean;
   /** Whether a press with `e`'s keys adds to the draft's parts; a tap, with no keys, only when the next is asked to. */
   extending(e?: MouseEvent): boolean;
   /** Reads the modifier off a press in comment mode, which a key held while the focus was elsewhere reaches only this way. */
@@ -110,15 +111,18 @@ export class PressTracker {
   down(e: PointerEvent): void {
     // A Ctrl-press on a Mac opens the context menu, which keeps its release.
     if (e.button !== 0 || contextPress(e)) return;
-    // A touch counts once it lifts as a tap: one that scrolls is cancelled first.
-    if (e.pointerType === 'touch') {
+    const touch = e.pointerType === 'touch';
+    if (touch && !e.isPrimary) return;
+    if (touch && !(this.host.mode() && this.host.drawOnTouch)) {
+      // A touch that scrolls is cancelled before it lifts as a tap.
       this.tapping = true;
       return;
     }
     this.releaseHeld(false);
     this.host.readKeys(e);
     this.held = { id: e.pointerId, cx: e.clientX, cy: e.clientY, extend: this.host.extending(e) };
-    this.heldTimer = setTimeout(() => this.releaseHeld(false), 0);
+    if (touch) this.releaseHeld(false);
+    else this.heldTimer = setTimeout(() => this.releaseHeld(false), 0);
   }
 
   /**
@@ -183,6 +187,7 @@ export class PressTracker {
   }
 
   up(e: PointerEvent): void {
+    if (e.pointerType === 'touch' && !e.isPrimary) return;
     if (this.tapping) {
       this.tapping = false;
       this.press(this.host.extending());

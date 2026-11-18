@@ -31,6 +31,7 @@ import { ADD_KEY } from './partModifier';
 import { canMark } from './textMarks';
 import { glyphAt } from './glyphs';
 import { PageHover } from './pageHover';
+import { ownChange } from './region/regionSpots';
 import './viewerPage.css';
 
 export interface ViewerPageOptions {
@@ -99,6 +100,7 @@ export class ViewerPage {
     });
     this.tracker = new PressTracker(scroller, content, {
       mode: () => this.mode,
+      drawOnTouch: this.picker?.drawOnTouch === true,
       extending: (e) => this.mode && (e ? this.key.adds(e) : this.key.next),
       readKeys: (e) => this.readModifier(e),
       // A press adding parts takes spots, so on glyphs too it draws an area.
@@ -131,7 +133,9 @@ export class ViewerPage {
     // The press's moves and release keep coming here once the pointer leaves the content.
     window.addEventListener('pointermove', (e) => this.tracker.move(e), { capture: true, passive: true, signal });
     window.addEventListener('pointerup', (e) => this.onPointerUp(e), capture);
-    window.addEventListener('pointercancel', () => this.tracker.cancel(), capture);
+    window.addEventListener('pointercancel', (e) => {
+      if (e.pointerType !== 'touch' || e.isPrimary) this.tracker.cancel();
+    }, capture);
     window.addEventListener('keydown', (e) => this.onKey(e), capture);
     window.addEventListener('keyup', (e) => this.onKey(e), capture);
     window.addEventListener('blur', () => this.key.set(false, this.key.next), { signal });
@@ -147,7 +151,9 @@ export class ViewerPage {
       // The file read again (the agent's edit) renders new blocks, and a
       // viewer showing another part of it in the same cells (a sheet) says so
       // in `data-shows`: each anchor is looked for afresh.
-      const changes = new MutationObserver(() => {
+      const changes = new MutationObserver((records) => {
+        // Boxes the page lays on a picture are its own, not the file's.
+        if (records.every(ownChange)) return;
         this.anchors.changed();
         this.request();
       });
@@ -303,7 +309,7 @@ export class ViewerPage {
     e.stopPropagation();
     const click = this.tracker.click(e);
     if (!click || e.detail > 1 || e.button !== 0 || !(e.target instanceof Element)) return;
-    const spot = this.picker?.spotAt(e.target) ?? null;
+    const spot = this.picker?.spotAt(e.target) ?? this.picker?.pointAt?.(e.clientX, e.clientY) ?? null;
     if (click.adds) {
       this.key.set(this.key.held, false);
       if (spot) this.sendParts(this.parts.toggled(spot));
@@ -320,7 +326,7 @@ export class ViewerPage {
    * began on when it touched none.
    */
   private reportArea(area: ReleasedArea): void {
-    const found = this.picker?.spotsIn(area.box) ?? [];
+    const found = this.picker?.draw?.(area.box, area) ?? this.picker?.spotsIn(area.box) ?? [];
     if (area.extend) {
       // The drag was the asked-for tap: its click is swallowed, so it is let go here.
       this.key.set(this.key.held, false);

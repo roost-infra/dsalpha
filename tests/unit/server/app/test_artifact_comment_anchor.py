@@ -220,3 +220,31 @@ def test_the_text_viewers_anchors_are_kept_as_sent(anchor):
 def test_a_text_viewers_anchor_out_of_bounds_is_refused(anchor):
     with pytest.raises(ValidationError):
         CommentAnchor.model_validate(anchor)
+
+
+def test_image_region_round_trips_a_labeled_box_and_point():
+    anchor = {
+        "kind": "region",
+        "label": "Revenue chart.png",
+        "boxes": [
+            {"x": 0.2, "y": 0.4, "w": 0.3, "h": 0.5, "picture": ".agents/comments/chart-1.png"},
+            {"x": 0.8, "y": 1, "w": 0, "h": 0},
+        ],
+    }
+    assert CommentAnchor.model_validate(anchor).model_dump(exclude_none=True) == anchor
+
+
+@pytest.mark.parametrize(
+    "boxes",
+    [
+        [],
+        [{"x": 0.9, "y": 0, "w": 0.2, "h": 0.1}],
+        [{"x": 0, "y": 0, "w": 0.1, "h": 0}],
+        [{"x": 0, "y": 0, "w": 0, "h": 0, "picture": ".agents/comments/chart.png"}],
+        [{"x": 0, "y": 0, "w": 0.1, "h": 0.1, "picture": ".agents/comments/../chart.png"}],
+        [{"x": 0, "y": 0, "w": 0, "h": 0, "page": 1}, {"x": 0, "y": 0, "w": 0, "h": 0}],
+    ],
+)
+def test_invalid_regions_are_rejected(boxes):
+    with pytest.raises(ValidationError):
+        CommentAnchor.model_validate({"kind": "region", "boxes": boxes})

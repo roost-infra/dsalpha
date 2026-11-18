@@ -10,10 +10,10 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     field_serializer,
-    BeforeValidator,
     field_validator,
     model_validator,
 )
@@ -330,6 +330,26 @@ class AreaRect(BaseModel):
     h: float = Field(ge=0, le=1)
 
 
+_PICTURE_PATH = r"^\.agents/comments/[A-Za-z0-9][A-Za-z0-9._-]{0,199}\.(png|jpg|jpeg)$"
+
+
+class RegionBox(AreaRect):
+    """Normalized geometry on an image or PDF page. A point has zero size."""
+
+    page: int | None = Field(default=None, ge=1, le=100_000)
+    picture: str | None = Field(default=None, pattern=_PICTURE_PATH)
+
+    @model_validator(mode="after")
+    def _on_its_surface(self) -> RegionBox:
+        if self.x + self.w > 1.001 or self.y + self.h > 1.001:
+            raise ValueError("a box runs past the edge it is drawn on")
+        if (self.w == 0) != (self.h == 0):
+            raise ValueError("a box has a width and a height, a point neither")
+        if self.w == 0 and self.picture:
+            raise ValueError("a point has no picture")
+        return self
+
+
 _SPOT_FIELDS = frozenset({"path", "label", "quote", "prefix", "suffix", "detail"})
 #: What each kind may carry beyond ``kind`` and ``point``: only what its
 #: rendering reads, so nothing stored is left out of what the agent is shown.
@@ -340,8 +360,9 @@ _KIND_FIELDS: dict[str, frozenset[str]] = {
     "area": _SPOT_FIELDS | {"elements", "count", "rect"},
     "block": frozenset({"lines", "label", "quote"}),
     "cells": frozenset({"sheet", "ranges"}),
+    "region": frozenset({"boxes", "label"}),
 }
-_KIND_REQUIRES = {"block": "lines", "cells": "ranges", "area": "elements"}
+_KIND_REQUIRES = {"block": "lines", "cells": "ranges", "area": "elements", "region": "boxes"}
 _KIND_FIELDS_ALL = sorted(frozenset().union(*_KIND_FIELDS.values()))
 
 
@@ -358,9 +379,8 @@ class CommentAnchor(BaseModel):
         return _whole_pairs(value)
 
     #: A clicked element, a text selection, a spot the file names itself, an
-    #: area dragged around several elements, a Markdown block, or cells of a
-    #: sheet.
-    kind: Literal["element", "text", "named", "area", "block", "cells"]
+    #: area around elements, a Markdown block, cells, or boxes on a picture.
+    kind: Literal["element", "text", "named", "area", "block", "cells", "region"]
     #: The source lines a block, or selected words, are on.
     lines: SourceLines | None = None
     #: The PDF page selected words are on.
@@ -387,6 +407,7 @@ class CommentAnchor(BaseModel):
     #: The cells' sheet, absent for a CSV, and each range picked.
     sheet: str | None = _anchor_text(300)
     ranges: list[CellRange] | None = Field(default=None, min_length=1, max_length=64)
+    boxes: list[RegionBox] | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def _kind_fields(self) -> CommentAnchor:
@@ -407,6 +428,12 @@ class CommentAnchor(BaseModel):
                 raise ValueError("an area holds at least two elements")
             if self.count is None or self.count < len(self.elements):
                 raise ValueError("an area counts at least the elements it lists")
+        if (
+            self.kind == "region"
+            and self.boxes
+            and len({box.page is None for box in self.boxes}) > 1
+        ):
+            raise ValueError("a region's boxes are all on pages or none is")
         return self
 
 
