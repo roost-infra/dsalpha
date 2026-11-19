@@ -234,9 +234,15 @@ async def deliver_message(
                 else None
             ),
             "from_name": sender_name,
-            "from_user_id": message.get("from_user_id"),
+            **(
+                {
+                    "from_user_id": message.get("from_user_id"),
+                    "external": True,
+                }
+                if message.get("external")
+                else {}
+            ),
             "message_kind": message["kind"],
-            "external": bool(message.get("external")),
             "body": message["content"],
             "root_id": message.get("root_id"),
             "depth": int((message.get("payload") or {}).get("depth") or 0),
