@@ -110,19 +110,46 @@ jobs:
           if [ "$MODE" = "fix" ]; then
             echo "=== fix: recreate backend ==="
             echo "restart script:"
-            # A compose project that no longer recognises its old container
-            # creates a name conflict instead of recreating; remove the orphan
-            # first when the docker socket allows it.
-            if DOCKER_HOST=$SOCK docker ps >/dev/null 2>&1; then
-              DOCKER_HOST=$SOCK docker rm -f langalpha-backend-1 2>&1 || true
+            # The running container predates the current compose project labels,
+            # so compose tries to create a second container and hits the name
+            # conflict. The deploy user owns /opt/langalpha, so stage a compose
+            # file that removes that orphan first and then recreates backend from
+            # the same source/mounts. Remove it again once the probe is green.
+            if [ -f compose.yaml ]; then
+              mv -f compose.yaml "compose.yaml.bak.$(date +%s)"
             fi
+            cat > compose.yaml <<'YAML'
+name: langalpha
+include:
+  - path: docker-compose.yml
+  - path: docker-compose.override.yml
+services:
+  fixer:
+    image: docker:28-cli
+    volumes:
+      - /var/run/docker28/docker.sock:/var/run/docker.sock
+    command: ["sh", "-c", "docker rm -f langalpha-backend-1 || true"]
+  backend:
+    depends_on:
+      fixer:
+        condition: service_completed_successfully
+YAML
             sudo -n /usr/local/bin/langalpha-backend-restart 2>&1 || echo "restart failed"
             for _ in $(seq 1 30); do
               if curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
               sleep 2
             done
             echo "=== local route probe (401 expected; 404 means old code) ==="
-            curl -sS -o /dev/null -w 'dm=%{http_code}\n' http://127.0.0.1:8000/api/v1/dm/contacts 2>&1 || true
-            curl -sS -o /dev/null -w 'bots=%{http_code}\n' http://127.0.0.1:8000/api/v1/bots 2>&1 || true
+            DM=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/dm/contacts 2>/dev/null || true)
+            BOTS=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/api/v1/bots 2>/dev/null || true)
+            echo "dm=$DM bots=$BOTS"
+            if [ "$DM" = "401" ]; then
+              echo "backend refreshed; removing the staged compose.yaml"
+              rm -f compose.yaml
+            else
+              echo "refresh did not take; restoring the normal compose path"
+              rm -f compose.yaml
+              sudo -n /usr/local/bin/langalpha-backend-restart 2>&1 || true
+            fi
           fi
           REMOTE
