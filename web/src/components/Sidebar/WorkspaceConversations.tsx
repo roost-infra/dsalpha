@@ -22,6 +22,7 @@ import { Loader } from '@/components/ui/loader';
 import { RoomAvatar } from '@/pages/Rooms/components/RoomAvatar';
 import { useThreadFlags } from '@/lib/threadLifecycle/store';
 import { buildBotPairs } from '@/pages/Rooms/botInbox';
+import { mergeBotMessages } from '@/pages/Rooms/guestInbox';
 import { useBotInbox } from '@/pages/Rooms/useBotInbox';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import {
@@ -165,7 +166,10 @@ export function WorkspaceConversations({
   const rooms = roomsQuery.data?.rooms ?? EMPTY_ROOMS;
   const bots = botsQuery.data?.bots ?? EMPTY_BOTS;
   const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
-  const pairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  const pairs = useMemo(() => {
+    const sentHere = inbox.sent.filter((message) => botsById.has(message.from_id));
+    return buildBotPairs(mergeBotMessages(inbox.messages, sentHere), botsById);
+  }, [inbox.messages, inbox.sent, botsById]);
   // Bot-to-bot exchanges are not conversation entries: they open from the
   // delivered message in a bot chat, where the reader meets them.
   const items = useMemo(

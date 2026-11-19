@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getBotMessages, streamBotMessages, type BotMessageInfo } from '@/api/bots';
+import { getGuestSent, type GuestMessage } from '@/api/guestDm';
 
 const EMPTY: BotMessageInfo[] = [];
 
@@ -12,6 +13,14 @@ export function useBotInbox(workspaceId: string | null) {
     enabled: !!workspaceId,
   });
   const [messages, setMessages] = useState<BotMessageInfo[]>(EMPTY);
+  // Sent guest messages are not in the inbox read (the recipient owns that
+  // row), so the sidebar needs this second source to show a conversation the
+  // user started before the other side answered.
+  const sent = useQuery({
+    queryKey: ['guest-sent'],
+    queryFn: () => getGuestSent(200),
+    enabled: !!workspaceId,
+  });
 
   useEffect(() => {
     if (!workspaceId) {
@@ -34,5 +43,5 @@ export function useBotInbox(workspaceId: string | null) {
     return stop;
   }, [workspaceId, query.data]);
 
-  return { ...query, messages };
+  return { ...query, messages, sent: (sent.data?.messages ?? []) as GuestMessage[] };
 }

@@ -14,6 +14,7 @@ import { useRoom, useRooms } from '@/hooks/useRooms';
 import { BotMark } from '@/components/bots/BotMark';
 import { RoomAvatar } from '@/pages/Rooms/components/RoomAvatar';
 import { buildBotPairs } from '@/pages/Rooms/botInbox';
+import { mergeBotMessages } from '@/pages/Rooms/guestInbox';
 import { useBotInbox } from '@/pages/Rooms/useBotInbox';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
 import { useChatRoute } from './useChatRoute';
@@ -63,7 +64,10 @@ export function ConversationSections({ onNavigate }: { onNavigate?: () => void }
   const rooms = roomsQuery.data?.rooms ?? [];
   const bots = botsQuery.data?.bots ?? [];
   const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
-  const pairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  const pairs = useMemo(() => {
+    const sentHere = inbox.sent.filter((message) => botsById.has(message.from_id));
+    return buildBotPairs(mergeBotMessages(inbox.messages, sentHere), botsById);
+  }, [inbox.messages, inbox.sent, botsById]);
 
   const openBot = async (botId: string) => {
     const bot = botsById.get(botId);
