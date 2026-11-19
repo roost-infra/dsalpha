@@ -19,6 +19,7 @@ from src.server.services.guest_dm.flow import (
     list_contacts,
     list_requests,
     reply_to_guest,
+    send_to_contact,
     send_via_invite,
 )
 
@@ -35,5 +36,6 @@ __all__ = [
     "list_contacts",
     "list_requests",
     "reply_to_guest",
+    "send_to_contact",
     "send_via_invite",
 ]

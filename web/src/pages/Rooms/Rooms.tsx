@@ -10,7 +10,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
-import { Bot as BotIcon, MessagesSquare, Plus, UsersRound } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Bot as BotIcon, MessagesSquare, Plus, UserPlus, UsersRound } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ErrorBanner } from '@/components/ui/error-banner';
@@ -27,7 +28,16 @@ import { responderLabelKey } from './roomsCopy';
 import CreateRoomDialog from './components/CreateRoomDialog';
 import { RoomAvatar } from './components/RoomAvatar';
 import { BotExchangePanel } from './components/BotExchangePanel';
+import { GuestExchangePanel } from './components/GuestExchangePanel';
+import { GuestDmDialog } from './components/GuestDmDialog';
 import { buildBotPairs } from './botInbox';
+import { isGuestPair, localSideOf, mergeBotMessages } from './guestInbox';
+import {
+  getGuestContacts,
+  getGuestRequests,
+  getGuestSent,
+  sendToGuestContact,
+} from '@/api/guestDm';
 import { useBotInbox } from './useBotInbox';
 import RoomPanel from './components/RoomPanel';
 import './Rooms.css';
@@ -102,6 +112,8 @@ export default function Rooms() {
   const [creating, setCreating] = useState(false);
   const [exchangeKey, setExchangeKey] = useState<string | null>(() => searchParams.get('exchange'));
   const [openingBotId, setOpeningBotId] = useState<string | null>(null);
+  const [guestDialogOpen, setGuestDialogOpen] = useState(false);
+  const queryClient = useQueryClient();
   const [readSeqs, setReadSeqs] = useState<Record<string, number>>(loadReadSeqs);
   const markRoomRead = (room: RoomInfo) => {
     if (!room.latest_seq) return;
@@ -138,8 +150,57 @@ export default function Rooms() {
   const inbox = useBotInbox(workspaceId);
   const bots = botsQuery.data?.bots ?? [];
   const botsById = useMemo(() => new Map(bots.map((bot) => [bot.bot_id, bot])), [bots]);
-  const botPairs = useMemo(() => buildBotPairs(inbox.messages, botsById), [inbox.messages, botsById]);
+  const localBotIds = useMemo(() => new Set(bots.map((bot) => bot.bot_id)), [bots]);
+  const guestSent = useQuery({
+    queryKey: ['guest-sent'],
+    queryFn: () => getGuestSent(200),
+    enabled: !!workspaceId,
+  });
+  const guestContacts = useQuery({
+    queryKey: ['guest-contacts'],
+    queryFn: () => getGuestContacts(),
+    enabled: !!workspaceId,
+  });
+  const guestRequests = useQuery({
+    queryKey: ['guest-requests'],
+    queryFn: getGuestRequests,
+    enabled: !!workspaceId,
+  });
+  const allMessages = useMemo(() => {
+    // The sent list is account-wide; this page only draws this workspace's bots.
+    const sentHere = (guestSent.data?.messages ?? []).filter((message) =>
+      botsById.has(message.from_id),
+    );
+    return mergeBotMessages(inbox.messages, sentHere);
+  }, [inbox.messages, guestSent.data, botsById]);
+  const botPairs = useMemo(() => buildBotPairs(allMessages, botsById), [allMessages, botsById]);
+  const guestPairs = useMemo(() => botPairs.filter(isGuestPair), [botPairs]);
   const activePair = botPairs.find((pair) => pair.key === exchangeKey) ?? null;
+  const activeGuest = activePair ? isGuestPair(activePair) : false;
+  const activeSide = activePair ? localSideOf(activePair, localBotIds) : null;
+  const localBot = activePair && activeSide ? (activeSide === 'left' ? activePair.left : activePair.right) : null;
+  const peerBot = activePair && activeSide ? (activeSide === 'left' ? activePair.right : activePair.left) : null;
+  const activeContact = localBot && peerBot
+    ? guestContacts.data?.contacts.find(
+        (contact) => contact.bot_id === localBot.bot_id && contact.peer_bot_id === peerBot.bot_id,
+      ) ?? null
+    : null;
+  const canSendGuest = Boolean(
+    activeContact?.status === 'accepted' ||
+      (activePair &&
+        activePair.messages.some(
+          (message) => message.external && (message.status === 'delivered' || message.status === 'consumed'),
+        )),
+  );
+  const sendGuest = useMutation({
+    mutationFn: (text: string) =>
+      sendToGuestContact(peerBot!.bot_id, localBot!.bot_id, text),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['guest-sent'] });
+      void queryClient.invalidateQueries({ queryKey: ['bot-messages'] });
+      void queryClient.invalidateQueries({ queryKey: ['guest-contacts'] });
+    },
+  });
   const openPrivateChat = async (bot: BotInfo) => {
     if (!workspaceId || openingBotId) return;
     setOpeningBotId(bot.bot_id);
@@ -208,6 +269,13 @@ export default function Rooms() {
           <span className="rooms-page__subtitle">{t('rooms.description')}</span>
         </div>
         <div className="rooms-page__actions">
+          <Button variant="outline" onClick={() => setGuestDialogOpen(true)}>
+            <UserPlus className="mr-1.5 h-4 w-4" aria-hidden />
+            {t('rooms.guestInviteButton')}
+            {(guestRequests.data?.contacts?.length ?? 0) > 0 && (
+              <Badge variant="muted" className="ml-1.5">{guestRequests.data?.contacts?.length}</Badge>
+            )}
+          </Button>
           {workspaces.length > 0 && (
             <Select
               className="rooms-page__workspace"
@@ -275,6 +343,37 @@ export default function Rooms() {
             ))
           )}
 
+          <div className="rooms-list__section">{t('rooms.guestSection')}</div>
+          {guestPairs.length === 0 ? (
+            <div className="rooms-list__empty-body rooms-list__quiet">{t('rooms.guestEmptyRail')}</div>
+          ) : (
+            guestPairs.map((pair) => {
+              const side = localSideOf(pair, localBotIds);
+              const peer = side === 'left' ? pair.right : pair.left;
+              return (
+                <button
+                  key={pair.key}
+                  type="button"
+                  className={`rooms-list__row rooms-list__row--exchange${pair.key === exchangeKey ? ' is-active' : ''}`}
+                  onClick={() => chooseExchange(pair.key)}
+                >
+                  <span className="rooms-exchange__faces">
+                    <BotMark bot={peer} size={18} decorative />
+                    <BotMark name={t('rooms.guestExternalBadge')} size={18} decorative />
+                  </span>
+                  <span className="rooms-list__body">
+                    <span className="rooms-list__name">
+                      <span className="rooms-list__name-text">{peer.name}</span>
+                    </span>
+                    <span className="rooms-list__preview">
+                      {pair.messages.at(-1)?.content.slice(0, 80) || t('rooms.guestEmpty')}
+                    </span>
+                  </span>
+                </button>
+              );
+            })
+          )}
+
           <div className="rooms-list__section">{t('rooms.privateSection')}</div>
           {bots.length === 0 ? (
             <div className="rooms-list__empty-body rooms-list__quiet">{t('rooms.privateEmpty')}</div>
@@ -300,7 +399,18 @@ export default function Rooms() {
         </aside>
 
         <section className="rooms-detail">
-          {activePair ? (
+          {activePair && activeGuest && localBot && peerBot ? (
+            <GuestExchangePanel
+              pair={activePair}
+              localBot={localBot}
+              peerBot={peerBot}
+              loading={inbox.isLoading || guestSent.isLoading}
+              failed={inbox.isError || guestSent.isError}
+              canSend={canSendGuest}
+              onSend={async (text) => { await sendGuest.mutateAsync(text); }}
+              onClose={() => chooseExchange(null)}
+            />
+          ) : activePair ? (
             <BotExchangePanel
               pair={activePair}
               messages={activePair.messages}
@@ -323,6 +433,10 @@ export default function Rooms() {
           )}
         </section>
       </div>
+
+      {guestDialogOpen && (
+        <GuestDmDialog bots={bots} onClose={() => setGuestDialogOpen(false)} />
+      )}
 
       {creating && (
         <CreateRoomDialog

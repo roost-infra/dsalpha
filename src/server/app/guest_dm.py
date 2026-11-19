@@ -24,6 +24,7 @@ from src.server.models.guest_dm import (
     RequestResult,
     SendByInvite,
     SendResult,
+    SendToPeer,
 )
 from src.server.services import guest_dm as guest
 
@@ -125,6 +126,25 @@ async def block_peer(
     except guest.GuestDmError as exc:
         raise _refuse(exc) from None
     return RequestResult(**result)
+
+
+@router.post("/contacts/{peer_bot_id}/send", response_model=SendResult, status_code=202)
+async def send_to_contact(
+    principal: ReadPrincipal, peer_bot_id: str, body: SendToPeer
+) -> SendResult:
+    """Send from one of the caller's bots to an already-accepted peer bot."""
+    try:
+        result = await guest.send_to_contact(
+            principal.user_id,
+            body.bot_id,
+            peer_bot_id,
+            content=body.content,
+            kind=body.kind,
+            idem=body.idem,
+        )
+    except guest.GuestDmError as exc:
+        raise _refuse(exc) from None
+    return SendResult(**result)
 
 
 @router.get("/contacts", response_model=ContactList)
