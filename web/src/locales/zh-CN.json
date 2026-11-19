@@ -6433,7 +6433,7 @@
       "orphanBody": "这些修改针对的子 Agent 已不存在，因此不再起作用。移除它们即可清除这条提示。",
       "collisionTitle": "现在有一个内置子 Agent 使用了这个名称",
       "collisionBody": "Agent 会使用内置的那个。如需继续使用这个，请复制并换一个新名称。",
-      "baseBanner": "内置指令会随 langalpha 的改进保持更新。如需编写自己的指令，请以它为起点新建一个子 Agent。",
+      "baseBanner": "内置指令会随 dsalpha 的改进保持更新。如需编写自己的指令，请以它为起点新建一个子 Agent。",
       "baseBannerPlugin": "指令来自 {{plugin}}，会随该插件更新而变化。如需编写自己的指令，请以它为起点新建一个子 Agent。",
       "baseBannerDeployment": "指令由运行此服务器的人设定，会随其更新而变化。如需编写自己的指令，请以它为起点新建一个子 Agent。",
       "duplicateToEdit": "复制后编辑",
