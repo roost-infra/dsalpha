@@ -1,20 +1,16 @@
 name: ops-backend
 
 # One-off operator job: inspect (and optionally repair) the production backend
-# container when the normal deploy reports success but the running app did not
-# pick up the new source tree. Manual only.
+# when the normal deploy reports success but the running app did not pick up the
+# new source tree. Manual only.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "diagnose prints the state; fix recreates the container and migrates"
+        description: "diagnose prints the state; fix recreates the backend container"
         type: choice
         options: [diagnose, fix]
         default: diagnose
-      sha:
-        description: "Commit SHA to deploy when mode=fix (defaults to main HEAD)"
-        required: false
-        default: ""
 
 concurrency:
   group: ops-backend
@@ -39,60 +35,57 @@ jobs:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
           MODE: ${{ inputs.mode }}
-          SHA: ${{ inputs.sha }}
         run: |
-          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- '$MODE' '$SHA'" <<'REMOTE'
+          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- '$MODE'" <<'REMOTE'
           set -uo pipefail
           MODE="$1"
-          SHA="$2"
           cd /opt/langalpha
 
           echo "=== host ==="
           pwd
-          ls -la docker-compose*.yml 2>/dev/null || true
-          ls -la src/server/app/guest_dm.py 2>/dev/null || true
-          grep -n "guest_dm" src/server/app/setup.py 2>/dev/null || true
+          id
+          ls -la docker-compose*.yml .env 2>&1 || true
+          ls -la src/server/app/guest_dm.py 2>&1 || true
+          grep -n "guest_dm" src/server/app/setup.py 2>&1 || true
 
-          echo "=== docker compose ls ==="
-          (docker compose ls || sudo -n docker compose ls) 2>&1 || true
+          echo "=== sudo permissions ==="
+          sudo -n -l 2>&1 || true
 
-          echo "=== backend container ==="
-          (docker ps -a --filter name=langalpha-backend --format '{{.ID}} {{.Names}} {{.Image}} {{.Status}}'
-           || sudo -n docker ps -a --filter name=langalpha-backend --format '{{.ID}} {{.Names}} {{.Image}} {{.Status}}') 2>&1 || true
-          NAME=$( (docker ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
-          if [ -z "$NAME" ]; then
-            NAME=$( (sudo -n docker ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
-          fi
-          echo "container name: $NAME"
-          DC="docker"
-          docker ps >/dev/null 2>&1 || DC="sudo -n docker"
-          if [ -n "$NAME" ]; then
-            $DC inspect "$NAME" --format '{{json .Mounts}}' 2>&1 || true
-            $DC inspect "$NAME" --format '{{.Config.Image}}' 2>&1 || true
-          fi
+          echo "=== docker access ==="
+          DC=docker
+          if ! docker ps >/dev/null 2>&1; then DC="sudo -n docker"; fi
+          echo "engine: $DC"
+          $DC version --format '{{.Server.Version}}' 2>&1 || true
+
+          echo "=== compose projects ==="
+          $DC compose ls 2>&1 || true
+
+          echo "=== containers ==="
+          $DC ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}' 2>&1 | grep -i langalpha || true
+
+          echo "=== restart script ==="
+          cat /usr/local/bin/langalpha-backend-restart 2>&1 || true
+
+          echo "=== port 8000 ==="
+          (ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null) | grep -E ':8000\b' || true
+
+          echo "=== backend mounts ==="
+          for n in $($DC ps -a --format '{{.Names}}' 2>/dev/null | grep 'langalpha-backend' || true); do
+            echo "-- $n"
+            $DC inspect "$n" --format '{{json .Mounts}}' 2>&1 || true
+            $DC inspect "$n" --format '{{.Config.Image}}' 2>&1 || true
+          done
 
           if [ "$MODE" = "fix" ]; then
-            echo "=== fix: recreate backend from the extracted source ==="
-            if [ -z "$SHA" ]; then
-              SHA=$(git -C /opt/langalpha rev-parse HEAD 2>/dev/null || echo unknown)
-            fi
-            echo "sha=$SHA"
-            if [ -n "$NAME" ]; then
-              $DC rm -f "$NAME" || true
-            fi
-            COMPOSE=$(ls -1 docker-compose.prod.yml docker-compose.yml 2>/dev/null | head -1)
-            echo "compose=$COMPOSE"
-            $DC compose -f "$COMPOSE" up -d --no-deps backend 2>&1 || true
-            sleep 3
-            NAME=$( ($DC ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
-            echo "recreated: $NAME"
-            $DC exec "$NAME" uv run alembic upgrade head 2>&1 || $DC exec "$NAME" alembic upgrade head 2>&1 || true
+            echo "=== fix: recreate backend ==="
+            echo "restart script:"
+            sudo -n /usr/local/bin/langalpha-backend-restart 2>&1 || echo "restart failed"
             for _ in $(seq 1 30); do
               if curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
               sleep 2
             done
             echo "=== local route probe (401 expected; 404 means old code) ==="
-            curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/dm/contacts 2>&1 || true
-            curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/bots 2>&1 || true
+            curl -sS -o /dev/null -w 'dm=%{http_code}\n' http://127.0.0.1:8000/api/v1/dm/contacts 2>&1 || true
+            curl -sS -o /dev/null -w 'bots=%{http_code}\n' http://127.0.0.1:8000/api/v1/bots 2>&1 || true
           fi
           REMOTE
