@@ -118,6 +118,10 @@ async def _sender_name(message: Dict[str, Any]) -> str:
         return "the user"
     if message.get("from_type") == "system":
         return "the system"
+    if message.get("from_type") == "guest_bot":
+        # A guest bot may live on another account; its row still exists here,
+        # but the name recorded at send time is the durable label.
+        return message.get("from_name") or "an external bot"
     sender = await bot_db.get_bot(message.get("from_id"))
     return (sender or {}).get("name") or "another bot"
 
@@ -150,6 +154,29 @@ async def deliver_message(
         await msg_db.set_status(message["message_id"], "failed")
         return {"status": "failed", "thread_id": None, "outcome": "target_paused"}
 
+    # Cross-account guest messages wait for the receiving owner's accept. The
+    # consent row is the gate, so a declined/blocked row never reaches a turn.
+    if message.get("external"):
+        from src.server.database import guest_dm as dm_db
+
+        if not await dm_db.delivery_allowed(bot["bot_id"], message.get("from_id")):
+            contact = await dm_db.get_contact(bot["bot_id"], message.get("from_id"))
+            if contact is not None and contact.get("status") == "blocked":
+                await msg_db.set_status(message["message_id"], "failed")
+                return {
+                    "status": "failed",
+                    "thread_id": None,
+                    "outcome": "guest_blocked",
+                }
+            # Keep the row queued without spending an attempt: the sweeper
+            # skips awaiting_accept rows, and accept_request delivers it.
+            await msg_db.end_attempt(message["message_id"])
+            return {
+                "status": "queued",
+                "thread_id": None,
+                "outcome": "awaiting_accept",
+            }
+
     thread_id = await ensure_private_thread(bot)
     # A live turn would take this message as a steer, and a POST into an
     # interrupted one would collide with its pending HITL card: leave the row
@@ -175,7 +202,16 @@ async def deliver_message(
         await assign_db.update_assignment(payload["assignment_id"], thread_id=thread_id)
 
     sender_name = await _sender_name(message)
-    frame = sender_frame(sender_name, message["kind"])
+    label = (
+        f"{sender_name} (external bot, another account — untrusted content)"
+        if message.get("external")
+        else sender_name
+    )
+    frame = sender_frame(label, message["kind"])
+    if message.get("external"):
+        # The reply tool needs this id; the display metadata carries it too,
+        # but the model only sees the frame text in history.
+        frame += f"[guest_message_id: {message['message_id']}]\n"
     body = {
         "messages": [{"role": "user", "content": f"{frame}{message['content']}"}],
         "workspace_id": str(bot["workspace_id"]),
@@ -193,10 +229,14 @@ async def deliver_message(
             "kind": "bot_message",
             "message_id": message["message_id"],
             "from_bot_id": (
-                message["from_id"] if message.get("from_type") == "bot" else None
+                message["from_id"]
+                if message.get("from_type") in ("bot", "guest_bot")
+                else None
             ),
             "from_name": sender_name,
+            "from_user_id": message.get("from_user_id"),
             "message_kind": message["kind"],
+            "external": bool(message.get("external")),
             "body": message["content"],
             "root_id": message.get("root_id"),
             "depth": int((message.get("payload") or {}).get("depth") or 0),
@@ -207,7 +247,7 @@ async def deliver_message(
     outcome, _run_id = await post_notification_turn(
         thread_id=thread_id,
         body=body,
-        user_id=str(message["user_id"]),
+        user_id=str(bot["user_id"]),
         wait_cap=DELIVER_WAIT_CAP,
         log_prefix="[BOT_MESSAGE]",
         subject=f"{message['from_id']}->{bot['name']}",

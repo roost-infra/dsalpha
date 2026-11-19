@@ -47,6 +47,7 @@ async def claim_due(limit: int = BATCH) -> list[Dict[str, Any]]:
                     WITH due AS (
                         SELECT message_id FROM bot_messages
                         WHERE status = 'queued'
+                          AND NOT (external AND payload->>'awaiting_accept' = 'true')
                           AND attempts < %s
                           AND (
                               delivering_until IS NULL
