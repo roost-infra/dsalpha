@@ -119,21 +119,21 @@ jobs:
               mv -f compose.yaml "compose.yaml.bak.$(date +%s)"
             fi
             cat > compose.yaml <<'YAML'
-name: langalpha
-include:
-  - path: docker-compose.yml
-  - path: docker-compose.override.yml
-services:
-  fixer:
-    image: docker:28-cli
-    volumes:
-      - /var/run/docker28/docker.sock:/var/run/docker.sock
-    command: ["sh", "-c", "docker rm -f langalpha-backend-1 || true"]
-  backend:
-    depends_on:
-      fixer:
-        condition: service_completed_successfully
-YAML
+            name: langalpha
+            include:
+              - path: docker-compose.yml
+              - path: docker-compose.override.yml
+            services:
+              fixer:
+                image: docker:28-cli
+                volumes:
+                  - /var/run/docker28/docker.sock:/var/run/docker.sock
+                command: ["sh", "-c", "docker rm -f langalpha-backend-1 || true"]
+              backend:
+                depends_on:
+                  fixer:
+                    condition: service_completed_successfully
+            YAML
             sudo -n /usr/local/bin/langalpha-backend-restart 2>&1 || echo "restart failed"
             for _ in $(seq 1 30); do
               if curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
