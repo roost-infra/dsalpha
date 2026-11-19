@@ -51,6 +51,16 @@ jobs:
           echo "=== sudo permissions ==="
           sudo -n -l 2>&1 || true
 
+          echo "=== paths and permissions ==="
+          for d in /opt/langalpha /opt/langalpha/src /opt/langalpha/deploy /opt/langalpha/migrations /var/run/docker28; do
+            ls -ld "$d" 2>&1 || true
+          done
+          for f in /usr/local/bin/langalpha-backend-restart /usr/local/bin/docker; do
+            ls -l "$f" 2>&1 || true
+          done
+          [ -w /opt/langalpha ] && echo "dir /opt/langalpha: writable" || echo "dir /opt/langalpha: not writable"
+          [ -w /usr/local/bin/langalpha-backend-restart ] && echo "restart script: writable" || echo "restart script: not writable"
+
           echo "=== docker socket access ==="
           SOCK=unix:///var/run/docker28/docker.sock
           ls -la /var/run/docker28/docker.sock /var/run/docker.sock 2>&1 || true
