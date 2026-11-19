@@ -66,6 +66,15 @@ jobs:
           echo "=== restart script ==="
           cat /usr/local/bin/langalpha-backend-restart 2>&1 || true
 
+          echo "=== compose files ==="
+          for f in docker-compose.yml docker-compose.override.yml docker-compose.sg.yml; do
+            echo "--- $f ---"
+            cat "$f" 2>&1 || true
+          done
+
+          echo "=== server processes ==="
+          ps -ef | grep -E "server\.py|uvicorn" | grep -v grep | head -10 || true
+
           echo "=== port 8000 ==="
           (ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null) | grep -E ':8000\b' || true
 
