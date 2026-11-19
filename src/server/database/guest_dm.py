@@ -116,8 +116,10 @@ async def revoke_invite(owner_user_id: str, invite_id: Any) -> bool:
 async def get_invite_by_hash(token_hash: str) -> dict[str, Any] | None:
     """The live invite a token names, joined with the receiving bot.
 
-    An expired, revoked, exhausted or deleted-bot invite answers None: the
-    caller treats all four as "this link no longer works" rather than leaking
+    An expired, revoked or deleted-bot invite answers None. An exhausted one
+    still resolves: its uses are spent only when the first contact is created,
+    and the same token remains the address for an accepted conversation. The
+    caller treats all misses as "this link no longer works" rather than leaking
     which one it was.
     """
     async with get_db_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -133,7 +135,6 @@ async def get_invite_by_hash(token_hash: str) -> dict[str, Any] | None:
             JOIN bots b ON b.bot_id = i.bot_id AND b.deleted_at IS NULL
             WHERE i.token_hash = %s
               AND i.status = 'active'
-              AND i.uses < i.max_uses
               AND (i.expires_at IS NULL OR i.expires_at > NOW())
             """,
             (token_hash,),
