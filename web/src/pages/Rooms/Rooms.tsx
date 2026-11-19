@@ -112,7 +112,7 @@ export default function Rooms() {
   const [creating, setCreating] = useState(false);
   const [exchangeKey, setExchangeKey] = useState<string | null>(() => searchParams.get('exchange'));
   const [openingBotId, setOpeningBotId] = useState<string | null>(null);
-  const [guestDialogOpen, setGuestDialogOpen] = useState(() => searchParams.get('guest') === '1');
+  const guestDialogOpen = searchParams.get('guest') === '1';
   const queryClient = useQueryClient();
   const [readSeqs, setReadSeqs] = useState<Record<string, number>>(loadReadSeqs);
   const markRoomRead = (room: RoomInfo) => {
@@ -269,7 +269,14 @@ export default function Rooms() {
           <span className="rooms-page__subtitle">{t('rooms.description')}</span>
         </div>
         <div className="rooms-page__actions">
-          <Button variant="outline" onClick={() => setGuestDialogOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.set('guest', '1');
+              setSearchParams(next);
+            }}
+          >
             <UserPlus className="mr-1.5 h-4 w-4" aria-hidden />
             {t('rooms.guestInviteButton')}
             {(guestRequests.data?.contacts?.length ?? 0) > 0 && (
@@ -438,7 +445,6 @@ export default function Rooms() {
         <GuestDmDialog
           bots={bots}
           onClose={() => {
-            setGuestDialogOpen(false);
             const next = new URLSearchParams(searchParams);
             next.delete('guest');
             setSearchParams(next, { replace: true });
