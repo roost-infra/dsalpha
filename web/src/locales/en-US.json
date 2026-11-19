@@ -6521,7 +6521,7 @@
       "orphanBody": "The subagent these changes were made to no longer exists, so they do nothing. Remove them to clear this.",
       "collisionTitle": "A built-in subagent now has this name",
       "collisionBody": "The agent uses the built-in one. Duplicate this one under a new name to keep using it.",
-      "baseBanner": "Built-in instructions stay current as langalpha improves them. To write your own, start a new subagent from this one.",
+      "baseBanner": "Built-in instructions stay current as dsalpha improves them. To write your own, start a new subagent from this one.",
       "baseBannerPlugin": "Instructions come from {{plugin}} and change when it updates. To write your own, start a new subagent from this one.",
       "baseBannerDeployment": "Instructions are set by whoever runs this server and change when they update them. To write your own, start a new subagent from this one.",
       "duplicateToEdit": "Duplicate to edit",
