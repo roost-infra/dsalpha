@@ -51,6 +51,18 @@ jobs:
           echo "=== sudo permissions ==="
           sudo -n -l 2>&1 || true
 
+          echo "=== docker socket access ==="
+          SOCK=unix:///var/run/docker28/docker.sock
+          ls -la /var/run/docker28/docker.sock /var/run/docker.sock 2>&1 || true
+          if DOCKER_HOST=$SOCK docker ps >/dev/null 2>&1; then
+            echo "docker28: accessible as $(id -un)"
+            DOCKER_HOST=$SOCK docker ps -a --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}' | grep -i langalpha || true
+            DOCKER_HOST=$SOCK docker inspect langalpha-backend-1 --format '{{json .Config.Labels}}' 2>&1 || true
+            DOCKER_HOST=$SOCK docker inspect langalpha-backend-1 --format '{{json .Mounts}}' 2>&1 || true
+          else
+            echo "docker28: not accessible (sudo only)"
+          fi
+
           echo "=== docker access ==="
           DC=docker
           if ! docker ps >/dev/null 2>&1; then DC="sudo -n docker"; fi
@@ -88,6 +100,12 @@ jobs:
           if [ "$MODE" = "fix" ]; then
             echo "=== fix: recreate backend ==="
             echo "restart script:"
+            # A compose project that no longer recognises its old container
+            # creates a name conflict instead of recreating; remove the orphan
+            # first when the docker socket allows it.
+            if DOCKER_HOST=$SOCK docker ps >/dev/null 2>&1; then
+              DOCKER_HOST=$SOCK docker rm -f langalpha-backend-1 2>&1 || true
+            fi
             sudo -n /usr/local/bin/langalpha-backend-restart 2>&1 || echo "restart failed"
             for _ in $(seq 1 30); do
               if curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
