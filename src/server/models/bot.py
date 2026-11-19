@@ -112,7 +112,9 @@ class BotMessageInfo(BaseModel):
     message_id: str
     from_type: str
     from_id: str
+    from_user_id: Optional[str] = None
     from_name: Optional[str] = None
+    external: bool = False
     to_bot_id: str
     to_name: str = ""
     kind: str

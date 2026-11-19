@@ -42,6 +42,13 @@ class SendResult(BaseModel):
     thread_id: str | None = None
 
 
+class SendToPeer(BaseModel):
+    bot_id: str = Field(description="The caller's bot acting as the sender.")
+    content: str
+    kind: str = Field(default="message", description="message | request | question | notice")
+    idem: str | None = None
+
+
 class BotRef(BaseModel):
     bot_id: str = Field(description="The local bot acting on this request.")
 

@@ -49,7 +49,7 @@ export function buildBotPairs(
   const pairs = new Map<string, BotPair>();
   const ordered = [...messages].sort((a, b) => timeOf(a) - timeOf(b));
   for (const message of ordered) {
-    if (message.from_type !== 'bot') continue;
+    if (message.from_type !== 'bot' && message.from_type !== 'guest_bot') continue;
     if (message.from_id === message.to_bot_id) continue;
     const key = pairKey(message.from_id, message.to_bot_id);
     let pair = pairs.get(key);

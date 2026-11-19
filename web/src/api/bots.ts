@@ -123,9 +123,11 @@ export async function deleteBot(botId: string): Promise<BotDeleteResponse> {
 /** One bot-to-bot message, as the room page's feed lists it. */
 export interface BotMessageInfo {
   message_id: string;
-  from_type: 'bot' | 'user' | string;
+  from_type: 'bot' | 'user' | 'guest_bot' | string;
   from_id: string;
+  from_user_id?: string | null;
   from_name: string | null;
+  external?: boolean;
   to_bot_id: string;
   to_name: string;
   kind: string;

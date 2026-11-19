@@ -322,6 +322,55 @@ async def block_peer(user_id: str, bot_id: Any, peer_bot_id: Any) -> dict[str, A
     return {"contact_status": "blocked", "peer_bot_id": str(peer_bot_id)}
 
 
+async def send_to_contact(
+    user_id: str,
+    from_bot_id: Any,
+    peer_bot_id: Any,
+    *,
+    content: str,
+    kind: str = "message",
+    idem: str | None = None,
+) -> dict[str, Any]:
+    """Send as one of the caller's bots to an accepted guest peer.
+
+    The UI has the peer bot id, not the owner's invite token, so this path
+    checks the receiver's accepted contact row instead of a token.
+    """
+    if kind not in _KINDS:
+        raise GuestDmError(f"kind must be one of {_KINDS}")
+    text = (content or "").strip()
+    if not text:
+        raise GuestDmError("content is empty")
+    if len(text) > MAX_CHARS:
+        raise GuestDmError(f"content is longer than {MAX_CHARS} bytes")
+    sender = await _owned_bot(user_id, from_bot_id)
+    if sender.get("status") != "active":
+        raise GuestDmError("this bot is paused")
+    peer = await bot_db.get_bot(peer_bot_id)
+    if peer is None or peer.get("status") != "active":
+        raise GuestDmNotFound("the peer bot no longer exists")
+    if not await dm_db.delivery_allowed(peer["bot_id"], sender["bot_id"]):
+        raise GuestDmBlocked("no accepted contact with that bot")
+    await _rate_limit(str(sender["bot_id"]))
+    message = await _queue_message(
+        target_owner=str(peer["user_id"]),
+        target_bot_id=str(peer["bot_id"]),
+        sender=sender,
+        sender_owner=user_id,
+        content=text,
+        kind=kind,
+        payload={},
+        idem=idem,
+    )
+    outcome = await _deliver(message["message_id"])
+    return {
+        "message_id": message["message_id"],
+        "status": outcome.get("status"),
+        "contact_status": "accepted",
+        "thread_id": outcome.get("thread_id"),
+    }
+
+
 async def reply_to_guest(
     user_id: str,
     from_bot_id: Any,
