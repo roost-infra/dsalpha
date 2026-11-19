@@ -9,6 +9,7 @@
  * row (rename, share, pin) is drawn by the caller so this list stays the only
  * history.
  */
+import { UserPlus } from 'lucide-react';
 import { Fragment, useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -326,6 +327,15 @@ export function WorkspaceConversations({
               ))}
             </section>
           )}
+
+          <button
+            type="button"
+            className="workspace-conversations__guest-link"
+            onClick={() => navigate('/rooms?guest=1')}
+          >
+            <UserPlus className="h-4 w-4 shrink-0" aria-hidden />
+            <span>{t('rooms.guestInviteButton')}</span>
+          </button>
 
           {groups.threads.length > 0 && (
             <section
