@@ -1,0 +1,98 @@
+name: ops-backend
+
+# One-off operator job: inspect (and optionally repair) the production backend
+# container when the normal deploy reports success but the running app did not
+# pick up the new source tree. Manual only.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "diagnose prints the state; fix recreates the container and migrates"
+        type: choice
+        options: [diagnose, fix]
+        default: diagnose
+      sha:
+        description: "Commit SHA to deploy when mode=fix (defaults to main HEAD)"
+        required: false
+        default: ""
+
+concurrency:
+  group: ops-backend
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ops:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Run on the app host
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          MODE: ${{ inputs.mode }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- '$MODE' '$SHA'" <<'REMOTE'
+          set -uo pipefail
+          MODE="$1"
+          SHA="$2"
+          cd /opt/langalpha
+
+          echo "=== host ==="
+          pwd
+          ls -la docker-compose*.yml 2>/dev/null || true
+          ls -la src/server/app/guest_dm.py 2>/dev/null || true
+          grep -n "guest_dm" src/server/app/setup.py 2>/dev/null || true
+
+          echo "=== docker compose ls ==="
+          (docker compose ls || sudo -n docker compose ls) 2>&1 || true
+
+          echo "=== backend container ==="
+          (docker ps -a --filter name=langalpha-backend --format '{{.ID}} {{.Names}} {{.Image}} {{.Status}}'
+           || sudo -n docker ps -a --filter name=langalpha-backend --format '{{.ID}} {{.Names}} {{.Image}} {{.Status}}') 2>&1 || true
+          NAME=$( (docker ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
+          if [ -z "$NAME" ]; then
+            NAME=$( (sudo -n docker ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
+          fi
+          echo "container name: $NAME"
+          DC="docker"
+          docker ps >/dev/null 2>&1 || DC="sudo -n docker"
+          if [ -n "$NAME" ]; then
+            $DC inspect "$NAME" --format '{{json .Mounts}}' 2>&1 || true
+            $DC inspect "$NAME" --format '{{.Config.Image}}' 2>&1 || true
+          fi
+
+          if [ "$MODE" = "fix" ]; then
+            echo "=== fix: recreate backend from the extracted source ==="
+            if [ -z "$SHA" ]; then
+              SHA=$(git -C /opt/langalpha rev-parse HEAD 2>/dev/null || echo unknown)
+            fi
+            echo "sha=$SHA"
+            if [ -n "$NAME" ]; then
+              $DC rm -f "$NAME" || true
+            fi
+            COMPOSE=$(ls -1 docker-compose.prod.yml docker-compose.yml 2>/dev/null | head -1)
+            echo "compose=$COMPOSE"
+            $DC compose -f "$COMPOSE" up -d --no-deps backend 2>&1 || true
+            sleep 3
+            NAME=$( ($DC ps -a --format '{{.Names}}' | grep -m1 '^langalpha-backend' || true) )
+            echo "recreated: $NAME"
+            $DC exec "$NAME" uv run alembic upgrade head 2>&1 || $DC exec "$NAME" alembic upgrade head 2>&1 || true
+            for _ in $(seq 1 30); do
+              if curl -fsS -m 3 http://127.0.0.1:8000/health >/dev/null 2>&1; then break; fi
+              sleep 2
+            done
+            echo "=== local route probe (401 expected; 404 means old code) ==="
+            curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/dm/contacts 2>&1 || true
+            curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/api/v1/bots 2>&1 || true
+          fi
+          REMOTE
