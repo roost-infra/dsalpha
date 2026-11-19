@@ -38,6 +38,19 @@ pytestmark = [
     pytest.mark.skipif(not (shutil.which("perl") and shutil.which("bash")), reason="the machine side needs perl and bash"),
 ]
 
+def _stand_in_cli(cli: Path) -> subprocess.Popen:
+    """A process whose argv[0] is ``cli``, backed by the system ``sleep``.
+
+    Copying a binary to a new name is not portable: Linux's ``sleep`` is a
+    coreutils multicall that refuses to run under another argv[0], and macOS
+    kills a relocated arm64e system binary. ``exec -a`` only changes argv[0],
+    so ps shows the CLI path and the pid really is a live sleep.
+    """
+    return subprocess.Popen(
+        ["bash", "-c", 'exec -a "$1" sleep "$2"', "sh", str(cli), "30"]
+    )
+
+
 TOKEN = "sk-ant-oat01-" + "7" * 80
 CID = "0b9e6a7c-3f0e-4c47-9a53-2f4b1d1c8e21"
 STORED = "sk-ant-oat01-" + "5" * 80
@@ -392,9 +405,7 @@ async def test_a_turn_waits_out_commands_holding_every_command_slot_past_its_sta
 @pytest.mark.parametrize("named", ["cli", "other"])
 def test_the_cli_is_signalled_only_while_its_pid_still_runs_it(tmp_path, named):
     cli = tmp_path / "bin dir" / "claude"
-    cli.parent.mkdir()
-    shutil.copy(shutil.which("sleep"), cli)
-    proc = subprocess.Popen([str(cli), "30"])
+    proc = _stand_in_cli(cli)
     try:
         asked = str(cli) if named == "cli" else str(tmp_path / "claude")
         subprocess.run(["sh", "-c", kill_if_cli(proc.pid, asked, "KILL")], check=True, timeout=10)
@@ -430,9 +441,7 @@ async def test_a_turns_layout_and_its_release_run_on_a_macs_userland(tmp_path, m
 def test_the_cli_is_signalled_by_ps_where_there_is_no_proc(tmp_path, named):
     """A Mac has no /proc, so the pid's command line comes from its ps."""
     cli = tmp_path / "bin dir" / "claude"
-    cli.parent.mkdir()
-    shutil.copy(shutil.which("sleep"), cli)
-    proc = subprocess.Popen([str(cli), "30"])
+    proc = _stand_in_cli(cli)
     try:
         asked = str(cli) if named == "cli" else str(tmp_path / "claude")
         script = kill_if_cli(proc.pid, asked, "KILL").replace("/proc/", "/no-such-proc/")

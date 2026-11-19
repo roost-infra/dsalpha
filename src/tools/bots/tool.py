@@ -1,10 +1,11 @@
 """The collaboration tools: who else is here, and how to talk to them.
 
-A bot may message another bot of the same workspace. The message is one row of
-durable truth and a framed turn on the target's thread — not a broadcast, and
-not a shared conversation: the target answers in its own thread, and a
-``request`` is tracked as an assignment so "did it get done" never depends on
-reading the transcript.
+A bot may message another bot of the same workspace, or — through an invite
+link another account shared — a bot in a different account. Either way the
+message is one row of durable truth and a framed turn on the target's thread:
+not a broadcast, and not a shared conversation. A guest contact needs the
+receiving owner's acceptance before its first turn runs, and replies arrive in
+this thread once it is accepted.
 """
 
 from __future__ import annotations
@@ -501,4 +502,102 @@ async def list_assignments(config: RunnableConfig) -> str:
     return "\n".join(lines)
 
 
-BOT_TOOLS = [list_bots, create_bot, send_bot_message, report_to, list_assignments]
+def _guest_line(result: dict) -> str:
+    status = result.get("status")
+    if status == "pending_accept":
+        return (
+            "queued: this is the first contact, so the other bot's owner has to "
+            "accept it before it runs. This thread will receive their reply once "
+            "they do."
+        )
+    if status in ("delivered", "queued"):
+        return (
+            f"delivered to the guest bot (message {result.get('message_id')}); "
+            "it answers on its own thread, and the reply comes back here."
+        )
+    return f"guest message ended as {status}"
+
+
+@tool("send_invite_message")
+async def send_invite_message(
+    invite: str,
+    content: str,
+    config: RunnableConfig,
+    kind: str = "message",
+) -> str:
+    """Message another user's bot through an invite link its owner shared.
+
+    Use this when the user pastes an invite link (or a dm_ token) and asks you
+    to reach a bot outside this workspace. The first message waits for the
+    receiving owner's acceptance; their bot answers on its own thread and the
+    reply arrives here.
+
+    Args:
+        invite: The invite link or token the other owner shared.
+        content: The message, in markdown, up to 64 KB.
+        kind: message | request | question | notice (default: message).
+    """
+    if not _messaging_enabled():
+        return "refused: bot messaging is disabled on this deployment"
+    if len(content) > _MAX_CONTENT:
+        return f"refused: the message is longer than {_MAX_CONTENT} bytes"
+    user_id, workspace_id, thread_id = _where(config)
+    caller = await _caller_bot(user_id, workspace_id, thread_id)
+    if caller is None:
+        return "refused: this thread has no bot identity"
+    from src.server.services import guest_dm as guest
+
+    try:
+        result = await guest.send_via_invite(
+            user_id,
+            caller["bot_id"],
+            invite,
+            content=content,
+            kind=kind,
+        )
+    except guest.GuestDmError as exc:
+        return f"refused: {exc}"
+    return _guest_line(result)
+
+
+@tool("reply_guest_message")
+async def reply_guest_message(
+    message_id: str,
+    content: str,
+    config: RunnableConfig,
+    kind: str = "reply",
+) -> str:
+    """Answer a guest message that another account's bot sent to this bot.
+
+    Use the message id from the guest message this thread received. Only an
+    accepted contact can be answered; the reply travels back through the same
+    mirror consent the acceptance created.
+
+    Args:
+        message_id: The guest message id (the ``[Message from ...]`` frame's bot_message_source).
+        content: The reply, in markdown, up to 64 KB.
+        kind: reply | message (default: reply).
+    """
+    if not _messaging_enabled():
+        return "refused: bot messaging is disabled on this deployment"
+    user_id, workspace_id, thread_id = _where(config)
+    caller = await _caller_bot(user_id, workspace_id, thread_id)
+    if caller is None:
+        return "refused: this thread has no bot identity"
+    from src.server.services import guest_dm as guest
+
+    try:
+        result = await guest.reply_to_guest(
+            user_id,
+            caller["bot_id"],
+            message_id,
+            content=content,
+            kind=kind,
+        )
+    except guest.GuestDmError as exc:
+        return f"refused: {exc}"
+    return _guest_line(result)
+
+
+BOT_TOOLS = [list_bots, create_bot, send_bot_message, report_to, list_assignments,
+              send_invite_message, reply_guest_message]

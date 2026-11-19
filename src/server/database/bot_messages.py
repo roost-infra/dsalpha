@@ -27,9 +27,10 @@ MESSAGE_KINDS = ("message", "request", "reply", "report", "question", "notice")
 STATUSES = ("queued", "delivered", "consumed", "failed")
 
 _MESSAGE_COLUMNS = """
-    message_id, user_id, from_type, from_id, to_bot_id, kind, content,
-    payload, idem, status, thread_id, in_reply_to, root_id, attempts,
-    last_attempt_at, delivering_until, created_at, delivered_at
+    message_id, user_id, from_type, from_id, from_user_id, from_name, external,
+    to_bot_id, kind, content, payload, idem, status, thread_id, in_reply_to,
+    root_id, attempts, last_attempt_at, delivering_until, created_at,
+    delivered_at
 """
 
 
@@ -59,6 +60,9 @@ async def create_message(
     idem: Optional[str] = None,
     in_reply_to: Optional[str] = None,
     root_id: Optional[str] = None,
+    from_user_id: Optional[str] = None,
+    from_name: Optional[str] = None,
+    external: bool = False,
     conn=None,
 ) -> tuple[Dict[str, Any], bool]:
     """Persist one message. Returns ``(row, created)``.
@@ -91,15 +95,19 @@ async def create_message(
                 await cur.execute(
                     f"""
                     INSERT INTO bot_messages (
-                        user_id, from_type, from_id, to_bot_id, kind, content,
-                        payload, idem, in_reply_to, root_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        user_id, from_type, from_id, from_user_id, from_name,
+                        external, to_bot_id, kind, content, payload, idem,
+                        in_reply_to, root_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING {_MESSAGE_COLUMNS}
                     """,
                     (
                         user_id,
                         from_type,
                         from_id,
+                        from_user_id,
+                        from_name,
+                        bool(external),
                         cleaned_target,
                         kind,
                         text,
@@ -117,6 +125,27 @@ async def create_message(
                 )
                 return _row_to_dict(await cur.fetchone()), False
             return _row_to_dict(await cur.fetchone()), True
+
+
+async def list_sent_for_user(
+    user_id: str,
+    *,
+    limit: int = 50,
+) -> list[Dict[str, Any]]:
+    """Guest messages this account sent, newest first (the other side of the inbox)."""
+    sql = f"""
+        SELECT {", ".join("m." + c.strip() for c in _MESSAGE_COLUMNS.split(","))},
+               tb.name AS to_name, tb.user_id AS to_user_id
+        FROM bot_messages m
+        JOIN bots tb ON tb.bot_id = m.to_bot_id
+        WHERE m.from_user_id = %s AND m.external
+        ORDER BY m.created_at DESC, m.message_id DESC
+        LIMIT %s
+    """
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(sql, (user_id, max(1, min(int(limit), 200))))
+            return [_row_to_dict(row) for row in await cur.fetchall()]
 
 
 async def count_root_messages(root_id: Any) -> int:
@@ -217,6 +246,7 @@ async def fail_exhausted_messages() -> int:
                 "UPDATE bot_messages SET status = 'failed', "
                 "delivering_until = NULL "
                 "WHERE status = 'queued' AND attempts >= %s "
+                "AND NOT (external AND payload->>'awaiting_accept' = 'true') "
                 "AND (delivering_until IS NULL OR delivering_until < NOW())",
                 (5,),
             )
@@ -335,7 +365,7 @@ async def list_for_user(
                fb.name AS from_name, tb.name AS to_name
         FROM bot_messages m
         JOIN bots tb ON tb.bot_id = m.to_bot_id
-        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type = 'bot'
+        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type IN ('bot', 'guest_bot')
         WHERE m.user_id = %s
     """
     params: list[Any] = [user_id]
@@ -372,7 +402,7 @@ async def list_after(
                fb.name AS from_name, tb.name AS to_name
         FROM bot_messages m
         JOIN bots tb ON tb.bot_id = m.to_bot_id
-        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type = 'bot'
+        LEFT JOIN bots fb ON fb.bot_id::text = m.from_id AND m.from_type IN ('bot', 'guest_bot')
         WHERE m.user_id = %s AND m.created_at > %s
     """
     params: list[Any] = [user_id, after]
