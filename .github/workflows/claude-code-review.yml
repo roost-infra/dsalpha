@@ -30,10 +30,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The review action authenticates with a repository secret. A repository that
+  # has not configured it (a fork, a fresh clone) would otherwise fail this
+  # check on every PR with an auth error that says nothing about the diff.
+  # Probe the secret once and report the review as skipped rather than red;
+  # adding the secret later re-enables reviews with no workflow change.
+  review-token:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: echo "enabled=$([ -n "$TOKEN" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
   claude-review:
+    needs: review-token
     # Each event handles exactly one PR origin: pull_request -> same-repo,
     # pull_request_target -> forks. The mismatched run is skipped.
     if: |
+      needs.review-token.outputs.enabled == 'true' &&
       github.event.pull_request.draft == false &&
       ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
        (github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository))
