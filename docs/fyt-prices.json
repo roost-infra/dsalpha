@@ -1,0 +1,1619 @@
+{
+  "source": "FYT API 计费说明 v2026.11.13",
+  "quotes": {
+    "quota_per_unit": 500000,
+    "usd_cny": 6.8,
+    "credits_per_cny": 100,
+    "credits_per_usd": 680.0
+  },
+  "rebate_rate": 0.2,
+  "payment_fee": 0.02,
+  "retail_markup": 0.1,
+  "models": [
+    {
+      "model": "claude-fable-5-1",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.075,
+        "cache_write": 3.75
+      },
+      "effective_usd": {
+        "input": 2.4,
+        "output": 12.0,
+        "cache_read": 0.06,
+        "cache_write": 3.0
+      },
+      "retail_usd": {
+        "input": 3.3,
+        "output": 16.5,
+        "cache_read": 0.0825,
+        "cache_write": 4.125
+      },
+      "credits": {
+        "input": 2244.0,
+        "output": 11220.0,
+        "cache_read": 56.1,
+        "cache_write": 2805.0
+      },
+      "official_usd": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.4
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.825,
+        "output": 0.825,
+        "cache_read": 0.206
+      },
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "tier": "短文本",
+      "input_tier": "<100k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.03,
+        "output": 0.15,
+        "cache_read": 0.0375,
+        "cache_write": 0.003
+      },
+      "effective_usd": {
+        "input": 0.024,
+        "output": 0.12,
+        "cache_read": 0.03,
+        "cache_write": 0.0024
+      },
+      "retail_usd": {
+        "input": 0.033,
+        "output": 0.165,
+        "cache_read": 0.0413,
+        "cache_write": 0.0033
+      },
+      "credits": {
+        "input": 22.4,
+        "output": 112.2,
+        "cache_read": 28.1,
+        "cache_write": 2.2
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "claude-haiku-5-5",
+      "tier": "长文本",
+      "input_tier": "≥100k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.15,
+        "output": 0.75,
+        "cache_read": 0.015,
+        "cache_write": 0.1875
+      },
+      "effective_usd": {
+        "input": 0.12,
+        "output": 0.6,
+        "cache_read": 0.012,
+        "cache_write": 0.15
+      },
+      "retail_usd": {
+        "input": 0.165,
+        "output": 0.825,
+        "cache_read": 0.0165,
+        "cache_write": 0.2063
+      },
+      "credits": {
+        "input": 112.2,
+        "output": 561.0,
+        "cache_read": 11.2,
+        "cache_write": 140.3
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "claude-sonnet-5",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 8.0,
+        "cache_read": 0.16,
+        "cache_write": 2.0
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 11.0,
+        "cache_read": 0.22,
+        "cache_write": 2.75
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 7480.0,
+        "cache_read": 149.6,
+        "cache_write": 1870.0
+      },
+      "official_usd": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.733,
+        "output": 0.733,
+        "cache_read": 0.733
+      },
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "claude-opus-5-5",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.06,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.96,
+        "output": 4.8,
+        "cache_read": 0.048,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 1.32,
+        "output": 6.6,
+        "cache_read": 0.066,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 897.6,
+        "output": 4488.0,
+        "cache_read": 44.9,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.4
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.33,
+        "output": 0.33,
+        "cache_read": 0.165
+      },
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "claude-fable-5-2",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.16,
+        "output": 10.8,
+        "cache_read": 2.16,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.728,
+        "output": 8.64,
+        "cache_read": 1.728,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 2.376,
+        "output": 11.88,
+        "cache_read": 0.36,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1615.7,
+        "output": 8078.4,
+        "cache_read": 244.8,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.4
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.594,
+        "output": 0.594,
+        "cache_read": 0.9
+      },
+      "net_margin": -3.82,
+      "advice": "建议官方直连"
+    },
+    {
+      "model": "claude-haiku-4.5",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.8,
+        "output": 4.0,
+        "cache_read": 0.08,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.9,
+        "output": 4.5,
+        "cache_read": 0.09,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 612.0,
+        "output": 3060.0,
+        "cache_read": 61.2,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.9,
+        "output": 0.9,
+        "cache_read": 0.9
+      },
+      "net_margin": 0.0911,
+      "advice": "建议官方直连"
+    },
+    {
+      "model": "claude-opus-4.8",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.4,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 4.5,
+        "output": 22.5,
+        "cache_read": 0.45,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 3060.0,
+        "output": 15300.0,
+        "cache_read": 306.0,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.9,
+        "output": 0.9,
+        "cache_read": 0.9
+      },
+      "net_margin": 0.0911,
+      "advice": "建议官方直连"
+    },
+    {
+      "model": "claude-sonnet-5.5",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.03,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.48,
+        "output": 2.4,
+        "cache_read": 0.024,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.66,
+        "output": 3.3,
+        "cache_read": 0.033,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 448.8,
+        "output": 2244.0,
+        "cache_read": 22.4,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "deepseek-v4-pro",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "非高峰",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.264,
+        "output": 0.792,
+        "cache_read": 0.0088,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.2112,
+        "output": 0.6336,
+        "cache_read": 0.007,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.2904,
+        "output": 0.8712,
+        "cache_read": 0.0097,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 197.5,
+        "output": 592.4,
+        "cache_read": 6.6,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 0.66,
+        "output": 1.98,
+        "cache_read": 0.022
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.44,
+        "output": 0.44,
+        "cache_read": 0.44
+      },
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "deepseek-v4-pro",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "高峰",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.528,
+        "output": 1.58,
+        "cache_read": 0.0176,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.4224,
+        "output": 1.264,
+        "cache_read": 0.0141,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.5808,
+        "output": 1.738,
+        "cache_read": 0.0194,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 394.9,
+        "output": 1181.8,
+        "cache_read": 13.2,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 1.32,
+        "output": 3.96,
+        "cache_read": 0.044
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.44,
+        "output": 0.439,
+        "cache_read": 0.44
+      },
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "deepseek-v4.1-flash",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.1278,
+        "output": 0.6389,
+        "cache_read": 0.0064,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.1022,
+        "output": 0.5111,
+        "cache_read": 0.0051,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.135,
+        "output": 0.54,
+        "cache_read": 0.0027,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 91.8,
+        "output": 367.2,
+        "cache_read": 1.8,
+        "cache_write": null
+      },
+      "official_usd": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.003
+      },
+      "retail_vs_official_ratio": {
+        "input": 0.9,
+        "output": 0.9,
+        "cache_read": 0.9
+      },
+      "net_margin": -0.9163,
+      "advice": "建议官方直连"
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "tier": "短文本",
+      "input_tier": "≤272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 4.0,
+        "output": 20.0,
+        "cache_read": 0.4,
+        "cache_write": 5.0
+      },
+      "effective_usd": {
+        "input": 3.2,
+        "output": 16.0,
+        "cache_read": 0.32,
+        "cache_write": 4.0
+      },
+      "retail_usd": {
+        "input": 4.4,
+        "output": 22.0,
+        "cache_read": 0.44,
+        "cache_write": 5.5
+      },
+      "credits": {
+        "input": 2992.0,
+        "output": 14960.0,
+        "cache_read": 299.2,
+        "cache_write": 3740.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-5.6-sol",
+      "tier": "长文本",
+      "input_tier": ">272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 8.0,
+        "output": 30.0,
+        "cache_read": 0.8,
+        "cache_write": 10.0
+      },
+      "effective_usd": {
+        "input": 6.4,
+        "output": 24.0,
+        "cache_read": 0.64,
+        "cache_write": 8.0
+      },
+      "retail_usd": {
+        "input": 8.8,
+        "output": 33.0,
+        "cache_read": 0.88,
+        "cache_write": 11.0
+      },
+      "credits": {
+        "input": 5984.0,
+        "output": 22440.0,
+        "cache_read": 598.4,
+        "cache_write": 7480.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "tier": "短文本",
+      "input_tier": "≤272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 9.6,
+        "cache_read": 0.16,
+        "cache_write": 2.0
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 13.2,
+        "cache_read": 0.22,
+        "cache_write": 2.75
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 8976.0,
+        "cache_read": 149.6,
+        "cache_write": 1870.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-5.6-terra",
+      "tier": "长文本",
+      "input_tier": ">272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 4.0,
+        "output": 18.0,
+        "cache_read": 0.4,
+        "cache_write": 5.0
+      },
+      "effective_usd": {
+        "input": 3.2,
+        "output": 14.4,
+        "cache_read": 0.32,
+        "cache_write": 4.0
+      },
+      "retail_usd": {
+        "input": 4.4,
+        "output": 19.8,
+        "cache_read": 0.44,
+        "cache_write": 5.5
+      },
+      "credits": {
+        "input": 2992.0,
+        "output": 13464.0,
+        "cache_read": 299.2,
+        "cache_write": 3740.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6-astra",
+      "tier": "短文本",
+      "input_tier": "≤272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 8.0,
+        "cache_read": 0.16,
+        "cache_write": 2.0
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 11.0,
+        "cache_read": 0.22,
+        "cache_write": 2.75
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 7480.0,
+        "cache_read": 149.6,
+        "cache_write": 1870.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6-astra",
+      "tier": "长文本",
+      "input_tier": ">272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 4.0,
+        "output": 15.0,
+        "cache_read": 0.4,
+        "cache_write": 5.0
+      },
+      "effective_usd": {
+        "input": 3.2,
+        "output": 12.0,
+        "cache_read": 0.32,
+        "cache_write": 4.0
+      },
+      "retail_usd": {
+        "input": 4.4,
+        "output": 16.5,
+        "cache_read": 0.44,
+        "cache_write": 5.5
+      },
+      "credits": {
+        "input": 2992.0,
+        "output": 11220.0,
+        "cache_read": 299.2,
+        "cache_write": 3740.0
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6-luna",
+      "tier": "短文本",
+      "input_tier": "≤272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.02,
+        "output": 0.1,
+        "cache_read": 0.002,
+        "cache_write": 0.025
+      },
+      "effective_usd": {
+        "input": 0.016,
+        "output": 0.08,
+        "cache_read": 0.0016,
+        "cache_write": 0.02
+      },
+      "retail_usd": {
+        "input": 0.022,
+        "output": 0.11,
+        "cache_read": 0.0022,
+        "cache_write": 0.0275
+      },
+      "credits": {
+        "input": 15.0,
+        "output": 74.8,
+        "cache_read": 1.5,
+        "cache_write": 18.7
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6-luna",
+      "tier": "长文本",
+      "input_tier": ">272k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.04,
+        "output": 0.15,
+        "cache_read": 0.004,
+        "cache_write": 0.05
+      },
+      "effective_usd": {
+        "input": 0.032,
+        "output": 0.12,
+        "cache_read": 0.0032,
+        "cache_write": 0.04
+      },
+      "retail_usd": {
+        "input": 0.044,
+        "output": 0.165,
+        "cache_read": 0.0044,
+        "cache_write": 0.055
+      },
+      "credits": {
+        "input": 29.9,
+        "output": 112.2,
+        "cache_read": 3.0,
+        "cache_write": 37.4
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6-sol",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.4,
+        "output": 2.0,
+        "cache_read": 0.04,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.32,
+        "output": 1.6,
+        "cache_read": 0.032,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.44,
+        "output": 2.2,
+        "cache_read": 0.044,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 299.2,
+        "output": 1496.0,
+        "cache_read": 29.9,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.4,
+        "output": 2.0,
+        "cache_read": 0.02,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.32,
+        "output": 1.6,
+        "cache_read": 0.016,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.44,
+        "output": 2.2,
+        "cache_read": 0.022,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 299.2,
+        "output": 1496.0,
+        "cache_read": 15.0,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3.1-pro",
+      "tier": "短文本",
+      "input_tier": "<200k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 9.6,
+        "cache_read": 0.16,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 13.2,
+        "cache_read": 0.22,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 8976.0,
+        "cache_read": 149.6,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3.1-pro",
+      "tier": "长文本",
+      "input_tier": "≥200k",
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 4.0,
+        "output": 18.0,
+        "cache_read": 0.4,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 3.2,
+        "output": 14.4,
+        "cache_read": 0.32,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 4.4,
+        "output": 19.8,
+        "cache_read": 0.44,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 2992.0,
+        "output": 13464.0,
+        "cache_read": 299.2,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-4-argon",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.05,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.8,
+        "output": 4.0,
+        "cache_read": 0.04,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 1.1,
+        "output": 5.5,
+        "cache_read": 0.055,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 748.0,
+        "output": 3740.0,
+        "cache_read": 37.4,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-4-carbon",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.05,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.8,
+        "output": 4.0,
+        "cache_read": 0.04,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 1.1,
+        "output": 5.5,
+        "cache_read": 0.055,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 748.0,
+        "output": 3740.0,
+        "cache_read": 37.4,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-2.5-flash-image",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.3,
+        "output": 30.0,
+        "cache_read": 0.075,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.24,
+        "output": 24.0,
+        "cache_read": 0.06,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.33,
+        "output": 33.0,
+        "cache_read": 0.0825,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 224.4,
+        "output": 22440.0,
+        "cache_read": 56.1,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3.1-flash-image",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.5,
+        "output": 60.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.4,
+        "output": 48.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.55,
+        "output": 66.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 374.0,
+        "output": 44880.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3.1-flash-image-preview",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.5,
+        "output": 60.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.4,
+        "output": 48.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.55,
+        "output": 66.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 374.0,
+        "output": 44880.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3.1-flash-lite-image",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.25,
+        "output": 30.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.2,
+        "output": 24.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.275,
+        "output": 33.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 187.0,
+        "output": 22440.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3-pro-image",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 120.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 96.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 132.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 89760.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-3-pro-image-preview",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 120.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 96.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 132.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 89760.0,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "gemini-nano-banana-2.1",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.5,
+        "output": 7.5,
+        "cache_read": 1.5,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 1.2,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 1.65,
+        "output": 8.25,
+        "cache_read": 1.65,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1122.0,
+        "output": 5610.0,
+        "cache_read": 1122.0,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "glm-5.3",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.7,
+        "output": 2.2,
+        "cache_read": 0.13,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.56,
+        "output": 1.76,
+        "cache_read": 0.104,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.77,
+        "output": 2.42,
+        "cache_read": 0.143,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 523.6,
+        "output": 1645.6,
+        "cache_read": 97.2,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "glm-5.3-flash",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.075,
+        "output": 0.25,
+        "cache_read": 0.015,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.06,
+        "output": 0.2,
+        "cache_read": 0.012,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.0825,
+        "output": 0.275,
+        "cache_read": 0.0165,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 56.1,
+        "output": 187.0,
+        "cache_read": 11.2,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "kimi-k3",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.9,
+        "output": 4.5,
+        "cache_read": 0.09,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.72,
+        "output": 3.6,
+        "cache_read": 0.072,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.99,
+        "output": 4.95,
+        "cache_read": 0.099,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 673.2,
+        "output": 3366.0,
+        "cache_read": 67.3,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "kimi-k3.1-pro",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 1.3,
+        "output": 6.5,
+        "cache_read": 0.13,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.04,
+        "output": 5.2,
+        "cache_read": 0.104,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 1.43,
+        "output": 7.15,
+        "cache_read": 0.143,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 972.4,
+        "output": 4862.0,
+        "cache_read": 97.2,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "qwen3.8-flash",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0.075,
+        "output": 0.235,
+        "cache_read": 0.008,
+        "cache_write": 0.1
+      },
+      "effective_usd": {
+        "input": 0.06,
+        "output": 0.188,
+        "cache_read": 0.0064,
+        "cache_write": 0.08
+      },
+      "retail_usd": {
+        "input": 0.0825,
+        "output": 0.2585,
+        "cache_read": 0.0088,
+        "cache_write": 0.11
+      },
+      "credits": {
+        "input": 56.1,
+        "output": 175.8,
+        "cache_read": 6.0,
+        "cache_write": 74.8
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    },
+    {
+      "model": "nano-banana-2",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": null,
+      "advice": "FYT"
+    },
+    {
+      "model": "nano-banana-pro",
+      "tier": "标准",
+      "input_tier": null,
+      "peak": "—",
+      "source": "fyt",
+      "fyt_usd": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": null
+      },
+      "effective_usd": {
+        "input": 1.6,
+        "output": 9.6,
+        "cache_read": 0.16,
+        "cache_write": null
+      },
+      "retail_usd": {
+        "input": 2.2,
+        "output": 13.2,
+        "cache_read": 0.22,
+        "cache_write": null
+      },
+      "credits": {
+        "input": 1496.0,
+        "output": 8976.0,
+        "cache_read": 149.6,
+        "cache_write": null
+      },
+      "official_usd": null,
+      "retail_vs_official_ratio": {},
+      "net_margin": 0.2527,
+      "advice": "FYT"
+    }
+  ],
+  "image_models": [
+    {
+      "model": "deepseek-v4.1-flash-free",
+      "usd_per_call": 0,
+      "effective_usd": 0.0,
+      "credits_per_call": 0.0,
+      "net_margin": null
+    },
+    {
+      "model": "gpt-image-2.5",
+      "usd_per_call": 0.01,
+      "effective_usd": 0.008,
+      "credits_per_call": 7.5,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2.6-flare",
+      "usd_per_call": 0.01,
+      "effective_usd": 0.008,
+      "credits_per_call": 7.5,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2.6-sunburst",
+      "usd_per_call": 0.01,
+      "effective_usd": 0.008,
+      "credits_per_call": 7.5,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2-4k",
+      "usd_per_call": 0.09,
+      "effective_usd": 0.072,
+      "credits_per_call": 67.3,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2.5-flare",
+      "usd_per_call": 0.02,
+      "effective_usd": 0.016,
+      "credits_per_call": 15.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2.5-sunburst",
+      "usd_per_call": 0.02,
+      "effective_usd": 0.016,
+      "credits_per_call": 15.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "gpt-image-2",
+      "usd_per_call": 0.015,
+      "effective_usd": 0.012,
+      "credits_per_call": 11.2,
+      "net_margin": 0.2527
+    }
+  ],
+  "video_models": [
+    {
+      "model": "MiniMax-H3",
+      "tier": "720P 高峰",
+      "usd_per_second": 0.0294,
+      "effective_usd": 0.0235,
+      "credits_per_second": 22.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "MiniMax-H3",
+      "tier": "720P 非高峰",
+      "usd_per_second": 0.0235,
+      "effective_usd": 0.0188,
+      "credits_per_second": 17.6,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "MiniMax-H3",
+      "tier": "1080P",
+      "usd_per_second": 0.0588,
+      "effective_usd": 0.047,
+      "credits_per_second": 44.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "MiniMax-H3",
+      "tier": "2K",
+      "usd_per_second": 0.0882,
+      "effective_usd": 0.0706,
+      "credits_per_second": 66.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "Seedance-2",
+      "tier": "720P",
+      "usd_per_second": 0.1029,
+      "effective_usd": 0.0823,
+      "credits_per_second": 77.0,
+      "net_margin": 0.2527
+    },
+    {
+      "model": "Seedance-2-5",
+      "tier": "720P",
+      "usd_per_second": 0.2206,
+      "effective_usd": 0.1765,
+      "credits_per_second": 165.0,
+      "net_margin": 0.2527
+    }
+  ],
+  "rules": {
+    "peak": {
+      "model": "deepseek-v4-pro",
+      "weekdays": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "windows_beijing": [
+        [
+          "09:00",
+          "12:00"
+        ],
+        [
+          "14:00",
+          "18:00"
+        ]
+      ]
+    },
+    "cache_tokens_in_prompt_total": true,
+    "tier_switch_is_whole_request": true,
+    "rounding": "ceil at settle, minimum 1 credit per request"
+  }
+}

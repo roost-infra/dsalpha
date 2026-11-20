@@ -41,7 +41,8 @@ _RUN_COLS = """
     sample_count, cpu_avg_pct, cpu_p95_pct, cpu_max_pct, cpu_pct_histogram,
     mem_peak_bytes, mem_peak_excl_cache_bytes, mem_total_bytes,
     disk_peak_bytes, disk_total_bytes, metrics_through, metrics_error,
-    metrics_polled_at, metrics_final, oom_kills
+    metrics_polled_at, metrics_final, oom_kills,
+    billing_reported_at, billing_credits, billing_error
 """
 
 
@@ -375,6 +376,99 @@ async def get_computer_run(run_id: str, *, conn=None) -> Optional[Dict[str, Any]
             )
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+async def list_runs_for_billing(
+    *,
+    kinds: Sequence[str] = ("daytona",),
+    limit: int = 100,
+    conn=None,
+) -> List[Dict[str, Any]]:
+    """Closed runs that have not been settled with the billing console.
+
+    A run without a user or a provider sandbox id names nothing the console
+    could charge, so it is not a candidate; it stays unreported rather than
+    being marked failed, and an operator can see it in the table. Ordering by
+    end time bills the oldest debt first.
+    """
+    async with get_db_connection(conn) as owned:
+        async with owned.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT run_id, computer_id, user_id, provider_kind,
+                       provider_sandbox_id, resource_tier, cpu, memory_gb,
+                       disk_gb, started_at, ended_at
+                FROM computer_runs
+                WHERE ended_at IS NOT NULL
+                  AND billing_reported_at IS NULL
+                  AND provider_kind = ANY(%s)
+                  AND user_id IS NOT NULL AND btrim(user_id) <> ''
+                  AND provider_sandbox_id IS NOT NULL
+                  AND btrim(provider_sandbox_id) <> ''
+                ORDER BY ended_at
+                LIMIT %s
+                """,
+                (list(kinds), limit),
+            )
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def mark_run_billed(run_id: str, credits: int, *, conn=None) -> bool:
+    """Settle the run at the console's accepted total.
+
+    Only an unreported run is written, so a report that lands twice keeps the
+    first total rather than the later one.
+    """
+    async with get_db_connection(conn) as owned:
+        async with owned.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE computer_runs
+                SET billing_reported_at = NOW(),
+                    billing_credits = %s,
+                    billing_error = NULL
+                WHERE run_id = %s AND billing_reported_at IS NULL
+                """,
+                (credits, run_id),
+            )
+            return cur.rowcount > 0
+
+
+async def mark_run_billing_error(
+    run_id: str,
+    error: str,
+    *,
+    final: bool,
+    credits: Optional[int] = None,
+    conn=None,
+) -> bool:
+    """Record a refused or failed report.
+
+    ``final`` is the difference between "the console said no and will say no
+    again" and "try again later": it sets the settled marker, so a malformed
+    or impossible run leaves the queue, while a retryable failure keeps
+    ``billing_reported_at`` NULL. ``credits`` is 0 only when the run had
+    nothing billable; a report the console permanently refused leaves the
+    charge NULL, since no amount was settled.
+    """
+    async with get_db_connection(conn) as owned:
+        async with owned.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE computer_runs
+                SET billing_error = %(error)s,
+                    billing_reported_at = CASE WHEN %(final)s THEN NOW() END,
+                    billing_credits = COALESCE(%(credits)s, billing_credits)
+                WHERE run_id = %(run_id)s AND billing_reported_at IS NULL
+                """,
+                {
+                    "run_id": run_id,
+                    "error": error,
+                    "final": final,
+                    "credits": credits,
+                },
+            )
+            return cur.rowcount > 0
 
 
 async def store_run_metrics(

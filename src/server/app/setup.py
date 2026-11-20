@@ -430,6 +430,16 @@ async def lifespan(app: FastAPI):
         await workspace_manager.start_cleanup_task()
         logger.info("Workspace Manager initialized")
 
+        # Bill closed sandbox runs to Roost Console. A task, not an await: the
+        # first cycle talks to the console and the run ledger, and startup
+        # must not wait on either. Inert without platform gating.
+        try:
+            from src.server.services.sandbox_billing import SandboxBillingReporter
+
+            SandboxBillingReporter.get_instance().start()
+        except Exception as e:
+            logger.warning(f"Failed to start SandboxBillingReporter: {e}")
+
         # An ssh computer logs in with its owner's key, which the provider
         # reads through this loader; any worker may start one. A machine that
         # connects out is reached through the gateway the second loader names.
@@ -1005,6 +1015,16 @@ async def lifespan(app: FastAPI):
             logger.info("Workspace Manager shutdown complete")
         except Exception as e:
             logger.warning(f"Error during Workspace Manager shutdown: {e}")
+
+    # 3.5. Stop sandbox billing before the database pools close. A cycle in
+    # flight is cancelled; an accepted report that has not been marked is
+    # replayed under the same idempotency key on the next start.
+    try:
+        from src.server.services.sandbox_billing import SandboxBillingReporter
+
+        await SandboxBillingReporter.get_instance().stop()
+    except Exception as e:
+        logger.warning(f"Error stopping SandboxBillingReporter: {e}")
 
     # 4. Forget this worker's PTC handles. A sibling worker may still be using
     # the same computer, so process shutdown must not stop the shared sandbox.

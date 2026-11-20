@@ -131,6 +131,26 @@ EGRESS_RELAY_LOOPBACK_URL: str = os.getenv("EGRESS_RELAY_LOOPBACK_URL", "http://
 # Credit conversion rate (USD → credits).  Override with USD_TO_CREDITS_RATE env var.
 USD_TO_CREDITS_RATE: int = int(os.getenv("USD_TO_CREDITS_RATE", "1000"))
 
+# Daytona sandbox billing. The unit prices are Daytona's list prices; the
+# markup is Roost's, in basis points, applied before the USD→credits
+# conversion. The first free disk GiB are Daytona's included allowance. The
+# defaults are production's; a deployment with AUTH_SERVICE_URL unset never
+# reports.
+SANDBOX_BILLING_INTERVAL_SECONDS: int = int(
+    os.getenv("SANDBOX_BILLING_INTERVAL_SECONDS", "300")
+)
+SANDBOX_MARKUP_BPS: int = int(os.getenv("SANDBOX_MARKUP_BPS", "13000"))
+DAYTONA_CPU_USD_PER_HOUR: float = float(
+    os.getenv("DAYTONA_CPU_USD_PER_HOUR", "0.0504")
+)
+DAYTONA_MEMORY_USD_PER_GIB_HOUR: float = float(
+    os.getenv("DAYTONA_MEMORY_USD_PER_GIB_HOUR", "0.0162")
+)
+DAYTONA_DISK_USD_PER_GIB_HOUR: float = float(
+    os.getenv("DAYTONA_DISK_USD_PER_GIB_HOUR", "0.000108")
+)
+DAYTONA_DISK_FREE_GIB: float = float(os.getenv("DAYTONA_DISK_FREE_GIB", "5"))
+
 # Automation webhook delivery (channel gateway)
 AUTOMATION_WEBHOOK_URL: str = os.getenv("AUTOMATION_WEBHOOK_URL", "")
 AUTOMATION_WEBHOOK_SECRET: str = os.getenv("AUTOMATION_WEBHOOK_SECRET", "")
