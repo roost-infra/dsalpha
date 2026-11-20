@@ -16,8 +16,15 @@ import {
   samplePortfolioHolding,
 } from './helpers/mockResponses.js';
 
-// Shared index snapshot data used across multiple tests
+// Shared index snapshot data used across multiple tests. The dashboard opens on
+// its A-share row by default; the US row is what the header switch swaps in, so
+// both baskets are mocked.
 const allIndexSnapshots = [
+  sampleIndexSnapshot('000001.SH', 3200.25, 12.5),
+  sampleIndexSnapshot('399001.SZ', 10500.5, -30.0),
+  sampleIndexSnapshot('399006.SZ', 2100.75, 8.25),
+  sampleIndexSnapshot('000300.SH', 3800.0, 15.0),
+  sampleIndexSnapshot('000688.SH', 1000.5, -2.5),
   sampleIndexSnapshot('GSPC', 5500.25, 25.5),
   sampleIndexSnapshot('IXIC', 17200.5, -50.0),
   sampleIndexSnapshot('DJI', 39800.0, 120.0),
@@ -82,7 +89,10 @@ function dashboardOverrides(extra = {}) {
  * index. These go to the mock server directly (not intercepted by page.route).
  */
 async function configureIntradayDefaults() {
-  const symbols = ['GSPC', 'IXIC', 'DJI', 'RUT', 'VIX'];
+  const symbols = [
+    '000001.SH', '399001.SZ', '399006.SZ', '000300.SH', '000688.SH',
+    'GSPC', 'IXIC', 'DJI', 'RUT', 'VIX',
+  ];
   for (const sym of symbols) {
     await configureSSE({
       method: 'GET',
@@ -158,21 +168,20 @@ test.describe('Market Indices & News', () => {
 
     const markets = widget(page, 'markets.overview');
 
-    // Verify S&P 500 card renders with symbol, name, and price, giving the
-    // page's first paint the budget other specs give it. Each index is a card
-    // whose title (its symbol) is the card's button, its name beside it.
-    await expect(markets.getByRole('button', { name: 'GSPC', exact: true })).toBeVisible({ timeout: 15000 });
-    await expect(markets.getByText('S&P 500', { exact: true })).toBeVisible();
-    await expect(markets.getByText('5,500.25')).toBeVisible();
+    // The dashboard opens on the A-share row: every index is a card whose title
+    // (its symbol) is the card's button and whose name sits beside it.
+    await expect(markets.getByRole('button', { name: '000001.SH', exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(markets.getByText('SSE Composite', { exact: true })).toBeVisible();
+    await expect(markets.getByText('3,200.25')).toBeVisible();
 
-    // Verify NASDAQ card
-    await expect(markets.getByText('NASDAQ', { exact: true })).toBeVisible();
-    await expect(markets.getByText('17,200.50')).toBeVisible();
+    // Verify the Shenzhen and STAR cards
+    await expect(markets.getByText('SZSE Component', { exact: true })).toBeVisible();
+    await expect(markets.getByText('10,500.50')).toBeVisible();
+    await expect(markets.getByText('STAR 50', { exact: true })).toBeVisible();
 
     // Verify all 5 index cards are present
-    await expect(markets.getByText('Dow Jones', { exact: true })).toBeVisible();
-    await expect(markets.getByText('Russell 2000', { exact: true })).toBeVisible();
-    await expect(markets.getByRole('button', { name: 'VIX', exact: true })).toBeVisible();
+    await expect(markets.getByText('ChiNext', { exact: true })).toBeVisible();
+    await expect(markets.getByText('CSI 300', { exact: true })).toBeVisible();
   });
 
   test('news headlines render with tabs', async ({ page }) => {
@@ -267,12 +276,13 @@ test.describe('Market Indices & News', () => {
 
     await page.goto('/dashboard');
 
-    // Wait for the S&P 500 card to appear
-    const spx = widget(page, 'markets.overview').getByText('S&P 500', { exact: true });
-    await expect(spx).toBeVisible({ timeout: 15000 });
+    // Wait for the Shanghai Composite card to appear
+    const sse = widget(page, 'markets.overview').getByText('SSE Composite', { exact: true });
+    await expect(sse).toBeVisible({ timeout: 15000 });
 
-    // Click the S&P 500 card: the whole card answers, not only its title
-    await spx.click();
+    // Click the card: the whole card answers, not only its title. A
+    // venue-listed index navigates bare (`000001.SH`), never caret-prefixed.
+    await sse.click();
 
     // The legacy /market?symbol link lands on the plugin page; MarketView
     // consumes the query into its selected stock and may clear the URL.
