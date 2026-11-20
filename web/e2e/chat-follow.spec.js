@@ -15,6 +15,12 @@ import { buildEvents } from './perf/streamFixture.js';
 
 // ANCHOR_OFFSET_PX in utils/scrollDom.ts: the gap left above a pinned message.
 const PIN_GAP = 16;
+// A pinned message's painted top lands on a half pixel where the scroll
+// position and the device pixel ratio round differently (CI reads 15.5 for a
+// 16px gap). Within a pixel is still "pinned under the top"; the assertions
+// below measure the gap, not a font metric, so the tolerance stays at 1.
+const PIN_TOLERANCE = 1;
+const pinnedNearTop = (top) => expect(Math.abs(top - PIN_GAP)).toBeLessThanOrEqual(PIN_TOLERANCE);
 // AT_BOTTOM_PX in utils/scrollHelpers.ts: as close to the end as counts as at it.
 const AT_END = 4;
 const QUESTION = 'And what changed in the second quarter?';
@@ -89,7 +95,7 @@ test.describe('pin on send', () => {
     await page.locator('textarea').fill(QUESTION);
     await page.keyboard.press('Enter');
     await expect(page.getByText(QUESTION)).toBeVisible();
-    await expect.poll(async () => (await view(page)).userTop, { timeout: 3000 }).toBeCloseTo(PIN_GAP, 0);
+    await expect.poll(async () => Math.abs((await view(page)).userTop - PIN_GAP), { timeout: 3000 }).toBeLessThanOrEqual(PIN_TOLERANCE);
     const pinned = await view(page);
     expect(pinned.floor).not.toBe('');
 
@@ -109,13 +115,13 @@ test.describe('pin on send', () => {
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
     const after = await view(page);
     expect(Math.abs(after.top - pinned.top)).toBeLessThan(1);
-    expect(after.userTop).toBeCloseTo(PIN_GAP, 0);
+    pinnedNearTop(after.userTop);
   });
 
   test('gives the room back as the reader scrolls up out of it, without moving them', async ({ page }) => {
     await page.locator('textarea').fill(QUESTION);
     await page.keyboard.press('Enter');
-    await expect.poll(async () => (await view(page)).userTop, { timeout: 3000 }).toBeCloseTo(PIN_GAP, 0);
+    await expect.poll(async () => Math.abs((await view(page)).userTop - PIN_GAP), { timeout: 3000 }).toBeLessThanOrEqual(PIN_TOLERANCE);
     await expect(streaming(page)).toBeHidden({ timeout: 15000 });
     await page.waitForTimeout(800);
 
@@ -146,7 +152,7 @@ test.describe('pin on send', () => {
       const users = vp.querySelectorAll('[data-message-role="user"]');
       resolve(users[users.length - 1].getBoundingClientRect().top - vp.getBoundingClientRect().top);
     })));
-    expect(top).toBeCloseTo(PIN_GAP, 0);
+    pinnedNearTop(top);
   });
 });
 
