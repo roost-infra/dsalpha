@@ -335,6 +335,7 @@ export function WorkspaceConversations({
           <button
             type="button"
             className="workspace-conversations__guest-link"
+            data-nav-key="guest-invite"
             onClick={() => navigate('/rooms?guest=1')}
           >
             <UserPlus className="h-4 w-4 shrink-0" aria-hidden />
