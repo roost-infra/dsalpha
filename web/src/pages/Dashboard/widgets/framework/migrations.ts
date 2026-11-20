@@ -1,4 +1,5 @@
 import { getWidget } from './WidgetRegistry';
+import { isDashboardMarket } from '../../utils/markets';
 import { DASHBOARD_PREFS_VERSION, type DashboardPrefs, type WidgetInstance } from '../types';
 
 // Widget types that have been renamed. Stored prefs are silently upgraded on load.
@@ -95,6 +96,10 @@ export function migrateDashboardPrefs(raw: unknown): DashboardPrefs | null {
 
   return {
     version: DASHBOARD_PREFS_VERSION,
+    // A region added after this record was written (or a hand-edited one that
+    // names nothing real) falls back to the US row rather than reaching the
+    // widgets, whose catalogs only know the two shipped regions.
+    market: isDashboardMarket(src.market) ? src.market : undefined,
     widgets,
     layouts,
     lastBreakpoint: src.lastBreakpoint,

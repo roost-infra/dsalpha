@@ -13,7 +13,9 @@ import type { SnapshotBatchResponse, SnapshotData } from '@/types/market';
 export type SnapshotEntry = SnapshotData;
 export type SnapshotResponse = SnapshotBatchResponse;
 
-// Default index basket for a no-arg indexes batch (mirrors Dashboard's).
+// Back-compat fallback for a no-arg indexes batch. Every real caller (the
+// dashboard's region row, the batcher's key set) passes its own symbols, so
+// this basket is not the product's default market.
 const DEFAULT_INDEX_SYMBOLS: string[] = ['GSPC', 'IXIC', 'DJI', 'RUT', 'VIX'];
 
 /**

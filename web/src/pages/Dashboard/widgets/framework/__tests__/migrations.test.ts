@@ -39,6 +39,16 @@ describe('migrateDashboardPrefs', () => {
     expect(out?.widgets).toEqual([]);
   });
 
+  it('carries a saved market region through, and drops one it does not know', () => {
+    expect(migrate({ widgets: [], market: 'cn' })?.market).toBe('cn');
+    expect(migrate({ widgets: [], market: 'us' })?.market).toBe('us');
+    // A dashboard saved before the switch existed has no region: absent, so
+    // the page falls back to US without writing a field it never had.
+    expect(migrate({ widgets: [] })?.market).toBeUndefined();
+    // A hand-edited blob cannot reach the widgets' two-region catalogs.
+    expect(migrate({ widgets: [], market: 'jp' })?.market).toBeUndefined();
+  });
+
   it('coerces array layouts to {}', () => {
     const out = migrate({ layouts: [] as unknown });
     expect(out?.layouts).toEqual({});

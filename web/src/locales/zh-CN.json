@@ -636,6 +636,11 @@
       "exitEditLayout": "退出编辑",
       "emailLabel": "邮箱"
     },
+    "market": {
+      "label": "行情地区",
+      "us": "美股",
+      "cn": "A 股"
+    },
     "widgets": {
       "common": {
         "save": "保存",

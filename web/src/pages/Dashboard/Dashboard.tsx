@@ -25,6 +25,7 @@ import { newWidgetId } from './widgets/framework/ids';
 import { useDashboardPrefs } from './widgets/framework/useDashboardPrefs';
 import type { DashboardPrefs, WidgetInstance } from './widgets/types';
 import type { PresetId } from './widgets/presets';
+import { DEFAULT_DASHBOARD_MARKET, type DashboardMarket } from './utils/markets';
 import './widgets/index';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { PAGE_PLUGINS } from '@/plugins/registry';
@@ -42,15 +43,16 @@ import './Dashboard.css';
 interface DashboardPageProps {
   marketEnabled: boolean;
   enabledPlugins: ReadonlySet<string>;
+  /** The saved dashboard state, read once by the route so the data provider
+   *  can see the region switch as well as the widgets. */
+  dashboardPrefs: ReturnType<typeof useDashboardPrefs>;
 }
 
-function DashboardPage({ marketEnabled, enabledPlugins }: DashboardPageProps) {
+function DashboardPage({ marketEnabled, enabledPlugins, dashboardPrefs }: DashboardPageProps) {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const { showPersonalizationBanner, setShowPersonalizationBanner } = useOnboarding();
-  const dashboardPlugin = PAGE_PLUGINS.find((plugin) => plugin.dashboard && enabledPlugins.has(plugin.id));
-  const dashboardPreset = (dashboardPlugin?.dashboard?.presetId ?? 'assistant') as PresetId;
-  const { prefs, update, applyPreset, resetToDefault, editable } = useDashboardPrefs(dashboardPreset);
+  const { prefs, update, applyPreset, resetToDefault, editable } = dashboardPrefs;
   // A user who turned the market plugin off still has its widgets in saved
   // preferences. Hide those cells without rewriting the saved layout, so
   // turning the plugin back on restores them.
@@ -156,6 +158,16 @@ function DashboardPage({ marketEnabled, enabledPlugins }: DashboardPageProps) {
   const settingsDef = settingsInstance ? getWidget(settingsInstance.type) : null;
   const SettingsComp = settingsDef?.settingsComponent;
 
+  // The region is a dashboard preference, not a widget config: the index row,
+  // the seeded symbols and every market card read the same value, and it
+  // survives a preset swap (applyPreset spreads the saved prefs).
+  const handleMarketChange = useCallback(
+    (market: DashboardMarket) => {
+      update((prev) => ({ ...prev, market }));
+    },
+    [update]
+  );
+
   // Hide the floating chat input if the user has placed the agent widget on the canvas,
   // or while the edit toolbar is open (they'd overlap).
   const hasAgentWidget = visiblePrefs.widgets.some((w) => w.type === 'agent.conversation');
@@ -181,6 +193,8 @@ function DashboardPage({ marketEnabled, enabledPlugins }: DashboardPageProps) {
         <h1 className="sr-only">{t('sidebar.dashboard')}</h1>
         <DashboardHeader
           marketEnabled={marketEnabled}
+          market={prefs.market ?? DEFAULT_DASHBOARD_MARKET}
+          onMarketChange={handleMarketChange}
           onScrollToTop={handleScrollToTop}
           edit={canEdit ? { editMode, onEditModeChange: setEditMode } : undefined}
         />
@@ -488,10 +502,17 @@ export default function Dashboard() {
     if (read) use(settledOf(read));
   }
   const marketEnabled = enabled.has('market-center');
+  const dashboardPlugin = PAGE_PLUGINS.find((plugin) => plugin.dashboard && enabled.has(plugin.id));
+  const dashboardPreset = (dashboardPlugin?.dashboard?.presetId ?? 'assistant') as PresetId;
+  const dashboardPrefs = useDashboardPrefs(dashboardPreset);
   return (
-    <DashboardDataProvider>
+    <DashboardDataProvider market={dashboardPrefs.prefs.market ?? DEFAULT_DASHBOARD_MARKET}>
       <MarketDataWSProvider>
-        <DashboardPage marketEnabled={marketEnabled} enabledPlugins={enabled} />
+        <DashboardPage
+          marketEnabled={marketEnabled}
+          enabledPlugins={enabled}
+          dashboardPrefs={dashboardPrefs}
+        />
       </MarketDataWSProvider>
     </DashboardDataProvider>
   );

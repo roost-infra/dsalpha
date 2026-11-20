@@ -7,11 +7,16 @@ import { resolveDualName } from '@/lib/displayName';
 import { useNavigate } from 'react-router';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { buildMarketViewUrl } from '@/pages/MarketView/utils/marketRoute';
+import { DASHBOARD_MARKETS, type DashboardMarket } from '../utils/markets';
 import './DashboardHeader.css';
 
 interface DashboardHeaderProps {
   /** The market-center plugin is on: show symbol search on the dashboard. */
   marketEnabled?: boolean;
+  /** The region the market cards are showing; absent where there is no switch. */
+  market?: DashboardMarket;
+  /** Called when the reader picks the other region. */
+  onMarketChange?: (market: DashboardMarket) => void;
   onScrollToTop?: () => void;
   /** The layout's Edit button; absent where the layout can't be edited (a phone). */
   edit?: {
@@ -20,7 +25,13 @@ interface DashboardHeaderProps {
   };
 }
 
-const DashboardHeader: React.FC<DashboardHeaderProps> = ({ marketEnabled = true, onScrollToTop, edit }) => {
+const DashboardHeader: React.FC<DashboardHeaderProps> = ({
+  marketEnabled = true,
+  market,
+  onMarketChange,
+  onScrollToTop,
+  edit,
+}) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const { t } = useTranslation();
@@ -224,6 +235,39 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({ marketEnabled = true,
 
         {/* Right actions */}
         <div className="flex items-center gap-3 ml-3 shrink-0">
+          {/* Region switch: the dashboard's market cards read the same region,
+              so this is one choice, not a per-card setting. */}
+          {marketEnabled && market !== undefined && onMarketChange && (
+            <div
+              role="group"
+              aria-label={t('dashboard.market.label')}
+              className="flex items-center gap-0.5 rounded-lg p-0.5"
+              style={{
+                backgroundColor: 'var(--color-bg-input)',
+                border: '1px solid var(--color-border-muted)',
+              }}
+            >
+              {DASHBOARD_MARKETS.map((region) => {
+                const active = region === market;
+                return (
+                  <button
+                    key={region}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => onMarketChange(region)}
+                    className="px-2 py-1 text-xs rounded-md transition-colors"
+                    style={{
+                      color: active ? 'var(--color-btn-primary-text)' : 'var(--color-text-secondary)',
+                      backgroundColor: active ? 'var(--color-btn-primary-bg)' : 'transparent',
+                      fontWeight: active ? 600 : 400,
+                    }}
+                  >
+                    {t(`dashboard.market.${region}`)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {edit && (
             <button
               type="button"

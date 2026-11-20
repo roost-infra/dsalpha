@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useCallback, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useDashboardData } from '../../hooks/useDashboardData';
+import type { DashboardMarket } from '../../utils/markets';
 import { useWatchlistData } from '../../hooks/useWatchlistData';
 import { usePortfolioData } from '../../hooks/usePortfolioData';
 import { useTickerNews } from '../../hooks/useTickerNews';
@@ -75,8 +76,15 @@ export interface DashboardDataContextValue {
 
 const Ctx = createContext<DashboardDataContextValue | null>(null);
 
-export function DashboardDataProvider({ children }: { children: ReactNode }) {
-  const dashboard = useDashboardData();
+export function DashboardDataProvider({
+  market,
+  children,
+}: {
+  /** The region the dashboard shows; owned by the page's saved prefs. */
+  market: DashboardMarket;
+  children: ReactNode;
+}) {
+  const dashboard = useDashboardData(market);
   const watchlist = useWatchlistData();
   const portfolio = usePortfolioData();
   const portfolioNews = useTickerNews(portfolio.rows, 'portfolio', 'tickertick');

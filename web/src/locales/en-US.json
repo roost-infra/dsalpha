@@ -598,6 +598,11 @@
       "exitEditLayout": "Exit edit layout",
       "emailLabel": "Email"
     },
+    "market": {
+      "label": "Market region",
+      "us": "US",
+      "cn": "A-shares"
+    },
     "widgets": {
       "common": {
         "save": "Save",

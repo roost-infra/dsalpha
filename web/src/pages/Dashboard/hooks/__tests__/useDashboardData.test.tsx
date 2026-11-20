@@ -66,6 +66,19 @@ describe('useDashboardData', () => {
     expect(Array.isArray(result.current.indices)).toBe(true);
   });
 
+  it('opens a fresh dashboard on the A-share row', () => {
+    const { result } = renderHookWithProviders(() => useDashboardData());
+
+    expect(result.current.market).toBe('cn');
+    expect(result.current.indices?.map((index) => index.symbol)).toEqual([
+      '000001.SH',
+      '399001.SZ',
+      '399006.SZ',
+      '000300.SH',
+      '000688.SH',
+    ]);
+  });
+
   it('returns newsItems as an empty array when no news', async () => {
     mockGetNews.mockResolvedValue({ results: [] });
 
@@ -148,5 +161,28 @@ describe('useDashboardData', () => {
     await waitFor(() => expect(result.current.marketStatus).not.toBeNull());
     expect(result.current.marketStatusRef).toBeDefined();
     expect(result.current.marketStatusRef.current).toEqual(result.current.marketStatus);
+  });
+
+  it('swaps the whole index row when the reader picks A-shares', async () => {
+    mockGetSnapshotIndexes.mockResolvedValue({
+      snapshots: [
+        { symbol: '000001.SH', name: 'SSE Composite', price: 3200, change: 10, change_percent: 0.3 },
+      ],
+    });
+
+    const { result } = renderHookWithProviders(() => useDashboardData('cn'));
+
+    expect(result.current.market).toBe('cn');
+    await waitFor(() =>
+      expect(result.current.indices?.some((index) => index.symbol === '000001.SH')).toBe(true),
+    );
+    // One batch for the CN row — the US symbols are not requested alongside.
+    await waitFor(() => expect(mockGetSnapshotIndexes).toHaveBeenCalled());
+    const batches = mockGetSnapshotIndexes.mock.calls.map((call) => call[0] as string[] | undefined);
+    const cnBatch = batches.find((batch) => Array.isArray(batch) && batch.includes('000001.SH'));
+    expect(cnBatch).toEqual(expect.arrayContaining(['000001.SH', '399001.SZ', '000300.SH']));
+    expect(cnBatch).not.toContain('GSPC');
+    // The sparkline is fetched per CN index with the market hint.
+    await waitFor(() => expect(mockGetIndex).toHaveBeenCalledWith('000001.SH', { market: 'cn' }));
   });
 });
