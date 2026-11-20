@@ -11,7 +11,7 @@ import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { grouped2 } from '@/lib/format';
 import { cn, dateStrInTz } from '@/lib/utils';
-import { venueTimeZoneForSymbol } from '../utils/markets';
+import { isCnSymbol, venueTimeZoneForSymbol } from '../utils/markets';
 import { TermCard, TermChange } from '@/pages/ChatAgent/components/charts/TermCard';
 import type { IndexData } from '@/types/market';
 
@@ -132,12 +132,16 @@ function IndexCardBody({ index, date }: { index: IndexData; date: string }) {
 function IndexCard({ index }: IndexCardProps) {
   const navigate = useNavigate();
   const date = useSessionDate(index);
+  // A caret names a venue-less family index (`^GSPC`). A venue-listed index
+  // already names itself (`000001.SH`) and must stay bare: a caret on it is a
+  // spelling the market protocol would have to strip again downstream.
+  const marketSymbol = isCnSymbol(index.symbol) ? index.symbol : `^${index.symbol}`;
   return (
     <TermCard
       title={index.symbol}
       sub={index.name}
       keep="title"
-      onClick={() => navigate(`/market?symbol=^${index.symbol}`)}
+      onClick={() => navigate(`/market?symbol=${marketSymbol}`)}
     >
       <IndexCardBody index={index} date={date} />
     </TermCard>
