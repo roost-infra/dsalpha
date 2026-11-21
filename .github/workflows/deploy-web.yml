@@ -58,12 +58,22 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/build"
           echo "$asset" > "$GITHUB_WORKSPACE/build/index-asset.txt"
           tar -czf "$GITHUB_WORKSPACE/build/dslpha-web.tgz" -C dist .
+      - name: Package landing
+        run: |
+          set -euo pipefail
+          test -f landing/index.html
+          title=$(grep -o '<title>[^<]*' landing/index.html | head -1 | sed 's/<title>//')
+          test -n "$title"
+          printf '%s\n' "$title" > "$GITHUB_WORKSPACE/build/landing-title.txt"
+          tar -czf "$GITHUB_WORKSPACE/build/dslpha-landing.tgz" -C landing .
       - uses: actions/upload-artifact@v4
         with:
           name: dslpha-web
           path: |
             build/dslpha-web.tgz
             build/index-asset.txt
+            build/dslpha-landing.tgz
+            build/landing-title.txt
           retention-days: 3
 
   deploy:
@@ -88,17 +98,25 @@ jobs:
         run: |
           scp -q -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts \
             build/dslpha-web.tgz "$USER@$HOST:/tmp/dslpha-web-${{ github.sha }}.tgz"
+          scp -q -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts \
+            build/dslpha-landing.tgz "$USER@$HOST:/tmp/dslpha-landing-${{ github.sha }}.tgz"
       - name: Deploy
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
           SHA: ${{ github.sha }}
+          # Set the DEPLOY_LANDING_ROOT repository variable if nginx serves the
+          # landing page somewhere other than the default below.
+          LANDING_ROOT: ${{ vars.DEPLOY_LANDING_ROOT || '/opt/langalpha/web/landing' }}
         run: |
           ASSET=$(cat build/index-asset.txt)
-          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- $SHA $ASSET" <<'REMOTE'
+          TITLE_B64=$(base64 < build/landing-title.txt | tr -d '\n')
+          ssh -i ~/.ssh/deploy -o UserKnownHostsFile=~/.ssh/known_hosts "$USER@$HOST" "bash -s -- $SHA $ASSET $TITLE_B64 $LANDING_ROOT" <<'REMOTE'
           set -euo pipefail
           SHA="$1"
           ASSET="$2"
+          TITLE_B64="$3"
+          LANDING_ROOT="${4:-/opt/langalpha/web/landing}"
           TS=$(date +%Y%m%d-%H%M%S)
           cd /opt/langalpha/web
 
@@ -121,9 +139,35 @@ jobs:
           done
           # Keep the three newest backups of the previous dist.
           ( ls -1dt dist-prev-* 2>/dev/null | tail -n +4 | xargs -r rm -rf -- ) || true
-          rm -f "/tmp/dslpha-web-$SHA.tgz"
-          echo "web deployed ($SHA)"
+
+          # The landing page is static and lives beside the app dist; swap it
+          # as a directory so a half-written index can never be served.
+          LANDING_PARENT=$(dirname "$LANDING_ROOT")
+          LANDING_NAME=$(basename "$LANDING_ROOT")
+          mkdir -p "$LANDING_PARENT"
+          cd "$LANDING_PARENT"
+          rm -rf "$LANDING_NAME.new"
+          mkdir "$LANDING_NAME.new"
+          tar -xzf "/tmp/dslpha-landing-$SHA.tgz" -C "$LANDING_NAME.new"
+          if [ -d "$LANDING_NAME" ]; then mv "$LANDING_NAME" "$LANDING_NAME-prev-$TS"; fi
+          mv "$LANDING_NAME.new" "$LANDING_NAME"
+
+          TITLE=$(printf '%s' "$TITLE_B64" | base64 -d)
+          for _ in $(seq 1 5); do
+            if curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' https://127.0.0.1/ 2>/dev/null | grep -qF "$TITLE"; then break; fi
+            sleep 1
+          done
+          if ! curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' https://127.0.0.1/ 2>/dev/null | grep -qF "$TITLE"; then
+            echo "::error::landing health check failed; rolling back"
+            rm -rf "$LANDING_NAME"
+            if [ -d "$LANDING_NAME-prev-$TS" ]; then mv "$LANDING_NAME-prev-$TS" "$LANDING_NAME"; fi
+            exit 1
+          fi
+          ( ls -1dt "$LANDING_NAME"-prev-* 2>/dev/null | tail -n +4 | xargs -r rm -rf -- ) || true
+          rm -f "/tmp/dslpha-web-$SHA.tgz" "/tmp/dslpha-landing-$SHA.tgz"
+          echo "web and landing deployed ($SHA)"
           REMOTE
       - name: Verify the public entry
         run: |
           curl -fsS https://dsalpha.roostbots.com/chat | grep -q "$(cat build/index-asset.txt)"
+          curl -fsS https://dsalpha.roostbots.com/ | grep -qF "$(cat build/landing-title.txt)"
