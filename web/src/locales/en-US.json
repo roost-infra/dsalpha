@@ -6767,7 +6767,10 @@
     "chatNamed": "Chat with {{name}}",
     "chatPaused": "Resume this bot before chatting",
     "chatFailed": "That conversation could not be opened. Try again.",
-    "skillsStoredNote": "Stored for v2: the bot does not yet restrict the skills a turn may load."
+    "skillsStoredNote": "Stored for v2: the bot does not yet restrict the skills a turn may load.",
+    "connectedApps": "Connected apps",
+    "connectedAppsHint": "Choose which connected apps this bot may use. All checked means every app; once any app is unchecked, an app it does not list gives this bot no tools.",
+    "connectedAppsAll": "Allow all apps"
   },
   "conversations": {
     "moreSessions": "Workspaces & history",

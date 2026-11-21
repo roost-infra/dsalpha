@@ -20,6 +20,11 @@ export type BotStatus = 'active' | 'paused';
 /** The four approval levels the server accepts, least autonomous first. */
 export type BotApproval = 'ask' | 'edits' | 'auto' | 'full';
 
+/** One app's connector grant on a bot: every tool, or an exact list. */
+export interface ConnectorToolGrant {
+  tools: '*' | string[];
+}
+
 /** One bot as the API returns it. */
 export interface BotInfo {
   bot_id: string;
@@ -34,6 +39,7 @@ export interface BotInfo {
   skills: string[];
   tools_allow: string[];
   tools_deny: string[];
+  connector_tools?: Record<string, ConnectorToolGrant>;
   approval: BotApproval;
   memory_scopes: string[];
   status: BotStatus;
@@ -62,6 +68,7 @@ export interface BotCreateInput {
   skills?: string[];
   tools_allow?: string[];
   tools_deny?: string[];
+  connector_tools?: Record<string, ConnectorToolGrant>;
   approval?: BotApproval;
   memory_scopes?: string[];
 }
@@ -78,6 +85,7 @@ export type BotUpdateInput = Partial<
     | 'skills'
     | 'tools_allow'
     | 'tools_deny'
+    | 'connector_tools'
     | 'approval'
     | 'memory_scopes'
     | 'status'

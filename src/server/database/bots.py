@@ -38,13 +38,14 @@ VERSIONED_FIELDS = (
     "skills",
     "tools_allow",
     "tools_deny",
+    "connector_tools",
     "approval",
     "memory_scopes",
 )
 
 _BOT_COLUMNS = """
     bot_id, user_id, workspace_id, name, role, persona, avatar, provider,
-    model, skills, tools_allow, tools_deny, approval, memory_scopes, status,
+    model, skills, tools_allow, tools_deny, connector_tools, approval, memory_scopes, status,
     primary_thread_id, created_by, created_at, updated_at, deleted_at
 """
 
@@ -188,6 +189,7 @@ async def _insert_bot(
     skills: Optional[Iterable[str]] = None,
     tools_allow: Optional[Iterable[str]] = None,
     tools_deny: Optional[Iterable[str]] = None,
+    connector_tools: Optional[Dict[str, Any]] = None,
     approval: str = "ask",
     memory_scopes: Optional[Iterable[str]] = None,
     created_by: str,
@@ -200,9 +202,9 @@ async def _insert_bot(
                 INSERT INTO bots (
                     user_id, workspace_id, name, role, persona, avatar,
                     provider, model, skills, tools_allow, tools_deny,
-                    approval, memory_scopes, created_by
+                    connector_tools, approval, memory_scopes, created_by
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 RETURNING {_BOT_COLUMNS}
                 """,
@@ -218,6 +220,7 @@ async def _insert_bot(
                     Json(list(skills or [])),
                     Json(list(tools_allow or [])),
                     Json(list(tools_deny or [])),
+                    Json(connector_tools or {}),
                     approval,
                     Json(list(memory_scopes or ["workspace"])),
                     created_by,
@@ -239,6 +242,7 @@ async def create_bot(
     skills: Optional[Iterable[str]] = None,
     tools_allow: Optional[Iterable[str]] = None,
     tools_deny: Optional[Iterable[str]] = None,
+    connector_tools: Optional[Dict[str, Any]] = None,
     approval: str = "ask",
     memory_scopes: Optional[Iterable[str]] = None,
     created_by: Optional[str] = None,
@@ -273,6 +277,7 @@ async def create_bot(
                     skills=skills,
                     tools_allow=tools_allow,
                     tools_deny=tools_deny,
+                    connector_tools=connector_tools,
                     approval=approval,
                     memory_scopes=memory_scopes,
                     created_by=created_by or user_id,
@@ -302,6 +307,7 @@ async def update_bot(
         "skills",
         "tools_allow",
         "tools_deny",
+        "connector_tools",
         "approval",
         "memory_scopes",
         "status",
@@ -313,7 +319,7 @@ async def update_bot(
     params: list[Any] = []
     for key, value in clean_changes.items():
         sets.append(f"{key} = %s")
-        params.append(Json(value) if key in {"avatar", "skills", "tools_allow", "tools_deny", "memory_scopes"} else value)
+        params.append(Json(value) if key in {"avatar", "skills", "tools_allow", "tools_deny", "connector_tools", "memory_scopes"} else value)
     versioned = {k: v for k, v in clean_changes.items() if k in VERSIONED_FIELDS}
     sets.append("updated_at = NOW()")
     async with get_db_connection() as conn:

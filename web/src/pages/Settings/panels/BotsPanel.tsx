@@ -2,7 +2,13 @@ import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { BotMessageSquare, MessageSquare, Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
-import type { BotApproval, BotCreateInput, BotInfo, BotUpdateInput } from '@/api/bots';
+import type {
+  BotApproval,
+  BotCreateInput,
+  BotInfo,
+  BotUpdateInput,
+  ConnectorToolGrant,
+} from '@/api/bots';
 import { BotMark } from '@/components/bots/BotMark';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -24,6 +30,7 @@ import { useAllWorkspaces } from '@/hooks/useAllWorkspaces';
 import { useBots, useCreateBot, useDeleteBot, useUpdateBot } from '@/hooks/useBots';
 import { failureText } from '@/lib/failureText';
 import { createThreadWithTitle } from '@/pages/ChatAgent/utils/api/threads';
+import { useConnectedApps } from '@/pages/Apps/hooks';
 import type { Workspace } from '@/types/api';
 import { BotAvatarEditor } from './BotAvatarEditor';
 import { SettingsCardBody, SettingsGroup, SettingRow } from '../components/SettingsLayout';
@@ -215,6 +222,12 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
   const [toolsAllowText, setToolsAllowText] = useState(joinList(bot?.tools_allow ?? []));
   const [toolsDenyText, setToolsDenyText] = useState(joinList(bot?.tools_deny ?? []));
   const [memoryScopes, setMemoryScopes] = useState<string[]>(bot?.memory_scopes ?? ['workspace']);
+  const [connectorGrants, setConnectorGrants] = useState<Record<string, ConnectorToolGrant>>(
+    bot?.connector_tools ?? {},
+  );
+  const { data: connectedApps } = useConnectedApps();
+  const usableApps = (connectedApps?.apps ?? []).filter((app) => app.connected);
+  const grantsRestricted = Object.keys(connectorGrants).length > 0;
   // Null until the reader changes the avatar: an untouched image/emoji is sent
   // back only if edited, and its fields (and unknown keys) stay as they are.
   const [avatarDraft, setAvatarDraft] = useState<Record<string, unknown> | null>(null);
@@ -249,6 +262,9 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
         if (!sameList(toolsAllow, bot.tools_allow)) patch.tools_allow = toolsAllow;
         if (!sameList(toolsDeny, bot.tools_deny)) patch.tools_deny = toolsDeny;
         if (!sameList(memoryScopes, bot.memory_scopes)) patch.memory_scopes = memoryScopes;
+        if (JSON.stringify(connectorGrants) !== JSON.stringify(bot.connector_tools ?? {})) {
+          patch.connector_tools = connectorGrants;
+        }
         // Only an avatar the reader changed goes in the patch: an untouched one
         // keeps the image/emoji (and unknown keys) the server already holds.
         if (avatarDraft !== null) patch.avatar = avatarDraft;
@@ -394,6 +410,56 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                   placeholder={t('bots.toolsDenyPlaceholder')}
                 />
               </FormField>
+              {usableApps.length > 0 && (
+                <FormField label={t('bots.connectedApps')}>
+                  <p className="text-[0.6875rem] leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {t('bots.connectedAppsHint')}
+                  </p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {usableApps.map((app) => {
+                      const checked = !grantsRestricted || Boolean(connectorGrants[app.slug]);
+                      return (
+                        <CheckboxChoice
+                          key={app.slug}
+                          checked={checked}
+                          onCheckedChange={() => {
+                            setConnectorGrants((current) => {
+                              if (!checked) {
+                                if (Object.keys(current).length === 0) return current;
+                                return { ...current, [app.slug]: { tools: '*' } };
+                              }
+                              const base: Record<string, ConnectorToolGrant> =
+                                Object.keys(current).length === 0
+                                  ? Object.fromEntries(
+                                      usableApps.map((entry) => [entry.slug, { tools: '*' as const }]),
+                                    )
+                                  : { ...current };
+                              delete base[app.slug];
+                              // Clearing the last selection means "no app tools";
+                              // a sentinel key keeps that distinct from {} (all).
+                              return Object.keys(base).length === 0
+                                ? { __none__: { tools: [] } }
+                                : base;
+                            });
+                          }}
+                        >
+                          {app.name}
+                        </CheckboxChoice>
+                      );
+                    })}
+                  </div>
+                  {grantsRestricted && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setConnectorGrants({})}
+                    >
+                      {t('bots.connectedAppsAll')}
+                    </Button>
+                  )}
+                </FormField>
+              )}
               <FormField label={t('bots.memoryScopes')}>
                 <div className="flex flex-wrap gap-x-4 gap-y-2">
                   {MEMORY_SCOPES.map((scope) => (

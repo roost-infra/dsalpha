@@ -6677,7 +6677,10 @@
     "chatNamed": "与 {{name}} 对话",
     "chatPaused": "恢复该 Bot 后才能对话",
     "chatFailed": "无法打开该对话，请重试。",
-    "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。"
+    "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。",
+    "connectedApps": "应用连接",
+    "connectedAppsHint": "选择这个 Bot 可以使用哪些已连接应用。全部勾选表示不限制；一旦取消某个应用，未列出的应用不会给它任何工具。",
+    "connectedAppsAll": "允许全部应用"
   },
   "conversations": {
     "moreSessions": "工作区与历史会话",
