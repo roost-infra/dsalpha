@@ -2774,6 +2774,11 @@
         "needs_bigger_computer": "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change its spec, or move this workspace to a computer of your own.",
         "needs_bigger_computer_plan": "Claude Code runs on Medium or larger cloud computers, and this workspace's computer is smaller. Change its spec or upgrade your dsalpha plan, or move this workspace to a computer of your own."
       }
+    },
+    "connectorConnect": {
+      "title": "Connect {{name}} to use it here",
+      "body": "This bot may use the app, but no account is connected yet.",
+      "action": "Connect app"
     }
   },
   "context": {

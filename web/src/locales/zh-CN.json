@@ -2799,6 +2799,11 @@
         "needs_bigger_computer": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格，或把此工作区移到你自己的电脑上。",
         "needs_bigger_computer_plan": "Claude Code 可在中型及以上规格的云端计算机上运行，而此工作区所在的计算机规格较小。你可以更改这台计算机的规格或升级 dsalpha 套餐，或把此工作区移到你自己的电脑上。"
       }
+    },
+    "connectorConnect": {
+      "title": "连接 {{name}} 后即可使用",
+      "body": "这个 Bot 被允许使用该应用，但还没有连接账号。",
+      "action": "去连接"
     }
   },
   "context": {

@@ -74,6 +74,7 @@ import SubagentStatusBar from './SubagentStatusBar';
 import TodoDrawer from './TodoDrawer';
 import { ComposerTray, ReconnectingChip, TrayDock } from './chatView/ComposerTray';
 import { ThreadBotChip } from './chatView/ThreadBotChip';
+import { ConnectorConnectCard } from './chatView/ConnectorConnectCard';
 import { useTrayContents } from './chatView/useTrayContents';
 import { useThreadCommands } from '../hooks/useCommands';
 import { ThreadCommandsContext } from './commands/threadCommandsContext';
@@ -1767,6 +1768,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       onDismiss={clearFallbackSuggestion}
                     />
                     <ThreadOffers model={threadModel} subagents={threadSubagents} summary={summaryHint} />
+                    <ConnectorConnectCard threadId={currentThreadId || threadId} />
                     <SelectionChips chips={chartSelectionChips} />
                     {/* At a file's foot the transcript is out of view, so the
                         turn's progress comes along with the composer. */}
