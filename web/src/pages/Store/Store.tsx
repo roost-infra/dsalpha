@@ -50,6 +50,7 @@ function Store() {
       market: t('store.categories.market'),
       event: t('store.categories.event'),
       risk: t('store.categories.risk'),
+      investor: t('store.categories.investor'),
     };
     return (bots.data?.categories ?? []).map((entry) => ({
       ...entry,

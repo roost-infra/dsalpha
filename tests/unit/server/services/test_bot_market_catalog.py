@@ -141,3 +141,25 @@ def test_the_catalog_is_read_once_and_cached():
     first = catalog_module.load_catalog()
     second = catalog_module.load_catalog()
     assert first is second
+
+
+def test_the_uzi_investor_roster_is_complete_and_role_play_only():
+    """Every investor in UZI-Skill's panel is a Bot, and none claims to be them.
+
+    The roster is derived data (see NOTICE); pinning the count catches a
+    generator that silently drops the tail of the 66, and the persona checks
+    keep the role-play boundary from being edited away.
+    """
+    investor_bots = [bot for bot in load_catalog().bots if bot.category == "investor"]
+
+    assert len(investor_bots) == 66
+    assert len({bot.slug for bot in investor_bots}) == 66
+    for bot in investor_bots:
+        assert bot.slug.startswith("uzi-"), bot.slug
+        assert "不代表本人观点" in bot.template.persona, bot.slug
+        assert "不构成买卖建议" in bot.template.persona, bot.slug
+        assert bot.template.tools_allow, bot.slug
+    buffett = next(bot for bot in investor_bots if bot.slug == "uzi-buffett")
+    assert buffett.featured
+    assert "Warren Buffett" in buffett.template.persona
+
