@@ -81,6 +81,11 @@ const INDEX_FAMILIES: Record<string, ExchangeInfo> = {
   GDAXI: { currency: 'EUR', foreign: true, tz: 'Europe/Berlin' },
   STOXX50E: { currency: 'EUR', foreign: true, tz: 'Europe/Berlin' },
   FCHI: { currency: 'EUR', foreign: true, tz: 'Europe/Paris' },
+  TWII: { currency: 'TWD', foreign: true, tz: 'Asia/Taipei' },
+  KS11: { currency: 'KRW', foreign: true, tz: 'Asia/Seoul' },
+  NSEI: { currency: 'INR', foreign: true, tz: 'Asia/Kolkata' },
+  BSESN: { currency: 'INR', foreign: true, tz: 'Asia/Kolkata' },
+  AXJO: { currency: 'AUD', foreign: true, tz: 'Australia/Sydney' },
 };
 
 /**
