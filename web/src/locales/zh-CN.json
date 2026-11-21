@@ -6680,7 +6680,10 @@
     "skillsStoredNote": "v2 才生效：当前不会按此限制该 Bot 可加载的技能。",
     "connectedApps": "应用连接",
     "connectedAppsHint": "选择这个 Bot 可以使用哪些已连接应用。全部勾选表示不限制；一旦取消某个应用，未列出的应用不会给它任何工具。",
-    "connectedAppsAll": "允许全部应用"
+    "connectedAppsAll": "允许全部应用",
+    "connectedToolsLabel": "{{name}} 的工具",
+    "connectedToolsPlaceholder": "全部工具；或逗号分隔的精确工具名",
+    "connectedToolsHint": "留空表示允许该应用的全部工具；也可以写精确的 Composio 工具名，例如 GITHUB_CREATE_AN_ISSUE。"
   },
   "conversations": {
     "moreSessions": "工作区与历史会话",
