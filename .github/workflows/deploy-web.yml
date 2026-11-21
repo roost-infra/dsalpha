@@ -153,12 +153,18 @@ jobs:
           mv "$LANDING_NAME.new" "$LANDING_NAME"
 
           TITLE=$(printf '%s' "$TITLE_B64" | base64 -d)
-          for _ in $(seq 1 5); do
-            if curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' https://127.0.0.1/ 2>/dev/null | grep -qF "$TITLE"; then break; fi
-            sleep 1
+          landing_ok=0
+          for _ in $(seq 1 15); do
+            if curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' -H 'Cache-Control: no-cache' https://127.0.0.1/ 2>/dev/null | grep -qF "$TITLE"; then
+              landing_ok=1
+              break
+            fi
+            sleep 2
           done
-          if ! curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' https://127.0.0.1/ 2>/dev/null | grep -qF "$TITLE"; then
-            echo "::error::landing health check failed; rolling back"
+          if [ "$landing_ok" != 1 ]; then
+            echo "::error::landing health check failed; expected title: $TITLE"
+            echo "served title: $(curl -fsS -m 3 -k -H 'Host: dsalpha.roostbots.com' -H 'Cache-Control: no-cache' https://127.0.0.1/ 2>/dev/null | grep -o '<title>[^<]*' | head -1 || true)"
+            echo "landing root: $LANDING_ROOT"
             rm -rf "$LANDING_NAME"
             if [ -d "$LANDING_NAME-prev-$TS" ]; then mv "$LANDING_NAME-prev-$TS" "$LANDING_NAME"; fi
             exit 1
@@ -170,4 +176,4 @@ jobs:
       - name: Verify the public entry
         run: |
           curl -fsS https://dsalpha.roostbots.com/chat | grep -q "$(cat build/index-asset.txt)"
-          curl -fsS https://dsalpha.roostbots.com/ | grep -qF "$(cat build/landing-title.txt)"
+          curl -fsS -H 'Cache-Control: no-cache' https://dsalpha.roostbots.com/ | grep -qF "$(cat build/landing-title.txt)"
