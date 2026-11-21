@@ -120,9 +120,21 @@ jobs:
           TS=$(date +%Y%m%d-%H%M%S)
           cd /opt/langalpha/web
 
+          # nginx serves a .gz beside each static file (gzip_static on). The
+          # build artifacts contain no .gz, so regenerate them in the new
+          # directories before the swap; otherwise every deploy silently
+          # drops the precompressed copies.
+          gzip_static() {
+            find "$1" -type f \
+              \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' \
+                 -o -name '*.json' -o -name '*.woff' -o -name '*.woff2' -o -name '*.ttf' \) \
+              -size +1024c ! -name '*.gz' -exec gzip -9 -k -f {} \;
+          }
+
           rm -rf dist.new
           mkdir dist.new
           tar -xzf "/tmp/dslpha-web-$SHA.tgz" -C dist.new
+          gzip_static dist.new
 
           if [ -d dist ]; then mv dist "dist-prev-$TS"; fi
           mv dist.new dist
@@ -149,6 +161,7 @@ jobs:
           rm -rf "$LANDING_NAME.new"
           mkdir "$LANDING_NAME.new"
           tar -xzf "/tmp/dslpha-landing-$SHA.tgz" -C "$LANDING_NAME.new"
+          gzip_static "$LANDING_NAME.new"
           if [ -d "$LANDING_NAME" ]; then mv "$LANDING_NAME" "$LANDING_NAME-prev-$TS"; fi
           mv "$LANDING_NAME.new" "$LANDING_NAME"
 
