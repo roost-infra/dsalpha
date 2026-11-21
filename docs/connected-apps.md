@@ -56,7 +56,6 @@ It is deliberately a composer-side strip, not a fake bot message.
 - **Managed broker.** A deployment either supplies one project key or each
   user supplies their own. The Cloudflare broker that keeps a shared key out of
   clients is an OpenMausBot deployment detail, not ported.
-- **Triggers/app events.** Composio triggers are not wired to routines.
 
 ## Managed broker
 
@@ -77,6 +76,49 @@ to be a public base the sandbox can reach; without one the page shows the
 configuration error and per-user keys still work.
 
 Per-user keys stay on the direct Composio MCP URL and their own vault key.
+
+## Connected-app triggers
+
+An automation can be started by a Composio trigger instead of a schedule:
+
+```json
+POST /api/v1/automations
+{
+  "name": "Triage new issues",
+  "instruction": "Read the issue and propose a fix.",
+  "trigger_type": "connector",
+  "trigger_config": {
+    "app": "github",
+    "event": "GITHUB_ISSUE_CREATED",
+    "filters": {"action": "opened"}
+  }
+}
+```
+
+`trigger_config.app` is the toolkit slug, `event` the Composio event name (or
+`*` for every event of that app), and `filters` an optional flat equality match
+over the payload. Connector automations have no `next_run_at`, so the due-poller
+never claims them.
+
+Composio delivers to:
+
+```
+POST /api/v1/connected-apps/events
+X-Composio-Webhook-Secret: $COMPOSIO_WEBHOOK_SECRET
+{
+  "user_id": "<Composio user id>",
+  "app": "github",
+  "event": "GITHUB_ISSUE_CREATED",
+  "payload": {"action": "opened", "title": "…"}
+}
+```
+
+The server maps the Composio user to its installation, matches active
+connector automations, creates the ordinary execution row and dispatches it
+through `AutomationScheduler`, so thread strategy, delivery and failure
+handling match scheduled runs. The event lands in the run's
+`additional_context` as `{"type": "connected_app_event", …}`. Unset
+`COMPOSIO_WEBHOOK_SECRET` disables the endpoint.
 
 ## Security notes
 

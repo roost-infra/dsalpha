@@ -330,6 +330,33 @@ async def list_all_automations(user_id: str, *, conn=None) -> List[Dict[str, Any
             return [dict(row) for row in await cur.fetchall()]
 
 
+async def list_connector_automations(
+    user_id: str, app: str, event: str
+) -> List[Dict[str, Any]]:
+    """Active automations watching one connected-app event.
+
+    ``event`` may be the exact Composio name or ``*`` for every event of the
+    app. The JSON guard keeps the read on the trigger_type index; filters are
+    applied by the caller, where a malformed config can be skipped.
+    """
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"""
+                SELECT {AUTOMATION_COLUMNS}
+                FROM automations
+                WHERE user_id = %s
+                  AND status = 'active'
+                  AND trigger_type = 'connector'
+                  AND trigger_config->>'app' = %s
+                  AND (trigger_config->>'event' = %s OR trigger_config->>'event' = '*')
+                ORDER BY created_at
+                """,
+                (user_id, app, event),
+            )
+            return [dict(row) for row in await cur.fetchall()]
+
+
 async def get_automation_file(
     user_id: str, file_name: str, *, conn=None, lock: bool = False
 ) -> Optional[Dict[str, Any]]:

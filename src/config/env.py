@@ -119,6 +119,10 @@ CONNECTED_APPS_API_BASE: str = os.getenv(
 ).rstrip("/")
 COMPOSIO_API_KEY: str = os.getenv("COMPOSIO_API_KEY", "").strip()
 
+# Shared secret a Composio trigger webhook must present. Unset disables the
+# connector-event endpoint (a connected app cannot start automations).
+COMPOSIO_WEBHOOK_SECRET: str = os.getenv("COMPOSIO_WEBHOOK_SECRET", "").strip()
+
 # Internal base URL the server-side PDF renderer (headless Chromium) loads
 # workspace HTML from. Must be the server's own loopback listen address so
 # Chromium fetches bytes from this process, not the public ingress.

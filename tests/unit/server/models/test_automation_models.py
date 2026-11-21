@@ -532,3 +532,53 @@ class TestAutomationRunsListResponse:
     def test_empty(self):
         resp = AutomationRunsListResponse(executions=[], has_more=False)
         assert resp.has_more is False
+
+
+class TestConnectorTriggers:
+    """A connected-app event is a schedule-free automation kind."""
+
+    def test_a_connector_trigger_accepts_an_app_and_event(self):
+        a = AutomationCreate(
+            name="Issue triage",
+            instruction="Read the issue.",
+            trigger_type="connector",
+            trigger_config={"app": "github", "event": "GITHUB_ISSUE_CREATED"},
+        )
+        assert a.trigger_config == {"app": "github", "event": "GITHUB_ISSUE_CREATED"}
+
+    def test_a_connector_trigger_does_not_need_a_schedule(self):
+        a = AutomationCreate(
+            name="Mail",
+            instruction="Read it.",
+            trigger_type="connector",
+            trigger_config={"app": "gmail", "event": "GMAIL_NEW_GMAIL_MESSAGE"},
+        )
+        assert a.cron_expression is None and a.next_run_at is None
+
+    def test_a_bad_connector_app_is_refused(self):
+        with pytest.raises(ValidationError):
+            AutomationCreate(
+                name="Bad",
+                instruction="x",
+                trigger_type="connector",
+                trigger_config={"app": "GitHub!", "event": "GITHUB_ISSUE_CREATED"},
+            )
+
+    def test_a_connector_trigger_refuses_a_foreign_schedule_field(self):
+        with pytest.raises(ValidationError):
+            AutomationCreate(
+                name="Bad",
+                instruction="x",
+                trigger_type="connector",
+                cron_expression="0 9 * * *",
+                trigger_config={"app": "github", "event": "GITHUB_ISSUE_CREATED"},
+            )
+
+    def test_a_star_event_covers_every_event_of_the_app(self):
+        a = AutomationCreate(
+            name="All GitHub",
+            instruction="x",
+            trigger_type="connector",
+            trigger_config={"app": "github", "event": "*"},
+        )
+        assert a.trigger_config["event"] == "*"
