@@ -1,0 +1,56 @@
+/* The in-chat missing-connection card: a compact strip above the composer, not
+   a transcript row, so it does not pretend the bot said it. */
+
+.connector-connect-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 10px;
+  background: var(--color-bg-card);
+}
+
+.connector-connect-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 7px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+.connector-connect-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.connector-connect-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.connector-connect-body {
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+@media (max-width: 640px) {
+  .connector-connect-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .connector-connect-copy {
+    flex-basis: calc(100% - 36px);
+  }
+}

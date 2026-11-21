@@ -43,6 +43,14 @@ from "unrestricted". The
 allow/deny lists still apply on top, and a tool no connected-app prefix claims
 is never filtered by this map.
 
+## In-chat connection card
+
+When a thread's bot has a grant for an app that has no connected account yet,
+the chat draws a compact card above the composer (GitHub, Gmail, …) linking to
+`/apps`. It reads the bot's `connector_tools` and the account's connected-app
+inventory; a bot with no grant map or an already-connected app draws nothing.
+It is deliberately a composer-side strip, not a fake bot message.
+
 ## What is deliberately not here yet
 
 - **Managed broker.** A deployment either supplies one project key or each
