@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "secedgar": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@cyanheads/secedgar-mcp-server@0.20.0"
+      ],
+      "env": {
+        "EDGAR_USER_AGENT": "dsalpha research (https://dsalpha.roostbots.com; support@dsalpha.roostbots.com)"
+      }
+    }
+  }
+}

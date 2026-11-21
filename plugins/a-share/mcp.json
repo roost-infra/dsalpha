@@ -1,0 +1,15 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "aktools": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "aktools==0.1.13",
+        "aktools-mcp"
+      ],
+      "env": {}
+    }
+  }
+}

@@ -405,6 +405,105 @@ SKILL_REGISTRY: dict[str, SkillDefinition] = {
         description="Design-quality reference for financial-research visual output: typography, color, composition, and avoiding generic AI aesthetics",
         skill_md_path="skills/ui-design/SKILL.md",
     ),
+    # Bundled trading plugins. Descriptions mirror the SKILL.md frontmatter
+    # verbatim (tests/unit/middleware/skills/test_skill_registry.py).
+    "a-share-market-review": SkillDefinition(
+        name="a-share-market-review",
+        description=(
+            "A-share close review: index moves, turnover, limit-up and "
+            "limit-down breadth, sector rotation, northbound and market money "
+            "flow, with an as-of stamp. Triggers on A股复盘, 今日盘面, market "
+            "recap, close review, 涨停家数, 北向资金, 板块轮动."
+        ),
+        skill_md_path="skills/a-share-market-review/SKILL.md",
+        command="a-share-market-review",
+        requires=("research-conventions",),
+    ),
+    "a-share-limit-up": SkillDefinition(
+        name="a-share-limit-up",
+        description=(
+            "A-share limit-up tape: first-board, consecutive-board, strong "
+            "and broken-board pools, the board ladder, and next-day "
+            "follow-through. Triggers on 涨停复盘, 连板, 炸板率, 打板情绪, "
+            "涨停梯队, limit-up analysis."
+        ),
+        skill_md_path="skills/a-share-limit-up/SKILL.md",
+        command="a-share-limit-up",
+        requires=("research-conventions",),
+    ),
+    "a-share-dragon-tiger": SkillDefinition(
+        name="a-share-dragon-tiger",
+        description=(
+            "A-share dragon-tiger list and money flow: brokerage and "
+            "institutional seats, hot-money follow-through, and individual or "
+            "sector fund flows. Triggers on 龙虎榜, 席位, 游资, 主力资金, "
+            "资金流, dragon tiger list."
+        ),
+        skill_md_path="skills/a-share-dragon-tiger/SKILL.md",
+        command="a-share-dragon-tiger",
+        requires=("research-conventions",),
+    ),
+    "a-share-fundamentals": SkillDefinition(
+        name="a-share-fundamentals",
+        description=(
+            "A-share fundamentals: financial statements and ratios, earnings "
+            "pre-announcements, research notes, announcements and valuation "
+            "snapshots. Triggers on A股财报, 业绩预告, 研报, 公告, 估值, "
+            "financial statements, earnings forecast."
+        ),
+        skill_md_path="skills/a-share-fundamentals/SKILL.md",
+        command="a-share-fundamentals",
+        requires=("research-conventions",),
+    ),
+    "sec-filing-review": SkillDefinition(
+        name="sec-filing-review",
+        description=(
+            "SEC filing review for US-listed companies: 10-K, 10-Q, 8-K and "
+            "proxy statements plus XBRL financials, with a checklist for "
+            "business, risk factors, MD&A, cash quality and red flags. Triggers "
+            "on 10-K, 10-Q, 8-K, SEC filing, annual report, quarterly report, "
+            "read the filing."
+        ),
+        skill_md_path="skills/sec-filing-review/SKILL.md",
+        command="sec-filing-review",
+        requires=("research-conventions",),
+    ),
+    "sec-ownership": SkillDefinition(
+        name="sec-ownership",
+        description=(
+            "SEC ownership and insider activity: Form 4 insider trades, 13F "
+            "institutional holdings, 13D/13G beneficial owners and fund "
+            "portfolios. Triggers on insider buying, 13F, 13D, institutional "
+            "holdings, Form 4, 内部人交易, 机构持仓."
+        ),
+        skill_md_path="skills/sec-ownership/SKILL.md",
+        command="sec-ownership",
+        requires=("research-conventions",),
+    ),
+    "sepa-trend-template": SkillDefinition(
+        name="sepa-trend-template",
+        description=(
+            "Mark Minervini's SEPA trend template and stage analysis for "
+            "growth stocks: the 8-point template, VCP, pivot entry, stop and "
+            "position sizing. Triggers on SEPA, Minervini, trend template, "
+            "VCP, stage 2, pivot, 趋势模板, 成长股买点."
+        ),
+        skill_md_path="skills/sepa-trend-template/SKILL.md",
+        command="sepa-trend-template",
+        requires=("research-conventions",),
+    ),
+    "market-regime": SkillDefinition(
+        name="market-regime",
+        description=(
+            "Market regime check across indices, volatility, breadth and "
+            "rates: risk-on or risk-off, trend and event calendar, with "
+            "position-sizing implications. Triggers on market regime, risk on "
+            "risk off, market environment, 市场环境, 风险偏好, 仓位."
+        ),
+        skill_md_path="skills/market-regime/SKILL.md",
+        command="market-regime",
+        requires=("research-conventions",),
+    ),
 }
 
 # Built-ins only the retired Flash agent loaded. Threads it started still name
