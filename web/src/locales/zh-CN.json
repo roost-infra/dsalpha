@@ -5779,7 +5779,9 @@
       "newSubagent": "新建子 Agent",
       "newSubagentHint": "从空白表单开始",
       "createWithAgent": "让 Agent 创建",
-      "createWithAgentHint": "在对话中描述，由 Agent 来编写"
+      "createWithAgentHint": "在对话中描述，由 Agent 来编写",
+      "hithinkFinance": "连接同花顺金融数据",
+      "hithinkFinanceHint": "A 股/指数/资讯等 8 个数据域，需要 API Key"
     },
     "stateFilter": {
       "all": "全部",
@@ -6558,6 +6560,21 @@
         "name": "内容工作台",
         "description": "灵感、初稿、排期、复盘和写作风格。"
       }
+    },
+    "hithink": {
+      "title": "连接同花顺金融数据",
+      "description": "把同花顺的 8 个金融数据域添加为连接器。API Key 存在你的 vault 里，连接器默认关闭。",
+      "keyLabel": "同花顺 API Key",
+      "keyPlaceholder": "粘贴同花顺 API Key",
+      "keyHint": "以密钥形式保存在 vault，不写入配置和日志。可在同花顺控制台创建。",
+      "keyPortal": "打开同花顺 API 控制台",
+      "add": "添加 {{count}} 个连接器",
+      "adding": "正在添加连接器…",
+      "addedTitle": "已添加 {{count}} 个连接器",
+      "addedNote": "它们默认是关闭的，请按需打开需要的域。",
+      "partialTitle": "部分连接器未添加",
+      "partialNote": "{{count}} 个条目未通过检查，其余已添加。",
+      "failed": "添加同花顺连接器失败。"
     }
   },
   "timezone": {

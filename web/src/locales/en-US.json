@@ -5841,7 +5841,9 @@
       "newSubagent": "New subagent",
       "newSubagentHint": "Start from a blank form",
       "createWithAgent": "Create with the agent",
-      "createWithAgentHint": "Describe it in a chat and the agent writes it"
+      "createWithAgentHint": "Describe it in a chat and the agent writes it",
+      "hithinkFinance": "Connect 同花顺 (Hithink)",
+      "hithinkFinanceHint": "A-share, index, news and more — needs an API key"
     },
     "stateFilter": {
       "all": "All",
@@ -6646,6 +6648,21 @@
         "name": "Content Desk",
         "description": "Ideas, drafts, schedule, review and voice."
       }
+    },
+    "hithink": {
+      "title": "Connect 同花顺 (Hithink)",
+      "description": "Add the eight Hithink finance data domains as connectors. The key is stored in your vault; the connectors start switched off.",
+      "keyLabel": "Hithink API key",
+      "keyPlaceholder": "Paste your Hithink API key",
+      "keyHint": "Stored in your vault as a secret; never written to the config or logs. Create one at the Hithink console.",
+      "keyPortal": "Open the Hithink API console",
+      "add": "Add {{count}} connectors",
+      "adding": "Adding connectors…",
+      "addedTitle": "{{count}} connectors added",
+      "addedNote": "They are listed switched off. Turn on the data domains you need.",
+      "partialTitle": "Some connectors were not added",
+      "partialNote": "{{count}} entries failed their check; the rest were added.",
+      "failed": "Could not add the 同花顺 connectors."
     }
   },
   "timezone": {
