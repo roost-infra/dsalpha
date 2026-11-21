@@ -1,0 +1,330 @@
+/* /apps — Connected apps. The page frame is the Store/Plugins shape: one
+   scroll port under the desktop drag strip and a centred reading column. Every
+   colour is a semantic token so both themes follow the app. */
+
+.apps-page {
+  --apps-gutter: clamp(16px, 3vw, 32px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.apps-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 48px;
+}
+
+.apps-container {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-inline: var(--apps-gutter);
+}
+
+.apps-header {
+  padding: var(--page-top) 0 18px;
+}
+
+.apps-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text-primary);
+}
+
+.apps-tagline {
+  margin-top: 6px;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.apps-deployment {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-hover);
+}
+
+/* ── Setup ──────────────────────────────────────────── */
+
+.apps-setup {
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+  background: var(--color-bg-card);
+}
+
+.apps-setup-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.apps-setup-copy {
+  margin-top: 6px;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  max-width: 68ch;
+}
+
+.apps-key-field {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 520px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.apps-key-hint {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+  max-width: 68ch;
+}
+
+.apps-setup-actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.apps-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+  color: var(--color-accent-primary);
+}
+
+.apps-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Toolbar ────────────────────────────────────────── */
+
+.apps-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.apps-search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  height: 36px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 8px;
+  background: var(--color-bg-page);
+  color: var(--color-text-tertiary);
+}
+
+.apps-search:focus-within {
+  border-color: var(--color-accent-primary);
+}
+
+.apps-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+
+.apps-count {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Grid and cards ─────────────────────────────────── */
+
+.apps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.apps-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+  background: var(--color-bg-card);
+}
+
+.apps-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.apps-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+}
+
+.apps-logo img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.apps-card-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.apps-card-title h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.apps-connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.6875rem;
+  color: var(--color-accent-primary);
+}
+
+.apps-card-desc {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.apps-accounts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.apps-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--color-bg-hover);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.apps-account-name {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apps-account-status {
+  font-size: 0.625rem;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--color-bg-page);
+  color: var(--color-text-tertiary);
+  text-transform: lowercase;
+}
+
+.apps-account-status.is-active {
+  color: var(--color-accent-primary);
+}
+
+.apps-account-status.is-error,
+.apps-account-status.is-failed {
+  color: var(--color-loss);
+}
+
+.apps-account-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 5px;
+  color: var(--color-text-tertiary);
+}
+
+.apps-account-remove:hover {
+  color: var(--color-loss);
+  background: var(--color-bg-page);
+}
+
+.apps-empty {
+  padding: 32px 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.apps-footnote {
+  margin-top: 28px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  max-width: 80ch;
+}
+
+@media (max-width: 640px) {
+  .apps-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .apps-toolbar {
+    align-items: stretch;
+  }
+
+  .apps-search {
+    max-width: none;
+  }
+}

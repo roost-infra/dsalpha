@@ -1,4 +1,4 @@
-import { Blocks, LayoutDashboard, MessagesSquare, Settings, Store, Timer } from 'lucide-react';
+import { AppWindow, Blocks, LayoutDashboard, MessagesSquare, Settings, Store, Timer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -28,6 +28,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/automations', icon: Timer, labelKey: 'sidebar.automations', match: 'exact-or-sub' },
   { key: '/plugins', icon: Blocks, labelKey: 'sidebar.plugins', match: 'exact-or-sub' },
   { key: '/store', icon: Store, labelKey: 'sidebar.store', match: 'exact-or-sub' },
+  { key: '/apps', icon: AppWindow, labelKey: 'sidebar.apps', match: 'exact-or-sub' },
 ];
 
 // Settings only appears in the mobile tab bar (desktop reaches it via AccountMenu).
