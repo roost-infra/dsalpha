@@ -133,7 +133,8 @@
     "resize": "调整侧边栏宽度",
     "plugins": "插件",
     "orders": "订单",
-    "menu": "菜单"
+    "menu": "菜单",
+    "store": "Bot 市场"
   },
   "account": {
     "menuLabel": "账号菜单"
@@ -7332,5 +7333,65 @@
       "unbind": "解绑失败"
     },
     "retry": "重试"
+  },
+  "store": {
+    "title": "Bot 市场",
+    "tagline": "把现成的分析师安装到你自己的某个工作区。安装会把模板的人设、工具和技能复制成一个新的 Bot，原模板保持不变。",
+    "builtinNote": "所有模板都由平台内置，免费安装。",
+    "openBot": "打开 {{name}}",
+    "featured": "精选",
+    "version": "v{{version}}",
+    "installed": "已安装",
+    "searchPlaceholder": "按名称或简介搜索 Bot",
+    "searchLabel": "搜索 Bot 市场",
+    "categoryAll": "全部分类",
+    "tabs": {
+      "all": "全部 Bot",
+      "installed": "已安装"
+    },
+    "empty": {
+      "all": "暂时还没有可安装的 Bot。",
+      "filtered": "没有符合这个搜索和分类的 Bot。",
+      "installed": "你还没有安装过 Bot。"
+    },
+    "clearFilters": "清除筛选",
+    "browseAll": "浏览全部 Bot",
+    "loadFailed": "无法加载 Bot 市场。",
+    "installsLoadFailed": "无法加载你已安装的 Bot。",
+    "install": "安装",
+    "installing": "安装中...",
+    "installTitle": "安装 {{name}}",
+    "installDescription": "选择工作区，再给新的 Bot 起个名字。模板的人设、工具和技能会被复制，原模板不受影响。",
+    "installWorkspace": "工作区",
+    "installName": "Bot 名称",
+    "installNamePlaceholder": "新 Bot 的名称",
+    "workspacesLoading": "正在加载工作区...",
+    "workspacesLoadFailed": "无法加载你的工作区。",
+    "noWorkspace": "请先创建一个非 Home 的工作区——安装 Bot 需要一个可以落脚的工作区。",
+    "installFailed": "无法安装这个 Bot。",
+    "installSuccessTitle": "Bot 已安装",
+    "installSuccess": "{{name}} 现在位于 {{workspace}}。",
+    "detail": {
+      "loading": "正在加载详情...",
+      "loadFailed": "无法加载这个 Bot。",
+      "persona": "人设",
+      "noPersona": "这个模板没有填写人设。",
+      "tools": "工具",
+      "noTools": "沿用默认工具集。",
+      "skills": "技能",
+      "noSkills": "没有声明技能。",
+      "installs": "已安装位置",
+      "installedIn": "{{workspace}}",
+      "noInstalls": "还没有安装到任何地方。",
+      "deferredNote": "技能、记忆范围和审批级别按原样复制。当前版本不会按技能名限制加载，也不会按审批级别自动批准。"
+    },
+    "categories": {
+      "research": "研究",
+      "earnings": "财报",
+      "market": "盘面",
+      "event": "事件",
+      "risk": "风控",
+      "investor": "投资大佬"
+    }
   }
 }
