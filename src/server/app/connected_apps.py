@@ -14,8 +14,15 @@ once to the browser that asked for it.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import hashlib
 
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
+
+from src.config.env import COMPOSIO_API_KEY
+from src.server.database import connected_apps as installation_db
 from src.server.dependencies.principal import (
     ReadPrincipal,
     WorkspaceWritePrincipal,
@@ -29,6 +36,85 @@ from src.server.models.connected_apps import (
 from src.server.services import connected_apps
 
 router = APIRouter(prefix="/api/v1/connected-apps", tags=["Connected apps"])
+
+#: A tool result (a pasted issue body, a canvas) can be large; an unbounded
+#: proxy body is a memory lever for anything holding a connector token.
+_MAX_MCP_BODY = 20 * 1024 * 1024
+
+
+def _proxy_token(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Missing connector token")
+    return token.strip()
+
+
+def _forward_headers(request: Request) -> dict[str, str]:
+    headers = {}
+    for name in (
+        "accept",
+        "content-type",
+        "mcp-session-id",
+        "mcp-protocol-version",
+        "mcp-method",
+        "mcp-name",
+        "last-event-id",
+    ):
+        value = request.headers.get(name)
+        if value:
+            headers[name] = value
+    headers["x-api-key"] = COMPOSIO_API_KEY
+    return headers
+
+
+@router.api_route("/mcp", methods=["GET", "POST", "DELETE"])
+async def composio_mcp_proxy(request: Request) -> StreamingResponse:
+    """The managed broker's MCP endpoint.
+
+    A sandbox authenticates with its per-account connector token. The server
+    looks up that installation and forwards the MCP request to the Composio
+    session, adding the deployment's shared key upstream. The key never enters
+    a user's vault, prompt or connector row.
+    """
+    token = _proxy_token(request)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    row = await installation_db.get_installation_by_proxy_token(digest)
+    if row is None:
+        raise HTTPException(status_code=401, detail="Unknown connector token")
+    if not COMPOSIO_API_KEY:
+        raise HTTPException(status_code=503, detail="Composio is not configured")
+
+    body = b""
+    if request.method == "POST":
+        body = await request.body()
+        if len(body) > _MAX_MCP_BODY:
+            raise HTTPException(status_code=413, detail="MCP request body too large")
+
+    client = httpx.AsyncClient(timeout=None)
+    upstream = client.build_request(
+        request.method,
+        row["mcp_url"],
+        headers=_forward_headers(request),
+        content=body or None,
+    )
+    try:
+        response = await client.send(upstream, stream=True)
+    except httpx.HTTPError:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail="Composio MCP is unreachable") from None
+
+    headers = {}
+    for name in ("content-type", "mcp-session-id", "cache-control"):
+        value = response.headers.get(name)
+        if value:
+            headers[name] = value
+    return StreamingResponse(
+        response.aiter_raw(),
+        status_code=response.status_code,
+        headers=headers,
+        background=BackgroundTask(response.aclose),
+    )
 
 
 def _raise(exc: connected_apps.ConnectedAppsError) -> None:

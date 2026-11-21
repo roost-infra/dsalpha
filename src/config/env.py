@@ -66,6 +66,14 @@ SERVER_BASE_URL: str = os.getenv("SERVER_BASE_URL", "http://localhost:8000")
 # unless the frontend is served from its own host.
 PUBLIC_APP_URL: str = (os.getenv("PUBLIC_APP_URL", "") or SERVER_BASE_URL).rstrip("/")
 
+# Where a sandbox reaches the Connected Apps MCP proxy when the deployment owns
+# one Composio project key. The proxy keeps that shared key server-side; each
+# account's connector authenticates with its own vault token. Unset, managed
+# mode is unavailable (each user supplies their own Composio key instead).
+CONNECTED_APPS_PROXY_BASE_URL: str = (
+    os.getenv("CONNECTED_APPS_PROXY_BASE_URL", "") or PUBLIC_API_BASE_URL
+).rstrip("/")
+
 # Where this server serves previews that a browser cannot open directly (a
 # private E2B computer's ports) and the pages the agent publishes: a scheme and
 # host, each preview and page a subdomain of it. Unset turns the preview proxy
