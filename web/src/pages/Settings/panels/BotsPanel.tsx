@@ -415,39 +415,71 @@ function BotEditor({ bot, workspaces, maxBots, initialWorkspaceId, onClose }: Bo
                   <p className="text-[0.6875rem] leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
                     {t('bots.connectedAppsHint')}
                   </p>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                  <div className="flex flex-col gap-2">
                     {usableApps.map((app) => {
-                      const checked = !grantsRestricted || Boolean(connectorGrants[app.slug]);
+                      const grant = connectorGrants[app.slug];
+                      const checked = !grantsRestricted || Boolean(grant);
+                      const exact = Array.isArray(grant?.tools) ? grant.tools.join(', ') : '';
                       return (
-                        <CheckboxChoice
-                          key={app.slug}
-                          checked={checked}
-                          onCheckedChange={() => {
-                            setConnectorGrants((current) => {
-                              if (!checked) {
-                                if (Object.keys(current).length === 0) return current;
-                                return { ...current, [app.slug]: { tools: '*' } };
-                              }
-                              const base: Record<string, ConnectorToolGrant> =
-                                Object.keys(current).length === 0
-                                  ? Object.fromEntries(
-                                      usableApps.map((entry) => [entry.slug, { tools: '*' as const }]),
-                                    )
-                                  : { ...current };
-                              delete base[app.slug];
-                              // Clearing the last selection means "no app tools";
-                              // a sentinel key keeps that distinct from {} (all).
-                              return Object.keys(base).length === 0
-                                ? { __none__: { tools: [] } }
-                                : base;
-                            });
-                          }}
-                        >
-                          {app.name}
-                        </CheckboxChoice>
+                        <div key={app.slug} className="flex flex-col gap-1">
+                          <CheckboxChoice
+                            checked={checked}
+                            onCheckedChange={() => {
+                              setConnectorGrants((current) => {
+                                if (!checked) {
+                                  if (Object.keys(current).length === 0) return current;
+                                  return { ...current, [app.slug]: { tools: '*' } };
+                                }
+                                const base: Record<string, ConnectorToolGrant> =
+                                  Object.keys(current).length === 0
+                                    ? Object.fromEntries(
+                                        usableApps.map((entry) => [entry.slug, { tools: '*' as const }]),
+                                      )
+                                    : { ...current };
+                                delete base.__none__;
+                                delete base[app.slug];
+                                // Clearing the last selection means "no app tools";
+                                // a sentinel key keeps that distinct from {} (all).
+                                return Object.keys(base).length === 0
+                                  ? { __none__: { tools: [] } }
+                                  : base;
+                              });
+                            }}
+                          >
+                            {app.name}
+                          </CheckboxChoice>
+                          {checked && (
+                            <Input
+                              value={exact}
+                              aria-label={t('bots.connectedToolsLabel', { name: app.name })}
+                              placeholder={t('bots.connectedToolsPlaceholder')}
+                              onChange={(event) => {
+                                const tools = splitList(event.target.value);
+                                setConnectorGrants((current) => {
+                                  const base: Record<string, ConnectorToolGrant> =
+                                    Object.keys(current).length === 0
+                                      ? Object.fromEntries(
+                                          usableApps.map((entry) => [entry.slug, { tools: '*' as const }]),
+                                        )
+                                      : { ...current };
+                                  delete base.__none__;
+                                  base[app.slug] = tools.length ? { tools } : { tools: '*' };
+                                  const everyAll = usableApps.every((entry) => {
+                                    const value = base[entry.slug]?.tools;
+                                    return value === '*';
+                                  });
+                                  return everyAll ? {} : base;
+                                });
+                              }}
+                            />
+                          )}
+                        </div>
                       );
                     })}
                   </div>
+                  <p className="text-[0.6875rem] leading-snug" style={{ color: 'var(--color-text-tertiary)' }}>
+                    {t('bots.connectedToolsHint')}
+                  </p>
                   {grantsRestricted && (
                     <Button
                       type="button"

@@ -37,8 +37,9 @@ A bot's `connector_tools` map names the apps it may use:
 
 An empty map (the default) grants every app. Once the map names any app, an app
 it omits grants that bot nothing — OpenMausBot's rule. The bot editor shows the
-connected apps as checkboxes; clearing the last one stores an explicit
-`__none__` marker so "no app tools" stays distinct from "unrestricted". The
+connected apps as checkboxes plus an optional exact-tool field; clearing the
+last one stores an explicit `__none__` marker so "no app tools" stays distinct
+from "unrestricted". The
 allow/deny lists still apply on top, and a tool no connected-app prefix claims
 is never filtered by this map.
 
