@@ -136,6 +136,7 @@ async def create_bot(principal: WorkspaceWritePrincipal, body: BotCreate) -> Bot
             skills=body.skills,
             tools_allow=body.tools_allow,
             tools_deny=body.tools_deny,
+            connector_tools=body.connector_tools,
             approval=body.approval,
             memory_scopes=body.memory_scopes,
         )

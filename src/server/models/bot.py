@@ -7,7 +7,7 @@ the unit of sandbox, files and workspace memory).
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -20,6 +20,16 @@ def _named(value: str) -> str:
     if not cleaned:
         raise ValueError("must not be blank")
     return cleaned
+
+
+class ConnectorToolGrant(BaseModel):
+    """One app's grant on a bot: all tools, or an exact list of Composio names."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tools: Union[Literal["*"], List[str]] = Field(
+        description='An app grants either "*" or an explicit list of tool names.'
+    )
 
 
 class BotCreate(BaseModel):
@@ -45,6 +55,9 @@ class BotCreate(BaseModel):
     skills: List[str] = Field(default_factory=list)
     tools_allow: List[str] = Field(default_factory=list)
     tools_deny: List[str] = Field(default_factory=list)
+    #: App slug -> grant. Empty means unrestricted; once any app is named, an
+    #: app it omits grants this bot nothing (OpenMausBot's rule).
+    connector_tools: Dict[str, ConnectorToolGrant] = Field(default_factory=dict)
     approval: Literal["ask", "edits", "auto", "full"] = "ask"
     memory_scopes: List[str] = Field(default_factory=lambda: ["workspace"])
 
@@ -64,6 +77,7 @@ class BotUpdate(BaseModel):
     skills: Optional[List[str]] = None
     tools_allow: Optional[List[str]] = None
     tools_deny: Optional[List[str]] = None
+    connector_tools: Optional[Dict[str, ConnectorToolGrant]] = None
     approval: Optional[Literal["ask", "edits", "auto", "full"]] = None
     memory_scopes: Optional[List[str]] = None
     status: Optional[Literal["active", "paused"]] = None
@@ -86,6 +100,9 @@ class BotInfo(BaseModel):
     skills: List[str] = Field(default_factory=list)
     tools_allow: List[str] = Field(default_factory=list)
     tools_deny: List[str] = Field(default_factory=list)
+    #: App slug -> grant. Empty means unrestricted; once any app is named, an
+    #: app it omits grants this bot nothing (OpenMausBot's rule).
+    connector_tools: Dict[str, ConnectorToolGrant] = Field(default_factory=dict)
     approval: Literal["ask", "edits", "auto", "full"] = "ask"
     memory_scopes: List[str] = Field(default_factory=lambda: ["workspace"])
     status: Literal["active", "paused"] = "active"

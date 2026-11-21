@@ -27,11 +27,23 @@ agent calls.
    `revoke_on_delete=true`, so the upstream grant is revoked rather than only
    hidden locally.
 
+## Per-bot grants
+
+A bot's `connector_tools` map names the apps it may use:
+
+```json
+{"github": {"tools": "*"}, "gmail": {"tools": ["GMAIL_FETCH_EMAILS"]}}
+```
+
+An empty map (the default) grants every app. Once the map names any app, an app
+it omits grants that bot nothing — OpenMausBot's rule. The bot editor shows the
+connected apps as checkboxes; clearing the last one stores an explicit
+`__none__` marker so "no app tools" stays distinct from "unrestricted". The
+allow/deny lists still apply on top, and a tool no connected-app prefix claims
+is never filtered by this map.
+
 ## What is deliberately not here yet
 
-- **Per-bot connector grants.** Every bot reaches the `composio` connector's
-  tools. Bot `tools_allow`/`tools_deny` still narrows tools, but there is no
-  per-app "all / exact list / none" switch yet.
 - **Managed broker.** A deployment either supplies one project key or each
   user supplies their own. The Cloudflare broker that keeps a shared key out of
   clients is an OpenMausBot deployment detail, not ported.
