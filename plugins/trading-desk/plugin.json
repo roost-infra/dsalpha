@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "trading-desk",
+  "version": "1.0.0",
+  "description": "Two discretionary trading skills: Mark Minervini's SEPA trend template for growth-stock setups, and a market-regime check that sets the risk budget before any setup is taken.",
+  "author": {
+    "name": "dsalpha",
+    "url": "https://dsalpha.roostbots.com"
+  },
+  "homepage": "https://dsalpha.roostbots.com",
+  "repository": "https://github.com/himself65/finance-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "trading",
+    "sepa",
+    "minervini",
+    "trend-template",
+    "vcp",
+    "market-regime",
+    "position-sizing"
+  ]
+}

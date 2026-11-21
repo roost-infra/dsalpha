@@ -1,0 +1,35 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "sec-filings",
+  "version": "1.0.0",
+  "description": "SEC EDGAR for US-listed companies: 10-K, 10-Q, 8-K, proxy statements, XBRL financials, insider Form 4s, 13F holdings and 13D/13G beneficial owners.",
+  "author": {
+    "name": "dsalpha",
+    "url": "https://dsalpha.roostbots.com"
+  },
+  "homepage": "https://dsalpha.roostbots.com",
+  "repository": "https://github.com/cyanheads/secedgar-mcp-server",
+  "license": "Apache-2.0",
+  "keywords": [
+    "sec",
+    "edgar",
+    "10-k",
+    "10-q",
+    "13f",
+    "form-4",
+    "filings",
+    "insider"
+  ],
+  "extensions": {
+    "ai.langalpha": {
+      "icon": "sec.gov",
+      "servers": {
+        "secedgar": {
+          "description": "SEC EDGAR filings, XBRL financials, material events, insider transactions, institutional holdings and beneficial owners",
+          "instruction": "Use for primary-source US disclosure: annual and quarterly reports, 8-K events, proxy statements, XBRL financials, Form 4 insider trades, 13F holdings and 13D/13G owners. Start with secedgar_company_search, then secedgar_search_filings for form types and dates, secedgar_get_filing for a section, and secedgar_get_financials for XBRL facts. Cite the accession number, form type and filing date beside every figure; a filing is the source of record, a summary is not.",
+          "tool_exposure_mode": "summary"
+        }
+      }
+    }
+  }
+}

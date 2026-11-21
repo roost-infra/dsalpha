@@ -61,3 +61,19 @@ Significant modifications made in this repository
    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
    SOFTWARE.
+
+8. Added the bundled ``a-share`` plugin, which wraps AKTools
+   (https://github.com/akfamily/aktools), Copyright AKFamily, MIT License.
+   The skills in that bundle are authored here.
+
+9. Added the bundled ``sec-filings`` plugin, which wraps
+   ``@cyanheads/secedgar-mcp-server``
+   (https://github.com/cyanheads/secedgar-mcp-server), Apache License 2.0.
+   The skills in that bundle are authored here.
+
+10. Added the bundled ``trading-desk`` skills. ``sepa-trend-template`` is adapted
+    from ``himself65/finance-skills`` (https://github.com/himself65/finance-skills),
+    MIT License, Copyright its authors; ``market-regime`` is adapted from
+    ``tradermonty/claude-trading-skills``
+    (https://github.com/tradermonty/claude-trading-skills), MIT License, Copyright
+    its authors. Both are rewritten for dsalpha's tools.
