@@ -52,7 +52,10 @@ export function BotDetailDialog({
         style={{ backgroundColor: 'var(--color-bg-page)', borderColor: 'var(--color-border-muted)' }}
       >
         <DialogHeader>
-          <DialogTitle className="store-dialog-title">{title}</DialogTitle>
+          <DialogTitle className="store-dialog-title">
+            {data?.icon && <span className="store-detail-icon" aria-hidden="true">{data.icon}</span>}
+            {title}
+          </DialogTitle>
           <DialogDescription>
             {data?.summary ?? t('store.detail.loading')}
           </DialogDescription>

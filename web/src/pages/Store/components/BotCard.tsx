@@ -31,7 +31,11 @@ export function BotCard({
     >
       <span className="store-card-top">
         <span className="store-card-mark" aria-hidden="true">
-          <Bot className="h-4 w-4" />
+          {bot.icon ? (
+            <span className="store-card-emoji">{bot.icon}</span>
+          ) : (
+            <Bot className="h-4 w-4" />
+          )}
         </span>
         <span className="store-card-titles">
           <span className="store-card-name">{bot.name}</span>
