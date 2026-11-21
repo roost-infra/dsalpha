@@ -248,6 +248,7 @@ function Apps() {
           )}
 
           {failure && <ErrorBanner error={failure} />}
+          {status?.error && <ErrorBanner error={status.error} />}
           {query.isError && (
             <ErrorBanner error={failureText(query.error, t('apps.loadFailed'))} />
           )}

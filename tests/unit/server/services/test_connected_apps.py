@@ -64,7 +64,7 @@ async def test_catalog_falls_back_to_the_curated_list():
 async def test_connect_returns_the_oauth_link_and_names_the_toolkit():
     request = AsyncMock(return_value={"redirect_url": "https://connect.example/oauth"})
     with (
-        patch.object(composio, "stored_key", AsyncMock(return_value="ak_key")),
+        patch.object(composio, "key_mode", AsyncMock(return_value=("ak_key", False))),
         patch.object(
             composio,
             "ensure_installation",
@@ -89,7 +89,7 @@ async def test_connect_returns_the_oauth_link_and_names_the_toolkit():
 async def test_disconnect_revokes_at_composio():
     request = AsyncMock(return_value={})
     with (
-        patch.object(composio, "stored_key", AsyncMock(return_value="ak_key")),
+        patch.object(composio, "key_mode", AsyncMock(return_value=("ak_key", False))),
         patch.object(composio, "_request", request),
     ):
         await composio.disconnect_account("u-1", "ca-1")
@@ -107,7 +107,13 @@ async def test_a_new_key_creates_a_session_and_registers_the_connector():
             "mcp": {"type": "http", "url": "https://mcp.composio.dev/session/abc"},
         }
     )
-    saved = AsyncMock(return_value={"user_id": "u-1", "session_id": "s-1"})
+    saved = AsyncMock(
+        return_value={
+            "user_id": "u-1",
+            "session_id": "s-1",
+            "mcp_url": "https://mcp.composio.dev/session/abc",
+        }
+    )
     connector = AsyncMock()
     with (
         patch.object(composio, "_request", upstream),
@@ -121,7 +127,11 @@ async def test_a_new_key_creates_a_session_and_registers_the_connector():
     assert row["session_id"] == "s-1"
     saved.assert_awaited_once()
     assert saved.await_args.kwargs["mcp_url"] == "https://mcp.composio.dev/session/abc"
-    connector.assert_awaited_once_with("u-1", "https://mcp.composio.dev/session/abc")
+    connector.assert_awaited_once_with(
+        "u-1",
+        "https://mcp.composio.dev/session/abc",
+        {"x-api-key": "${vault:COMPOSIO_API_KEY}"},
+    )
 
 
 @pytest.mark.asyncio
@@ -161,7 +171,11 @@ async def test_re_entering_a_working_key_keeps_the_existing_session():
         await composio.save_key("u-1", "ak_key")
 
     recreate.assert_not_awaited()
-    connector.assert_awaited_once_with("u-1", "https://mcp.composio.dev/session/old")
+    connector.assert_awaited_once_with(
+        "u-1",
+        "https://mcp.composio.dev/session/old",
+        {"x-api-key": "${vault:COMPOSIO_API_KEY}"},
+    )
 
 
 @pytest.mark.asyncio
@@ -179,4 +193,65 @@ async def test_a_key_from_another_project_recreates_the_session():
     ):
         await composio.save_key("u-1", "ak_new")
 
-    recreate.assert_awaited_once_with("u-1", "ak_new", recreate=True)
+    recreate.assert_awaited_once_with("u-1", "ak_new", managed=False, recreate=True)
+
+
+@pytest.mark.asyncio
+async def test_managed_mode_wires_a_proxy_and_keeps_the_shared_key_out_of_the_vault():
+    existing = {
+        "session_id": "s-1",
+        "composio_user_id": "dsalpha_1",
+        "mcp_url": "https://mcp.composio.dev/session/abc",
+        "proxy_token_hash": "hash",
+    }
+    with (
+        patch.object(composio, "CONNECTED_APPS_PROXY_BASE_URL", "https://api.example"),
+        patch.object(composio, "_request", AsyncMock(return_value={"session_id": "s-1"})),
+        patch.object(composio, "_upsert_connector", AsyncMock()) as connector,
+        patch.object(composio, "_save_key", AsyncMock()) as save_key,
+        patch.object(composio, "installation_db") as db,
+    ):
+        db.get_installation = AsyncMock(return_value=existing)
+        await composio.ensure_installation("u-1", "ak_shared", managed=True)
+
+    save_key.assert_not_awaited()
+    connector.assert_awaited_once_with(
+        "u-1",
+        "https://api.example/api/v1/connected-apps/mcp",
+        {"Authorization": "Bearer ${vault:COMPOSIO_CONNECTOR_TOKEN}"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_proxy_token_is_written_to_the_vault_and_only_its_hash_to_the_row():
+    installation = {
+        "session_id": "s-1",
+        "composio_user_id": "dsalpha_1",
+        "mcp_url": "https://mcp.composio.dev/session/abc",
+    }
+    save_token = AsyncMock()
+    save_row = AsyncMock()
+    with (
+        patch.object(composio, "_save_proxy_token", save_token),
+        patch.object(composio.installation_db, "save_installation", save_row),
+    ):
+        token = await composio._proxy_token_for("u-1", installation)
+
+    save_token.assert_awaited_once_with("u-1", token)
+    kwargs = save_row.await_args.kwargs
+    assert kwargs["proxy_token_hash"] == composio._token_hash(token)
+    assert kwargs["proxy_token_hash"] != token
+
+
+@pytest.mark.asyncio
+async def test_status_names_managed_mode_and_its_configuration_error():
+    with (
+        patch.object(composio, "key_mode", AsyncMock(return_value=("ak_shared", True))),
+        patch.object(composio, "CONNECTED_APPS_PROXY_BASE_URL", ""),
+    ):
+        configured, managed, apps, error = await composio.status("u-1")
+
+    assert configured is True
+    assert managed is True
+    assert apps == []
+    assert error and "CONNECTED_APPS_PROXY_BASE_URL" in error

@@ -58,6 +58,26 @@ It is deliberately a composer-side strip, not a fake bot message.
   clients is an OpenMausBot deployment detail, not ported.
 - **Triggers/app events.** Composio triggers are not wired to routines.
 
+## Managed broker
+
+A deployment that sets one `COMPOSIO_API_KEY` does **not** write it into every
+user's vault. The session is created server-side, and the connector points at
+this server's MCP proxy:
+
+```
+url: https://<PUBLIC_API_BASE_URL>/api/v1/connected-apps/mcp
+Authorization: Bearer ${vault:COMPOSIO_CONNECTOR_TOKEN}
+```
+
+The vault holds only the random per-account connector token; the installation
+row stores its SHA-256 hash. The proxy looks the row up by that hash and adds
+the shared key upstream, so a sandbox never receives the deployment key.
+Managed mode needs `CONNECTED_APPS_PROXY_BASE_URL` (or `PUBLIC_API_BASE_URL`)
+to be a public base the sandbox can reach; without one the page shows the
+configuration error and per-user keys still work.
+
+Per-user keys stay on the direct Composio MCP URL and their own vault key.
+
 ## Security notes
 
 - Provider tokens are never in dsalpha's database, prompts or renderer.

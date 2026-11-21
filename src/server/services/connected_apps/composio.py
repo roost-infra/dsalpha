@@ -14,13 +14,19 @@ token stays with Composio, and disconnecting deletes the connected account with
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import secrets
 import uuid
 from typing import Any, Optional
 
 import httpx
 
-from src.config.env import COMPOSIO_API_KEY, CONNECTED_APPS_API_BASE
+from src.config.env import (
+    COMPOSIO_API_KEY,
+    CONNECTED_APPS_API_BASE,
+    CONNECTED_APPS_PROXY_BASE_URL,
+)
 from src.server.database import connected_apps as installation_db
 from src.server.database.mcp_servers import (
     create_catalog_server,
@@ -29,6 +35,7 @@ from src.server.database.mcp_servers import (
 )
 from src.server.database.user_vault_secrets import (
     create_user_secret,
+    delete_user_secret,
     get_user_secret_names,
     get_user_secrets_decrypted,
     update_user_secret,
@@ -38,6 +45,9 @@ from src.server.models.connected_apps import ConnectedAccount, ConnectedApp
 logger = logging.getLogger(__name__)
 
 VAULT_SECRET = "COMPOSIO_API_KEY"
+#: The managed broker's per-account bearer token. It is not the Composio key;
+#: the server adds that upstream.
+PROXY_SECRET = "COMPOSIO_CONNECTOR_TOKEN"
 CONNECTOR_NAME = "composio"
 CONNECTOR_DESCRIPTION = "Connected external apps through Composio"
 CONNECTOR_INSTRUCTION = (
@@ -145,8 +155,7 @@ def _trusted_mcp_url(url: str) -> bool:
     )
 
 
-async def stored_key(user_id: str) -> Optional[str]:
-    """The user's Composio key from the vault, else the deployment's."""
+async def _vault_key(user_id: str) -> Optional[str]:
     try:
         names = await get_user_secret_names(user_id)
         if VAULT_SECRET in names:
@@ -155,38 +164,85 @@ async def stored_key(user_id: str) -> Optional[str]:
                 return secrets[VAULT_SECRET]
     except Exception:  # noqa: BLE001 - an unreadable vault must not 500 the status
         logger.warning("[connected-apps] could not read the vault", exc_info=True)
-    return COMPOSIO_API_KEY or None
+    return None
 
 
-def using_deployment_key(user_id: str, stored: Optional[str]) -> bool:
-    """Whether the only usable key is the deployment's, which changes setup copy."""
-    return bool(COMPOSIO_API_KEY and stored == COMPOSIO_API_KEY)
+async def key_mode(user_id: str) -> tuple[Optional[str], bool]:
+    """(key, managed). A user's own key is direct; the deployment's is proxied."""
+    key = await _vault_key(user_id)
+    if key:
+        return key, False
+    return (COMPOSIO_API_KEY or None), bool(COMPOSIO_API_KEY)
 
 
-async def _save_key(user_id: str, key: str) -> None:
+async def stored_key(user_id: str) -> Optional[str]:
+    """The effective Composio key (kept for callers that only need it)."""
+    key, _managed = await key_mode(user_id)
+    return key
+
+
+async def _save_secret(user_id: str, name: str, value: str, description: str) -> None:
     names = await get_user_secret_names(user_id)
-    if VAULT_SECRET in names:
-        await update_user_secret(
-            user_id,
-            VAULT_SECRET,
-            value=key,
-            description="Composio project key for Connected apps",
-        )
+    if name in names:
+        await update_user_secret(user_id, name, value=value, description=description)
         return
     try:
-        await create_user_secret(
-            user_id,
-            VAULT_SECRET,
-            key,
-            "Composio project key for Connected apps",
-        )
+        await create_user_secret(user_id, name, value, description)
     except Exception as exc:  # SecretExists from a race, or vault disabled
         if "already exists" in str(exc):
-            await update_user_secret(user_id, VAULT_SECRET, value=key)
+            await update_user_secret(user_id, name, value=value)
             return
         raise ConnectedAppsError(
             "The vault is not available; ask the operator to configure it."
         ) from exc
+
+
+async def _save_key(user_id: str, key: str) -> None:
+    await _save_secret(
+        user_id, VAULT_SECRET, key, "Composio project key for Connected apps"
+    )
+
+
+async def _save_proxy_token(user_id: str, token: str) -> None:
+    await _save_secret(
+        user_id,
+        PROXY_SECRET,
+        token,
+        "Connected apps connector token",
+    )
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _proxy_base() -> str:
+    return CONNECTED_APPS_PROXY_BASE_URL.rstrip("/")
+
+
+def _proxy_url() -> str:
+    base = _proxy_base()
+    if not base:
+        raise ConnectedAppsError(
+            "Managed Connected apps need CONNECTED_APPS_PROXY_BASE_URL "
+            "(or PUBLIC_API_BASE_URL) so sandboxes can reach the proxy.",
+            status=503,
+        )
+    return f"{base}/api/v1/connected-apps/mcp"
+
+
+async def _proxy_token_for(user_id: str, installation: dict[str, Any]) -> str:
+    """A fresh broker token whose hash the installation row keeps."""
+    token = secrets.token_urlsafe(32)
+    await _save_proxy_token(user_id, token)
+    await installation_db.save_installation(
+        user_id,
+        composio_user_id=installation["composio_user_id"],
+        session_id=installation["session_id"],
+        mcp_url=installation["mcp_url"],
+        proxy_token_hash=_token_hash(token),
+    )
+    return token
 
 
 async def validate_key(key: str) -> None:
@@ -197,9 +253,21 @@ async def validate_key(key: str) -> None:
 
 
 async def ensure_installation(
-    user_id: str, key: str, *, recreate: bool = False
+    user_id: str, key: str, *, managed: bool = False, recreate: bool = False
 ) -> dict[str, Any]:
-    """The account's Composio session, created once and reused after that."""
+    """The account's Composio session, created once and reused after that.
+
+    A user's own key keeps the direct hosted MCP URL and its vault key header.
+    The deployment's key goes through the server proxy: the connector carries a
+    per-account bearer token, and the shared key stays in this process.
+    """
+    if managed and not _proxy_base():
+        raise ConnectedAppsError(
+            "Managed Connected apps need CONNECTED_APPS_PROXY_BASE_URL "
+            "(or PUBLIC_API_BASE_URL) so sandboxes can reach the proxy.",
+            status=503,
+        )
+
     if not recreate:
         existing = await installation_db.get_installation(user_id)
         if existing:
@@ -209,12 +277,15 @@ async def ensure_installation(
                     f"/tool_router/session/{existing['session_id']}",
                     key,
                 )
-                return existing
             except ConnectedAppsError as exc:
                 # A key from another project cannot read the old session; keep
                 # it only on a transient upstream failure.
                 if exc.status not in (401, 403, 404):
+                    await _wire_connector(user_id, existing, managed)
                     return existing
+            else:
+                await _wire_connector(user_id, existing, managed)
+                return existing
 
     composio_user_id = f"dsalpha_{uuid.uuid4().hex}"
     session = await _request(
@@ -244,26 +315,53 @@ async def ensure_installation(
     if not isinstance(mcp_url, str) or not _trusted_mcp_url(mcp_url):
         raise ConnectedAppsError("Composio returned an untrusted MCP endpoint.")
 
-    await _save_key(user_id, key)
+    if not managed:
+        await _save_key(user_id, key)
     row = await installation_db.save_installation(
         user_id,
         composio_user_id=composio_user_id,
         session_id=session_id,
         mcp_url=mcp_url,
+        proxy_token_hash=None,
     )
-    await _upsert_connector(user_id, mcp_url)
+    if managed:
+        await _proxy_token_for(user_id, row)
+        row = await installation_db.get_installation(user_id) or row
+    await _wire_connector(user_id, row, managed)
     return row
 
 
-async def _upsert_connector(user_id: str, mcp_url: str) -> None:
+async def _wire_connector(
+    user_id: str, installation: dict[str, Any], managed: bool
+) -> None:
+    """Point the one connector at the right endpoint for this key mode."""
+    if managed:
+        if not installation.get("proxy_token_hash"):
+            await _proxy_token_for(user_id, installation)
+        await _upsert_connector(
+            user_id,
+            _proxy_url(),
+            {"Authorization": f"Bearer ${{vault:{PROXY_SECRET}}}"},
+        )
+        return
+    await _upsert_connector(
+        user_id,
+        installation["mcp_url"],
+        {"x-api-key": f"${{vault:{VAULT_SECRET}}}"},
+    )
+
+
+async def _upsert_connector(
+    user_id: str, mcp_url: str, headers: dict[str, str]
+) -> None:
     fields = {
         "transport": "http",
         "url": mcp_url,
-        "headers": {"x-api-key": f"${{vault:{VAULT_SECRET}}}"},
+        "headers": headers,
         "description": CONNECTOR_DESCRIPTION,
         "instruction": CONNECTOR_INSTRUCTION,
         "tool_exposure_mode": "summary",
-        # tools/list needs the key too: without resolving the vault on
+        # tools/list needs the credential too: without resolving the vault on
         # discovery the connector would look empty and never register tools.
         "discovery_uses_secrets": True,
         "enabled": True,
@@ -360,23 +458,22 @@ async def catalog(user_id: str, key: str, installation: dict[str, Any]) -> list[
 
 async def status(user_id: str) -> tuple[bool, bool, list[ConnectedApp], Optional[str]]:
     """(configured, deployment_key, apps, error) for the page."""
-    key = await stored_key(user_id)
+    key, managed = await key_mode(user_id)
     if not key:
         return False, False, [], None
-    deployment = using_deployment_key(user_id, key)
     try:
-        installation = await ensure_installation(user_id, key)
+        installation = await ensure_installation(user_id, key, managed=managed)
         apps = await catalog(user_id, key, installation)
-        return True, deployment, apps, None
+        return True, managed, apps, None
     except ConnectedAppsError as exc:
-        return True, deployment, [], str(exc)
+        return True, managed, [], str(exc)
 
 
 async def connect_app(user_id: str, slug: str, alias: Optional[str]) -> str:
-    key = await stored_key(user_id)
+    key, managed = await key_mode(user_id)
     if not key:
         raise ConnectedAppsError("Connected apps are not configured yet.", status=400)
-    installation = await ensure_installation(user_id, key)
+    installation = await ensure_installation(user_id, key, managed=managed)
     body: dict[str, Any] = {"toolkit": slug}
     if alias:
         body["alias"] = alias
@@ -394,7 +491,7 @@ async def connect_app(user_id: str, slug: str, alias: Optional[str]) -> str:
 
 
 async def disconnect_account(user_id: str, account_id: str) -> None:
-    key = await stored_key(user_id)
+    key, _managed = await key_mode(user_id)
     if not key:
         raise ConnectedAppsError("Connected apps are not configured yet.", status=400)
     await _request(
@@ -419,12 +516,12 @@ async def save_key(user_id: str, key: str) -> None:
                 key,
             )
             await _save_key(user_id, key)
-            await _upsert_connector(user_id, existing["mcp_url"])
+            await _wire_connector(user_id, existing, managed=False)
             return
         except ConnectedAppsError as exc:
             if exc.status not in (401, 403, 404):
                 raise
-    await ensure_installation(user_id, key, recreate=True)
+    await ensure_installation(user_id, key, managed=False, recreate=True)
 
 
 async def disconnect_all(user_id: str) -> None:

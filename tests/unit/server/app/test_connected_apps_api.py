@@ -9,7 +9,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import HTTPException
+import httpx
+from fastapi import HTTPException, Request
 
 from src.server.app import connected_apps as api
 from src.server.dependencies.principal import Principal
@@ -71,3 +72,67 @@ async def test_disconnect_returns_ok():
 
     assert answer == {"ok": True}
     disconnect.assert_awaited_once_with("u-1", "ca-1")
+
+
+def _request(method: str = "POST", *, token: str | None = "connector-token", body: bytes = b'{"x":1}'):
+    headers = []
+    if token is not None:
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+    headers.append((b"content-type", b"application/json"))
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": "/api/v1/connected-apps/mcp",
+        "headers": headers,
+        "query_string": b"",
+    }
+    sent = False
+
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(scope, receive)
+
+
+@pytest.mark.asyncio
+async def test_the_managed_proxy_rejects_an_unknown_connector_token():
+    with patch.object(api.installation_db, "get_installation_by_proxy_token", AsyncMock(return_value=None)):
+        with pytest.raises(HTTPException) as caught:
+            await api.composio_mcp_proxy(_request())
+    assert caught.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_the_managed_proxy_adds_the_shared_key_upstream():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
+
+    transport = httpx.MockTransport(handler)
+    real_async_client = httpx.AsyncClient
+
+    def client_factory(*args, **kwargs):
+        return real_async_client(transport=transport)
+
+    with (
+        patch.object(api.httpx, "AsyncClient", client_factory),
+        patch.object(api, "COMPOSIO_API_KEY", "ak_shared"),
+        patch.object(
+            api.installation_db,
+            "get_installation_by_proxy_token",
+            AsyncMock(return_value={"mcp_url": "https://mcp.composio.dev/session/abc"}),
+        ),
+    ):
+        response = await api.composio_mcp_proxy(_request())
+
+    assert response.status_code == 200
+    assert len(seen) == 1
+    assert seen[0].url == "https://mcp.composio.dev/session/abc"
+    assert seen[0].headers["x-api-key"] == "ak_shared"
+    assert "connector-token" not in str(seen[0].headers)

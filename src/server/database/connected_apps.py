@@ -41,6 +41,7 @@ async def save_installation(
     composio_user_id: str,
     session_id: str,
     mcp_url: str,
+    proxy_token_hash: Optional[str] = None,
     conn=None,
 ) -> dict[str, Any]:
     async with get_db_connection(conn) as owned:
@@ -48,18 +49,32 @@ async def save_installation(
             await cur.execute(
                 """
                 INSERT INTO connected_app_installations
-                    (user_id, composio_user_id, session_id, mcp_url)
-                VALUES (%s, %s, %s, %s)
+                    (user_id, composio_user_id, session_id, mcp_url, proxy_token_hash)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE SET
                     composio_user_id = EXCLUDED.composio_user_id,
                     session_id = EXCLUDED.session_id,
                     mcp_url = EXCLUDED.mcp_url,
+                    proxy_token_hash = EXCLUDED.proxy_token_hash,
                     updated_at = NOW()
                 RETURNING *
                 """,
-                (user_id, composio_user_id, session_id, mcp_url),
+                (user_id, composio_user_id, session_id, mcp_url, proxy_token_hash),
             )
             return _row(await cur.fetchone()) or {}
+
+
+async def get_installation_by_proxy_token(
+    token_hash: str, *, conn=None
+) -> dict[str, Any] | None:
+    async with get_db_connection(conn) as owned:
+        async with owned.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM connected_app_installations "
+                "WHERE proxy_token_hash = %s",
+                (token_hash,),
+            )
+            return _row(await cur.fetchone())
 
 
 async def delete_installation(user_id: str, *, conn=None) -> None:
