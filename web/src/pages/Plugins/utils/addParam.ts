@@ -9,7 +9,14 @@
  * naturally single-shot, and it survives a reload the way a deep link should.
  */
 
-export type AddIntent = 'plugin' | 'server' | 'import' | 'skill' | 'subagent' | 'subagent-chat';
+export type AddIntent =
+  | 'plugin'
+  | 'server'
+  | 'import'
+  | 'hithink'
+  | 'skill'
+  | 'subagent'
+  | 'subagent-chat';
 
 export const ADD_PARAM = 'add';
 
@@ -17,6 +24,7 @@ const INTENTS: ReadonlySet<string> = new Set<AddIntent>([
   'plugin',
   'server',
   'import',
+  'hithink',
   'skill',
   'subagent',
   'subagent-chat',
@@ -27,6 +35,7 @@ export const ADD_INTENT_TAB: Record<AddIntent, string> = {
   plugin: 'plugins',
   server: 'mcp',
   import: 'mcp',
+  hithink: 'mcp',
   skill: 'skills',
   subagent: 'subagents',
   'subagent-chat': 'subagents',

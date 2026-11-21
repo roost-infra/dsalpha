@@ -74,6 +74,11 @@ export const ADD_ROUTES: Record<AddSection, AddRoute[]> = {
   mcp: [
     { intent: 'server', key: 'plugins.addMenu.addServer' },
     { intent: 'import', key: 'plugins.addMenu.importServers' },
+    {
+      intent: 'hithink',
+      key: 'plugins.addMenu.hithinkFinance',
+      hintKey: 'plugins.addMenu.hithinkFinanceHint',
+    },
   ],
   skills: [{ intent: 'skill', key: 'plugins.addMenu.uploadSkill' }],
   subagents: [

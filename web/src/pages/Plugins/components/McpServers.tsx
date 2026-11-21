@@ -38,6 +38,7 @@ import { useWorkspaceOptions } from '../hooks/useWorkspaceOptions';
 import { isEffectivelyEnabled, isPluginOwned } from '../utils/provenance';
 import { connectorRowKey, type ConnectorRow } from '../utils/rowKeys';
 import { CatalogStart } from './CatalogStart';
+import { HithinkPresetDialog } from './connectors/HithinkPresetDialog';
 import { REGISTRY_NOTE_ID } from './OauthRowParts';
 import { PluginListFrame } from './PluginListFrame';
 import { RetryNote } from './RetryNote';
@@ -155,8 +156,13 @@ export function McpServers() {
   // registry is what the build ships, so that answer is as good as it was.
   const registryUnavailable = !brokerages && !!brokeragesError;
   const [builtinTogglingName, setBuiltinTogglingName] = useState<string | null>(null);
+  const [hithinkOpen, setHithinkOpen] = useState(false);
 
-  useAddIntent({ server: openAdd, import: openImport });
+  useAddIntent({
+    server: openAdd,
+    import: openImport,
+    hithink: () => setHithinkOpen(true),
+  });
 
   const servers = catalog?.servers ?? [];
   // A save that went by way of a sign-in came back without finishing: its
@@ -409,7 +415,11 @@ export function McpServers() {
         {list.showStart && (
           <CatalogStart
             scope="connectors"
-            onAdd={(intent) => (intent === 'import' ? openImport() : openAdd())}
+            onAdd={(intent) => {
+              if (intent === 'import') openImport();
+              else if (intent === 'hithink') setHithinkOpen(true);
+              else openAdd();
+            }}
           />
         )}
 
@@ -477,6 +487,10 @@ export function McpServers() {
           />
         )}
       </AnimatePresence>
+
+      {hithinkOpen && (
+        <HithinkPresetDialog open onClose={() => setHithinkOpen(false)} />
+      )}
 
       <AnimatePresence>
         {detailData && (
