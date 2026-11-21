@@ -15,6 +15,7 @@ from croniter import croniter
 from market_protocol import display_spelling
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     ValidationError,
     ValidationInfo,
@@ -317,13 +318,45 @@ def future_run(when: datetime, tz_name: Optional[str]) -> datetime:
 # =============================================================================
 
 
-TriggerType = Literal["cron", "once", "price"]
+class ConnectorTriggerConfig(BaseModel):
+    """A connected-app event that starts an automation.
+
+    ``app`` and ``event`` name one Composio trigger (the webhook carries the
+    same pair); ``filters`` is a flat equality match over the event payload,
+    and is optional.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    app: str = Field(..., min_length=1, max_length=64)
+    event: str = Field(..., min_length=1, max_length=128)
+    filters: Optional[Dict[str, Any]] = None
+
+    @field_validator("app")
+    @classmethod
+    def _app_slug(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", cleaned):
+            raise ValueError("must be a connected-app slug")
+        return cleaned
+
+    @field_validator("event")
+    @classmethod
+    def _event_name(cls, value: str) -> str:
+        cleaned = value.strip().upper()
+        if cleaned != "*" and not re.fullmatch(r"[A-Z0-9][A-Z0-9_]*", cleaned):
+            raise ValueError("must be an uppercase Composio event name, or *")
+        return cleaned
+
+
+TriggerType = Literal["cron", "once", "price", "connector"]
 
 # The schedule field each kind of trigger reads, and reads alone.
 SCHEDULE_FIELD: Dict[str, str] = {
     "cron": "cron_expression",
     "once": "next_run_at",
     "price": "trigger_config",
+    "connector": "trigger_config",
 }
 
 # A crypto, currency or futures symbol is refused: the monitor has no feed
@@ -414,9 +447,15 @@ class _ScheduleFields(BaseModel):
 
     @field_validator("trigger_config")
     @classmethod
-    def _price_monitor_can_read(
+    def _trigger_config_can_read(
         cls, v: Optional[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
+        if v is not None and ("app" in v or "event" in v):
+            try:
+                ConnectorTriggerConfig(**v)
+            except ValidationError as e:
+                raise ValueError(f"Invalid connector trigger config: {validation_error_text(e)}")
+            return v
         # The monitor skips a config it cannot parse without a word, so one
         # stored unchecked leaves an alert that reads as watching and never
         # fires. The config is stored as sent, the monitor parses it again;
@@ -455,9 +494,10 @@ class _ScheduleFields(BaseModel):
     def _refuse_other_kinds(self, kind: str) -> None:
         # Refused rather than stored: a next_run_at on a price row would have
         # the scheduler claim and fire it.
+        own = SCHEDULE_FIELD[kind]
         foreign = [
             field for other, field in SCHEDULE_FIELD.items()
-            if other != kind and getattr(self, field) is not None
+            if other != kind and field != own and getattr(self, field) is not None
         ]
         if foreign:
             raise ValueError(
@@ -490,7 +530,11 @@ class AutomationCreate(_ScheduleFields):
 
     # Trigger
     trigger_type: TriggerType = Field(
-        ..., description="'cron' for recurring, 'once' for one-time, 'price' for price-triggered"
+        ...,
+        description=(
+            "'cron' for recurring, 'once' for one-time, 'price' for "
+            "price-triggered, 'connector' for a connected-app event"
+        ),
     )
     timezone: str = Field(
         default="UTC", max_length=100, description="IANA timezone (e.g., 'America/New_York')"
@@ -561,6 +605,8 @@ class AutomationCreate(_ScheduleFields):
         field = SCHEDULE_FIELD[self.trigger_type]
         if getattr(self, field) is None:
             raise ValueError(f"{field} is required for trigger_type='{self.trigger_type}'")
+        if self.trigger_type == "connector":
+            ConnectorTriggerConfig(**(self.trigger_config or {}))
         self._refuse_other_kinds(self.trigger_type)
         return self
 

@@ -77,6 +77,18 @@ async def get_installation_by_proxy_token(
             return _row(await cur.fetchone())
 
 
+async def get_installation_by_composio_user(
+    composio_user_id: str, *, conn=None
+) -> dict[str, Any] | None:
+    async with get_db_connection(conn) as owned:
+        async with owned.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT * FROM connected_app_installations WHERE composio_user_id = %s",
+                (composio_user_id,),
+            )
+            return _row(await cur.fetchone())
+
+
 async def delete_installation(user_id: str, *, conn=None) -> None:
     async with get_db_connection(conn) as owned:
         async with owned.cursor() as cur:
