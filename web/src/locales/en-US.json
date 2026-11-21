@@ -133,7 +133,8 @@
     "resize": "Resize sidebar",
     "plugins": "Plugins",
     "orders": "Orders",
-    "menu": "Menu"
+    "menu": "Menu",
+    "store": "Bot Store"
   },
   "account": {
     "menuLabel": "Account menu"
@@ -7422,5 +7423,64 @@
       "unbind": "Unbind failed"
     },
     "retry": "Retry"
+  },
+  "store": {
+    "title": "Bot Store",
+    "tagline": "Install a ready-made analyst into one of your workspaces. Installing copies its persona, tools and skills into a new bot; the original stays untouched.",
+    "builtinNote": "Every template is built in and free.",
+    "openBot": "Open {{name}}",
+    "featured": "Featured",
+    "version": "v{{version}}",
+    "installed": "Installed",
+    "searchPlaceholder": "Search bots by name or summary",
+    "searchLabel": "Search the Bot Store",
+    "categoryAll": "All categories",
+    "tabs": {
+      "all": "All bots",
+      "installed": "Installed"
+    },
+    "empty": {
+      "all": "No bots are available yet.",
+      "filtered": "No bot matches this search and category.",
+      "installed": "You have not installed a bot yet."
+    },
+    "clearFilters": "Clear filters",
+    "browseAll": "Browse all bots",
+    "loadFailed": "Could not load the Bot Store.",
+    "installsLoadFailed": "Could not load your installed bots.",
+    "install": "Install",
+    "installing": "Installing...",
+    "installTitle": "Install {{name}}",
+    "installDescription": "Choose a workspace and a name for the new bot. The template's persona, tools and skills are copied; this does not change the original.",
+    "installWorkspace": "Workspace",
+    "installName": "Bot name",
+    "installNamePlaceholder": "Name for the new bot",
+    "workspacesLoading": "Loading your workspaces...",
+    "workspacesLoadFailed": "Could not load your workspaces.",
+    "noWorkspace": "Create a non-Home workspace first — installing a bot needs a workspace to live in.",
+    "installFailed": "Could not install this bot.",
+    "installSuccessTitle": "Bot installed",
+    "installSuccess": "{{name}} now lives in {{workspace}}.",
+    "detail": {
+      "loading": "Loading details...",
+      "loadFailed": "Could not load this bot.",
+      "persona": "Persona",
+      "noPersona": "This template has no persona text.",
+      "tools": "Tools",
+      "noTools": "Keeps the default tool set.",
+      "skills": "Skills",
+      "noSkills": "No skills declared.",
+      "installs": "Installed in",
+      "installedIn": "{{workspace}}",
+      "noInstalls": "Not installed anywhere yet.",
+      "deferredNote": "Skills, memory scopes and approval are copied as stored. This version does not restrict skills or auto-approve by them."
+    },
+    "categories": {
+      "research": "Research",
+      "earnings": "Earnings",
+      "market": "Market",
+      "event": "Events",
+      "risk": "Risk"
+    }
   }
 }

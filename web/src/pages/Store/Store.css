@@ -1,0 +1,519 @@
+/* /store — the built-in Bot market. The page frame is the Plugins/Orders
+   shape: an unpadded column whose first child is the desktop shell's drag
+   strip, one scroll port under it, and a centred reading column. Every colour
+   is a semantic token so both themes follow the app. */
+
+.store-page {
+  --store-gutter: clamp(16px, 3vw, 32px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.store-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 48px;
+}
+
+.store-container {
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-inline: var(--store-gutter);
+}
+
+/* ── Header ─────────────────────────────────────────── */
+
+.store-header {
+  padding: var(--page-top) 0 18px;
+}
+
+.store-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-text-primary);
+}
+
+.store-tagline {
+  margin-top: 6px;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.store-builtin-note {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Tabs ───────────────────────────────────────────── */
+
+.store-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+.store-tab {
+  position: relative;
+  padding: 8px 12px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--motion-quick) var(--ease-out),
+    border-color var(--motion-quick) var(--ease-out);
+}
+
+.store-tab:hover {
+  color: var(--color-text-primary);
+}
+
+.store-tab.is-active {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent-primary);
+}
+
+/* ── Toolbar: search + category chips ───────────────── */
+
+.store-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 16px 0;
+}
+
+.store-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 380px;
+  height: 36px;
+  padding-inline: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-input);
+  color: var(--color-icon-muted);
+  transition: border-color var(--motion-quick) var(--ease-out);
+}
+
+.store-search:focus-within {
+  border-color: var(--color-border-strong);
+}
+
+.store-search input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+
+.store-search input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.store-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.store-chip-button {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-card);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: color var(--motion-quick) var(--ease-out),
+    border-color var(--motion-quick) var(--ease-out),
+    background-color var(--motion-quick) var(--ease-out);
+}
+
+.store-chip-button:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-default);
+}
+
+.store-chip-button.is-active {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+  background: var(--color-bg-tag);
+}
+
+/* ── Bot grid ───────────────────────────────────────── */
+
+.store-body {
+  padding-top: 4px;
+}
+
+.store-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.store-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-card);
+  transition: background-color var(--motion-quick) var(--ease-out),
+    border-color var(--motion-quick) var(--ease-out);
+}
+
+.store-card:hover {
+  background: var(--color-bg-card-hover);
+  border-color: var(--color-border-default);
+}
+
+.store-card:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.store-card-skeleton {
+  min-height: 168px;
+  background: var(--color-bg-card);
+}
+
+.store-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.store-card-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-tag);
+  color: var(--color-text-secondary);
+}
+
+.store-card-titles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.store-card-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.store-card-featured {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-accent-soft);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--color-accent-primary);
+}
+
+.store-card-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.store-card-tags,
+.store-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.store-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tag);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.store-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+
+.store-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-text-tertiary);
+}
+
+.store-card-version {
+  white-space: nowrap;
+}
+
+.store-card-installed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--color-profit-soft);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--color-profit);
+}
+
+/* ── Installed tab ──────────────────────────────────── */
+
+.store-install-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.store-install-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-card);
+  transition: background-color var(--motion-quick) var(--ease-out),
+    border-color var(--motion-quick) var(--ease-out);
+}
+
+.store-install-row:hover {
+  background: var(--color-bg-card-hover);
+  border-color: var(--color-border-default);
+}
+
+.store-install-row:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.store-install-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.store-install-meta {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Shared states ──────────────────────────────────── */
+
+.store-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* ── Detail dialog ──────────────────────────────────── */
+
+.store-dialog-title {
+  overflow-wrap: anywhere;
+}
+
+.store-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.store-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.store-detail-description {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.store-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.store-detail-label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.store-detail-persona {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-muted);
+  background: var(--color-bg-card);
+  font-family: var(--font-content);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text-secondary);
+}
+
+.store-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tag);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.store-detail-muted {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.store-install-locations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.store-install-locations li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.store-install-locations svg {
+  flex: none;
+  color: var(--color-profit);
+}
+
+.store-detail-note {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border-muted);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Install dialog ─────────────────────────────────── */
+
+.store-install-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.store-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.store-field-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+@media (min-width: 768px) {
+  .store-detail-dialog {
+    max-width: 680px;
+  }
+
+  .store-install-dialog {
+    max-width: 480px;
+  }
+}
+
+@media (max-width: 767px) {
+  .store-grid {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+
+  .store-search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+
+  .store-detail-persona {
+    max-height: 34vh;
+  }
+}
