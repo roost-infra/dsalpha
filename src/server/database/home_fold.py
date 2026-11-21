@@ -126,6 +126,7 @@ STAYS: dict[str, str] = {
     "user_skills": "nothing offers Home as a skill's workspace, so a former Home holds none",
     "workspace_skill_disables": "Home's own skill selection wins",
     "user_subagents": "its workspace_id is reserved and always NULL, so a former Home holds none",
+    "bot_market_installs": "installs are refused in Home, so a former Home holds none",
 }
 
 _HAS_FORMER = """
