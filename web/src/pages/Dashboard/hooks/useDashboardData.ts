@@ -1,6 +1,13 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { getNews, getIndex, INDEX_SYMBOLS, normalizeIndexSymbol, buildIndexData } from '../utils/api';
+import { getNews, getIndex, normalizeIndexSymbol, buildIndexData } from '../utils/api';
+import {
+  DEFAULT_DASHBOARD_MARKET,
+  marketIndexName,
+  marketIndexSymbols,
+  type DashboardMarket,
+} from '../utils/markets';
+import { useLocale } from '@/hooks/useLocale';
 import { useQuotes } from '@/lib/quotes';
 import { fetchMarketStatus } from '@/lib/marketUtils';
 import type { IndexData, SparklinePoint } from '@/types/market';
@@ -22,6 +29,8 @@ interface MarketStatusData {
 }
 
 interface DashboardData {
+  /** The region the dashboard is showing; the widgets read it for their defaults. */
+  market: DashboardMarket;
   indices: IndexData[] | undefined;
   indicesLoading: boolean;
   newsItems: NewsItem[];
@@ -92,7 +101,8 @@ function useInfiniteNewsFeed(queryKey: (string | null)[], provider?: string, ena
  * Uses TanStack Query to manage fetching, caching, and auto-polling of data.
  * Eliminates race conditions and reduces boilerplate of manual useEffects.
  */
-export function useDashboardData(): DashboardData {
+export function useDashboardData(market: DashboardMarket = DEFAULT_DASHBOARD_MARKET): DashboardData {
+  const locale = useLocale();
   // 1. Market Status (Polls every 60s, cached globally)
   const { data: marketStatus = null } = useQuery<MarketStatusData | null>({
     queryKey: ['dashboard', 'marketStatus'],
@@ -107,9 +117,12 @@ export function useDashboardData(): DashboardData {
     (marketStatus && !marketStatus.afterHours && !marketStatus.earlyHours && marketStatus.market !== 'closed');
   const indexRefetch = isMarketOpen ? 30000 : 60000;
 
+  // The region's index row, swapped whole when the reader changes market.
+  const indexSymbols = useMemo(() => marketIndexSymbols(market), [market]);
+
   // Index price/change flows through the shared quote layer (['quote', NORM]),
   // so an index viewed in MarketView and shown here shares one cache entry.
-  const { quotes: indexQuotes, isLoading: indexQuotesLoading } = useQuotes(INDEX_SYMBOLS, {
+  const { quotes: indexQuotes, isLoading: indexQuotesLoading } = useQuotes(indexSymbols, {
     isIndex: true,
     staleTime: 10000,
     refetchInterval: indexRefetch,
@@ -117,13 +130,15 @@ export function useDashboardData(): DashboardData {
 
   // Sparklines are the intraday series — not part of the quote layer — so they
   // keep their own batched fetch, refreshed on the same adaptive cadence.
+  // `getIndex` reads the venue off the symbol, so the CN row is filtered to the
+  // Shanghai sessions rather than the US ones.
   const { data: sparklineMap = {} } = useQuery<Record<string, { sparklineData: SparklinePoint[]; asOfDate?: string }>>({
-    queryKey: ['dashboard', 'indexSparklines', INDEX_SYMBOLS],
+    queryKey: ['dashboard', 'indexSparklines', market],
     queryFn: async () => {
-      const entries = await Promise.all(INDEX_SYMBOLS.map(async (s) => {
+      const entries = await Promise.all(indexSymbols.map(async (s) => {
         const norm = normalizeIndexSymbol(s);
         try {
-          const r = await getIndex(norm);
+          const r = await getIndex(norm, { market });
           return [norm, { sparklineData: r.sparklineData, asOfDate: r.asOfDate }] as const;
         } catch {
           return [norm, { sparklineData: [] as SparklinePoint[], asOfDate: undefined }] as const;
@@ -140,12 +155,17 @@ export function useDashboardData(): DashboardData {
   // (fallback cards for symbols with no quote yet), matching the old
   // placeholderData behavior of rendering instantly.
   const indices = useMemo<IndexData[]>(
-    () => INDEX_SYMBOLS.map((s) => {
+    () => indexSymbols.map((s) => {
       const norm = normalizeIndexSymbol(s);
       const sp = sparklineMap[norm];
-      return buildIndexData(norm, indexQuotes[norm], sp?.sparklineData ?? [], sp?.asOfDate);
+      const card = buildIndexData(norm, indexQuotes[norm], sp?.sparklineData ?? [], sp?.asOfDate);
+      // The catalog name is the one a reader here recognizes ("上证指数"
+      // rather than the vendor's "SSE Composite"), and it exists before the
+      // first quote arrives.
+      const name = marketIndexName(norm, locale);
+      return name === undefined ? card : { ...card, name };
     }),
-    [indexQuotes, sparklineMap]
+    [indexSymbols, indexQuotes, sparklineMap, locale]
   );
   const indicesLoading = indexQuotesLoading;
 
@@ -167,6 +187,7 @@ export function useDashboardData(): DashboardData {
   const curated = useInfiniteNewsFeed(['dashboard', 'curatedNews'], 'tickertick');
 
   return {
+    market,
     indices,
     indicesLoading,
     newsItems: news.items,

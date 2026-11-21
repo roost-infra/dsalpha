@@ -15,6 +15,7 @@
     "copied": "已复制",
     "save": "保存",
     "saving": "保存中...",
+    "sending": "发送中...",
     "cancel": "取消",
     "close": "关闭",
     "delete": "删除",
@@ -635,6 +636,11 @@
       "editLayout": "编辑布局",
       "exitEditLayout": "退出编辑",
       "emailLabel": "邮箱"
+    },
+    "market": {
+      "label": "行情地区",
+      "us": "美股",
+      "cn": "A 股"
     },
     "widgets": {
       "common": {

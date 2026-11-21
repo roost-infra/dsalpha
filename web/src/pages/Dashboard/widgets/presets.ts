@@ -1,7 +1,6 @@
 import { newWidgetId } from './framework/ids';
 import type { DashboardPrefs, RGLItem, WidgetInstance } from './types';
 import { DASHBOARD_PREFS_VERSION } from './types';
-import { DEFAULT_BLUE_CHIPS } from './framework/defaults';
 
 export type PresetId =
   | 'assistant'
@@ -161,7 +160,10 @@ export function traderTvPreset(): Pick<DashboardPrefs, 'widgets' | 'layouts' | '
   const movers = { id: newId('mv'), type: 'tv.movers', config: { exchange: 'US', dataSource: 'AllUSA' } };
   const events = { id: newId('ev'), type: 'tv.economic-events', config: { importanceFilter: '-1,0,1', countryFilter: 'us,eu,jp,gb,cn' } };
   const technicals = { id: newId('ta'), type: 'tv.technicals', config: { symbol: 'NASDAQ:NVDA', interval: '1D' } };
-  const miniGrid = { id: newId('mg'), type: 'markets.miniChartGrid', config: { symbols: DEFAULT_BLUE_CHIPS } };
+  // Empty `symbols` lets the card seed from the dashboard's region (via the
+  // watchlist when the reader has one), so this preset opens on A-shares for
+  // an A-share dashboard instead of pinning US blue chips here.
+  const miniGrid = { id: newId('mg'), type: 'markets.miniChartGrid', config: { symbols: [] } };
 
   const widgets = [tape, heatmap, spotlight, movers, events, technicals, miniGrid];
   const layouts: RGLItem[] = [

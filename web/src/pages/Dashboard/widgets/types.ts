@@ -1,6 +1,7 @@
 import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type * as z from 'zod/mini';
+import type { DashboardMarket } from '../utils/markets';
 import type { DashboardDataContextValue } from './framework/DashboardDataContext';
 
 export type WidgetCategory = 'markets' | 'intel' | 'personal' | 'agent' | 'workspace';
@@ -103,6 +104,12 @@ export type BreakpointKey = 'lg' | 'md';
 
 export interface DashboardPrefs {
   version: 2;
+  /**
+   * The market region the tape widgets show (US or A-share). Optional: a
+   * dashboard saved before the switch existed reads as the US row, so the
+   * field is additive and needs no version bump.
+   */
+  market?: DashboardMarket;
   widgets: WidgetInstance[];
   layouts: Partial<Record<BreakpointKey, RGLItem[]>>;
   lastBreakpoint?: BreakpointKey;

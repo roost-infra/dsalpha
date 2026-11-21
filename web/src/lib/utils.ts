@@ -49,6 +49,12 @@ export const utcMsToETTime = (ms: number): string =>
     timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false,
   });
 
+/** Convert UTC Unix ms to an HH:MM (24h) wall-clock string in `tz`. */
+export const timeStrInTz = (ms: number, tz: string): string =>
+  new Date(ms).toLocaleTimeString('en-US', {
+    timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+
 export function utcMsToChartSec(utcMs: number | null | undefined, tz: string = 'America/New_York'): number {
   if (utcMs == null || isNaN(utcMs)) return 0;
   const parts = wallClockFmt(tz).formatToParts(new Date(utcMs));

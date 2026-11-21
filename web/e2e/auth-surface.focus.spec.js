@@ -198,7 +198,11 @@ test.describe('a button or link on the auth surface', () => {
  */
 test.describe('every view of the auth surface', () => {
   const VIEWS = [
-    { name: 'the method list', open: methodView, least: 6 },
+    // Five, not six: the auth server builds with OAuth off, so the method list
+    // is email + magic link + the view switch, plus the two legal links
+    // (terms and the configured privacy policy). The floor exists to catch a
+    // view that stopped rendering its controls, not to pin a provider count.
+    { name: 'the method list', open: methodView, least: 5 },
     { name: 'the email form', open: emailView, least: 5 },
     { name: 'the check-inbox screen', open: inboxView, least: 3 },
   ];

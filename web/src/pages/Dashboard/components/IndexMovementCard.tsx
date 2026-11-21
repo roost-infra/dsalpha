@@ -10,7 +10,8 @@ import { useTranslation } from 'react-i18next';
 import { useLocale } from '@/hooks/useLocale';
 import { useNow } from '@/hooks/useNow';
 import { grouped2 } from '@/lib/format';
-import { cn, utcMsToETDate } from '@/lib/utils';
+import { cn, dateStrInTz } from '@/lib/utils';
+import { isCnSymbol, venueTimeZoneForSymbol } from '../utils/markets';
 import { TermCard, TermChange } from '@/pages/ChatAgent/components/charts/TermCard';
 import type { IndexData } from '@/types/market';
 
@@ -42,14 +43,16 @@ interface IndexMovementCardProps {
 const SPARK_HEIGHT = 32;
 
 /** The session the figures belong to, M/D: the last trading day when the
- *  market is closed or not yet open, else today in ET. ET, not the browser's
- *  zone, so the fallback matches the ET-derived asOfDate on sibling cards for
- *  users outside US timezones. Only a card on the fallback reads the clock,
- *  so only it ticks. */
+ *  market is closed or not yet open, else today on the venue's calendar. The
+ *  venue's zone, not the browser's, so the fallback matches the asOfDate the
+ *  card already derives from the symbol (Shanghai for a CN index, ET for a US
+ *  one). Only a card on the fallback reads the clock, so only it ticks. */
 function useSessionDate(index: IndexData): string {
   const hasAsOfDate = /^\d{4}-\d{2}-\d{2}$/.test(index.asOfDate ?? '');
   const now = useNow(60_000, !hasAsOfDate);
-  const iso = hasAsOfDate ? (index.asOfDate as string) : utcMsToETDate(now);
+  const iso = hasAsOfDate
+    ? (index.asOfDate as string)
+    : dateStrInTz(now, venueTimeZoneForSymbol(index.symbol));
   const [, mo, d] = iso.split('-');
   return `${Number(mo)}/${Number(d)}`;
 }
@@ -129,12 +132,16 @@ function IndexCardBody({ index, date }: { index: IndexData; date: string }) {
 function IndexCard({ index }: IndexCardProps) {
   const navigate = useNavigate();
   const date = useSessionDate(index);
+  // A caret names a venue-less family index (`^GSPC`). A venue-listed index
+  // already names itself (`000001.SH`) and must stay bare: a caret on it is a
+  // spelling the market protocol would have to strip again downstream.
+  const marketSymbol = isCnSymbol(index.symbol) ? index.symbol : `^${index.symbol}`;
   return (
     <TermCard
       title={index.symbol}
       sub={index.name}
       keep="title"
-      onClick={() => navigate(`/market?symbol=^${index.symbol}`)}
+      onClick={() => navigate(`/market?symbol=${marketSymbol}`)}
     >
       <IndexCardBody index={index} date={date} />
     </TermCard>

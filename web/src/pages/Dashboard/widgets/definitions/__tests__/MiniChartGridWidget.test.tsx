@@ -27,11 +27,13 @@ vi.mock('@/lib/quotes/snapshotApi', () => ({
   getSnapshotStocks: vi.fn(),
 }));
 
-// Stub the dashboard context — the widget only reads `watchlist.rows` to fall
-// back when no symbols are configured. Mocking sidesteps Supabase / API hooks.
+// Stub the dashboard context — the widget reads `watchlist.rows` to fall back
+// when no symbols are configured, and `dashboard.market` to pick the seed row.
+// Mocking sidesteps Supabase / API hooks.
 vi.mock('../../framework/DashboardDataContext', () => ({
   useDashboardContext: () => ({
     watchlist: { rows: [] },
+    dashboard: { market: 'us' },
   }),
 }));
 

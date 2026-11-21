@@ -942,7 +942,7 @@
 }
 
 .rooms-guest-messages__row--mine .rooms-bot-messages__body {
-  border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border-muted));
+  border-color: color-mix(in srgb, var(--color-accent-primary) 30%, var(--color-border-muted));
 }
 
 .rooms-guest-messages__status {
@@ -982,7 +982,7 @@
 .rooms-guest-messages__error {
   margin: 0;
   padding: 0 16px 8px;
-  color: var(--color-danger, #d14343);
+  color: var(--color-loss);
   font-size: 12px;
 }
 

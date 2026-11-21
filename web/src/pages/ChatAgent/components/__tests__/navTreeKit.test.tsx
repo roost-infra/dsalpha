@@ -175,7 +175,7 @@ describe('nav tree kits', () => {
     expect(document.activeElement).toBe(navElement(container, 'ws-main', 'thread:t-current:pin'));
     // The fixture reaches every keyed element a section can show, bar the rename field.
     expect(staticTree.find((section) => section.wsId === 'ws-main')?.keys).toEqual([
-      'header', 'new-thread', 'options',
+      'header', 'new-thread', 'options', 'guest-invite',
       'thread:t-pinned:title', 'thread:t-pinned:pin', 'thread:t-pinned:archive',
       'thread:t-current:title', 'thread:t-current:agents', 'thread:t-current:pin', 'thread:t-current:archive',
       'agent:main', 'agent:sub-running', 'agent:sub-running:remove', 'agent:sub-done', 'agent:sub-done:remove',

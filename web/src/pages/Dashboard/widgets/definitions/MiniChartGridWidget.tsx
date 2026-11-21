@@ -24,7 +24,7 @@ import {
 import { dateStrInTz } from '@/lib/utils';
 import type { ChartBar } from '@/lib/bars';
 import { useQuotes, quoteKey } from '@/lib/quotes';
-import { DEFAULT_BLUE_CHIPS } from '../framework/defaults';
+import { marketBlueChips } from '../../utils/markets';
 import { SymbolListField } from '../framework/settings/SymbolListField';
 import { SettingsDoneButton } from '../framework/settings/SettingsDoneButton';
 import { grouped2 } from '@/lib/format';
@@ -142,7 +142,10 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
   const { t } = useTranslation();
   const locale = useLocale();
   const navigate = useNavigate();
-  const { watchlist } = useDashboardContext();
+  const { watchlist, dashboard } = useDashboardContext();
+  // The seed row follows the dashboard's region, so a fresh card on an
+  // A-share dashboard shows A-shares instead of six US blue chips.
+  const fallbackSymbols = useMemo(() => marketBlueChips(dashboard.market), [dashboard.market]);
   // Memoized so the query key stays reference-stable on unrelated re-renders
   // (dashboard edit-mode toggle, neighbor widget edits). React Query would
   // cache-hit on the stringified key either way, but skipping the IIFE also
@@ -152,8 +155,8 @@ function MiniChartGridWidget({ instance }: WidgetRenderProps<MiniChartGridConfig
     if (configured.length > 0) return configured.slice(0, MAX_SYMBOLS);
     const fromWatchlist = watchlist.rows.map((r) => r.symbol).filter(Boolean);
     if (fromWatchlist.length > 0) return fromWatchlist.slice(0, 12);
-    return DEFAULT_BLUE_CHIPS;
-  }, [instance.config.symbols, watchlist.rows]);
+    return fallbackSymbols;
+  }, [instance.config.symbols, watchlist.rows, fallbackSymbols]);
 
   // Per-symbol delta-poll state, carried across the 120s refetches so each
   // cycle appends only bars newer than the stored watermark instead of
@@ -346,7 +349,7 @@ function MiniChartGridSettings({
   onClose,
 }: WidgetSettingsProps<MiniChartGridConfig>) {
   const { t } = useTranslation();
-  const { watchlist } = useDashboardContext();
+  const { watchlist, dashboard } = useDashboardContext();
   // Mirror the render-time precedence: configured symbols > watchlist >
   // defaults. Opening settings is side-effect-free — prefs only commit
   // on the user's first add/remove, which captures the full displayed
@@ -355,7 +358,7 @@ function MiniChartGridSettings({
     if (config.symbols?.length) return config.symbols;
     const fromWatchlist = watchlist.rows.map((r) => r.symbol).filter(Boolean);
     if (fromWatchlist.length > 0) return fromWatchlist.slice(0, 12);
-    return DEFAULT_BLUE_CHIPS;
+    return marketBlueChips(dashboard.market);
   })();
   return (
     <div className="space-y-4">
@@ -387,6 +390,6 @@ registerWidget<MiniChartGridConfig>({
   initConfig: (ctx) => {
     const fromWatchlist = ctx.watchlist.rows.map((r) => r.symbol).filter(Boolean);
     if (fromWatchlist.length > 0) return { symbols: fromWatchlist.slice(0, 12) };
-    return { symbols: DEFAULT_BLUE_CHIPS };
+    return { symbols: marketBlueChips(ctx.dashboard.market) };
   },
 });
