@@ -1432,6 +1432,7 @@ from src.server.app.computers_ssh import router as computers_ssh_router
 from src.server.app.workspaces import router as workspaces_router
 from src.server.app.bots import router as bots_router
 from src.server.app.bot_market import router as bot_market_router
+from src.server.app.connected_apps import router as connected_apps_router
 from src.server.app.rooms import router as rooms_router
 from src.server.app.guest_dm import router as guest_dm_router
 from src.server.app.workspace_files import router as workspace_files_router
@@ -1516,6 +1517,7 @@ app.include_router(sessions_router)  # /api/v1/sessions - Active session stats
 app.include_router(workspaces_router)  # /api/v1/workspaces/* - Workspace CRUD
 app.include_router(bots_router)  # /api/v1/bots/* - Bot identity over threads
 app.include_router(bot_market_router)  # /api/v1/market/* - Built-in Bot templates and installs
+app.include_router(connected_apps_router)  # /api/v1/connected-apps/* - Composio-backed app connections
 app.include_router(rooms_router)  # /api/v1/rooms/* - Rooms (shared log, group rounds)
 app.include_router(guest_dm_router)  # /api/v1/dm/* - Guest bot DMs (invite-gated, cross-account)
 app.include_router(

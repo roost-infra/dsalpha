@@ -28,6 +28,7 @@ const routeChunks = {
   orders: () => import('../../pages/Orders/Orders'),
   plugins: () => import('../../pages/Plugins/Plugins'),
   store: () => import('../../pages/Store/Store'),
+  apps: () => import('../../pages/Apps/Apps'),
   settings: () => import('../../pages/Settings/Settings'),
   // Alias so preloading /connectors (the legacy path) warms the right chunk.
   connectors: () => import('../../pages/Plugins/Plugins'),
@@ -45,6 +46,7 @@ const Orders = lazyWithMotion(routeChunks.orders);
 const Plugins = lazyWithMotion(routeChunks.plugins);
 // The store page animates nothing of its own, so it skips the framer download.
 const Store = preloadableLazy(routeChunks.store);
+const Apps = preloadableLazy(routeChunks.apps);
 const Settings = lazyWithMotion(routeChunks.settings);
 
 // What a preload warms for each section: the page itself, not only its chunk,
@@ -60,6 +62,7 @@ const routePreloads = {
   orders: Orders.preload,
   plugins: Plugins.preload,
   store: Store.preload,
+  apps: Apps.preload,
   settings: Settings.preload,
   connectors: Plugins.preload,
 } satisfies Record<RouteSection, () => Promise<unknown>>;
@@ -80,7 +83,7 @@ export function preloadRouteChunk(pathname: string): void {
 }
 
 // Warmed in the order the rail lists them, the likeliest next stops first.
-const WARM_ORDER = ['dashboard', 'chat', 'rooms', 'market', 'automations', 'plugins', 'store', 'settings', 'orders', 'news'] as const satisfies readonly AppSection[];
+const WARM_ORDER = ['dashboard', 'chat', 'rooms', 'market', 'automations', 'plugins', 'store', 'apps', 'settings', 'orders', 'news'] as const satisfies readonly AppSection[];
 const WARM_IDLE_TIMEOUT_MS = 2000;
 
 /** Warms every section's chunk once the shell is idle, one at a time so none
@@ -161,6 +164,7 @@ function Main() {
           <Route path="/orders" element={<Orders />} />
           <Route path="/plugins" element={<Plugins />} />
           <Route path="/store" element={<Store />} />
+          <Route path="/apps" element={<Apps />} />
           <Route path="/connectors" element={<LegacyConnectorsRedirect />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/news/:id" element={<NewsDetailPage />} />

@@ -101,6 +101,16 @@ PLUGIN_MARKETPLACE_URL: str = os.getenv("PLUGIN_MARKETPLACE_URL", "")
 # place that sends it.
 PLUGIN_MARKETPLACE_TOKEN: str = os.getenv("PLUGIN_MARKETPLACE_TOKEN", "")
 
+# Connected apps use Composio's Tool Router. A project key can come from the
+# deployment (a self-host single project) or from each user's vault; either way
+# it creates one session per account whose hosted MCP endpoint becomes a user
+# MCP server. The API base is overridable for a self-hosted/Composio-compatible
+# gateway.
+CONNECTED_APPS_API_BASE: str = os.getenv(
+    "CONNECTED_APPS_API_BASE", "https://backend.composio.dev/api/v3.1"
+).rstrip("/")
+COMPOSIO_API_KEY: str = os.getenv("COMPOSIO_API_KEY", "").strip()
+
 # Internal base URL the server-side PDF renderer (headless Chromium) loads
 # workspace HTML from. Must be the server's own loopback listen address so
 # Chromium fetches bytes from this process, not the public ingress.

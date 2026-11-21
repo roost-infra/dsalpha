@@ -134,7 +134,8 @@
     "plugins": "Plugins",
     "orders": "Orders",
     "menu": "Menu",
-    "store": "Bot Store"
+    "store": "Bot Store",
+    "apps": "Apps"
   },
   "account": {
     "menuLabel": "Account menu"
@@ -7500,5 +7501,41 @@
       "risk": "Risk",
       "investor": "Investor minds"
     }
+  },
+  "apps": {
+    "title": "Connected apps",
+    "tagline": "Give your bots tools for GitHub, Gmail, Slack and the other apps you use. Connections are authorized in your browser; provider tokens stay with Composio.",
+    "setupTitle": "Connect your first app",
+    "setupDescription": "Paste a Composio project key. It is stored in your vault, and the session it opens exposes the apps you connect as tools for your bots.",
+    "keyLabel": "Composio project key",
+    "keyPlaceholder": "ak_...",
+    "keyHint": "Create a project key at app.composio.dev. The key is kept in your vault, never in a prompt, a tool call or a log.",
+    "keyPortal": "Open Composio",
+    "saveKey": "Save key",
+    "saving": "Saving...",
+    "keySavedTitle": "Connected apps ready",
+    "keySavedNote": "Connect an app below to give your bots its tools.",
+    "keyFailed": "Could not set up connected apps.",
+    "changeKey": "Change key",
+    "cancel": "Cancel",
+    "usingDeploymentKey": "Using the deployment's Composio key",
+    "searchPlaceholder": "Search apps",
+    "searchLabel": "Search connected apps",
+    "connected": "Connected",
+    "defaultAccount": "Default account",
+    "disconnectAccount": "Disconnect {{name}}",
+    "connect": "Connect",
+    "addAccount": "Add account",
+    "connectedCount": "{{count}} apps connected",
+    "refresh": "Refresh",
+    "noMatches": "No app matches this search.",
+    "loadFailed": "Could not load connected apps.",
+    "connectFailed": "Could not start the connection.",
+    "removeFailed": "Could not disconnect the account.",
+    "popupTitle": "Allow the popup",
+    "popupNote": "Your browser blocked the authorization window; allow popups for this site and try again.",
+    "authorizeTitle": "Authorize {{name}}",
+    "authorizeNote": "Finish in the browser, then come back and refresh.",
+    "footnote": "Provider tokens stay with Composio; dsalpha only keeps the project key in your vault. Tools appear to your bots through the composio connector."
   }
 }

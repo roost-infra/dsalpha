@@ -9,6 +9,7 @@ export const APP_SECTIONS = [
   'orders',
   'plugins',
   'store',
+  'apps',
   'settings',
   'connectors',
 ] as const;

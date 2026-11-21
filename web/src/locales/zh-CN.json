@@ -134,7 +134,8 @@
     "plugins": "插件",
     "orders": "订单",
     "menu": "菜单",
-    "store": "Bot 市场"
+    "store": "Bot 市场",
+    "apps": "应用连接"
   },
   "account": {
     "menuLabel": "账号菜单"
@@ -7410,5 +7411,41 @@
       "risk": "风控",
       "investor": "投资大佬"
     }
+  },
+  "apps": {
+    "title": "应用连接",
+    "tagline": "给你的 Bot 接上 GitHub、Gmail、Slack 等你常用的应用。授权在浏览器里完成，上游 token 留在 Composio。",
+    "setupTitle": "连接第一个应用",
+    "setupDescription": "粘贴一个 Composio 项目 Key。它会存进你的 vault，并开一个会话，把你连接的应用变成 Bot 可用的工具。",
+    "keyLabel": "Composio 项目 Key",
+    "keyPlaceholder": "ak_...",
+    "keyHint": "在 app.composio.dev 创建项目 Key。Key 只保存在 vault 里，不会出现在 prompt、工具调用或日志中。",
+    "keyPortal": "打开 Composio",
+    "saveKey": "保存 Key",
+    "saving": "保存中...",
+    "keySavedTitle": "应用连接已就绪",
+    "keySavedNote": "在下面连接一个应用，Bot 就能用它的工具了。",
+    "keyFailed": "应用连接配置失败。",
+    "changeKey": "更换 Key",
+    "cancel": "取消",
+    "usingDeploymentKey": "正在使用部署配置的 Composio Key",
+    "searchPlaceholder": "搜索应用",
+    "searchLabel": "搜索可连接的应用",
+    "connected": "已连接",
+    "defaultAccount": "默认账号",
+    "disconnectAccount": "断开 {{name}}",
+    "connect": "连接",
+    "addAccount": "添加账号",
+    "connectedCount": "已连接 {{count}} 个应用",
+    "refresh": "刷新",
+    "noMatches": "没有符合搜索的应用。",
+    "loadFailed": "无法加载应用连接。",
+    "connectFailed": "无法发起连接。",
+    "removeFailed": "无法断开账号。",
+    "popupTitle": "请允许弹窗",
+    "popupNote": "浏览器拦截了授权窗口；允许本站弹窗后重试。",
+    "authorizeTitle": "授权 {{name}}",
+    "authorizeNote": "在浏览器里完成授权，然后回来刷新。",
+    "footnote": "上游 token 留在 Composio；dsalpha 只在你的 vault 里保存项目 Key。工具通过 composio 连接器提供给 Bot。"
   }
 }
