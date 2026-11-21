@@ -107,6 +107,28 @@ jobs:
               - tests/integration/sandbox/providers/**
 
   # -----------------------------------------------------------------------
+  # Daytona needs a key this repo may not hold (a fork or self-host without the
+  # `integration` environment's secret). A missing key is a skip, not a red
+  # check on every PR that touches the sandbox: the probe reads the secret in a
+  # step env, where it is legal, and the tier below gates on its answer.
+  # -----------------------------------------------------------------------
+  daytona-key:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.probe.outputs.ready }}
+    steps:
+      - id: probe
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -n "${DAYTONA_API_KEY}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DAYTONA_API_KEY is not configured; skipping the Daytona integration tier."
+          fi
+
+  # -----------------------------------------------------------------------
   # Daytona: the production provider (~5 min)
   # Same-repo PRs, pushes to main and nightly; fork PRs run it through
   # fork-integration.yml, which can read the key. Postgres and Redis are for
@@ -114,11 +136,13 @@ jobs:
   # reported as skipped with a warning, not failed (tests/integration/conftest.py).
   # -----------------------------------------------------------------------
   sandbox-daytona:
+    needs: daytona-key
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'push' || github.event_name == 'schedule' ||
+      needs.daytona-key.outputs.ready == 'true' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+       github.event.pull_request.head.repo.full_name == github.repository))
     timeout-minutes: 45
     environment: integration
     services:
