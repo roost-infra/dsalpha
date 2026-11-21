@@ -53,8 +53,14 @@ to `blocked` and fails any held messages.
 | `POST /api/v1/dm/requests/{peer}/accept` | receiving owner | accept; delivers held messages |
 | `POST /api/v1/dm/requests/{peer}/decline` | receiving owner | fail held messages, drop contact |
 | `POST /api/v1/dm/contacts/{peer}/block` | receiving owner | block both directions |
+| `POST /api/v1/dm/contacts/{peer}/send` | sender owner, after accept | message an accepted peer |
 | `GET /api/v1/dm/contacts?status=` | owner | accepted/blocked roster |
 | `GET /api/v1/dm/sent` | sender owner | guest messages sent |
+
+Accept, decline, block, and send-to-contact take a JSON body with `bot_id`
+(the caller's bot). `POST /api/v1/dm/send` takes `from_bot_id`, `invite_token`,
+`content`, and an optional `kind` of `message`, `request`, `question`, or
+`notice`.
 
 ## Agent tools
 
@@ -69,14 +75,38 @@ to `blocked` and fails any held messages.
   attempt.
 - Rate limits per sender bot: `GUEST_DM_MAX_PER_MINUTE` (6) and
   `GUEST_DM_MAX_PER_DAY` (50); at most 3 held first messages per pair.
-- Content cap 64 KB; kinds limited to `message|request|question|notice|reply`.
+- Content cap is 64 × 1024 characters. Kinds the send path accepts are
+  `message`, `request`, `question`, `notice`, and `reply`.
 - Invite tokens are stored hashed; expiry, max uses and revoke are enforced by
   a single guarded `UPDATE` when the first contact is created.
-- `PUBLIC_APP_URL` (optional) turns a token into a clickable link in API
-  responses; without it only the token is returned.
+- `PUBLIC_APP_URL` or `APP_PUBLIC_URL` (optional) adds `{base}/dm/{token}` to
+  the mint response. That path carries the token. The web app has no `/dm`
+  route, so opening it falls through to the dashboard. Without either
+  variable, only the token is returned.
+
+## In the web app
+
+`/rooms` lists external conversations. Guest DM (`/rooms?guest=1`, and the same
+control in the sidebar) mints a link for one of the caller's bots, lists
+pending requests, accepts or declines them, and blocks a contact. The button
+uses the defaults (168 hours, one use). Hours and `max_uses` are set on
+`POST /api/v1/dm/invites`; the dialog does not expose them.
+
+The first message is not typed in that dialog. The other account pastes the
+link or `dm_` token into a chat with its own bot (`send_invite_message`), or
+calls `POST /api/v1/dm/send`. After accept, the external conversation on
+`/rooms` sends further messages through
+`POST /api/v1/dm/contacts/{peer_bot_id}/send`.
+
+`PUBLIC_APP_URL` or `APP_PUBLIC_URL` adds `{base}/dm/{token}` to the mint
+response. That path only carries the token. The web app has no `/dm` route;
+an unknown path falls through to the dashboard.
 
 ## Deploying
 
-`alembic upgrade head` adds migration 117. No config is required; the two rate
-limits and `PUBLIC_APP_URL` are optional. The web UI is the next phase — until
-then the API and the agent tools are usable directly.
+Migration 117 adds the invite and contact tables. `make up` runs
+`alembic upgrade head` from the container entrypoint. A backend started on
+the host uses `make migrate`. No config is required; the two rate limits and
+`PUBLIC_APP_URL` / `APP_PUBLIC_URL` are optional. The default self-host setup
+is one local user, so it has no second account to invite. Bots and rooms
+inside that account do not use this flow.

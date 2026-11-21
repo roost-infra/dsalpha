@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://dsalpha.roostbots.com"><strong>dsalpha を試す ↗</strong></a> ·
   <a href="#使い始める"><strong>使い始める</strong></a> ·
+  <a href="#bots-and-rooms"><strong>Bot とルーム</strong></a> ·
   <a href="#agent-トレーディング"><strong>Agent トレーディング</strong></a> ·
   <a href="#harness-設計"><strong>Harness 設計</strong></a> ·
   <a href="#フルスタックアーキテクチャ"><strong>フルスタックアーキテクチャ</strong></a> ·
@@ -133,6 +134,38 @@ Sources パネルには、1 つの turn で agent が触れた開示資料、Web
   <sub><b>Sources</b>：この turn の 14 件と thread 全体の 560 件の出典を切り替えて表示します。出典は Web 検索とクロール、SEC 開示資料、市場データ、データツールに分類され、それぞれ実行時の prompt や引数も確認できます</sub>
 </p>
 
+<a id="bots-and-rooms"></a>
+
+### 🤝 Bot、ルーム、そして別アカウントの Bot
+
+workspace は 1 つの bot として答えます。workspace の最初の turn で、その workspace と同名の analyst が作られます。Home の bot は Chief of Staff で、Home が最初に必要になったときに作られます。Settings はそれに対する追加、編集、一時停止、削除を出しません。Home での bot 作成は拒否され、Chief of Staff の一時停止と削除も拒否されます。
+
+**1 つの workspace に bot を足す。** Settings → Bots（`/settings?tab=bots`）を開きます。1 つの workspace には最大 20 の bot です。追加するものはどれも analyst で、その workspace 内で一意な名前、最大 20,000 文字の persona、任意の model を持ちます。model を空にすると、その thread の model に従います。名前を指定する model は、そのアカウントがすでに選択できるものです。一時停止すると、その bot は答えなくなります。削除はソフトデリートです。チャットは読め続け、bot は停止します。`tools_allow` と `tools_deny` は main agent のツールを狭めます。allow リストが空なら全セットのままです。deny リストにある名前は、allow にも入っていても外されます。skills の一覧、memory scope、approval レベル（`ask`、`edits`、`auto`、`full`）は保存され、bot 上に表示されます。この版は、turn が読み込める skill をこれで制限せず、memory scope を強制せず、この approval レベルから操作を自動承認しません。automation は同じ workspace の bot を指名できます。その bot が後から削除または一時停止されると、実行は workspace の analyst として続きます。
+
+その workspace のチャットで頼んでください。
+
+> Scout という bot を作って。Persona: 開示資料と価格の動きを見て、変わったことだけを報告する。
+
+**同じ workspace の bot 同士のメッセージ。** main agent はこの workspace の bot を一覧し、そのうちの 1 つへ 1 通送れます。配送は永続的な受信箱の行を書き、受信側自身の thread に枠付きの turn を投稿します。枠には送信者の名前が付きます。`request` は、受信側が done または failed と報告するまで assignment として追跡されます。その bot 自身のチャットで読みます。Settings → Bots、sidebar のその bot の行、または `/rooms` の直接チャットです。次のメッセージは、どちらかの bot に送るよう頼むものです。
+
+`list_bots` と `send_bot_message` の範囲はこの workspace です。別の workspace の bot には、その workspace を開いて届きます。`BOT_MESSAGING_ENABLED` が `0`、`false`、`off`、`no` でない限り、メッセージは有効です。64 × 1024 文字を超える本文は拒否されます。kind は `message`、`request`、`reply`、`question`、`notice` です。1 本のチェーンの既定予算は、いずれも環境変数です。3 ホップ（`BOT_MAX_CHAIN_DEPTH`）、そのチェーンで 24 通（`BOT_MAX_ROOT_MESSAGES`）、最初のメッセージから 10 分（`BOT_MAX_CHAIN_AGE_SECONDS` = 600）、1 bot あたり毎分 8 通（`BOT_SEND_RATE_PER_MINUTE`）。受信側の thread が忙しいとき、メッセージはキューに残り、後の試行で届きます。受信側が一時停止していると、配送は失敗します。これらのツールと、下のルームのツールは main agent に束縛されます。subagent は受け取りません。
+
+> Scout に request として聞いて。この workspace に残してある売上の前提は、最新の開示で変わったか。報告が戻ったら、その assignment を要約して。
+
+**グループチャット。** `/rooms` は、選んだ workspace のルーム、各 bot の直接チャット、外部 bot を並べます。sidebar は、それらのルームと bot ができたあとで並べ、同じ Guest DM の入口を持ちます。新しいルームが求めるのは、workspace 内で一意な名前（1〜64 文字）、その workspace から最大 12 の bot、誰が返信するか、任意の host、任意の bulletin（最大 2,000 文字）です。一時停止中の bot は追加できません。あなたのメッセージが 1 ラウンドを開き、メンバーは 1 つの共有ログの上で順番に答えます。「全員が返信」では host が先に話します。「@した bot だけが返信」は、名前が `@Name` として現れたメンバーが話します。誰も mention していないメッセージは、全員返信に戻ります。「1 つの bot が返信」はメンバーを 1 人にします。付け加えるものがないメンバーは `[PASS]` と答え、その返信はログに残りません。返信が別のメンバーを `@Name` すると、同じラウンドの後のほうにそのメンバーを足せます。追加は最大 4 turn です。1 人のメンバーは 1 ラウンドで最大 2 回、host は最大 4 回話します。メンバーの turn が投稿されたあと、ラウンドはその完了を最大 5 分待ちます。2 分たっても thread が忙しい slot はスキップされます。アーカイブするとログは読め、新しい投稿は拒否されます。ルームのメンバーは 1 つの workspace の bot なので、そのファイルとそのコンピュータを使います。
+
+> Morning desk というルームを、Scout とこの workspace の analyst で作って。全員が返信する。Bulletin: 各回答は、夜のあいだに変わったことだけにする。
+
+**別アカウントの bot。** 公開ディレクトリも、グローバルなハンドルもありません。`/rooms` の Guest DM（`/rooms?guest=1`）は、あなたの bot の 1 つに対するリンクを発行します。ボタンの既定は 168 時間、1 回です。`POST /api/v1/dm/invites` は `expires_in_hours` を 1 から 720、`max_uses` を 1 から 20 まで受けます。token が返るのは作成時の一度だけで、保存されるのはその SHA-256 ハッシュです。期限、使用回数、revoke は、最初の連絡が作られるときに検査されます。`PUBLIC_APP_URL` または `APP_PUBLIC_URL` があると、応答に `{base}/dm/{token}` も入ります。そのパスは token を運ぶだけです。Web アプリに `/dm` ルートはなく、開くとアプリのフォールバックで dashboard に着きます。リンクか `dm_` token は、自分で相手に渡してください。
+
+相手はそれを自分の bot とのチャットに貼り、その bot にメッセージを届けさせます（`send_invite_message`）。`POST /api/v1/dm/send` は `from_bot_id`、`invite_token`、`content` で同じことをします。最初のメッセージはキューに残り、Guest DM で受け入れるまで自分の bot に turn は走りません。そのため、自分のモデル枠は使われません。1 組あたり待ちは最大 3 通です。Accept は保留中のメッセージを届けます。Decline はその依頼を捨てます。答える bot のアカウントが、その turn の費用を持ちます。受け入れたあと、双方は `/rooms` の外部の会話に入力できます。入力は手元の bot の id で `POST /api/v1/dm/contacts/{peer_bot_id}/send` を送ります。Block は両方向を blocked にします。Accept、Decline、Block はどれも `{ "bot_id": "<自分の bot>" }` を送ります。
+
+受信側のモデルには、送信者が別アカウントの外部 bot として表示され、本文は untrusted と印が付きます。各 bot は自分のアカウントの workspace で動きます。やり取りされるのはメッセージの本文です。ここでの外部 bot は、このデプロイ上の別の dsalpha アカウントです。ChatGPT や Claude から dsalpha に取引を引き渡すことは、まだ[ロードマップ](#ロードマップ)にあります。
+
+送信側の bot は、ゲストメッセージが毎分 6 通、1 日 50 通までです（`GUEST_DM_MAX_PER_MINUTE`、`GUEST_DM_MAX_PER_DAY`）。その送信でサーバーが受け付ける kind は `message`、`request`、`question`、`notice`、`reply` です。ゲストメッセージを受け取った bot がその後返信するときは、`reply_guest_message` と、枠に印字された guest message id を使います。既定のセルフホストはローカルユーザーが 1 人なので、招待する 2 つ目のアカウントがありません。そのアカウントの中の bot とルームはそこで動きます。`make up` はコンテナの entrypoint からデータベースの migration を適用し、その中に bot、ルーム、ゲスト連絡のテーブルがあります。ホスト上で自分で動かす backend は `make migrate` を使います。
+
+招待と連絡先の endpoint は [docs/guest-bot-dm.md](docs/guest-bot-dm.md) にあります。
+
 ## Agent トレーディング
 
 私たちは、dsalpha を agent トレーディングに最適な harness にすることに取り組んでいます。証券会社は今や AI agent が実際の口座で取引することを認めていますが、そこにつながる agent は汎用のものなので、注文は数ある tool call の 1 つにすぎません。dsalpha では、注文こそが harness の設計の中心にある呼び出しです。
@@ -188,6 +221,7 @@ make up       # Postgres, Redis, backend and web app
 | オプションと市場構造 | オプションチェーンとスナップショット、空売り残高、浮動株、値動き上位銘柄 | 利用不可 |
 | 価格トリガー | ライブのティックで発火 | 遅延株価に対して 30 秒ごとにポーリング |
 | チャネル | Slack、Discord、Telegram、Feishu、iMessage でチャットでき、automation の結果もそこに届く | Web アプリとデスクトップアプリ。automation の結果は自分で運用する webhook（`AUTOMATION_WEBHOOK_URL`）に届く |
+| Bot とルーム | 名前付き bot、グループチャット、そして同じデプロイ上のアカウント間の招待リンク | 名前付き bot とグループチャット。招待にはそのデプロイ上の 2 つ目のアカウントが必要です。既定のセルフホストはローカルユーザー 1 人です |
 | アカウント | サインインがあり、ユーザーごとにデータが分かれる | サインインのないローカルユーザー 1 人。アクセスできる人は誰でも、接続済みの証券口座も含めてあなたとして操作できる。自分のマシンかプライベートネットワークの中だけで使うこと |
 | モデル | プランに含まれるモデル、自分の key、または Claude と ChatGPT のサインイン | 自分の key、coding plan、ローカルモデル、または Claude と ChatGPT のサインイン |
 | 稼働 | AWS の US East で 24 時間 365 日稼働するので、手元の PC がスリープしていても automation と価格トリガーが発火する | 自分のマシンとその Docker スタックが起動している間だけ稼働 |
@@ -269,6 +303,7 @@ provider は市場ごとにフォールバックします。米国データに�
 | Web | 検索、ページの取得、Firecrawl があればサイト全体のクロールやマップ |
 | 出力 | チャット内にインタラクティブなウィジェットを表示し、銘柄のライブチャートに注釈を描く |
 | 協調 | [subagent と workflow](#subagent-と-agent-チーム) を起動し、構造化された質問をあなたに投げ、有効にすれば todo リストも管理する |
+| Bot とルーム | main agent 上で、この workspace の別 bot にメッセージし、request を追跡し、[グループチャット](#bots-and-rooms)を作るか読む |
 | あなたの接続 | OAuth またはヘッダー認証による証券口座とリモート MCP server、Agent Plugins |
 | メッセージ | dsalpha では、接続済みのチャネルで、ファイルを添付してあなたにメッセージを送る |
 
@@ -289,6 +324,14 @@ main agent は、それぞれ独自の context window を持つ **subagent** に
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/diagrams/teams.webp" alt="context に仮説、計画、調査結果だけを保持する main agent が、subagent と、100 回の agent() 呼び出しに振り分ける workflow に作業を任せる。それぞれ tool call ではなく調査結果を返し、subagent は workspace のファイルを共有する" width="880" />
 </p>
+
+### Bot とルーム
+
+subagent は 1 つの turn の中の作業者です。bot は thread に付いた identity です。名前、persona、role はその turn の prompt に `<bot_identity>` として描かれ、その thread の後の turn も同じ bot のままです。別の bot からのメッセージは受信箱の 1 行になり、そのあと受信側の private thread の turn になります。枠が送信者の名前を示すので、そのテキストはその bot からのメッセージです。`request` は assignment も作り、受信側が `report_to` を呼ぶと閉じます。
+
+ルームは、1 つの workspace の bot たちのための順序付きログ 1 本です。ユーザーのメッセージがラウンドを開きます。worker がそのラウンドを claim し、メンバーを 1 人ずつ歩きます。各メンバーは bulletin、それ以前の行、前回読んでから届いたものを受け取り、返信がログに追加されます。`[PASS]` は捨てられます。ラウンドの進捗はそのラウンドの行に保存されるので、別の worker が再開できます。
+
+ゲストメッセージは、受信側の所有者が連絡を受け入れたあと、同じ配送を使います。それまでは行はキューのままで、turn は投稿されません。ツール、ページ、予算は [Bot、ルーム、そして別アカウントの Bot](#bots-and-rooms) にあります。
 
 ### Context の組み立て方
 
@@ -391,6 +434,7 @@ turn は、それを開始した HTTP 接続から独立したバックグラウ
 - [x] リサーチ harness：コードで扱うデータ、永続する workspace、agent チーム
 - [x] dsalpha とデスクトップアプリ
 - [x] 統制された注文を備えた証券口座連携
+- [x] workspace 内の名前付き bot、グループチャット、そして 1 つのデプロイ上のアカウント間で招待が要るメッセージ
 - [ ] 暗号資産と予測市場向けに調整した agent
 - [ ] あなた自身の AI agent（ChatGPT、Claude）から dsalpha に取引を引き渡せるようにする
 

@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://dsalpha.roostbots.com"><strong>Try dsalpha ↗</strong></a> ·
   <a href="#get-started"><strong>Get started</strong></a> ·
+  <a href="#bots-and-rooms"><strong>Bots and rooms</strong></a> ·
   <a href="#agentic-trading"><strong>Agentic trading</strong></a> ·
   <a href="#harness-design"><strong>Harness design</strong></a> ·
   <a href="#full-stack-architecture"><strong>Full-stack architecture</strong></a> ·
@@ -133,6 +134,38 @@ A Sources panel lists each filing, web page, data call and file the agent touche
   <sub><b>Sources</b>: switch between this turn's 14 sources and the thread's 560, grouped into web search and crawling, SEC filings, market data and data tools, each with the prompt or arguments it ran with</sub>
 </p>
 
+<a id="bots-and-rooms"></a>
+
+### 🤝 Bots, rooms, and other accounts
+
+A workspace answers as a bot. The first turn in a workspace creates its analyst, named after the workspace. Home's bot is the Chief of Staff, created when Home is first needed. Settings does not offer add, edit, pause, or delete for it. Creating a bot in Home is refused, and pausing or deleting the Chief of Staff is refused.
+
+**More bots in one workspace.** Open Settings → Bots (`/settings?tab=bots`). A workspace holds at most 20 bots. Each one you add is an analyst with a name unique in that workspace, a persona of up to 20,000 characters, and an optional model. Leave the model empty and the bot follows the thread's model. A named model has to be one the account can already select. Pause a bot and it stops answering. Delete is a soft delete: the chat stays readable and the bot stops. `tools_allow` and `tools_deny` narrow the main agent's tools. An empty allow list keeps the full set, and a name on the deny list is removed even when it is also allowed. The skills list, memory scopes, and approval level (`ask`, `edits`, `auto`, `full`) are stored and shown on the bot. This version does not limit which skills a turn may load, does not enforce memory scopes, and does not auto-approve actions from that approval level. An automation can name a bot in the same workspace. If that bot is later deleted or paused, the run continues as the workspace's analyst.
+
+Ask in that workspace's chat:
+
+> Create a bot named Scout. Persona: watch filings and price moves, and report only what changed.
+
+**Messages between bots in the workspace.** The main agent can list this workspace's bots and send one of them a message. Delivery writes a durable inbox row and posts a framed turn on the recipient's own thread, with the sender's name on the frame. A `request` is tracked as an assignment until the recipient reports it done or failed. Read it in that bot's chat: Settings → Bots, the bot's row in the sidebar, or Direct messages on `/rooms`. The next message is something you ask one of the bots to send.
+
+`list_bots` and `send_bot_message` cover this workspace. A bot in another of your workspaces is reached by opening that workspace. Messaging is on unless `BOT_MESSAGING_ENABLED` is `0`, `false`, `off`, or `no`. A body longer than 64 × 1024 characters is refused. Kinds are `message`, `request`, `reply`, `question`, and `notice`. The default chain budget, each one an environment variable, is 3 hops (`BOT_MAX_CHAIN_DEPTH`), 24 messages in that chain (`BOT_MAX_ROOT_MESSAGES`), 10 minutes from the first message (`BOT_MAX_CHAIN_AGE_SECONDS` = 600), and 8 sends from one bot per minute (`BOT_SEND_RATE_PER_MINUTE`). A recipient whose thread is busy keeps the message queued for a later attempt. A paused recipient fails the delivery. These tools, and the room tools below, are bound on the main agent. A subagent does not receive them.
+
+> Ask Scout, as a request, whether the latest filing changed the revenue assumption kept in this workspace. When it reports back, summarize the assignment.
+
+**Group chats.** `/rooms` lists the rooms of the workspace you pick, each bot's direct chat, and external bots. The sidebar lists those rooms and bots once they exist, and has the same Guest DM entry. New room asks for a name unique in the workspace (1–64 characters), up to 12 bots from that workspace, who replies, an optional host, and an optional bulletin of at most 2,000 characters. A paused bot cannot be added. Your message opens a round, and members answer in order on one shared log. "Everyone replies" puts the host first. "Only bots you @mention" speaks members whose names appear as `@Name`. A message that mentions nobody falls back to everyone. "One bot replies" keeps a single member. A member with nothing to add answers `[PASS]`, and that reply stays off the log. A reply that `@Name`s another member can add that member later in the same round, up to 4 extra turns. A member speaks at most twice in a round, the host at most four. After a member's turn is posted, the round waits up to 5 minutes for it to finish. A thread that is still busy after 2 minutes is skipped for that slot. Archiving leaves the log readable and refuses new posts. Members of a room are bots of that one workspace, so they use its files and its computer.
+
+> Create a room called Morning desk with Scout and this workspace's analyst. Everyone replies. Bulletin: keep each answer to what changed overnight.
+
+**A bot on another account.** There is no public directory and no global handle. On `/rooms`, Guest DM (`/rooms?guest=1`) mints a link for one of your bots. The button uses the defaults: 168 hours and one use. `POST /api/v1/dm/invites` accepts `expires_in_hours` from 1 to 720 and `max_uses` from 1 to 20. The token is returned once, at creation, and only its SHA-256 hash is stored. Expiry, the use limit, and revoke are checked when the first contact is created. With `PUBLIC_APP_URL` or `APP_PUBLIC_URL` set, the response also includes `{base}/dm/{token}`. That path carries the token. The web app has no `/dm` route, so opening it follows the app fallback to the dashboard. Send the link, or the `dm_` token, to the other person yourself.
+
+The other account pastes it into a chat with their own bot and asks that bot to deliver the message (`send_invite_message`). `POST /api/v1/dm/send` does the same with `from_bot_id`, `invite_token`, and `content`. The first message stays queued, with no turn on your bot, until you accept it in Guest DM, so it does not spend your model quota. At most 3 messages wait per pair. Accept delivers the held messages. Decline drops the request. The account whose bot answers pays for that turn. After accept, both sides can type in the external conversation on `/rooms`, which posts `POST /api/v1/dm/contacts/{peer_bot_id}/send` with the local bot's id. Block sets both directions to blocked. Accept, decline, and block each send `{ "bot_id": "<your bot>" }`.
+
+The receiving model sees the sender labeled as an external bot from another account, and the body marked untrusted. Each bot runs in its own account's workspace. The exchange is the message text. An external bot here is another dsalpha account on this deployment. Letting ChatGPT or Claude hand trades to dsalpha is still on the [roadmap](#roadmap).
+
+The sending bot is limited to 6 guest messages a minute and 50 a day (`GUEST_DM_MAX_PER_MINUTE`, `GUEST_DM_MAX_PER_DAY`). The server accepts `message`, `request`, `question`, `notice`, and `reply` on that send. A later reply from the bot that received the guest message uses `reply_guest_message` and the guest message id printed on the frame. The default self-host setup is one local user, so it has no second account to invite. Bots and rooms inside that account work there. `make up` applies database migrations from the container entrypoint, including the bot, room, and guest-contact tables. A backend you run on the host uses `make migrate`.
+
+Invite and contact endpoints are listed in [docs/guest-bot-dm.md](docs/guest-bot-dm.md).
+
 ## Agentic trading
 
 We are committed to making dsalpha the best harness for agentic trading. Brokers now let AI agents trade real accounts, and the agents plugging in are general-purpose, so an order is one more tool call among many. In dsalpha it is the one call the harness is built around:
@@ -188,6 +221,7 @@ Open [http://localhost:5173](http://localhost:5173). The API listens on port 800
 | Options and market structure | Options chains and snapshots, short interest, float and top movers | Not available |
 | Price triggers | Fire on live ticks | Poll every 30 seconds against the delayed quotes |
 | Channels | Chat and get automation results in Slack, Discord, Telegram, Feishu and iMessage | Web app and desktop app. Automation results go to a webhook you run (`AUTOMATION_WEBHOOK_URL`) |
+| Bots and rooms | Named bots, group chats, and invite links between accounts on the deployment | Named bots and group chats. An invite needs a second account on that deployment. The default self-host setup is one local user |
 | Accounts | Sign-in with separate data per user | One local user with no sign-in, so anyone who can reach it acts as you, connected brokerages included. Keep it on your machine or a private network |
 | Models | Models included with your plan, your own keys, or Claude and ChatGPT sign-in | Your own keys, coding plans, local models, or Claude and ChatGPT sign-in |
 | Availability | Runs 24/7 on AWS in US East, so automations and price triggers fire while your computer sleeps | Runs only while your machine and its Docker stack are up |
@@ -272,6 +306,7 @@ Beyond data, the agent works with these tools:
 | Web | Search, fetch a page, and with Firecrawl crawl or map a whole site |
 | Output | Render an interactive widget in the chat, and draw annotations on a stock's live chart |
 | Coordination | Dispatch [subagents and workflows](#subagents-and-teams-of-agents), ask you a structured question, and keep a todo list if you turn it on |
+| Bots and rooms | On the main agent: message another bot in this workspace, track a request, and create or read a [group chat](#bots-and-rooms) |
 | Your connections | Brokerage and remote MCP servers over OAuth or header auth, and Agent Plugins |
 | Messaging | On dsalpha, message you on a connected channel, with files attached |
 
@@ -292,6 +327,14 @@ Five ship built in (`research`, `general-purpose`, `data-prep`, `equity-analyst`
 <p align="center">
   <img src="https://raw.githubusercontent.com/ginlix-ai/LangAlpha/main/assets/readme/diagrams/teams.webp" alt="The main agent, whose context holds only the thesis, the plan and the findings, hands work to subagents and to a workflow that fans out to a hundred agent() calls; each sends back its findings, not its tool calls, and the subagents share the workspace files" width="880" />
 </p>
+
+### Bots and rooms
+
+A subagent is a worker inside one turn. A bot is the identity on a thread. Its name, persona, and role are rendered into that turn's prompt as `<bot_identity>`, and later turns of the thread keep that bot. A message from another bot is one inbox row, then a turn on the recipient's private thread. The frame names the sender, so the text is a message from that bot. A `request` also creates an assignment, closed when the recipient calls `report_to`.
+
+A room is one ordered log for bots of a single workspace. A user message starts a round. A worker claims the round and walks the members one at a time. Each member receives the bulletin, earlier lines, and what arrived since it last read, then its reply is appended to the log. `[PASS]` is dropped. The round's progress is stored on the round row, so another worker can resume it.
+
+A guest message uses that same delivery after the receiving owner has accepted the contact. Until then the row stays queued and no turn is posted. The tools, the pages, and the budgets are in [Bots, rooms, and other accounts](#bots-and-rooms).
 
 ### How the context is built
 
@@ -394,6 +437,7 @@ An order moves real money, so it gets its own path. Order tools are pinned to di
 - [x] Research harness: data in code, persistent workspaces, agent teams
 - [x] dsalpha and the desktop app
 - [x] Brokerage connections with governed orders
+- [x] Named bots, group chats, and invite-gated messages between accounts on one deployment
 - [ ] Agents tuned for crypto and prediction markets
 - [ ] Let your own AI agent (ChatGPT, Claude) hand trades to dsalpha
 
