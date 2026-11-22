@@ -794,10 +794,16 @@ async def report_stopped_disks(
             await computers_db.mark_disk_billed(computer_id, end)
             result.reported += 1
         elif status in _RETRYABLE_4XX:
-            logger.warning("Stopped disk report %s for %s: %s", status, computer_id, _response_text(response))
+            logger.warning(
+                "Stopped disk report %s for %s: %s",
+                status, computer_id, _response_text(response),
+            )
             result.retried += 1
         else:
-            logger.error("Stopped disk report refused %s for %s: %s", status, computer_id, _response_text(response))
+            logger.error(
+                "Stopped disk report refused %s for %s: %s",
+                status, computer_id, _response_text(response),
+            )
             result.failed += 1
     if result.reported or result.retried or result.failed:
         logger.info(
