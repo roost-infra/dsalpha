@@ -32,7 +32,7 @@ import { FoldPanel } from './FoldPanel';
 import { CardArrivals, type ArrivingCard } from './CardArrivals';
 import { useMotionSafe } from '@/lib/reducedMotion';
 import { useProseReport } from './proseTyping';
-import { projectContent, blockIsProcess, blockVisible, streamingTextBlockIndex, type ContentProjection } from './contentProjection';
+import { projectContent, blockIsProcess, blockVisible, replyStartKey, streamingTextBlockIndex, type ContentProjection } from './contentProjection';
 import { EMPTY_OBJ } from './types';
 import type { ContentSegmentRecord, FoldState, ToolCallProcessRecord } from './types';
 import type {
@@ -281,6 +281,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
     return null;
   };
 
+  const replyStart = replyStartKey(projection, fold, endsReply);
   const blockIsVisible = renderBlocks.map((block) => blockVisible(projection, block, fold, endsReply));
   const blockFolds = renderBlocks.map((block) => fold !== 'unfolded' && blockIsProcess(projection, block, endsReply));
 
@@ -405,7 +406,7 @@ export const MessageContentSegments = memo(function MessageContentSegments({ seg
               key={block.key}
               block={block as TextRenderBlock}
               isStreaming={blockIdx === streamingTextIdx}
-              isReplyStart={block.key === projection.lastTextKey}
+              isReplyStart={block.key === replyStart}
               isSubagentView={isSubagentView}
               onOpenFile={onOpenFile}
               onRevealed={onRevealed}
