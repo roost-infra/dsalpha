@@ -23,6 +23,7 @@ upstream subsystem are deferred rather than half-applied.
 | `d558fdd51` | SSE delta goes out at once after a quiet spell | `4d98505fb` | core coalescer only; relay half depends on `6b99a6c32` |
 | `903c38a84` | thread load ends at its replay, not its ratings read | `1f37e9cf5` | adapted; adds `feedbackLoading` to our older hook |
 | `0a52c7dec` | keep an earlier report's start when the newest turn wrote nothing | `5bfc4441b` | ported onto `tools/secretary/utils.py` |
+| `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
 
 ## Deferred: dependency or semantic conflict
 
