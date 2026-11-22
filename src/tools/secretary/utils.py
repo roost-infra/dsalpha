@@ -635,6 +635,11 @@ def _run_block(run: dict[str, Any], text: str, zone: ZoneInfo) -> str:
     if (attempt := run.get("attempt_no") or 1) > 1:
         parts.append(f"attempt {attempt} of the same request")
     metadata = run.get("metadata")
+    # The model the run was admitted on: a fallback may have written its text.
+    if isinstance(metadata, dict) and (model := metadata.get("llm_model")):
+        from src.llms.model_identity import model_label
+
+        parts.append(f"started on {model_label(model)}")
     if isinstance(metadata, dict) and (
         analyst := metadata.get("report_back_ptc_thread_id")
     ):

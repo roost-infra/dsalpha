@@ -340,3 +340,10 @@ async def test_a_long_report_before_a_turn_with_no_text_is_cut_to_fit_not_droppe
     assert "[truncated — full output available in workspace]" in out["text"]
     assert "earlier turns truncated" not in out["text"]
     assert len(out["text"]) <= MAX_OUTPUT_CHARS
+
+
+def test_a_run_names_the_model_it_started_on():
+    run = _response(7, created_at=_STARTED, metadata={"llm_model": "m-gone"})
+    assert _run_block(run, "x", _UTC).startswith(
+        "[Run started 2026-10-05 18:40 UTC, completed, started on m-gone]"
+    )
