@@ -6,7 +6,7 @@
  * the old `messagesRef` mirror created.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { submitFeedback, removeFeedback, getThreadFeedback } from '../utils/api';
 
 type FeedbackEntry = { rating: string | null; [key: string]: unknown };
@@ -16,19 +16,30 @@ export function useChatFeedback(threadId: string) {
   // resolved load or submit must re-render the rated bubble so it re-seeds
   // from the new entry.
   const [feedbackByTurn, setFeedbackByTurn] = useState<Record<number, FeedbackEntry>>({});
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+
+  // Only the latest load applies. A thread load does not wait for its ratings,
+  // so a reload or a switch can start the next read while one is out, and the
+  // older answer may arrive last.
+  const loadSeq = useRef(0);
 
   /** Fetch feedback state for the thread. Best-effort — display-only data. */
   const loadFeedback = useCallback(async (targetThreadId?: string) => {
     const tid = targetThreadId ?? threadId;
     if (!tid) return;
+    const seq = ++loadSeq.current;
+    setFeedbackLoading(true);
     try {
       const feedbackList = await getThreadFeedback(tid);
+      if (seq !== loadSeq.current) return;
       const map: Record<number, FeedbackEntry> = {};
       feedbackList.forEach((fb: Record<string, unknown>) => { map[fb.turn_index as number] = fb as FeedbackEntry; });
       setFeedbackByTurn(map);
     } catch (e) {
       // Non-critical — feedback display is best-effort
       console.warn('[History] Failed to load feedback:', e);
+    } finally {
+      if (seq === loadSeq.current) setFeedbackLoading(false);
     }
   }, [threadId]);
 
@@ -69,5 +80,5 @@ export function useChatFeedback(threadId: string) {
     }
   }, [threadId]);
 
-  return { handleThumbUp, handleThumbDown, feedbackByTurn, loadFeedback };
+  return { handleThumbUp, handleThumbDown, feedbackByTurn, feedbackLoading, loadFeedback };
 }
