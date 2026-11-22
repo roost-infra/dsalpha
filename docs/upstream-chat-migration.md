@@ -29,7 +29,7 @@ upstream subsystem are deferred rather than half-applied.
 
 | Upstream | Why not yet |
 |---|---|
-| `f5d61083a` / `c9127b134` (turn fold by answer) | Needs upstream `replyEnds`, `quietEnd`, `cardedCharts`, `textsFollowed`, `chartLayerGrouping`, and a newer `contentProjection`; 4-file conflict and a semantic rewrite. Port after the projection layer is brought over. |
+| `f5d61083a` / `c9127b134` (turn fold by answer) | Dependency chain: `9c10553bb` adds `chartLayerGrouping` / `cardedCharts`; `d78b9e503` adds quiet-turn ends (`replyEnds`, `quietEnd`); `650819ba2` / `06ef07733` add the context hand-off and notice types (`textsFollowed`). All of those touch our `MessageList` / `ChatView` / `buildRenderBlocks`; 4-file conflict and a semantic rewrite. Port the projection layer as one unit. |
 | `19829836f` (source cost + provider icon) | UI is small, but backend provenance does not yet emit `cost_credits` / `site`; porting only the panel would render nothing. |
 | `cb8cc1dcc` (fold composer tray under notices) | Needs `useNoticeSlot`, `useTrayFold.covered`, `othersTurn`; those are not in this fork. |
 | `d558fdd51` relay half | `DeltaJoin` arrives in upstream `6b99a6c32`; our relay predates it. |
