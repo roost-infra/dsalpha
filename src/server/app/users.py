@@ -63,6 +63,35 @@ from src.server.utils.api import CurrentUserId, handle_api_exceptions, raise_not
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["Users"])
+platform_router = APIRouter(prefix="/api/auth", tags=["Platform"])
+
+
+@platform_router.get("/models")
+@handle_api_exceptions("get platform models", logger)
+async def platform_models(user_id: ReadUserId):
+    """The account's model-access tier, as the web picker expects it.
+
+    The web reads ``model_tier`` to separate platform models from ones the plan
+    does not include. Without this route the request 404s, the picker fails open
+    and falls back to the user's own configured key, which is why only the BYOK
+    DeepSeek row showed. Provider lists stay explicit so BYOK/OAuth remain
+    honoured where the picker already knows them.
+    """
+    from src.server.database.api_keys import get_user_api_keys
+    from src.server.dependencies.usage_limits import _fetch_platform_membership
+
+    membership = await _fetch_platform_membership(user_id)
+    tier = int(membership.get("access_tier", 0)) if membership else 0
+    try:
+        keys = await get_user_api_keys(user_id)
+        byok = sorted(keys.keys()) if isinstance(keys, dict) else []
+    except Exception:
+        byok = []
+    return {
+        "model_tier": tier,
+        "byok_providers": byok,
+        "oauth_providers": [],
+    }
 
 
 # ==================== Auth Sync ====================
