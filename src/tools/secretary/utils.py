@@ -83,7 +83,7 @@ _WSREF_PREFIX = "__wsref__"
 # not safely ignored the way a URL is -- the parser hands the client the bare
 # path, which then resolves against Home and opens nothing.
 _DEST = r"<[^<>\n]+>|(?:[^()<>\n]|\([^()<>\n]*\))+?"
-_TITLE = r"""(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?"""
+_TITLE = r"""(?:(?:(?<![ \t])|(?<=\]\([ \t]))[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?"""
 _MD_LINK_RE = re.compile(r"(!?\[[^\]\n]{0,512}\]\()(" + _DEST + r")(" + _TITLE + r"\))")
 
 # Fenced blocks and inline code spans: shown, not read. A link inside one is
