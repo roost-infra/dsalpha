@@ -26,6 +26,7 @@ upstream subsystem are deferred rather than half-applied.
 | `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
 | `ed4c67f51` | home clocks for TWII/KS11/NSEI/BSESN/AXJO indices | `0112791b9` | adapted; our table predates `SessionHours`, so timezone only |
 | `5451fcb17` | check an index quote's previous close against FMP daily history | `76b59b1b6` | merge port; protocol + FMP + web table; 497 tests pass |
+| `42ea097ce` | comment anchors for Markdown blocks, code lines, PDF pages and cell ranges | `867cc7e3d` | backend + tests; UI comments still deferred |
 | `f5d61083a` | fold a turn's texts by whether they read as an answer | `02d6d372d` | core; chart-layer inputs not needed |
 | `d78b9e503` | close a quiet wake turn with its note, so it folds like a reply | `790d52169` | adapted; kept our action props, dropped upstream-only extras |
 | `c9127b134` | keep the reply a steer answered in a folded turn | `cf22634e7` | adapted; uses `computeReplyEnds` |
@@ -40,7 +41,7 @@ upstream subsystem are deferred rather than half-applied.
 | `d558fdd51` relay half | `DeltaJoin` arrives in upstream `6b99a6c32`; our relay predates it. |
 | `9e365f931`, `1a20c1c1e` | Depend on upstream `turn_tool.py` and background-subagent refactors not present here. |
 | `ab972510b`, `fbcbcbdfb`, `4cde70a7f` (forks) | Cross-cut `threads`, `context_stack`, runtime-context, ChatView, and session state; needs a dedicated feature branch. |
-| `7a9da0937`, `42ea097ce` (comments) | Comments backend, preview bridge, models and anchors are a separate subsystem; 22 conflicts for the first commit. |
+| `7a9da0937` (comments UI/viewers) | Comments UI, preview bridge and viewers are a separate subsystem; the anchor backend is now in, 22 conflicts remain on the UI side. |
 | `a25a926f6` (browser tab) | Needs `browser_runtime`, `workspace_browser`, preview capabilities and a newer FilePanel; 14 conflicts. |
 | `06ef07733` (Claude Code wait UI) | Needs upstream computer/CLI state and Job view; 15 conflicts. |
 
