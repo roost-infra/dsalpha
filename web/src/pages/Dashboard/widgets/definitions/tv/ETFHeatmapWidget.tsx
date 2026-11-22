@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { useDashboardContext } from '../../framework/DashboardDataContext';
 import { Layers } from 'lucide-react';
 import { TradingViewEmbed } from '../../framework/TradingViewEmbed';
 import { registerWidget } from '../../framework/WidgetRegistry';
@@ -7,6 +8,7 @@ import { EnumField } from '../../framework/settings/EnumField';
 import { TradingViewSettingsFooter } from '../../framework/TradingViewSettingsFooter';
 import { SettingsDoneButton } from '../../framework/settings/SettingsDoneButton';
 import type { WidgetRenderProps, WidgetSettingsProps } from '../../types';
+import CnEtfHeatmap from './CnEtfHeatmap';
 
 interface ETFHeatmapConfig {
   dataSource: string;
@@ -16,6 +18,8 @@ interface ETFHeatmapConfig {
 }
 
 function ETFHeatmapWidget({ instance }: WidgetRenderProps<ETFHeatmapConfig>) {
+  const { dashboard } = useDashboardContext();
+  if (dashboard.market === 'cn') return <CnEtfHeatmap />;
   return (
     <TradingViewEmbed
       scriptKey="etf-heatmap"
@@ -31,6 +35,17 @@ function ETFHeatmapWidget({ instance }: WidgetRenderProps<ETFHeatmapConfig>) {
 
 function ETFHeatmapSettings({ config, onChange, onClose }: WidgetSettingsProps<ETFHeatmapConfig>) {
   const { t } = useTranslation();
+  const { dashboard } = useDashboardContext();
+  if (dashboard.market === 'cn') {
+    return (
+      <div className="space-y-4">
+        <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+          {t('dashboard.widgets.etfHeatmap.cnInfo')}
+        </p>
+        <SettingsDoneButton onClick={onClose} />
+      </div>
+    );
+  }
   return (
     <div className="space-y-4">
       <EnumField

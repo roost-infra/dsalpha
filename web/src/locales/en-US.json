@@ -904,7 +904,14 @@
         "color_ytd": "YTD performance",
         "groupBy": "Group by",
         "groupBy_assetClass": "Asset class",
-        "groupBy_none": "None"
+        "groupBy_none": "None",
+        "cnTitle": "A-share ETF heatmap",
+        "cnUp": "Up",
+        "cnDown": "Down",
+        "cnInfo": "The dashboard is on CN, so this board uses local A-share ETF quotes. TradingView US ETF data is used only in the US market.",
+        "cnBroad": "Broad",
+        "cnSector": "Sector",
+        "cnTheme": "Theme & cross-border"
       },
       "economicEvents": {
         "title": "Economic Calendar",

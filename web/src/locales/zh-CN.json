@@ -952,7 +952,14 @@
         "color_ytd": "年初至今表现",
         "groupBy": "分组方式",
         "groupBy_assetClass": "资产类别",
-        "groupBy_none": "不分组"
+        "groupBy_none": "不分组",
+        "cnTitle": "A 股 ETF 热力图",
+        "cnUp": "涨",
+        "cnDown": "跌",
+        "cnInfo": "当前市场为 A 股，热力图使用本地 A 股 ETF 行情；只有切到美股时才使用 TradingView 的美股 ETF 数据。",
+        "cnBroad": "宽基",
+        "cnSector": "行业",
+        "cnTheme": "主题与跨境"
       },
       "economicEvents": {
         "title": "财经日历",
