@@ -35,7 +35,7 @@ import { InPlaceSwap } from '@/components/ui/crossfade';
 import { CollapseClockContext, isFreshSend, playEntrance, turnEndDelays } from './transcriptMotion';
 import { useMessageTyping, useProseReport } from './proseTyping';
 import type { TurnFile } from '../../utils/turnFiles';
-import { projectMessageContent, type ContentProjection } from './contentProjection';
+import { holdsAnswerText, projectMessageContent, type ContentProjection } from './contentProjection';
 import { isImeComposing } from '@/lib/ime';
 import { onScreenKeyboardUp } from '@/lib/visualViewport';
 import { EMPTY_OBJ } from './types';
@@ -265,6 +265,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
   const foldedAway = fold === 'collapsed'
     && isAssistant
     && !isTurnTail
+    && !holdsAnswerText(projection, false)
     && !(message.error as boolean)
     && !(message.stopped as boolean)
     && sourceCount === 0

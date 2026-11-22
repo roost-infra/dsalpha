@@ -7,7 +7,7 @@ import { WakeupRow } from './messageList/WakeupRow';
 import { QuietChecksRow } from './messageList/QuietChecksRow';
 import { MessageBubble } from './messageList/MessageBubble';
 import { TurnFold } from './messageList/TurnFold';
-import { projectMessageContent, visibleProjection } from './messageList/contentProjection';
+import { holdsAnswerText, projectMessageContent, visibleProjection } from './messageList/contentProjection';
 import { useMessageActions } from './messageList/MessageActionsContext';
 import { isBotMessageRow, isReportRow, opensTurn } from './messageList/messagePredicates';
 import { ReportRow, type ReportProvenance } from './messageList/ReportRow';
@@ -305,7 +305,7 @@ function MessageList({ messages: latest, isLoading, isLoadingHistory, isSubagent
       if (!foldable && !isLive && !ranHere.has(turnIndex)) continue;
       const hasFiles = !!onOpenFile && (!readOnly || allowFiles) && (filesByTurn.get(turnIndex)?.length ?? 0) > 0;
       folds.set(turnIndex, {
-        noAnswer: !(contents.at(-1)?.lastTextKey || contents.some((content) => content.hasRetained) || hasFiles),
+        noAnswer: !(contents.some((content) => holdsAnswerText(content, true)) || contents.some((content) => content.hasRetained) || hasFiles),
         rowPos: pos,
         startedAt: start,
         completedAt,

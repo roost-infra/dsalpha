@@ -5,6 +5,7 @@ import { preparingCallsOf, samePreparing } from './pendingToolCalls';
 import type { ActivityItem, PreparingToolCallData } from './activityTypes';
 import { EMPTY_OBJ, type ContentSegmentRecord, type FoldState, type MessageRecord, type ToolCallProcessRecord } from './types';
 import type { ProjectedMessage } from './turnProjection';
+import { ANSWER_SCORE_HELD, ANSWER_SCORE_SHOWN, answerScore } from './answerText';
 
 export interface ContentInput {
   segments: ContentSegmentRecord[];
@@ -20,6 +21,7 @@ export interface ContentInput {
 }
 
 type FoldRole = 'retain' | 'text' | 'process';
+export type TextFollow = 'nothing' | 'work' | 'ask';
 export interface ContentProjection {
   blocks: RenderBlock[];
   roles: ReadonlyMap<string, FoldRole>;
@@ -27,6 +29,9 @@ export interface ContentProjection {
   preparingToolCall: PreparingToolCallData | null;
   lastTextKey?: string;
   textCount: number;
+  /** What followed each text before its next text: nothing, more work, or a
+   *  card asking the user. Structure only; answer scoring is on demand. */
+  textsFollowed: ReadonlyMap<string, TextFollow>;
   hasRetained: boolean;
   hasProcess: boolean;
   /** A background task is still running under a turn whose stream has ended. */
@@ -108,6 +113,56 @@ function shareBlock(next: RenderBlock, old: RenderBlock | undefined): RenderBloc
  *  did not move. Only what is field-for-field equal is reused, so this can
  *  never show stale data; that holds because the stream replaces a tool call's
  *  record on every update rather than editing it in place. */
+const NON_BLANK = /\S/;
+
+/** A text group or block with something in it; a blank one is never drawn. */
+function hasText(content: string | undefined): content is string {
+  return !!content && NON_BLANK.test(content);
+}
+
+/** Cards that wait on the user. The text leading into one is what it asks. */
+const ASKS_USER = new Set([
+  'user_question', 'tool_approval', 'create_workspace', 'start_question', 'ptc_agent',
+  'delete_workspace', 'stop_workspace', 'delete_thread', 'credit_pause',
+]);
+/** Calls that record work rather than do it. An answer often ends on one. */
+const BOOKKEEPING_TOOLS = new Set(['TodoWrite']);
+
+function isBookkeeping(group: ContentSegmentRecord, toolCallProcesses: Record<string, ToolCallProcessRecord>): boolean {
+  if (group.type === 'todo_list') return true;
+  const name = group.type === 'tool_call' && group.toolCallId ? toolCallProcesses[group.toolCallId]?.toolName : undefined;
+  return name !== undefined && BOOKKEEPING_TOOLS.has(name);
+}
+
+function readFollows(
+  groups: readonly ContentSegmentRecord[],
+  toolCallProcesses: Record<string, ToolCallProcessRecord>,
+): Map<string, TextFollow> {
+  const follows = new Map<string, TextFollow>();
+  let key: string | null = null;
+  for (const group of groups) {
+    if (group.type === 'text') {
+      if (!hasText(group.content)) continue;
+      key = `text-${group.order}`;
+      follows.set(key, 'nothing');
+    } else if (key === null || group.type === 'reasoning' || group.type === 'notification') {
+      continue;
+    } else if (ASKS_USER.has(group.type)) {
+      follows.set(key, 'ask');
+    } else if (follows.get(key) === 'nothing' && !isBookkeeping(group, toolCallProcesses)) {
+      follows.set(key, 'work');
+    }
+  }
+  return follows;
+}
+
+function sameFollows(a: ReadonlyMap<string, TextFollow>, b: ReadonlyMap<string, TextFollow>): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const [key, follow] of a) if (b.get(key) !== follow) return false;
+  return true;
+}
+
 function shareProjection(next: ContentProjection, prev: ContentProjection | undefined): ContentProjection {
   if (!prev) return next;
   const prevByKey = new Map(prev.blocks.map((block) => [block.key, block]));
@@ -132,7 +187,8 @@ export function projectContent(input: ContentInput, prev?: ContentProjection): C
   // A hidden tool is dropped here too, or it would show as preparing until
   // it landed and vanished.
   const preparingToolCall = preparingCallsOf(input.pendingToolCallChunks, input.toolCallProcesses, HIDDEN_TOOL_CALL_NAMES);
-  const { blocks, nextExpiry, pinnedLive, pinnedSettledAt } = buildRenderBlocks(groupSegments(input.segments), {
+  const groups = groupSegments(input.segments);
+  const { blocks, nextExpiry, pinnedLive, pinnedSettledAt } = buildRenderBlocks(groups, {
     ...input, preparing: preparingToolCall !== null,
   });
   const roles = new Map<string, FoldRole>();
@@ -143,7 +199,7 @@ export function projectContent(input: ContentInput, prev?: ContentProjection): C
   for (const block of blocks) {
     const role = foldRole(block);
     roles.set(block.key, role);
-    if (block.type === 'text' && block.segment.content?.trim()) {
+    if (block.type === 'text' && hasText(block.segment.content)) {
       lastTextKey = block.key;
       textCount++;
     }
@@ -151,7 +207,7 @@ export function projectContent(input: ContentInput, prev?: ContentProjection): C
     if (role === 'process') hasProcess = true;
   }
   return shareProjection({
-    blocks, roles, nextExpiry, preparingToolCall, lastTextKey, textCount,
+    blocks, roles, nextExpiry, preparingToolCall, lastTextKey, textCount, textsFollowed: readFollows(groups, input.toolCallProcesses),
     hasRetained, hasProcess, hasPinnedLive: pinnedLive, pinnedSettledAt,
   }, prev);
 }
@@ -289,6 +345,50 @@ export function blockIsProcess(projection: ContentProjection, block: RenderBlock
   return role !== 'retain' && !(role === 'text' && isTurnTail && block.key === projection.lastTextKey);
 }
 
-export function blockVisible(projection: ContentProjection, block: RenderBlock, fold: FoldState, isTurnTail: boolean): boolean {
-  return fold !== 'collapsed' || !blockIsProcess(projection, block, isTurnTail);
+/** The text that stands as a reply whatever it says: the last of a bubble that
+ *  closes one, unless the turn went on working after it. */
+function closingTextKey(projection: ContentProjection, endsReply: boolean): string | undefined {
+  const key = projection.lastTextKey;
+  return endsReply && key !== undefined && projection.textsFollowed.get(key) !== 'work' ? key : undefined;
+}
+
+const shownByProjection = new WeakMap<ContentProjection, Map<boolean, ReadonlySet<string>>>();
+
+function shownTexts(projection: ContentProjection, endsReply: boolean): ReadonlySet<string> {
+  let byEnd = shownByProjection.get(projection);
+  const known = byEnd?.get(endsReply);
+  if (known) return known;
+  const closing = closingTextKey(projection, endsReply);
+  const shown = new Set<string>();
+  for (const block of projection.blocks) {
+    if (block.type !== 'text') continue;
+    const follow = projection.textsFollowed.get(block.key);
+    if (follow === undefined) continue;
+    if (block.key === closing || follow === 'ask') {
+      shown.add(block.key);
+      continue;
+    }
+    const threshold = endsReply && block.key === projection.lastTextKey ? ANSWER_SCORE_HELD : ANSWER_SCORE_SHOWN;
+    if (answerScore(block.segment.content ?? '') >= threshold) shown.add(block.key);
+  }
+  if (!byEnd) shownByProjection.set(projection, byEnd = new Map());
+  byEnd.set(endsReply, shown);
+  return shown;
+}
+
+export function blockVisible(projection: ContentProjection, block: RenderBlock, fold: FoldState, endsReply: boolean): boolean {
+  if (fold !== 'collapsed') return true;
+  const role = projection.roles.get(block.key);
+  return role === 'retain' || (role === 'text' && shownTexts(projection, endsReply).has(block.key));
+}
+
+/** The texts a collapsed turn keeps from this bubble, by `endsReply`. */
+export function holdsAnswerText(projection: ContentProjection, endsReply: boolean): boolean {
+  return closingTextKey(projection, endsReply) !== undefined || shownTexts(projection, endsReply).size > 0;
+}
+
+export function replyStartKey(projection: ContentProjection, fold: FoldState, endsReply: boolean): string | undefined {
+  if (fold !== 'collapsed') return projection.lastTextKey;
+  const shown = shownTexts(projection, endsReply);
+  return projection.blocks.find((block) => shown.has(block.key))?.key;
 }
