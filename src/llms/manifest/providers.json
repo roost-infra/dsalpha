@@ -968,12 +968,11 @@
         "is_reasoning": true,
         "description": "Claude Fable 5.1 model",
         "pricing": {
-          "input": 10.0,
-          "cached_input": 0.25,
-          "cache_5m": 12.5,
-          "cache_1h": 20.0,
-          "output": 50.0,
-          "unit": "per_1m_tokens"
+          "input": 2.244,
+          "cached_input": 0.057,
+          "output": 11.22,
+          "unit": "per_1m_tokens",
+          "cache_5m": 2.805
         }
       },
       {
@@ -982,35 +981,11 @@
         "is_reasoning": true,
         "description": "Claude Haiku 5.5 model",
         "pricing": {
-          "input_tiers": [
-            {
-              "max_tokens": 100000,
-              "rate": 0.1,
-              "cached_input": 0.01,
-              "cache_5m": 0.125,
-              "cache_1h": 0.2
-            },
-            {
-              "max_tokens": null,
-              "rate": 0.5,
-              "cached_input": 0.05,
-              "cache_5m": 0.625,
-              "cache_1h": 1.0
-            }
-          ],
-          "output_tiers": [
-            {
-              "max_tokens": 100000,
-              "rate": 0.5
-            },
-            {
-              "max_tokens": null,
-              "rate": 2.5
-            }
-          ],
-          "output_pricing_mode": "input_dependent",
-          "input_pricing_mode": "input_dependent",
-          "unit": "per_1m_tokens"
+          "input": 0.0224,
+          "cached_input": 0.0281,
+          "output": 0.1122,
+          "unit": "per_1m_tokens",
+          "cache_5m": 0.0022
         }
       },
       {
@@ -1018,10 +993,11 @@
         "name": "claude-sonnet-5",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
-          "unit": "per_1m_tokens"
+          "input": 1.496,
+          "cached_input": 0.15,
+          "output": 7.48,
+          "unit": "per_1m_tokens",
+          "cache_5m": 1.87
         },
         "context_window": 200000,
         "max_output": 8192
@@ -1032,11 +1008,9 @@
         "is_reasoning": true,
         "description": "Claude Opus 5.5 model",
         "pricing": {
-          "input": 4.0,
-          "cached_input": 0.2,
-          "cache_5m": 5.0,
-          "cache_1h": 8.0,
-          "output": 20.0,
+          "input": 0.898,
+          "cached_input": 0.045,
+          "output": 4.488,
           "unit": "per_1m_tokens"
         }
       },
@@ -1045,9 +1019,9 @@
         "name": "claude-fable-5-2",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.616,
+          "cached_input": 0.245,
+          "output": 8.079,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1058,9 +1032,9 @@
         "name": "claude-haiku-4.5",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.612,
+          "cached_input": 0.062,
+          "output": 3.06,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1071,9 +1045,9 @@
         "name": "claude-opus-4.8",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 3.06,
+          "cached_input": 0.306,
+          "output": 15.3,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1084,9 +1058,9 @@
         "name": "claude-sonnet-5.5",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.449,
+          "cached_input": 0.023,
+          "output": 2.244,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1097,9 +1071,9 @@
         "name": "deepseek-v4-pro",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.1975,
+          "cached_input": 0.0066,
+          "output": 0.5924,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1110,9 +1084,9 @@
         "name": "deepseek-v4.1-flash",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.092,
+          "cached_input": 0.002,
+          "output": 0.368,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1123,10 +1097,11 @@
         "name": "gpt-5.6-sol",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
-          "unit": "per_1m_tokens"
+          "input": 2.992,
+          "cached_input": 0.2992,
+          "output": 14.96,
+          "unit": "per_1m_tokens",
+          "cache_5m": 3.74
         },
         "context_window": 200000,
         "max_output": 8192
@@ -1137,34 +1112,11 @@
         "is_reasoning": true,
         "description": "Retired 2026-10-26, superseded by gpt-6.1-terra. Kept until the next retirement so a custom model on this id still bills.",
         "pricing": {
-          "input_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 2.0,
-              "cached_input": 0.2,
-              "cache_5m": 2.5
-            },
-            {
-              "max_tokens": null,
-              "rate": 4.0,
-              "cached_input": 0.4,
-              "cache_5m": 5.0
-            }
-          ],
-          "cache_5m": 2.5,
-          "output_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 12.0
-            },
-            {
-              "max_tokens": null,
-              "rate": 18.0
-            }
-          ],
-          "output_pricing_mode": "input_dependent",
-          "input_pricing_mode": "input_dependent",
-          "unit": "per_1m_tokens"
+          "input": 1.496,
+          "cached_input": 0.1496,
+          "output": 8.976,
+          "unit": "per_1m_tokens",
+          "cache_5m": 1.87
         },
         "context_window": 1050000,
         "max_output": 128000
@@ -1175,34 +1127,11 @@
         "is_reasoning": true,
         "description": "OpenAI's most capable GPT-6 reasoning model with tiered short/long-context pricing",
         "pricing": {
-          "input_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 10.0,
-              "cached_input": 1.0,
-              "cache_5m": 12.5
-            },
-            {
-              "max_tokens": null,
-              "rate": 20.0,
-              "cached_input": 2.0,
-              "cache_5m": 25.0
-            }
-          ],
-          "cache_5m": 12.5,
-          "output_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 50.0
-            },
-            {
-              "max_tokens": null,
-              "rate": 75.0
-            }
-          ],
-          "output_pricing_mode": "input_dependent",
-          "input_pricing_mode": "input_dependent",
-          "unit": "per_1m_tokens"
+          "input": 1.496,
+          "cached_input": 0.1496,
+          "output": 7.48,
+          "unit": "per_1m_tokens",
+          "cache_5m": 1.87
         },
         "context_window": 1050000,
         "max_output": 128000
@@ -1213,34 +1142,11 @@
         "is_reasoning": true,
         "description": "OpenAI's most efficient GPT-6 model for focused, high-volume tasks, with tiered short/long-context pricing",
         "pricing": {
-          "input_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 0.1,
-              "cached_input": 0.01,
-              "cache_5m": 0.125
-            },
-            {
-              "max_tokens": null,
-              "rate": 0.2,
-              "cached_input": 0.02,
-              "cache_5m": 0.25
-            }
-          ],
-          "cache_5m": 0.125,
-          "output_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 0.5
-            },
-            {
-              "max_tokens": null,
-              "rate": 0.75
-            }
-          ],
-          "output_pricing_mode": "input_dependent",
-          "input_pricing_mode": "input_dependent",
-          "unit": "per_1m_tokens"
+          "input": 0.015,
+          "cached_input": 0.0015,
+          "output": 0.0748,
+          "unit": "per_1m_tokens",
+          "cache_5m": 0.0187
         },
         "context_window": 1050000,
         "max_output": 128000
@@ -1250,9 +1156,9 @@
         "name": "gpt-6-sol",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.3,
+          "cached_input": 0.03,
+          "output": 1.496,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1264,33 +1170,9 @@
         "is_reasoning": true,
         "description": "OpenAI's GPT-6.1 model balancing intelligence and cost, with tiered short/long-context pricing",
         "pricing": {
-          "input_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 2.0,
-              "cached_input": 0.1,
-              "cache_5m": 2.5
-            },
-            {
-              "max_tokens": null,
-              "rate": 4.0,
-              "cached_input": 0.2,
-              "cache_5m": 5.0
-            }
-          ],
-          "cache_5m": 2.5,
-          "output_tiers": [
-            {
-              "max_tokens": 272000,
-              "rate": 10.0
-            },
-            {
-              "max_tokens": null,
-              "rate": 15.0
-            }
-          ],
-          "output_pricing_mode": "input_dependent",
-          "input_pricing_mode": "input_dependent",
+          "input": 0.3,
+          "cached_input": 0.015,
+          "output": 1.496,
           "unit": "per_1m_tokens"
         },
         "context_window": 1050000,
@@ -1301,9 +1183,9 @@
         "name": "gemini-3.1-pro",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.496,
+          "cached_input": 0.1496,
+          "output": 8.976,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1315,9 +1197,9 @@
         "is_reasoning": true,
         "description": "Google's flagship reasoning model, for complex software engineering, deep mathematical and scientific problem solving, and autonomous multi-step agents",
         "pricing": {
-          "input": 2.0,
-          "cached_input": 0.1,
-          "output": 10.0,
+          "input": 0.748,
+          "cached_input": 0.038,
+          "output": 3.74,
           "unit": "per_1m_tokens"
         },
         "scheduled_pricing": {
@@ -1333,9 +1215,9 @@
         "name": "gemini-4-carbon",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.748,
+          "cached_input": 0.038,
+          "output": 3.74,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1346,9 +1228,9 @@
         "name": "gemini-2.5-flash-image",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.225,
+          "cached_input": 0.057,
+          "output": 22.44,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1359,9 +1241,9 @@
         "name": "gemini-3.1-flash-image",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.374,
+          "cached_input": 0.0,
+          "output": 44.88,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1372,9 +1254,9 @@
         "name": "gemini-3.1-flash-image-preview",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.374,
+          "cached_input": 0.0,
+          "output": 44.88,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1385,9 +1267,9 @@
         "name": "gemini-3.1-flash-lite-image",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.187,
+          "cached_input": 0.0,
+          "output": 22.44,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1398,9 +1280,9 @@
         "name": "gemini-3-pro-image",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.496,
+          "cached_input": 0.0,
+          "output": 89.76,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1411,9 +1293,9 @@
         "name": "gemini-3-pro-image-preview",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.496,
+          "cached_input": 0.0,
+          "output": 89.76,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1424,9 +1306,9 @@
         "name": "gemini-nano-banana-2.1",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.122,
+          "cached_input": 1.122,
+          "output": 5.61,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1438,9 +1320,9 @@
         "is_reasoning": true,
         "description": "Z.AI's flagship GLM-5.3 model with 1M context and always-on thinking",
         "pricing": {
-          "input": 1.4,
-          "cached_input": 0.26,
-          "output": 4.4,
+          "input": 0.524,
+          "cached_input": 0.098,
+          "output": 1.646,
           "unit": "per_1m_tokens"
         }
       },
@@ -1450,9 +1332,9 @@
         "is_reasoning": true,
         "description": "Z.AI's natively multimodal GLM-5.3-Flash with 1M context",
         "pricing": {
-          "input": 0.15,
-          "cached_input": 0.03,
-          "output": 0.5,
+          "input": 0.057,
+          "cached_input": 0.012,
+          "output": 0.187,
           "unit": "per_1m_tokens"
         }
       },
@@ -1463,9 +1345,9 @@
         "description": "Retired 2026-10-26, superseded by kimi-k3.1-pro. Kept until the next retirement so a custom model on this id still bills.",
         "context_window": 1000000,
         "pricing": {
-          "input": 3.0,
-          "cached_input": 0.3,
-          "output": 15.0,
+          "input": 0.674,
+          "cached_input": 0.068,
+          "output": 3.366,
           "unit": "per_1m_tokens"
         }
       },
@@ -1476,9 +1358,9 @@
         "description": "Moonshot AI's flagship Kimi K3.1 multi-modal model with 1M-token context",
         "context_window": 1000000,
         "pricing": {
-          "input": 2.0,
-          "cached_input": 0.2,
-          "output": 10.0,
+          "input": 0.973,
+          "cached_input": 0.098,
+          "output": 4.862,
           "unit": "per_1m_tokens"
         }
       },
@@ -1490,11 +1372,11 @@
         "context_window": 1000000,
         "max_output": 131072,
         "pricing": {
-          "input": 0.114,
-          "cached_input": 0.014,
-          "cache_5m": 0.179,
-          "output": 0.386,
-          "unit": "per_1m_tokens"
+          "input": 0.057,
+          "cached_input": 0.006,
+          "output": 0.176,
+          "unit": "per_1m_tokens",
+          "cache_5m": 0.075
         }
       },
       {
@@ -1502,9 +1384,9 @@
         "name": "nano-banana-2",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 0.0,
+          "cached_input": 0.0,
+          "output": 0.0,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
@@ -1515,9 +1397,9 @@
         "name": "nano-banana-pro",
         "is_reasoning": true,
         "pricing": {
-          "input": 1.0,
-          "cached_input": 0.1,
-          "output": 2.0,
+          "input": 1.496,
+          "cached_input": 0.15,
+          "output": 8.976,
           "unit": "per_1m_tokens"
         },
         "context_window": 200000,
