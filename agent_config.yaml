@@ -33,7 +33,7 @@ sandbox:
   daytona:
     base_url: "https://app.daytona.io/api"
     auto_stop_interval: 3600 # 1 hour in seconds
-    auto_archive_interval: 21600 # 6 小时（原 7 天：免费 Tier 磁盘配额 30GiB，停止的沙箱需尽快归档释放）
+    auto_archive_interval: 7200 # 2 小时（停机磁盘由平台承担，尽快归档释放）
     auto_delete_interval: 259200 # 3 天（原 90 天：空闲沙箱长期占住名额）
     host_unavailable_rebuild_after_minutes: 60 # rebuild a computer from its backup once its sandbox's host has refused starts this long (the old sandbox is kept); 0 always waits
     python_version: "3.12"
