@@ -1864,7 +1864,8 @@
       "prompt_cache_key": false,
       "display_name": "Roost 中转",
       "category": "aggregator",
-      "operator_channel": "system"
+      "operator_channel": "system",
+      "session_header": "X-Roost-Session"
     }
   },
   "infrastructure_pricing": {},
