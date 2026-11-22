@@ -1448,7 +1448,7 @@ from src.server.app.workspace_sandbox import preview_redirect_router
 from src.server.app.market_data import router as market_data_router
 from src.server.app.bars import router as bars_router
 from src.server.app.user_events import router as user_events_router
-from src.server.app.users import router as users_router
+from src.server.app.users import router as users_router, platform_router
 from src.server.app.trading_permission import router as trading_permission_router
 from src.server.app.push_devices import router as push_devices_router
 from src.server.app.features import router as features_router
@@ -1552,6 +1552,7 @@ app.include_router(
     bars_router
 )  # /api/v1/market-data/bars/* - Protocol-native progressive bars
 app.include_router(users_router)  # /api/v1/users/* - User management
+app.include_router(platform_router)  # /api/auth/models - model-access tier for the picker
 app.include_router(
     trading_permission_router
 )  # /api/v1/users/me/trading-permission - Order approval level
