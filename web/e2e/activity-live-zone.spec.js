@@ -536,7 +536,6 @@ test.describe('activity live zone', () => {
       await summary.click();
       await page.waitForTimeout(1200);
       const samples = await stopSampling(page);
-      await releaseSSE('toggled');
 
       const flicked = samples.filter((s) => s.phase === 'flicked' && s.markTop !== null);
       expect(Math.min(...flicked.map((s) => s.stepShown)), 'flicked: the step left the screen').toBeGreaterThan(0.99);

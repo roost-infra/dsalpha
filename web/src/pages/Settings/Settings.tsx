@@ -81,6 +81,7 @@ function Settings() {
   const pageRef = useRef<HTMLDivElement>(null);
   useScrollMemory(pageRef, `page:settings:${section}`);
   const isLoading = isUserLoading || isPrefsLoading;
+  const wide = section === 'plan';
 
   // The setting is brought into view as soon as it is drawn: a section that
   // waits on its own query (Experiments, Trading permission) draws it later. Keyed on
@@ -134,7 +135,7 @@ function Settings() {
       <div className="settings-body">
         <SettingsRail section={section} />
         <div ref={pageRef} className="settings-scroll">
-          <div className="settings-column">
+          <div className={`settings-column ${wide ? 'settings-column--wide' : ''}`}>
             <header className="settings-head">
               <h1 className="settings-head-title">{t(SECTIONS[section].labelKey)}</h1>
               <p className="settings-head-def">{t(SECTIONS[section].descKey)}</p>

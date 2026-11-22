@@ -384,3 +384,268 @@ label.settings-row-label { cursor: pointer; }
   .settings-row { min-height: 48px; padding: 9px 12px; }
   .settings-card-body { padding: 12px; }
 }
+
+/* ---------- Plan & usage (DSAlpha pricing page) ---------- */
+.settings-column--wide { max-width: 1120px; }
+
+.plan-page { display: flex; flex-direction: column; gap: 22px; }
+.plan-page__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+.plan-page__eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--color-text-quaternary);
+}
+.plan-page__title {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary);
+}
+.plan-page__sub {
+  margin: 6px 0 0;
+  max-width: 620px;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+}
+.plan-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-muted);
+}
+.plan-toggle button {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  padding: 6px 13px;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.plan-toggle button.is-active {
+  background: var(--color-bg-card);
+  color: var(--color-text-primary);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.14);
+}
+.plan-toggle button span { color: var(--color-text-quaternary); font-size: 0.6875rem; }
+
+.plan-page__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.plan-card-ui {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 18px 16px 16px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 12px;
+  background: var(--color-bg-card);
+}
+.plan-card-ui.is-popular {
+  border-color: color-mix(in srgb, var(--color-accent, #e5a00d) 55%, var(--color-border-muted));
+}
+.plan-card-ui.is-current {
+  box-shadow: inset 0 0 0 1px var(--color-border-elevated);
+}
+.plan-card-ui__badge {
+  position: absolute;
+  top: -9px;
+  left: 14px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-text-primary);
+  color: var(--color-bg-card);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.plan-card-ui__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.plan-card-ui__head h3 { margin: 0; font-size: 0.9375rem; font-weight: 600; color: var(--color-text-primary); }
+.plan-card-ui__current {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-tertiary);
+  font-size: 0.625rem;
+}
+.plan-card-ui__price { margin-top: 14px; display: flex; align-items: baseline; gap: 5px; }
+.plan-card-ui__price strong { font-size: 1.5rem; font-weight: 650; letter-spacing: -0.02em; }
+.plan-card-ui__price span { font-size: 0.75rem; color: var(--color-text-quaternary); }
+.plan-card-ui__note { margin: 4px 0 0; min-height: 16px; font-size: 0.6875rem; color: var(--color-text-quaternary); }
+.plan-card-ui__credits {
+  margin: 12px 0 0;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+.plan-card-ui__features {
+  margin: 12px 0 18px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: 1;
+}
+.plan-card-ui__features li {
+  position: relative;
+  padding-left: 15px;
+  font-size: 0.71875rem;
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+.plan-card-ui__features li::before {
+  content: '✓';
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--color-text-primary);
+  font-size: 0.6875rem;
+}
+.plan-card-ui__cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 7px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-decoration: none;
+}
+.plan-card-ui__cta:hover { background: var(--color-bg-hover); }
+.plan-card-ui__cta.is-primary {
+  background: var(--color-text-primary);
+  border-color: var(--color-text-primary);
+  color: var(--color-bg-card);
+}
+
+.plan-page__wallet {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 10px;
+  background: var(--color-bg-card);
+}
+.plan-page__wallet h3 { margin: 0; font-size: 0.8125rem; font-weight: 600; }
+.plan-page__wallet p { margin: 3px 0 0; font-size: 0.75rem; color: var(--color-text-tertiary); }
+.plan-page__wallet-value { display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.plan-page__wallet-value strong { font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.plan-page__wallet-value span { font-size: 0.75rem; color: var(--color-text-quaternary); }
+.plan-page__wallet-value small { flex-basis: 100%; text-align: right; font-size: 0.6875rem; color: var(--color-text-quaternary); }
+.plan-page__links { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.plan-page__links a { font-size: 0.75rem; color: var(--color-text-secondary); text-decoration: none; }
+.plan-page__links a:hover { color: var(--color-text-primary); text-decoration: underline; }
+.plan-page__hint { margin-left: auto; font-size: 0.6875rem; color: var(--color-text-quaternary); }
+
+@media (max-width: 980px) {
+  .plan-page__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .plan-page__grid { grid-template-columns: 1fr; }
+  .plan-page__wallet { align-items: flex-start; flex-direction: column; }
+  .plan-page__wallet-value { justify-content: flex-start; }
+  .plan-page__hint { margin-left: 0; flex-basis: 100%; }
+}
+
+.plan-card-ui__cta.is-muted { color: var(--color-text-quaternary); cursor: default; }
+.plan-card-ui__trial {
+  margin-top: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.plan-card-ui__trial:hover { color: var(--color-text-primary); text-decoration: underline; }
+.plan-card-ui__trial:disabled { opacity: 0.5; cursor: wait; }
+
+.plan-checkout {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(3px);
+}
+.plan-checkout__panel {
+  position: relative;
+  width: min(360px, 100%);
+  padding: 22px 20px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-card);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.35);
+  text-align: center;
+}
+.plan-checkout__panel h3 { margin: 0 0 4px; font-size: 0.9375rem; font-weight: 650; }
+.plan-checkout__close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.plan-checkout__close:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.plan-checkout__amount { margin: 10px 0 14px; font-size: 1.5rem; font-weight: 650; letter-spacing: -0.02em; }
+.plan-checkout__qr {
+  width: 220px;
+  height: 220px;
+  object-fit: contain;
+  margin: 0 auto 12px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+.plan-checkout__pay {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 7px;
+  background: var(--color-text-primary);
+  color: var(--color-bg-card);
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+.plan-checkout__hint { margin: 12px 0 0; font-size: 0.6875rem; line-height: 1.5; color: var(--color-text-quaternary); }
+.plan-checkout__error { margin: 12px 0; font-size: 0.75rem; color: var(--color-loss, #d9534f); }

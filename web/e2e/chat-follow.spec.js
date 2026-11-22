@@ -7,7 +7,7 @@
  * reader only meets by chance: between a glide's write and its scroll event,
  * which arrives a frame later.
  */
-import { configureSSE, releaseSSE, resetMockServer, mockAPI, test, expect } from './fixtures.js';
+import { configureSSE, resetMockServer, mockAPI, test, expect } from './fixtures.js';
 import { sseEvents } from './helpers/mockResponses.js';
 import { TH, WS, chatViewOverrides, openThread, send } from './helpers/chatScenario.js';
 import { sampleFrames, stopSampling } from './helpers/frameProbe.js';
@@ -344,7 +344,6 @@ test.describe('a count opened at the end of a live turn', () => {
     // Open once more, and the reply runs on below the steps.
     await count.click();
     await expect.poll(below).toBeGreaterThan(150);
-    await releaseSSE('opened');
     await expect.poll(below, { timeout: 15000 }).toBeGreaterThan(400);
     await expect(pill).toHaveAttribute('data-state', 'open');
 
@@ -354,11 +353,9 @@ test.describe('a count opened at the end of a live turn', () => {
     await expect(pill).toHaveAttribute('data-state', 'closed');
     const height = () => page.evaluate(() => document.querySelector('main [data-transcript-content]').closest('.overflow-auto').scrollHeight);
     const before = await height();
-    await releaseSSE('rejoined');
     await expect.poll(async () => (await height()) - before, { timeout: 15000 }).toBeGreaterThan(300);
     await expect.poll(below).toBeLessThanOrEqual(NEAR_END);
     await expect(pill).toHaveAttribute('data-state', 'closed');
-    await releaseSSE('followed');
   });
 
   // The hold on a toggled row ends on its own clock and decides the pill by
@@ -397,7 +394,6 @@ test.describe('a count opened at the end of a live turn', () => {
     // Away from the end, with the steps open and the reply all in below them.
     await count.click();
     await expect(pill).toHaveAttribute('data-state', 'open');
-    await releaseSSE('opened');
     await expect(page.locator('main [data-transcript-content]')).toContainText('Later 5.', { timeout: 15000 });
     await expect.poll(below).toBeGreaterThan(400);
 
@@ -410,7 +406,6 @@ test.describe('a count opened at the end of a live turn', () => {
     await page.waitForTimeout(600);
     expect(await below()).toBeLessThanOrEqual(AT_END);
     await expect(pill).toHaveAttribute('data-state', 'closed');
-    await releaseSSE('landed');
   });
 });
 
