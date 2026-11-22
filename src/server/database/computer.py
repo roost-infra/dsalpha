@@ -11,6 +11,7 @@ losers, retain the single-table path.
 
 import logging
 from contextlib import asynccontextmanager
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -492,6 +493,41 @@ async def clear_computer_retirement_pending(
                     @> '{{"retire_when_empty": true}}'::jsonb
             """,
             (computer_id,),
+        )
+        return cur.rowcount > 0
+
+
+async def set_computer_setting(
+    computer_id: str,
+    user_id: str,
+    key: str,
+    value: Any,
+    *,
+    conn=None,
+) -> bool:
+    """Set one of the user's computer's settings in its ``config``, or with
+    ``value`` None remove it. False where the computer is gone or not theirs."""
+    return await set_computer_settings(computer_id, user_id, {key: value}, conn=conn)
+
+
+async def set_computer_settings(
+    computer_id: str, user_id: str, settings: Mapping[str, Any], *, conn=None
+) -> bool:
+    """:func:`set_computer_setting` for several at once, in one write, so a
+    reader never sees some of them changed and not the rest."""
+    removed = [key for key, value in settings.items() if value is None]
+    kept = {key: value for key, value in settings.items() if value is not None}
+    async with _computer_cursor(conn) as cur:
+        await cur.execute(
+            f"""
+            UPDATE computers
+            SET config = (COALESCE(config, '{{}}'::jsonb) - %s::text[]) || %s::jsonb,
+                updated_at = NOW()
+            WHERE computer_id = %s
+              AND user_id = %s
+              AND {FENCE_NOT_DELETED}
+            """,
+            (removed, Json(kept), computer_id, user_id),
         )
         return cur.rowcount > 0
 

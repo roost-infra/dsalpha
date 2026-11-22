@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import shlex
 import time
 import uuid
@@ -17,13 +18,20 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
+from fastapi import HTTPException
 
 from ptc_agent.core.sandbox.preview_probe import head_preview
 from ptc_agent.core.sandbox.runtime import PreviewInfo
 from src.server.database.workspace import get_preview_command
-from src.server.services.preview_capabilities import publish
+from src.server.services.preview_capabilities import (
+    PreviewProxyNotConfigured,
+    PreviewProxyUnavailable,
+    publish,
+)
 from src.server.services.preview_upstreams import probe_target
 from src.utils.cache.redis_cache import get_cache_client
+
+logger = logging.getLogger(__name__)
 
 _SIGNED_URL_TTL = 3000  # 50 min (signed URLs expire in 1h)
 # What a provider signs a preview URL for when the caller names no lifetime.
@@ -390,3 +398,21 @@ async def resolve_preview(
             cache_for=expires_in,
             claim_owner=False,
         )
+
+
+def proxy_failure(
+    e: PreviewProxyNotConfigured | PreviewProxyUnavailable,
+    workspace_id: str,
+    port: int | None = None,
+) -> HTTPException:
+    """The answer for a preview that needs the proxy this deployment cannot give."""
+    if isinstance(e, PreviewProxyNotConfigured):
+        return HTTPException(
+            status_code=501,
+            detail=(
+                "Previews on this computer need the preview proxy, which this "
+                "deployment has not configured."
+            ),
+        )
+    logger.warning("Preview proxy unavailable for workspace %s port %s", workspace_id, port)
+    return HTTPException(status_code=503, detail="Previews are unavailable. Try again shortly.")
