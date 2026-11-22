@@ -1428,3 +1428,47 @@ async def _publish_shadowed(row: Dict[str, Any], status: str) -> None:
         await publish_computer_status_change(str(computer_id), status)
     for workspace_id in row.get("shadowed_workspace_ids") or ():
         await publish_status_change(str(workspace_id), status)
+
+
+async def list_stopped_for_disk_billing(limit: int = 100) -> List[Dict[str, Any]]:
+    """Computers whose stopped-state disk has not been metered yet.
+
+    ``disk_billed_until`` is the end of the last reported stopped interval; the
+    sweeper advances it only after the console accepts the charge.
+    """
+    if limit <= 0:
+        return []
+    async with get_db_connection() as conn:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                SELECT computer_id, user_id, status, provider_ref,
+                       disk_total_bytes, stopped_at, disk_billed_until, updated_at
+                FROM computers
+                WHERE status IN ('stopped', 'paused', 'running', 'starting', 'stopping')
+                  AND stopped_at IS NOT NULL
+                  AND disk_total_bytes IS NOT NULL
+                  AND disk_total_bytes > 0
+                  AND (disk_billed_until IS NULL OR disk_billed_until < stopped_at)
+                ORDER BY COALESCE(disk_billed_until, stopped_at), computer_id
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return list(await cur.fetchall())
+
+
+async def mark_disk_billed(computer_id: str, until: datetime) -> bool:
+    """Advance the stopped-disk watermark, never past a newer stop boundary."""
+    async with get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE computers
+                SET disk_billed_until = %s
+                WHERE computer_id = %s
+                  AND (disk_billed_until IS NULL OR disk_billed_until < %s)
+                """,
+                (until, computer_id, until),
+            )
+            return cur.rowcount > 0

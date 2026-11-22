@@ -18,9 +18,8 @@ the queue.
 
 Two billing limits are deliberate, and read as under-billing rather than bugs:
 
-* Only the interval spent running is billed. A stopped sandbox keeps its disk
-  until it is deleted; ``computer_runs`` has no disk-only or paused interval,
-  so that storage is not charged yet.
+* Running intervals come from ``computer_runs``. Stopped/paused disk is metered
+  separately by ``report_stopped_disks``, capped to Daytona's archive window.
 * There is no historical backfill. Only runs closed after the columns existed
   are in the queue.
 
@@ -37,7 +36,7 @@ import logging
 import math
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
@@ -49,9 +48,11 @@ from src.config.env import (
     DAYTONA_MEMORY_USD_PER_GIB_HOUR,
     SANDBOX_BILLING_INTERVAL_SECONDS,
     SANDBOX_MARKUP_BPS,
+    STOPPED_DISK_MAX_SECONDS,
     USD_TO_CREDITS_RATE,
 )
 from src.config.settings import AUTH_SERVICE_URL
+from src.server.database import computer as computers_db
 from src.server.database import computer_runs as runs_db
 from src.server.database.session_lock import try_own_session_lock
 from src.server.dependencies import usage_limits
@@ -699,6 +700,119 @@ async def report_once(
     )
 
 
+async def report_stopped_disks(
+    limit: int = 100,
+    *,
+    client: Any = None,
+    prices: Optional[SandboxPrices] = None,
+    markup_bps: int = SANDBOX_MARKUP_BPS,
+    usd_to_credits: float = USD_TO_CREDITS_RATE,
+) -> BillingSweepResult:
+    """Meter disk reserved while a computer is stopped or paused.
+
+    Daytona bills reserved disk in those states; a ``computer_runs`` row only
+    covers running seconds. Cap each stop at ``STOPPED_DISK_MAX_SECONDS`` (the
+    auto-archive window): once archived Daytona stops billing disk, and this
+    meter must not charge a machine that is no longer reserving it.
+    """
+    result = BillingSweepResult()
+    if not _base_url() or usage_limits.service_token_missing():
+        return result
+    http = client or await usage_limits.get_http_client()
+    rows = await computers_db.list_stopped_for_disk_billing(limit=limit)
+    result.listed = len(rows)
+    rates = prices or SandboxPrices()
+    org_cache: dict[str, str] = {}
+    org_failures: dict[str, BillingError] = {}
+    now = datetime.now(UTC)
+    for row in rows:
+        computer_id = str(row["computer_id"])
+        stopped_at = row.get("stopped_at")
+        if stopped_at is None:
+            result.skipped += 1
+            continue
+        if stopped_at.tzinfo is None:
+            stopped_at = stopped_at.replace(tzinfo=UTC)
+        billed_until = row.get("disk_billed_until")
+        if billed_until is not None and billed_until.tzinfo is None:
+            billed_until = billed_until.replace(tzinfo=UTC)
+        start = max(stopped_at, billed_until or stopped_at)
+        cap = stopped_at + timedelta(seconds=STOPPED_DISK_MAX_SECONDS)
+        if row.get("status") in ("stopped", "paused"):
+            end = min(now, cap)
+        else:
+            # The stop ended when the machine began running again. updated_at is
+            # the closest durable stamp for that transition.
+            end = min(now, cap, row.get("updated_at") or now)
+        if end <= start:
+            await computers_db.mark_disk_billed(computer_id, end)
+            result.skipped += 1
+            continue
+        disk_gb = float(row["disk_total_bytes"]) / (1024 ** 3)
+        seconds = int((end - start).total_seconds())
+        try:
+            charge = compute_charge(
+                0, 0, disk_gb, seconds, markup_bps, usd_to_credits, prices=rates
+            )
+        except ValueError as e:
+            logger.warning("Stopped disk charge invalid for %s: %s", computer_id, e)
+            result.failed += 1
+            continue
+        if charge.total_credits <= 0:
+            await computers_db.mark_disk_billed(computer_id, end)
+            result.skipped += 1
+            continue
+        try:
+            org_id = await _org_for_user(
+                str(row["user_id"]), client=http, org_cache=org_cache, org_failures=org_failures
+            )
+        except BillingError as e:
+            logger.warning("Stopped disk org unresolved for %s: %s", computer_id, e)
+            result.retried += 1
+            continue
+        run = {
+            "run_id": f"stopped-disk:{computer_id}:{int(end.timestamp())}",
+            "computer_id": computer_id,
+            "user_id": str(row["user_id"]),
+            "provider_sandbox_id": str(row.get("provider_ref") or computer_id),
+            "started_at": start,
+            "ended_at": end,
+        }
+        body = build_usage_body(
+            run, org_id, charge, prices=rates, markup_bps=markup_bps,
+            usd_to_credits=usd_to_credits,
+        )
+        body["idempotency_key"] = f"dsalpha:stopped_disk:{computer_id}:{int(end.timestamp())}"
+        try:
+            response = await _post(http, _console_url(REPORT_SANDBOX_PATH), body)
+        except Exception as e:
+            logger.warning("Stopped disk report unreachable for %s: %s", computer_id, e)
+            result.retried += 1
+            continue
+        status = int(response.status_code)
+        if 200 <= status < 300:
+            await computers_db.mark_disk_billed(computer_id, end)
+            result.reported += 1
+        elif status in _RETRYABLE_4XX:
+            logger.warning(
+                "Stopped disk report %s for %s: %s",
+                status, computer_id, _response_text(response),
+            )
+            result.retried += 1
+        else:
+            logger.error(
+                "Stopped disk report refused %s for %s: %s",
+                status, computer_id, _response_text(response),
+            )
+            result.failed += 1
+    if result.reported or result.retried or result.failed:
+        logger.info(
+            "Stopped disk billing: %d reported, %d retrying, %d failed of %d",
+            result.reported, result.retried, result.failed, result.listed,
+        )
+    return result
+
+
 class SandboxBillingReporter:
     """The per-worker loop that reports billing.
 
@@ -756,6 +870,7 @@ class SandboxBillingReporter:
                 async with try_own_session_lock(_REPORTER_LOCK) as held:
                     if held:
                         await report_closed_runs(limit=self.limit)
+                        await report_stopped_disks(limit=self.limit)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
