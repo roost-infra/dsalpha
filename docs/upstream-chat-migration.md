@@ -21,6 +21,7 @@ upstream subsystem are deferred rather than half-applied.
 | `af1b00923` | Concurrent thread numbering under a lock | `fcb8101a5` | clean; touches our thread create/home-fold path |
 | `07226dd1c` | Postgres regression for the thread-index race | `d3bc0282f` | integration test |
 | `d558fdd51` | SSE delta goes out at once after a quiet spell | `4d98505fb` | core coalescer only; relay half depends on `6b99a6c32` |
+| `903c38a84` | thread load ends at its replay, not its ratings read | `1f37e9cf5` | adapted; adds `feedbackLoading` to our older hook |
 
 ## Deferred: dependency or semantic conflict
 
@@ -28,7 +29,6 @@ upstream subsystem are deferred rather than half-applied.
 |---|---|
 | `f5d61083a` / `c9127b134` (turn fold by answer) | Needs upstream `replyEnds`, `quietEnd`, `cardedCharts`, `textsFollowed`, `chartLayerGrouping`, and a newer `contentProjection`; 4-file conflict and a semantic rewrite. Port after the projection layer is brought over. |
 | `19829836f` (source cost + provider icon) | UI is small, but backend provenance does not yet emit `cost_credits` / `site`; porting only the panel would render nothing. |
-| `903c38a84` (end load at replay, not ratings) | Depends on upstream `useChatFeedback` / `useChatMessages` load-order refactor; 2-file semantic conflict. |
 | `cb8cc1dcc` (fold composer tray under notices) | Needs `useNoticeSlot`, `useTrayFold.covered`, `othersTurn`; those are not in this fork. |
 | `d558fdd51` relay half | `DeltaJoin` arrives in upstream `6b99a6c32`; our relay predates it. |
 | `9e365f931`, `1a20c1c1e` | Depend on upstream `turn_tool.py` and background-subagent refactors not present here. |
