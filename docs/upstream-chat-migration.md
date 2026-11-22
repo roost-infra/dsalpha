@@ -25,6 +25,7 @@ upstream subsystem are deferred rather than half-applied.
 | `0a52c7dec` | keep an earlier report's start when the newest turn wrote nothing | `5bfc4441b` | ported onto `tools/secretary/utils.py` |
 | `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
 | `ed4c67f51` | home clocks for TWII/KS11/NSEI/BSESN/AXJO indices | `0112791b9` | adapted; our table predates `SessionHours`, so timezone only |
+| `5451fcb17` | check an index quote's previous close against FMP daily history | `76b59b1b6` | merge port; protocol + FMP + web table; 497 tests pass |
 | `f5d61083a` | fold a turn's texts by whether they read as an answer | `02d6d372d` | core; chart-layer inputs not needed |
 | `d78b9e503` | close a quiet wake turn with its note, so it folds like a reply | `790d52169` | adapted; kept our action props, dropped upstream-only extras |
 | `c9127b134` | keep the reply a steer answered in a folded turn | `cf22634e7` | adapted; uses `computeReplyEnds` |
