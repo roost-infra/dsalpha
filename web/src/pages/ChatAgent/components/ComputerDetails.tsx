@@ -20,9 +20,11 @@ import { useIsPresent } from '@/lib/framer';
 import { DURATION } from '@/lib/motion';
 import type { Computer } from '@/types/api';
 
+import { useBrowserHere } from '../hooks/useBrowserHere';
 import { useComputerProviders, useComputerStorage } from '../hooks/useComputers';
 import type { ThisMac } from '../hooks/useRemoteControl';
 import { isComputerPreparing, isComputerStatusTransitional, takesWorkspaces } from '../utils/computerStatus';
+import { BrowserQualitySetting } from './BrowserQualitySetting';
 import { DiskBar, DiskUsageText } from './computerDiskUi';
 import { activeSpecChange, effectiveTier } from './specChangeUi';
 import { COMPUTER_NAME_MAX, computerNameTakenMessage } from '../utils/computerName';
@@ -66,6 +68,7 @@ function ComputerDetails({ computer, index, total, height, onBack, thisMac, show
   const disk = computer.disk ?? null;
   const specChange = activeSpecChange(computer);
   const managesSpec = providerManagesSpec(computer.kind);
+  const browserHere = useBrowserHere(computer);
   // The primary is kept, so it offers no Remove at all. Every other computer
   // offers it, held while the server would refuse, with the reason under it.
   // Workspaces on it do not hold it: the confirmation offers to delete them.
@@ -161,6 +164,8 @@ function ComputerDetails({ computer, index, total, height, onBack, thisMac, show
             {disk && <DiskBar disk={disk} className="mt-1.5" />}
             <StorageBreakdown computer={computer} />
           </section>
+
+          {browserHere && <BrowserQualitySetting computer={computer} />}
 
           {hasSettings && (
             <section className="computer-details-group">
