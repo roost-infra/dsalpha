@@ -758,7 +758,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
             <div className="w-full flex flex-col gap-4 pb-8">
               <div className="flex items-center justify-between">
                 <h2 className="text-base font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                  {showArchived ? t('thread.archivedTasks') : t('thread.tasks')}
+                  {showArchived ? t('thread.archivedConversations') : t('thread.conversations')}
                 </h2>
                 <button
                   type="button"
