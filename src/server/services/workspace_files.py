@@ -102,6 +102,19 @@ async def acquire_sandbox(
     return sandbox, workspace
 
 
+async def sandbox_if_running(workspace_id: str, user_id: str) -> Any | None:
+    """The workspace's sandbox while its computer is running, else None, for a
+    read that must never start it. The caller has checked ownership."""
+    try:
+        session = await WorkspaceManager.get_instance().get_session_if_running(
+            workspace_id, user_id=user_id
+        )
+    except Exception as e:
+        logger.warning(f"Workspace {workspace_id} could not be reached: {e}")
+        raise sandbox_failure_http(e) from None
+    return getattr(session, "sandbox", None)
+
+
 @asynccontextmanager
 async def acquire_sandbox_to_change(
     workspace_id: str, user_id: str

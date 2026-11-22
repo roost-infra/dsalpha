@@ -27,6 +27,7 @@ from src.server.database.workspace import (
     get_workspace_identity as db_get_workspace_identity,
 )
 
+from src.server.services import browser_quality
 from src.server.services.computer_manager._providers import HostOutageClock
 from src.server.services.computer_manager._types import (
     ComputerBinding,
@@ -64,6 +65,8 @@ class SessionCacheMixin:
                 str(computer["files_epoch"]) if computer.get("files_epoch") else None
             ),
             files_backup=computer.get("files_backup", True) is not False,
+            browser_quality=browser_quality.chosen(computer),
+            browser_quality_rev=browser_quality.revision(computer),
         )
 
     async def resolve_binding(
