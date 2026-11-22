@@ -25,12 +25,13 @@ upstream subsystem are deferred rather than half-applied.
 | `0a52c7dec` | keep an earlier report's start when the newest turn wrote nothing | `5bfc4441b` | ported onto `tools/secretary/utils.py` |
 | `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
 | `ed4c67f51` | home clocks for TWII/KS11/NSEI/BSESN/AXJO indices | `0112791b9` | adapted; our table predates `SessionHours`, so timezone only |
+| `f5d61083a` | fold a turn's texts by whether they read as an answer | `02d6d372d` | core ported without chart-layer/quiet-end inputs; `c9127b134` still deferred |
 
 ## Deferred: dependency or semantic conflict
 
 | Upstream | Why not yet |
 |---|---|
-| `f5d61083a` / `c9127b134` (turn fold by answer) | Dependency chain: `9c10553bb` adds `chartLayerGrouping` / `cardedCharts`; `d78b9e503` adds quiet-turn ends (`replyEnds`, `quietEnd`); `650819ba2` / `06ef07733` add the context hand-off and notice types (`textsFollowed`). All of those touch our `MessageList` / `ChatView` / `buildRenderBlocks`; 4-file conflict and a semantic rewrite. Port the projection layer as one unit. |
+| `c9127b134` (steer reply in a folded turn) | Needs the quiet-end (`d78b9e503`) and chart-layer (`9c10553bb`) projection inputs; deferred behind that subsystem. |
 | `19829836f` (source cost + provider icon) | UI is small, but backend provenance does not yet emit `cost_credits` / `site`; porting only the panel would render nothing. |
 | `cb8cc1dcc` (fold composer tray under notices) | Needs `useNoticeSlot`, `useTrayFold.covered`, `othersTurn`; those are not in this fork. |
 | `d558fdd51` relay half | `DeltaJoin` arrives in upstream `6b99a6c32`; our relay predates it. |
@@ -56,10 +57,8 @@ upstream subsystem are deferred rather than half-applied.
 
 ## Next batches
 
-1. **Projection layer**: upstream history/fold helpers (`replyEnds`,
-   `quietEnd`, `cardedCharts`) then `f5d` + `c912` + `4198`.
+1. **Chart-layer projection**: `e00b33209` + `9c10553bb` + `d78b9e503`, then
+   `c9127b134` and the remaining fold tests (`4198e82ff`).
 2. **Provenance**: backend `cost_credits`/`site` then `19829836f`.
-3. **Load/reconnect**: `useChatFeedback`/`useChatMessages` load order then
-   `903c38a84`.
-4. **Forks**: `threads` + `context_stack` + session resume, as one feature.
-5. **Comments**, **browser**, **Claude Code** remain separate subsystem ports.
+3. **Forks**: `threads` + `context_stack` + session resume, as one feature.
+4. **Comments**, **browser**, **Claude Code** remain separate subsystem ports.
