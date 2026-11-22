@@ -29,11 +29,13 @@ import { downloadTarget } from '../utils/fileRefResolver';
 import { toast } from '@/components/ui/use-toast';
 import { mergeWarmingDisplay } from '../utils/warmWorkspace';
 import { useChatMessages } from '../hooks/useChatMessages';
+import { BROWSER_FEATURE } from '../hooks/useBrowserHere';
 import { useThreadModel } from '../hooks/useThreadModel';
 import { useThreadSubagents } from '../hooks/useThreadSubagents';
 import { useThreadTuning } from '../hooks/useThreadTuning';
 import { useForeignRunCatchUp } from '../hooks/useForeignRunCatchUp';
 import { useComputerFolders } from '../hooks/useComputerFolders';
+import { useComputer } from '../hooks/useComputers';
 import { saveChatSession, getChatSession, clearChatSession } from '../hooks/utils/chatSessionRestore';
 import type { PreviewData } from '../hooks/utils/types';
 import { useCardState } from '../hooks/useCardState';
@@ -68,7 +70,8 @@ import { DispatchStatusProvider } from '../hooks/usePTCDispatchStatus';
 import JumpToLatestPill from './JumpToLatestPill';
 import ShareButton from './ShareButton';
 import { WorkspaceProvider } from '../contexts/WorkspaceContext';
-import { ShareLinkOpenerContext } from '../contexts/ShareLinkOpenerContext';
+import { LinkActionsContext } from '../contexts/LinkActionsContext';
+import type { BrowserUse } from '../session/stream/browserUse';
 import { RouteLeaveGuardContext } from '../contexts/RouteLeaveGuardContext';
 import SubagentStatusBar from './SubagentStatusBar';
 import TodoDrawer from './TodoDrawer';
@@ -313,6 +316,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const handleOpenPreviewFromStream = useCallback((data: PreviewData) => {
     openPreviewRef.current(data);
   }, []);
+  const browserUseRef = useRef<(use: BrowserUse) => void>(() => {});
+  const handleBrowserUseFromStream = useCallback((use: BrowserUse) => {
+    browserUseRef.current(use);
+  }, []);
 
   // Chat messages management - receives updateTodoListCard and updateSubagentCard from floating cards hook.
   // Send, edit, regenerate and retry come from useTranscriptFollow below.
@@ -322,7 +329,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const coverReads = useChatCoverReads();
   const chat = useChatMessages(workspaceId, threadId, {
     updateTodoListCard: updateTodoListCard as (todoData: Record<string, unknown>) => void, updateSubagentCard, finalizePendingTodos,
-    onFileArtifact: handleFileArtifact, onPreviewUrl: handleOpenPreviewFromStream, clearSubagentCards,
+    onFileArtifact: handleFileArtifact, onPreviewUrl: handleOpenPreviewFromStream, onBrowserUse: handleBrowserUseFromStream, clearSubagentCards,
     onWorkspaceCreated: handleWorkspaceCreated, platform: 'web', readComposerOptions, returnsUnsent: coverReads.docked,
   });
   const {
@@ -909,6 +916,11 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
 
 
   // Right-panel controller (chatView/useRightPanel).
+  const { data: chatComputer } = useComputer(workspaceRecord?.computer_id ?? null);
+  const browserOn = useFeatureEnabled(BROWSER_FEATURE);
+  // Our fork has no shared-workspace mode yet, so every chat owns the computer
+  // its workspace runs on.
+  const sharedWorkspace = false;
   const {
     panelTarget,
     handleTargetHandled,
@@ -938,8 +950,10 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     activeTabKind,
     leaveFiles,
     handleOpenPreview,
+    handleBrowserUse,
+    browserViewFor,
+    linkActions,
     handleOpenArtifactComment,
-    handleOpenShareLink,
     handleOpenChart,
     handleOpenInMarketView,
     detailToolCall,
@@ -957,6 +971,9 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     messages,
     subagentTranscripts,
     watching: showWatchChip,
+    computer: chatComputer ?? null,
+    shared: sharedWorkspace,
+    browserOn,
   });
 
   // Whether the file panel covers the chat, and the composer that moves to the
@@ -1030,6 +1047,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   // Keep the ref in sync so SSE events (via handleOpenPreviewFromStream) use the latest closure
   useLayoutEffect(() => {
     openPreviewRef.current = handleOpenPreview;
+    browserUseRef.current = handleBrowserUse;
   });
 
   // A deliverable card names its own workspace only for a cross-workspace ref;
@@ -1393,7 +1411,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
         panel beside it, so it leaves through the panel's guard like the
         panel's own exits do. */}
     <RouteLeaveGuardContext value={leaveFiles}>
-    <ShareLinkOpenerContext value={handleOpenShareLink}>
+    <LinkActionsContext value={linkActions}>
     <ThreadCommandsContext value={panelThreadId ?? null}>
     <ChatCommentSendsProvider value={commentSends}>
     <ComposerDockContext value={composerDock.context}>
@@ -1931,6 +1949,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                     });
                   }}
                   {...filePanelAccess}
+                  browserView={browserViewFor(panelWorkspaceId)}
                 />
                 </WorkspaceProvider>
               </Suspense>
@@ -2006,6 +2025,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                         });
                       }}
                       {...filePanelAccess}
+                      browserView={browserViewFor(panelWorkspaceId)}
                     />
                     </WorkspaceProvider>
                   ) : null}
@@ -2022,7 +2042,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     </ComposerDockContext>
     </ChatCommentSendsProvider>
     </ThreadCommandsContext>
-    </ShareLinkOpenerContext>
+    </LinkActionsContext>
     </RouteLeaveGuardContext>
     </WorkspaceProvider>
   );

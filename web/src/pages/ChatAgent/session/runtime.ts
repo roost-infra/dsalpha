@@ -29,6 +29,7 @@
  */
 
 import type React from 'react';
+import type { BrowserUse } from './stream/browserUse';
 import type {
   SetMessages, TokenUsage, PendingInterrupt, OffloadBatch, SSEEvent,
   TaskRefs, HistoryInterruptInfo, FallbackSuggestion,
@@ -137,6 +138,8 @@ export interface StreamRuntime {
   onWorkspaceCreated: ((info: { workspaceId: string; question: string }) => void) | null;
   onFileArtifact: ((event: SSEEvent) => void) | null;
   onPreviewUrl: ((data: PreviewData) => void) | null;
+  /** A shell command drove the computer's browser. */
+  onBrowserUse: ((use: BrowserUse) => void) | null;
   // stable (setters)
   setMessages: SetMessages;
   /** Per-token writes, applied on the next frame (`frameQueue.ts`). */
