@@ -23,6 +23,11 @@ on:
       - deploy/**
       - .github/workflows/deploy-backend.yml
   workflow_dispatch:
+    inputs:
+      image_rebuilt:
+        description: "The runtime image was rebuilt for this tree (Dockerfile/dependency change)"
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-dslpha-backend
@@ -39,8 +44,11 @@ jobs:
         with:
           fetch-depth: 2
       - name: Refuse dependency changes without an image rebuild
+        env:
+          IMAGE_REBUILT: ${{ inputs.image_rebuilt }}
         run: |
-          if git diff --name-only HEAD^ HEAD | grep -qE '^(pyproject\.toml|uv\.lock|deploy/Dockerfile\.backend)$'; then
+          if [ "${IMAGE_REBUILT:-false}" != "true" ] && \
+             git diff --name-only HEAD^ HEAD | grep -qE '^(pyproject\.toml|uv\.lock|deploy/Dockerfile\.backend)$'; then
             echo "::error::dependency or image inputs changed; the runtime image must be rebuilt before this tree can run"
             exit 1
           fi
