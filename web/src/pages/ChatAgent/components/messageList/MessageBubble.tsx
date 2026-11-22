@@ -29,13 +29,15 @@ import { assistantText, userMessageText } from './messageText';
 import { EditMessageField } from './EditMessageField';
 import { sentMessageForCopy, sentMessageWords } from './sentMessage';
 import { TurnFileCards } from './TurnFileCards';
+import { QuietEndLine } from './QuietEndLine';
+import type { QuietEnd } from '../../session/wakeupEvents';
 import type { ArtifactCommentsShown } from '@/types/api';
 import { CommentSendBody } from '../artifactComments/CommentSendBody';
 import { InPlaceSwap } from '@/components/ui/crossfade';
 import { CollapseClockContext, isFreshSend, playEntrance, turnEndDelays } from './transcriptMotion';
 import { useMessageTyping, useProseReport } from './proseTyping';
 import type { TurnFile } from '../../utils/turnFiles';
-import { projectMessageContent, type ContentProjection } from './contentProjection';
+import { holdsAnswerText, projectMessageContent, type ContentProjection } from './contentProjection';
 import { isImeComposing } from '@/lib/ime';
 import { onScreenKeyboardUp } from '@/lib/visualViewport';
 import { EMPTY_OBJ } from './types';
@@ -101,6 +103,9 @@ interface MessageBubbleProps {
    *  turn (steering splits one turn across several bubbles). Regenerate renders
    *  only on the tail. Computed positionally in MessageList. */
   isTurnTail: boolean;
+  /** The bubble closes a reply: the turn's tail, or the last bubble before a
+   *  steer (`computeReplyEnds`). A folded turn keeps its closing text. */
+  endsReply?: boolean;
   /** False for a turn that opened hidden, whose words a regenerate's replay
    *  would drop (see `hiddenOpenerTurns`). */
   canRegenerate?: boolean;
@@ -115,6 +120,9 @@ interface MessageBubbleProps {
   turnFiles?: TurnFile[];
   /** When the turn ended, on its tail once it has; the time its reply shows. */
   completedAt?: number;
+  /** The line closing a wake turn that ended quietly, given to its tail
+   *  once the turn has settled. */
+  quietEnd?: QuietEnd | null;
   /** This turn's stored rating, or null. */
   feedback?: FeedbackResult | null;
   isLoading?: boolean;
@@ -134,7 +142,7 @@ interface MessageBubbleProps {
  * MessageActionsContext (one identity-stable object per host), so a streamed
  * chunk never re-renders settled bubbles through a handler identity.
  */
-export const MessageBubble = memo(function MessageBubble({ message, contentProjection, turnIndex, isTurnTail, canRegenerate = true, isLatestReply = true, isTurnLive, turnFiles, completedAt, feedback, isLoading, fold = 'unfolded', isSubagentView, readOnly, allowFiles, isMobile, dispatcherContext }: MessageBubbleProps): React.ReactElement | null {
+export const MessageBubble = memo(function MessageBubble({ message, contentProjection, turnIndex, isTurnTail, endsReply = isTurnTail, canRegenerate = true, isLatestReply = true, isTurnLive, turnFiles, completedAt, quietEnd, feedback, isLoading, fold = 'unfolded', isSubagentView, readOnly, allowFiles, isMobile, dispatcherContext }: MessageBubbleProps): React.ReactElement | null {
   const { onOpenFile, onDownloadFile, onRevealFiles, onOpenSources, onEditMessage, editDrafts, onRegenerate, onRetry, onThumbUp, onThumbDown } = useMessageActions();
   const { t } = useTranslation();
   const root = useWorkspaceFolders()?.rootDir;
@@ -258,13 +266,16 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
 
   // A mid-turn bubble of a folded turn is process by definition: its prose is
   // commentary the answer superseded, and its activity is behind the fold row.
+  // One a steer ended is not mid-turn in that sense: it holds the reply the
+  // steer answered.
   // Once that is taken away it can have nothing left to draw, and an assistant
   // bubble with nothing in it is an avatar beside a blank column — the same
   // thing `isOrphanAssistantMessage` keeps off screen. The bubble stays in
   // state either way: turn indices are counted positionally over it.
   const foldedAway = fold === 'collapsed'
     && isAssistant
-    && !isTurnTail
+    && !endsReply
+    && !holdsAnswerText(projection, endsReply)
     && !(message.error as boolean)
     && !(message.stopped as boolean)
     && sourceCount === 0
@@ -329,7 +340,10 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
   }, [isEditing]);
 
   const handleCopy = useStableHandler(() => {
-    const text = isUser ? sentMessageForCopy(userMessageText(message)) : assistantText(message);
+    // A quiet turn's closing line stands as its answer, so it is copied too.
+    const text = isUser
+      ? sentMessageForCopy(userMessageText(message))
+      : [assistantText(message), quietEnd?.status].filter(Boolean).join('\n\n');
     // Confirm only after the write lands (it can reject when the document
     // loses focus); rapid re-copies reset the shared timer instead of
     // stacking timers that would cut the newer indicator short.
@@ -518,6 +532,7 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
         isStreaming={message.isStreaming as boolean}
         fold={fold}
         isTurnTail={isTurnTail}
+        endsReply={endsReply}
         isSubagentView={isSubagentView}
         ptcAgentProposals={(message.ptcAgentProposals as Record<string, PTCAgentProposalState>) || EMPTY_OBJ}
         secretaryActionProposals={(message.secretaryActionProposals as Record<string, Record<string, unknown>>) || EMPTY_OBJ}
@@ -694,6 +709,8 @@ export const MessageBubble = memo(function MessageBubble({ message, contentProje
             {bubbleContent}
           </div>
         )}
+
+        {quietEnd && <QuietEndLine end={quietEnd} entering={sawLive} />}
 
         {/* The turn's deliverables, on its last bubble, directly under the
             reply. A long turn names its files somewhere in the prose or only

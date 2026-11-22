@@ -2495,6 +2495,9 @@
       "cancellingWakeups": "cancelling wakeups...",
       "checkingWakeups": "checking wakeups...",
       "endingQuietly": "ending the check...",
+      "quietEnd": "Nothing new",
+      "quietEndSet": "Set · {{name}}",
+      "quietEndCancelled": "Cancelled · {{name}}",
       "orderPartialCancelled": "{{order}}: {{filled}} of {{qty}} filled, then cancelled",
       "orderFailed": "{{order}} failed",
       "orderPartialExpired": "{{order}}: {{filled}} of {{qty}} filled, then expired",
@@ -4072,7 +4075,8 @@
         "stage": "Stage order",
         "unstage": "Remove staged order",
         "exercise": "Exercise option",
-        "cancelExercise": "Cancel exercise"
+        "cancelExercise": "Cancel exercise",
+        "watch": "Watch order"
       },
       "orderField": {
         "quantity": "Quantity",
@@ -5341,7 +5345,8 @@
       "stage": "Stage",
       "unstage": "Unstage",
       "exercise": "Exercise",
-      "cancel_exercise": "Cancel exercise"
+      "cancel_exercise": "Cancel exercise",
+      "watch": "Watched"
     },
     "side": {
       "buy": "Buy",

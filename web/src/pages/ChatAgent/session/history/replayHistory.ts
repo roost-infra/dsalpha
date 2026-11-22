@@ -904,12 +904,11 @@ export async function loadConversationHistory(
       lastTurnIndex: maxReplayedTurnIndex,
       carry: { events: carryEvents, subagents: subagentHistoryByTaskId, steeredAgentIds },
     });
+    // Start the ratings read without holding the load: the reveal opens the
+    // composer, and a turn sent while the load still waited on ratings read as
+    // taking the load over, so the load ran again once that turn ended.
+    if (rt.threadId) void deps.loadFeedback(rt.threadId);
     reveal(true);
-
-    // Fetch feedback state for the thread (best-effort)
-    if (rt.threadId) {
-      await deps.loadFeedback(rt.threadId);
-    }
     return true;
   } catch (error: unknown) {
     if (olderPage) throw error;

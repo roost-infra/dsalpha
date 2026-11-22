@@ -83,7 +83,7 @@ _WSREF_PREFIX = "__wsref__"
 # not safely ignored the way a URL is -- the parser hands the client the bare
 # path, which then resolves against Home and opens nothing.
 _DEST = r"<[^<>\n]+>|(?:[^()<>\n]|\([^()<>\n]*\))+?"
-_TITLE = r"""(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?"""
+_TITLE = r"""(?:(?:(?<![ \t])|(?<=\]\([ \t]))[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?"""
 _MD_LINK_RE = re.compile(r"(!?\[[^\]\n]{0,512}\]\()(" + _DEST + r")(" + _TITLE + r"\))")
 
 # Fenced blocks and inline code spans: shown, not read. A link inside one is
@@ -314,13 +314,21 @@ def _parse_sse_string(raw: str) -> tuple[str, dict] | None:
         return None
 
 
+_TRUNCATED = "\n\n[truncated — full output available in workspace]"
+
+
 def _truncate_single(text: str) -> str:
     """Head-truncate one turn's text to ``MAX_OUTPUT_CHARS`` (keeps the start)."""
     if len(text) <= MAX_OUTPUT_CHARS:
         return text
-    return text[:MAX_OUTPUT_CHARS] + (
-        "\n\n[truncated — full output available in workspace]"
-    )
+    return text[:MAX_OUTPUT_CHARS] + _TRUNCATED
+
+
+def _truncate_within(text: str, size: int) -> str:
+    """``text`` head-truncated so that it, marker included, fits ``size``."""
+    if len(text) <= size:
+        return text
+    return text[: max(size - len(_TRUNCATED), 0)] + _TRUNCATED
 
 
 def _join_recent_turns(turn_texts: list[str]) -> str:
@@ -441,14 +449,21 @@ async def extract_text_from_thread(
         )
     else:
         runs = await _runs_to_read(thread_id, turns)
-        text = _join_recent_turns([
+        blocks = [
             _run_block(
                 run,
                 _qualify_file_paths(run["main_text"], workspace_id, *where),
                 zone,
             )
             for run in runs
-        ])
+        ]
+        if turns == 1 and len(blocks) == 2:
+            # A text-less newest run is read with the last run that had text.
+            # Cut that report to the room the newest label leaves rather than
+            # dropping it whole beside the label.
+            room = MAX_OUTPUT_CHARS - len(blocks[1]) - len(_TURN_SEPARATOR)
+            blocks[0] = _truncate_within(blocks[0], room)
+        text = _join_recent_turns(blocks)
 
     return {
         "text": text,
@@ -620,6 +635,11 @@ def _run_block(run: dict[str, Any], text: str, zone: ZoneInfo) -> str:
     if (attempt := run.get("attempt_no") or 1) > 1:
         parts.append(f"attempt {attempt} of the same request")
     metadata = run.get("metadata")
+    # The model the run was admitted on: a fallback may have written its text.
+    if isinstance(metadata, dict) and (model := metadata.get("llm_model")):
+        from src.llms.model_identity import model_label
+
+        parts.append(f"started on {model_label(model)}")
     if isinstance(metadata, dict) and (
         analyst := metadata.get("report_back_ptc_thread_id")
     ):

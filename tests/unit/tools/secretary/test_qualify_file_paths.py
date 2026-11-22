@@ -259,3 +259,15 @@ def test_rewrites_every_link_in_a_reply():
     assert _qualify_file_paths(text, WID) == (
         f"See [a]({Q}/a.md) and [b](https://x.io) then ![c]({Q}/charts/c.png)."
     )
+
+
+def test_an_unclosed_link_before_a_long_run_of_whitespace_reads_in_linear_time():
+    """A title retried from inside the run rescanned it from every point."""
+    import time
+
+    from src.tools.secretary.utils import _MD_LINK_RE
+
+    for opening in ("[a](x", "[a]("):
+        started = time.perf_counter()
+        assert _MD_LINK_RE.search(opening + " \t" * 16000) is None
+        assert time.perf_counter() - started < 1.0
