@@ -47,6 +47,25 @@ upstream subsystem are deferred rather than half-applied.
 | `a25a926f6` (browser tab) | Needs `browser_runtime`, `workspace_browser`, preview capabilities and a newer FilePanel; 14 conflicts. |
 | `06ef07733` (Claude Code wait UI) | Needs upstream computer/CLI state and Job view; 15 conflicts. |
 
+## Probed and blocked on missing fork subsystems (round 10)
+
+- **Comments UI** (`7a9da0937`): after resolving bridge/locales/Markdown, tsc
+  needs `PageAnchorItem.draft`, `page:adding`, `PickHow` and
+  `SpotWire.extend` from earlier page-protocol work. Aborted rather than land a
+  half-typed comment layer; the anchor backend is already in.
+- **Forks** (`fbcbcbdfb`): our HEAD has deleted
+  `src/server/services/search/index.py`; upstream's fork creation schedules a
+  full-thread index through it. A fork branch must restore/own search indexing
+  first.
+- **Context hand-off** (`650819ba2`): needs `HandOffNotice`, `PlanBilled`,
+  `NotificationDetailKind` and `useClaudeCodeSetup`, which this fork does not
+  have.
+- **Per-view subagent mux** (`4fb0dd6cf`): code auto-merges, but the new tests
+  need `onMainRunClosed` and `refreshClaudeCodePlan`; those belong to an
+  upstream plan-refresh change not in this fork.
+- **Subagent lazy graph** (`1a20c1c1e`): needs upstream's
+  `ClaudeCodeSubagent` / `SubagentGraphs` build injection.
+
 ## Clean but not taken yet
 
 - `b5437c5e0` watched-order summary — depends on upstream order/wakeup model.
@@ -60,6 +79,15 @@ upstream subsystem are deferred rather than half-applied.
 `ptc_agent/agent/agent.py`, `server/app/setup.py`, `threads/*`,
 `home_fold.py`, `automation_executor.py`, `web/src/pages/Dashboard/*`,
 `navItems.ts`, `ChatView.tsx`, `locales/*`.
+
+## Delivered scope
+
+Low-risk chat/UX fixes, the fold subsystem (answer scoring, quiet wake close,
+steer reply, reply-start landing), load ordering, markdown links, comment
+anchors backend, FMP previous close, index home clocks, run model labels and
+token-tracking performance are ported and tested. Comments UI, forks,
+computer-browser and context hand-off remain separate subsystem branches
+because their prerequisites are not in this fork.
 
 ## Next batches
 
