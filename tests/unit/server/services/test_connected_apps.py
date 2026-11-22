@@ -255,3 +255,29 @@ async def test_status_names_managed_mode_and_its_configuration_error():
     assert managed is True
     assert apps == []
     assert error and "CONNECTED_APPS_PROXY_BASE_URL" in error
+
+
+@pytest.mark.asyncio
+async def test_a_reused_connector_is_enabled_through_the_live_switches():
+    update = AsyncMock()
+    enable = AsyncMock()
+    new_workspace = AsyncMock()
+    with (
+        patch.object(
+            composio,
+            "get_catalog_server",
+            AsyncMock(return_value={"enabled": False, "enabled_in_new_workspaces": False}),
+        ),
+        patch.object(composio, "update_catalog_server", update),
+        patch.object(composio, "set_catalog_server_enabled", enable),
+        patch.object(composio, "set_catalog_server_new_workspace_default", new_workspace),
+    ):
+        await composio._upsert_connector(
+            "u-1", "https://mcp.composio.dev/session/abc", {"x-api-key": "ref"}
+        )
+
+    fields = update.await_args.kwargs["updates"]
+    assert "enabled" not in fields
+    assert "enabled_in_new_workspaces" not in fields
+    enable.assert_awaited_once_with("u-1", "composio", True)
+    new_workspace.assert_awaited_once_with("u-1", "composio", True)
