@@ -6,13 +6,13 @@
 # For non agent related config, see config.yaml
 
 llm:
-  name: "roost-deepseek-v4.1-flash"
-  background: "roost-deepseek-v4.1-flash" # relay path
+  name: "deepseek-v4.1-flash"
+  background: "deepseek-v4.1-flash" # relay path
   compaction: ""
   fetch: ""
   fallback:
-    - "roost-deepseek-v4.1-flash"
-    - "roost-glm-5.3"
+    - "deepseek-v4.1-flash"
+    - "glm-5.3"
 sandbox:
   # Provider selection: "daytona" or "e2b" (cloud), or "docker" (local).
   # - daytona: Cloud-hosted sandboxes via Daytona API. Each workspace gets an isolated
