@@ -38,9 +38,9 @@
   "gpt-6-astra": {
     "prompt_guidance": "lean",
     "model_id": "gpt-6-astra",
-    "provider": "openai",
+    "provider": "roost",
     "display_name": "GPT-6 Astra",
-    "visible": false,
+    "visible": true,
     "speed": 2,
     "intelligence": 5,
     "context": 1050000,
@@ -51,32 +51,16 @@
       "pdf"
     ],
     "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "prompt_cache_options": {
-        "mode": "implicit"
-      }
-    },
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
+      "max_tokens": 8192
     },
     "tier": 2
   },
   "gpt-6.1-sol": {
     "prompt_guidance": "lean",
     "model_id": "gpt-6.1-sol",
-    "provider": "openai",
+    "provider": "roost",
     "display_name": "GPT-6.1 Sol",
-    "visible": false,
+    "visible": true,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -87,31 +71,15 @@
       "pdf"
     ],
     "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "prompt_cache_options": {
-        "mode": "implicit"
-      }
-    },
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
+      "max_tokens": 8192
     },
     "tier": 2
   },
   "gpt-6-luna": {
     "model_id": "gpt-6-luna",
-    "provider": "openai",
+    "provider": "roost",
     "display_name": "GPT-6 Luna",
-    "visible": false,
+    "visible": true,
     "speed": 5,
     "intelligence": 3,
     "context": 1050000,
@@ -122,33 +90,16 @@
       "pdf"
     ],
     "parameters": {
-      "reasoning": {
-        "summary": "auto"
-      },
-      "prompt_cache_options": {
-        "mode": "implicit"
-      }
-    },
-    "reasoning": {
-      "efforts": [
-        "none",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
+      "max_tokens": 8192
     },
     "tier": 2
   },
   "claude-fable-5-1": {
     "prompt_guidance": "lean",
     "model_id": "claude-fable-5-1",
-    "provider": "anthropic",
+    "provider": "roost",
     "display_name": "Claude Fable 5.1",
-    "visible": false,
+    "visible": true,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -159,39 +110,16 @@
       "pdf"
     ],
     "parameters": {
-      "max_tokens": 128000,
-      "thinking": {
-        "type": "adaptive",
-        "display": "summarized",
-        "block_binding": {
-          "prefix_mismatch_behavior": "drop_block"
-        }
-      }
-    },
-    "additional_betas": [
-      "thinking-binding-controls-2026-08-01",
-      "mid-conversation-system-clear-at-2026-08-21",
-      "compact-2026-09-04"
-    ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "high",
-      "write": "parameters.output_config.effort"
+      "max_tokens": 8192
     },
     "tier": 3
   },
   "claude-opus-5-5": {
     "prompt_guidance": "lean",
     "model_id": "claude-opus-5-5",
-    "provider": "anthropic",
+    "provider": "roost",
     "display_name": "Claude Opus 5.5",
-    "visible": false,
+    "visible": true,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -202,30 +130,7 @@
       "pdf"
     ],
     "parameters": {
-      "max_tokens": 128000,
-      "thinking": {
-        "type": "adaptive",
-        "display": "summarized",
-        "block_binding": {
-          "prefix_mismatch_behavior": "drop_block"
-        }
-      }
-    },
-    "additional_betas": [
-      "thinking-binding-controls-2026-08-01",
-      "mid-conversation-system-clear-at-2026-08-21",
-      "compact-2026-09-04"
-    ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.output_config.effort"
+      "max_tokens": 8192
     },
     "tier": 3
   },
@@ -273,9 +178,9 @@
   },
   "claude-haiku-5-5": {
     "model_id": "claude-haiku-5-5",
-    "provider": "anthropic",
+    "provider": "roost",
     "display_name": "Claude Haiku 5.5",
-    "visible": false,
+    "visible": true,
     "speed": 5,
     "intelligence": 3,
     "context": 1000000,
@@ -286,39 +191,16 @@
       "pdf"
     ],
     "parameters": {
-      "max_tokens": 128000,
-      "thinking": {
-        "type": "adaptive",
-        "display": "summarized",
-        "block_binding": {
-          "prefix_mismatch_behavior": "drop_block"
-        }
-      }
-    },
-    "additional_betas": [
-      "thinking-binding-controls-2026-08-01",
-      "mid-conversation-system-clear-at-2026-08-21",
-      "compact-2026-09-04"
-    ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.output_config.effort"
+      "max_tokens": 8192
     },
     "tier": 1
   },
   "gemini-4-argon": {
     "prompt_guidance": "lean",
     "model_id": "gemini-4-argon",
-    "provider": "gemini",
+    "provider": "roost",
     "display_name": "Gemini 4 Argon",
-    "visible": false,
+    "visible": true,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -329,16 +211,7 @@
       "video"
     ],
     "parameters": {
-      "include_thoughts": true
-    },
-    "reasoning": {
-      "efforts": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "default": "medium",
-      "write": "parameters.thinking_level"
+      "max_tokens": 8192
     },
     "tier": 3
   },
@@ -464,14 +337,14 @@
   "glm-5.3": {
     "prompt_guidance": "lean",
     "model_id": "glm-5.3",
-    "provider": "z-ai",
+    "provider": "roost",
     "display_name": "GLM-5.3",
-    "visible": false,
+    "visible": true,
     "speed": 2,
     "intelligence": 4,
     "context": 1000000,
     "parameters": {
-      "max_tokens": 128000
+      "max_tokens": 8192
     },
     "extra_body": {
       "thinking": {
@@ -482,28 +355,19 @@
     "input_modalities": [
       "text"
     ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "high",
-        "max"
-      ],
-      "default": "high",
-      "write": "extra_body.reasoning_effort"
-    },
     "tier": 1
   },
   "glm-5.3-flash": {
     "prompt_guidance": "lean",
     "model_id": "glm-5.3-flash",
-    "provider": "z-ai",
+    "provider": "roost",
     "display_name": "GLM-5.3 Flash",
-    "visible": false,
+    "visible": true,
     "speed": 3,
     "intelligence": 3,
     "context": 1000000,
     "parameters": {
-      "max_tokens": 128000
+      "max_tokens": 8192
     },
     "extra_body": {
       "thinking": {
@@ -516,15 +380,6 @@
       "image",
       "pdf"
     ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "high",
-        "max"
-      ],
-      "default": "high",
-      "write": "extra_body.reasoning_effort"
-    },
     "tier": 0
   },
   "glm-5.2-cn": {
@@ -712,9 +567,9 @@
   },
   "qwen3.8-flash": {
     "model_id": "qwen3.8-flash",
-    "provider": "dashscope",
+    "provider": "roost",
     "display_name": "Qwen3.8 Flash",
-    "visible": false,
+    "visible": true,
     "speed": 2,
     "intelligence": 3,
     "context": 1000000,
@@ -722,18 +577,8 @@
       "text",
       "image"
     ],
-    "reasoning": {
-      "efforts": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max"
-      ],
-      "default": "medium",
-      "write": "parameters.reasoning.effort"
+    "parameters": {
+      "max_tokens": 8192
     },
     "tier": 0
   },
@@ -846,9 +691,9 @@
   "kimi-k3.1-pro": {
     "prompt_guidance": "lean",
     "model_id": "kimi-k3.1-pro",
-    "provider": "moonshot",
+    "provider": "roost",
     "display_name": "Kimi K3.1 Pro",
-    "visible": false,
+    "visible": true,
     "speed": 2,
     "intelligence": 5,
     "context": 1000000,
@@ -856,14 +701,8 @@
       "text",
       "image"
     ],
-    "reasoning": {
-      "efforts": [
-        "low",
-        "high",
-        "max"
-      ],
-      "default": "high",
-      "write": "parameters.output_config.effort"
+    "parameters": {
+      "max_tokens": 8192
     },
     "tier": 1
   },
@@ -1735,8 +1574,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-fable-5-1",
     "provider": "roost",
-    "display_name": "Claude Fable 5.1 · 中转",
-    "visible": true,
+    "display_name": "Claude Fable 5.1 (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -1754,8 +1593,8 @@
   "roost-claude-haiku-5-5": {
     "model_id": "claude-haiku-5-5",
     "provider": "roost",
-    "display_name": "Claude Haiku 5.5 · 中转",
-    "visible": true,
+    "display_name": "Claude Haiku 5.5 (legacy)",
+    "visible": false,
     "speed": 5,
     "intelligence": 3,
     "context": 1000000,
@@ -1774,8 +1613,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-sonnet-5",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1794,8 +1633,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-opus-5-5",
     "provider": "roost",
-    "display_name": "Claude Opus 5.5 · 中转",
-    "visible": true,
+    "display_name": "Claude Opus 5.5 (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -1814,8 +1653,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-fable-5-2",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1834,8 +1673,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-haiku-4.5",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1854,8 +1693,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-opus-4.8",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1874,8 +1713,8 @@
     "prompt_guidance": "lean",
     "model_id": "claude-sonnet-5.5",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1894,8 +1733,8 @@
     "prompt_guidance": "lean",
     "model_id": "deepseek-v4-pro",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1914,8 +1753,8 @@
     "prompt_guidance": "lean",
     "model_id": "deepseek-v4.1-flash",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1934,8 +1773,8 @@
     "prompt_guidance": "lean",
     "model_id": "gpt-5.6-sol",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1954,8 +1793,8 @@
     "prompt_guidance": "lean",
     "model_id": "gpt-5.6-terra",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -1974,8 +1813,8 @@
     "prompt_guidance": "lean",
     "model_id": "gpt-6-astra",
     "provider": "roost",
-    "display_name": "GPT-6 Astra · 中转",
-    "visible": true,
+    "display_name": "GPT-6 Astra (legacy)",
+    "visible": false,
     "speed": 2,
     "intelligence": 5,
     "context": 1050000,
@@ -1993,8 +1832,8 @@
   "roost-gpt-6-luna": {
     "model_id": "gpt-6-luna",
     "provider": "roost",
-    "display_name": "GPT-6 Luna · 中转",
-    "visible": true,
+    "display_name": "GPT-6 Luna (legacy)",
+    "visible": false,
     "speed": 5,
     "intelligence": 3,
     "context": 1050000,
@@ -2013,8 +1852,8 @@
     "prompt_guidance": "lean",
     "model_id": "gpt-6-sol",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2033,8 +1872,8 @@
     "prompt_guidance": "lean",
     "model_id": "gpt-6.1-sol",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2053,8 +1892,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3.1-pro",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2073,8 +1912,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-4-argon",
     "provider": "roost",
-    "display_name": "Gemini 4 Argon · 中转",
-    "visible": true,
+    "display_name": "Gemini 4 Argon (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1000000,
@@ -2093,8 +1932,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-4-carbon",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2113,8 +1952,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-2.5-flash-image",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2133,8 +1972,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3.1-flash-image",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2153,8 +1992,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3.1-flash-image-preview",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2173,8 +2012,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3.1-flash-lite-image",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2193,8 +2032,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3-pro-image",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2213,8 +2052,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-3-pro-image-preview",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2233,8 +2072,8 @@
     "prompt_guidance": "lean",
     "model_id": "gemini-nano-banana-2.1",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2253,8 +2092,8 @@
     "prompt_guidance": "lean",
     "model_id": "glm-5.3",
     "provider": "roost",
-    "display_name": "GLM-5.3 · 中转",
-    "visible": true,
+    "display_name": "GLM-5.3 (legacy)",
+    "visible": false,
     "speed": 2,
     "intelligence": 4,
     "context": 1000000,
@@ -2276,8 +2115,8 @@
     "prompt_guidance": "lean",
     "model_id": "glm-5.3-flash",
     "provider": "roost",
-    "display_name": "GLM-5.3 Flash · 中转",
-    "visible": true,
+    "display_name": "GLM-5.3 Flash (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 3,
     "context": 1000000,
@@ -2301,8 +2140,8 @@
     "prompt_guidance": "lean",
     "model_id": "kimi-k3",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2321,8 +2160,8 @@
     "prompt_guidance": "lean",
     "model_id": "kimi-k3.1-pro",
     "provider": "roost",
-    "display_name": "Kimi K3.1 Pro · 中转",
-    "visible": true,
+    "display_name": "Kimi K3.1 Pro (legacy)",
+    "visible": false,
     "speed": 2,
     "intelligence": 5,
     "context": 1000000,
@@ -2338,8 +2177,8 @@
   "roost-qwen3.8-flash": {
     "model_id": "qwen3.8-flash",
     "provider": "roost",
-    "display_name": "Qwen3.8 Flash · 中转",
-    "visible": true,
+    "display_name": "Qwen3.8 Flash (legacy)",
+    "visible": false,
     "speed": 2,
     "intelligence": 3,
     "context": 1000000,
@@ -2356,8 +2195,8 @@
     "prompt_guidance": "lean",
     "model_id": "nano-banana-2",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
-    "visible": true,
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
     "speed": 3,
     "intelligence": 5,
     "context": 1050000,
@@ -2376,7 +2215,447 @@
     "prompt_guidance": "lean",
     "model_id": "nano-banana-pro",
     "provider": "roost",
-    "display_name": "GPT-6.1 Sol · 中转",
+    "display_name": "GPT-6.1 Sol (legacy)",
+    "visible": false,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "claude-sonnet-5": {
+    "prompt_guidance": "lean",
+    "model_id": "claude-sonnet-5",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "claude-fable-5-2": {
+    "prompt_guidance": "lean",
+    "model_id": "claude-fable-5-2",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 3
+  },
+  "claude-haiku-4.5": {
+    "prompt_guidance": "lean",
+    "model_id": "claude-haiku-4.5",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "claude-opus-4.8": {
+    "prompt_guidance": "lean",
+    "model_id": "claude-opus-4.8",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "claude-sonnet-5.5": {
+    "prompt_guidance": "lean",
+    "model_id": "claude-sonnet-5.5",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "deepseek-v4-pro": {
+    "prompt_guidance": "lean",
+    "model_id": "deepseek-v4-pro",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "deepseek-v4.1-flash": {
+    "prompt_guidance": "lean",
+    "model_id": "deepseek-v4.1-flash",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 0
+  },
+  "gpt-5.6-sol": {
+    "prompt_guidance": "lean",
+    "model_id": "gpt-5.6-sol",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "gpt-5.6-terra": {
+    "prompt_guidance": "lean",
+    "model_id": "gpt-5.6-terra",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "gpt-6-sol": {
+    "prompt_guidance": "lean",
+    "model_id": "gpt-6-sol",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3.1-pro": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3.1-pro",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "gemini-4-carbon": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-4-carbon",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-2.5-flash-image": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-2.5-flash-image",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3.1-flash-image": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3.1-flash-image",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3.1-flash-image-preview": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3.1-flash-image-preview",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3.1-flash-lite-image": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3.1-flash-lite-image",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3-pro-image": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3-pro-image",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-3-pro-image-preview": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-3-pro-image-preview",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "gemini-nano-banana-2.1": {
+    "prompt_guidance": "lean",
+    "model_id": "gemini-nano-banana-2.1",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "kimi-k3": {
+    "prompt_guidance": "lean",
+    "model_id": "kimi-k3",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 1
+  },
+  "nano-banana-2": {
+    "prompt_guidance": "lean",
+    "model_id": "nano-banana-2",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
+    "visible": true,
+    "speed": 3,
+    "intelligence": 5,
+    "context": 1050000,
+    "compaction_profile": "expansive",
+    "input_modalities": [
+      "text",
+      "image",
+      "pdf"
+    ],
+    "parameters": {
+      "max_tokens": 8192
+    },
+    "tier": 2
+  },
+  "nano-banana-pro": {
+    "prompt_guidance": "lean",
+    "model_id": "nano-banana-pro",
+    "provider": "roost",
+    "display_name": "GPT-6.1 Sol",
     "visible": true,
     "speed": 3,
     "intelligence": 5,
