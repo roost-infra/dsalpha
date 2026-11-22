@@ -24,6 +24,7 @@ upstream subsystem are deferred rather than half-applied.
 | `903c38a84` | thread load ends at its replay, not its ratings read | `1f37e9cf5` | adapted; adds `feedbackLoading` to our older hook |
 | `0a52c7dec` | keep an earlier report's start when the newest turn wrote nothing | `5bfc4441b` | ported onto `tools/secretary/utils.py` |
 | `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
+| `ed4c67f51` | home clocks for TWII/KS11/NSEI/BSESN/AXJO indices | `0112791b9` | adapted; our table predates `SessionHours`, so timezone only |
 
 ## Deferred: dependency or semantic conflict
 
