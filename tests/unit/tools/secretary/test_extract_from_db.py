@@ -313,3 +313,30 @@ async def test_a_run_reads_the_text_its_turn_committed():
         runs = await _runs_to_read("t-1")
     assert runs[0]["main_text"] == "committed text"
     committed.assert_awaited_once_with("t-1", {"r-1": 1})
+
+
+@pytest.mark.asyncio
+async def test_a_long_report_before_a_turn_with_no_text_is_cut_to_fit_not_dropped():
+    """The newest run wrote nothing, so the read shows the last run with text;
+    that report is what the read is for, so a long one keeps its start."""
+    from src.tools.secretary.utils import extract_text_from_thread
+
+    report = "Margins widened. " * 1000
+    window = [_response(4, report), _response(5)]
+    with (
+        patch(_RECENT, AsyncMock(side_effect=lambda _t, limit: window[-limit:])),
+        patch(
+            "src.server.database.conversation.threads_read.get_thread_by_id",
+            AsyncMock(return_value={"workspace_id": None}),
+        ),
+        patch(
+            "src.server.database.runs.lifecycle.get_active_run",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        out = await extract_text_from_thread("t-1")
+
+    assert "Margins widened." in out["text"]
+    assert "[truncated — full output available in workspace]" in out["text"]
+    assert "earlier turns truncated" not in out["text"]
+    assert len(out["text"]) <= MAX_OUTPUT_CHARS
