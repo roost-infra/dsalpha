@@ -26,6 +26,7 @@ upstream subsystem are deferred rather than half-applied.
 | `b5437c5e0` | show/refresh watched orders and order wakeups | `8ac5e9ed1` | clean; order wakeup backend remains upstream-only |
 | `ed4c67f51` | home clocks for TWII/KS11/NSEI/BSESN/AXJO indices | `0112791b9` | adapted; our table predates `SessionHours`, so timezone only |
 | `5451fcb17` | check an index quote's previous close against FMP daily history | `76b59b1b6` | merge port; protocol + FMP + web table; 497 tests pass |
+| `5d7d4531b` | token usage reported inline on the event loop | `386e2e356` | removes executor hop per streamed token |
 | `42ea097ce` | comment anchors for Markdown blocks, code lines, PDF pages and cell ranges | `867cc7e3d` | backend + tests; UI comments still deferred |
 | `f5d61083a` | fold a turn's texts by whether they read as an answer | `02d6d372d` | core; chart-layer inputs not needed |
 | `d78b9e503` | close a quiet wake turn with its note, so it folds like a reply | `790d52169` | adapted; kept our action props, dropped upstream-only extras |
