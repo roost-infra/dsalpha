@@ -1959,7 +1959,6 @@
     "workspace": "工作区",
     "threads": "对话",
     "thread": "对话",
-    "tasks": "任务",
     "noThreadsYet": "暂无对话",
     "startConversation": "开始对话以创建您的第一个会话",
     "loadingThreads": "加载对话中...",
@@ -1973,8 +1972,9 @@
     "archive": "归档",
     "unarchive": "取消归档",
     "archived": "已归档",
-    "archivedTasks": "已归档任务",
-    "noArchivedThreads": "暂无已归档的对话"
+    "noArchivedThreads": "暂无已归档的对话",
+    "conversations": "对话",
+    "archivedConversations": "已归档对话"
   },
   "share": {
     "shareConversation": "分享对话",

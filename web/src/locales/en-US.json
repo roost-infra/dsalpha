@@ -1915,7 +1915,6 @@
     "workspace": "Workspace",
     "threads": "threads",
     "thread": "thread",
-    "tasks": "Tasks",
     "noThreadsYet": "No threads yet",
     "startConversation": "Start a conversation to create your first thread",
     "loadingThreads": "Loading threads...",
@@ -1929,8 +1928,9 @@
     "archive": "Archive",
     "unarchive": "Unarchive",
     "archived": "Archived",
-    "archivedTasks": "Archived tasks",
-    "noArchivedThreads": "No archived threads"
+    "noArchivedThreads": "No archived threads",
+    "conversations": "Conversations",
+    "archivedConversations": "Archived conversations"
   },
   "share": {
     "shareConversation": "Share conversation",
