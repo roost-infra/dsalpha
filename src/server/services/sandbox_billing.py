@@ -758,7 +758,10 @@ async def report_stopped_disks(
             logger.warning("Stopped disk charge invalid for %s: %s", computer_id, e)
             result.failed += 1
             continue
-        if charge.total_credits <= 0:
+        # compute_charge floors any used interval at one credit. A stopped
+        # disk within the free allowance has disk_credits == 0 and must not
+        # create a one-credit minimum charge.
+        if charge.disk_credits <= 0:
             await computers_db.mark_disk_billed(computer_id, end)
             result.skipped += 1
             continue
