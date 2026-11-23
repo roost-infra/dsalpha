@@ -1,4 +1,4 @@
-"""Migration 124: give already-installed market bots their catalog avatar.
+"""Migration 125: give already-installed market bots their catalog avatar.
 
 Market cards have always carried an emoji icon, but install used to write an
 empty avatar, so an installed Bot fell back to its deterministic letter mark.
@@ -8,8 +8,8 @@ avatar; a reader's later pick is never overwritten.
 
 from alembic import op
 
-revision = "124"
-down_revision = "123"
+revision = "125"
+down_revision = "124"
 branch_labels = None
 depends_on = None
 

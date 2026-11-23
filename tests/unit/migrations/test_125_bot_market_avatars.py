@@ -1,4 +1,4 @@
-"""124 backfills the emoji the market card already showed."""
+"""125 backfills the emoji the market card already showed."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ _VERSIONS = Path(__file__).resolve().parents[3] / "migrations" / "versions"
 @pytest.fixture
 def migration(monkeypatch):
     spec = importlib.util.spec_from_file_location(
-        "migration_124", _VERSIONS / "124_bot_market_avatars.py"
+        "migration_125", _VERSIONS / "125_bot_market_avatars.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -25,9 +25,9 @@ def migration(monkeypatch):
     return module, events
 
 
-def test_it_follows_123(migration):
+def test_it_follows_124(migration):
     module, _events = migration
-    assert (module.revision, module.down_revision) == ("124", "123")
+    assert (module.revision, module.down_revision) == ("125", "124")
 
 
 def test_the_upgrade_sets_emoji_only_where_the_avatar_is_empty(migration):
