@@ -1,9 +1,9 @@
-"""Cloud computer platform, desktop status, and desktop session history."""
+"""Migration 126: cloud computer platform, desktop status, and desktop session history."""
 
 from alembic import op
 
-revision = "125"
-down_revision = "124"
+revision = "126"
+down_revision = "125"
 branch_labels = None
 depends_on = None
 
