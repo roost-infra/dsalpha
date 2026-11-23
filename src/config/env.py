@@ -162,6 +162,9 @@ SANDBOX_BILLING_INTERVAL_SECONDS: int = int(
     os.getenv("SANDBOX_BILLING_INTERVAL_SECONDS", "300")
 )
 SANDBOX_MARKUP_BPS: int = int(os.getenv("SANDBOX_MARKUP_BPS", "18000"))
+# Daytona stops billing disk once auto-archive runs; cap stopped-disk metering
+# to that window so an archived sandbox is never charged as a live one.
+STOPPED_DISK_MAX_SECONDS: int = int(os.getenv("STOPPED_DISK_MAX_SECONDS", "7200"))
 DAYTONA_CPU_USD_PER_HOUR: float = float(
     os.getenv("DAYTONA_CPU_USD_PER_HOUR", "0.0504")
 )
