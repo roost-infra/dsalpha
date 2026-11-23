@@ -356,6 +356,27 @@ class UsagePersistenceService:
                 f"infra={float(self._infrastructure_credits):.2f})"
             )
 
+            # A task row has no credit-gate lease of its own; the parent turn's
+            # release does not include it. Charge it directly, keyed by the
+            # write-once usage row id.
+            if (
+                msg_type == "task"
+                and not effective_is_byok
+                and total_credits > 0
+            ):
+                from src.server.services.task_usage_billing import charge_task_usage
+
+                charged = await charge_task_usage(
+                    self.user_id,
+                    f"task-usage:{usage_data['conversation_usage_id']}",
+                    float(total_credits),
+                )
+                if not charged:
+                    logger.warning(
+                        f"[UsagePersistence] Task usage {usage_data['conversation_usage_id']} "
+                        "was not charged to the console"
+                    )
+
             return True
 
         except Exception as e:
