@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { ArrowLeft, FolderOpen, Maximize2, Monitor, Plus, Terminal } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -15,12 +15,11 @@ import { useWorkspaceLabel } from '@/hooks/useWorkspaceLabel';
 import { formatClock } from '@/lib/elapsed';
 import { createFormatter, formatTimestamp } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import ComputersDialogHost from '@/pages/ChatAgent/components/ComputersDialogHost';
 import { PowerButton } from '@/pages/ChatAgent/components/computerParts';
 import { ComputerStatusIndicator } from '@/pages/ChatAgent/components/computerStatusUi';
 import { computerSourceLabel } from '@/pages/ChatAgent/components/providerUi';
 import { normalizeTier, tierLabel } from '@/pages/ChatAgent/components/tierUi';
-import { openComputersPanel } from '@/pages/ChatAgent/hooks/computerPanelStore';
+import { openComputersPanel, useComputersPanel } from '@/pages/ChatAgent/hooks/computerPanelStore';
 import { useComputerActions } from '@/pages/ChatAgent/hooks/useComputerActions';
 import { useComputers, useComputerProviders, useComputerStatusFanout } from '@/pages/ChatAgent/hooks/useComputers';
 import { desktopPath, PLATFORM_NAMES, workspaceFilesPath } from '@/pages/ChatAgent/utils/computerPlatform';
@@ -30,6 +29,8 @@ import type { Computer, ComputerProviderOption, Workspace } from '@/types/api';
 import { ComputerSshDialog } from './ComputerSshDialog';
 import { DesktopPreview } from './DesktopPreview';
 import { useDesktopSession } from './useDesktopSession';
+
+const ComputersDialogHost = lazy(() => import('@/pages/ChatAgent/components/ComputersDialogHost'));
 
 const formatCredits = createFormatter({ maximumFractionDigits: 0 });
 const actionLink = buttonClass({ size: 'sm', variant: 'outline' });
@@ -150,8 +151,9 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
   const fullscreen = useRef<HTMLElement>(null);
   const [fullscreenError, setFullscreenError] = useState(false);
   const running = computer.status === 'running';
-  const active = state.status === 'connected' || state.status === 'connecting';
+  const connecting = state.status === 'connecting' || state.status === 'reconnecting';
   const connected = state.status === 'connected';
+  const active = connected || connecting;
 
   async function toggleFullscreen() {
     setFullscreenError(false);
@@ -172,6 +174,9 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
           </Link>
           <h1 className="title-font truncate text-2xl font-semibold">{computer.name}</h1>
           <ComputerStatusIndicator status={computer.status} preparing={isComputerPreparing(computer)} className="text-xs text-muted-foreground" />
+          {connected && <p role="status" className="text-xs text-muted-foreground">
+            {t(state.role === 'control' ? 'computer.cloud.controlling' : 'computer.cloud.viewing')}
+          </p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <WorkspaceFiles workspaces={workspaces} selectedId={selectedId} />
@@ -192,15 +197,16 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
         <div ref={vnc} className={cn('absolute inset-0', connected && state.role === 'control' ? 'visible' : 'invisible')} />
         <img ref={picture} className={cn('absolute inset-0 h-full w-full object-contain', connected && state.role === 'view' ? 'visible' : 'invisible')}
           alt={t('computer.cloud.previewAlt', { name: computer.name })} />
-        {state.status === 'connecting' && (
+        {connecting && (
           <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader size={14} /> {t('computer.cloud.connecting')}
+            <Loader size={14} /> {t(state.status === 'reconnecting' ? 'computer.cloud.reconnecting' : 'computer.cloud.connecting')}
           </p>
         )}
         {!active && (
           <div className="grid max-w-md justify-items-center gap-4 p-6 text-center text-sm text-muted-foreground">
             <Monitor className="size-8" aria-hidden="true" />
             {state.status === 'closed' && <p role="status">{t('computer.cloud.sessionEnded')}</p>}
+            {state.status === 'revoked' && <p role="status">{t('computer.cloud.sessionRevoked')}</p>}
             {state.status === 'error' && <p role="alert" className="text-destructive">{state.message ?? t('computer.cloud.connectFailed')}</p>}
             {!computer.desktop_transport && <p>{t('computer.cloud.noDesktop')}</p>}
             {!!computer.desktop_transport && !running && <p>{t('computer.cloud.wakeFirst')}</p>}
@@ -229,6 +235,7 @@ export default function Computers() {
   const { computerId } = useParams();
   const [search] = useSearchParams();
   const [sshId, setSshId] = useState<string | null>(null);
+  const { panel, specComputerId } = useComputersPanel();
   const list = useComputers({ refreshRunning: true });
   const { data: providerData } = useComputerProviders({ enabled: true });
   const { data: workspaceData } = useAllWorkspaces({ includeHome: true });
@@ -273,7 +280,9 @@ export default function Computers() {
           )}
         </main>
       )}
-      <ComputersDialogHost />
+      {(!list.isPending || panel || specComputerId) && (
+        <Suspense fallback={null}><ComputersDialogHost /></Suspense>
+      )}
       {sshComputer && <ComputerSshDialog key={sshComputer.computer_id} computer={sshComputer} onClose={() => setSshId(null)} />}
     </div>
   );

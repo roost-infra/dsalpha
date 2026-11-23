@@ -121,6 +121,21 @@ async def test_ticket_is_revoked_when_same_provider_ref_has_a_new_run(desktop):
 
 
 @pytest.mark.asyncio
+async def test_upstream_eof_is_a_connection_failure(desktop):
+    async def frames():
+        yield b"last frame"
+
+    ws = SimpleNamespace(send_bytes=AsyncMock())
+    traffic = gateway.Traffic()
+
+    with pytest.raises(ConnectionError, match="Desktop upstream closed"):
+        await gateway._desktop_output(ws, desktop.issued, frames(), traffic)
+
+    ws.send_bytes.assert_awaited_once_with(b"last frame")
+    assert traffic.sent == len(b"last frame")
+
+
+@pytest.mark.asyncio
 async def test_viewer_input_has_no_upstream(desktop):
     view = leases.Session(desktop.issued.session_id, desktop.issued.computer_id,
                           "owner", "sandbox", "view", "screenshot")

@@ -93,8 +93,9 @@ const WARM_IDLE_TIMEOUT_MS = 2000;
  * competes with what the page in view is still loading. A section's first
  * visit then renders at once: its keyed Suspense mounts fresh, with nothing of
  * its own to hold, so a chunk still in flight showed the pane's loader. */
-function useWarmSections(): void {
+function useWarmSections(enabled: boolean): void {
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let cancelWait = () => {};
     const whenIdle = (run: () => void) => {
@@ -118,7 +119,7 @@ function useWarmSections(): void {
       cancelled = true;
       cancelWait();
     };
-  }, []);
+  }, [enabled]);
 }
 
 /** Permanent alias for the pre-rename Connectors page. Keeps search + hash:
@@ -134,9 +135,10 @@ function Main() {
   const location = useLocation();
   const isMobile = useIsMobile();
   useSyncUserLocale();
-  useWarmSections();
   // Key by top-level path segment so /chat sub-routes share a key (no re-animation)
   const pageKey = location.pathname.split('/')[1] || 'dashboard';
+  // Background route downloads compete with the desktop on slower connections.
+  useWarmSections(pageKey !== 'computers');
 
   // A chunk a deploy deleted rejects rather than stays pending, so Suspense
   // hands the throw straight up; without a boundary it reaches the root and

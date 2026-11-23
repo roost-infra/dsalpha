@@ -3,7 +3,7 @@ declare module '@novnc/novnc' {
     scaleViewport: boolean;
     disconnect(): void;
   }
-  type RFBConstructor = new (target: HTMLElement, url: string, options: { wsProtocols: string[] }) => RFB;
+  type RFBConstructor = new (target: HTMLElement, socket: WebSocket) => RFB;
   const entry: RFBConstructor | { default: RFBConstructor };
   export default entry;
 }

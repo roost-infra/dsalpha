@@ -88,6 +88,8 @@ async def _desktop_output(ws, session, upstream, traffic) -> None:
         await leases.check(session)
         await ws.send_bytes(data)
         traffic.sent += len(data)
+    # The upstream ended while the browser was still connected.
+    raise ConnectionError("Desktop upstream closed")
 
 
 async def _pictures(ws, session, runtime, traffic) -> None:

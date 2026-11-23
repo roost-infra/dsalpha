@@ -22,7 +22,7 @@ export async function requestDesktop(id: string, role: DesktopRole, takeover: bo
 }
 
 export async function releaseDesktop(id: string, sessionId: string): Promise<void> {
-  await api.delete(`${computerPath(id)}/desktop/session/${encodeURIComponent(sessionId)}`);
+  await api.delete(`${computerPath(id)}/desktop/session/${encodeURIComponent(sessionId)}`, { timeout: 4000 });
 }
 
 export async function getDesktopPreview(id: string, signal: AbortSignal): Promise<Blob> {
