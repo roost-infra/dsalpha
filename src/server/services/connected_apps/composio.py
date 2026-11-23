@@ -31,6 +31,8 @@ from src.server.database import connected_apps as installation_db
 from src.server.database.mcp_servers import (
     create_catalog_server,
     get_catalog_server,
+    set_catalog_server_enabled,
+    set_catalog_server_new_workspace_default,
     update_catalog_server,
 )
 from src.server.database.user_vault_secrets import (
@@ -364,14 +366,27 @@ async def _upsert_connector(
         # tools/list needs the credential too: without resolving the vault on
         # discovery the connector would look empty and never register tools.
         "discovery_uses_secrets": True,
-        "enabled": True,
-        "enabled_in_new_workspaces": True,
     }
     existing = await get_catalog_server(user_id, CONNECTOR_NAME)
     if existing:
+        # `enabled` and `enabled_in_new_workspaces` are live-switch fields, not
+        # catalog columns: update_catalog_server rejects them. Use the two
+        # writers that also bump the config version existing workspaces read.
         await update_catalog_server(user_id, CONNECTOR_NAME, updates=fields)
+        if not existing.get("enabled"):
+            await set_catalog_server_enabled(user_id, CONNECTOR_NAME, True)
+        if not existing.get("enabled_in_new_workspaces"):
+            await set_catalog_server_new_workspace_default(
+                user_id, CONNECTOR_NAME, True
+            )
         return
-    await create_catalog_server(user_id, CONNECTOR_NAME, **fields)
+    await create_catalog_server(
+        user_id,
+        CONNECTOR_NAME,
+        **fields,
+        enabled=True,
+        enabled_in_new_workspaces=True,
+    )
 
 
 async def _accounts(user_id: str, key: str, installation: dict[str, Any]) -> list[dict[str, Any]]:
