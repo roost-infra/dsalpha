@@ -459,7 +459,7 @@ label.settings-row-label { cursor: pointer; }
   background: var(--color-bg-card);
 }
 .plan-card-ui.is-popular {
-  border-color: color-mix(in srgb, var(--color-accent, #e5a00d) 55%, var(--color-border-muted));
+  border-color: color-mix(in srgb, var(--color-accent-primary) 55%, var(--color-border-muted));
 }
 .plan-card-ui.is-current {
   box-shadow: inset 0 0 0 1px var(--color-border-elevated);

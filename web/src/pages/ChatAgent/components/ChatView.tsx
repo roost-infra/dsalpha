@@ -1584,7 +1584,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                       instant pin short. */}
                   <div ref={transcriptFloorRef} data-transcript-floor="" className="transition-none">
                     <div className={`${isMobile ? 'px-3 pt-3' : 'px-6 pt-4'} ${TRANSCRIPT_BOTTOM_PAD} flex justify-center`}>
-                      <div className="w-full max-w-3xl overflow-x-hidden">
+                      <div data-transcript-content="" className="w-full max-w-3xl overflow-x-hidden">
                         <OlderHistoryRow
                           getRoot={getMainScrollRoot}
                           status={olderHistoryStatus}

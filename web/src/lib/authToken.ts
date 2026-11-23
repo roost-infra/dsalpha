@@ -373,6 +373,14 @@ function fenced(startedFor: string | null, p: Promise<string | null>): Promise<s
   return p.then((token) => (accountChanged(startedFor) ? null : token));
 }
 
+/** The Bearer header for an outbound request, or an empty object when signed
+ *  out. The header is built here, beside the token cache, so request paths
+ *  never assemble their own. */
+export async function authHeaders(): Promise<Record<string, string>> {
+  const token = await getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /** The token for an outbound request. Cached; only renews when near expiry. */
 export function getAccessToken(): Promise<string | null> {
   const token = unexpiredToken();

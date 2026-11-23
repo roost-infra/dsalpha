@@ -278,9 +278,27 @@ export async function updateCurrentUser(userData: Record<string, unknown>): Prom
   return data;
 }
 
+/** A preferences write survives the short gap a deploy or restart leaves in
+ *  the API. 4xx answers are the request's fault and are not repeated; a
+ *  dropped connection or a 5xx is the server's and is. */
+const PREFERENCE_WRITE_RETRY_DELAYS_MS = [300, 900] as const;
+
+function isTransientPreferenceWrite(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  return status === undefined || status === 429 || status >= 500;
+}
+
 export async function updatePreferences(preferences: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const { data } = await api.put('/api/v1/users/me/preferences', preferences);
-    return data;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const { data } = await api.put('/api/v1/users/me/preferences', preferences);
+      return data;
+    } catch (error) {
+      const delay = PREFERENCE_WRITE_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !isTransientPreferenceWrite(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }
 
 export async function clearPreferences(): Promise<Record<string, unknown>> {
