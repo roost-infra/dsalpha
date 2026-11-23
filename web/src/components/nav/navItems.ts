@@ -1,4 +1,4 @@
-import { AppWindow, Blocks, LayoutDashboard, MessagesSquare, Settings, Store, Timer } from 'lucide-react';
+import { AppWindow, Blocks, LayoutDashboard, MessagesSquare, Monitor, Settings, Store, Timer } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavItem {
@@ -25,6 +25,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { key: '/dashboard', icon: LayoutDashboard, labelKey: 'sidebar.dashboard', match: 'exact-or-sub' },
   { key: '/chat', icon: MessagesSquare, labelKey: 'sidebar.chatAgent', match: 'prefix' },
+  { key: '/computers', icon: Monitor, labelKey: 'computer.computers', match: 'exact-or-sub' },
   { key: '/automations', icon: Timer, labelKey: 'sidebar.automations', match: 'exact-or-sub' },
   { key: '/plugins', icon: Blocks, labelKey: 'sidebar.plugins', match: 'exact-or-sub' },
   { key: '/store', icon: Store, labelKey: 'sidebar.store', match: 'exact-or-sub' },

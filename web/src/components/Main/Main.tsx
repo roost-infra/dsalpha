@@ -21,6 +21,7 @@ type RouteSection = AppSection;
 const routeChunks = {
   dashboard: () => import('../../pages/Dashboard/Dashboard'),
   chat: () => import('../../pages/ChatAgent/ChatAgent'),
+  computers: () => import('../../pages/Computers/Computers'),
   rooms: () => import('../../pages/Rooms/Rooms'),
   market: () => import('../../pages/MarketView/MarketView'),
   news: () => import('../../pages/Detail/NewsDetailPage'),
@@ -36,6 +37,7 @@ const routeChunks = {
 
 const Dashboard = lazyWithMotion(routeChunks.dashboard);
 const ChatAgent = lazyWithMotion(routeChunks.chat);
+const Computers = lazyWithMotion(routeChunks.computers);
 // The Rooms page animates nothing, so it skips the framer download.
 const Rooms = preloadableLazy(routeChunks.rooms);
 const MarketView = lazyWithMotion(routeChunks.market);
@@ -55,6 +57,7 @@ const Settings = lazyWithMotion(routeChunks.settings);
 const routePreloads = {
   dashboard: Dashboard.preload,
   chat: ChatAgent.preload,
+  computers: Computers.preload,
   rooms: Rooms.preload,
   market: MarketView.preload,
   news: NewsDetailPage.preload,
@@ -90,8 +93,9 @@ const WARM_IDLE_TIMEOUT_MS = 2000;
  * competes with what the page in view is still loading. A section's first
  * visit then renders at once: its keyed Suspense mounts fresh, with nothing of
  * its own to hold, so a chunk still in flight showed the pane's loader. */
-function useWarmSections(): void {
+function useWarmSections(enabled: boolean): void {
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let cancelWait = () => {};
     const whenIdle = (run: () => void) => {
@@ -115,7 +119,7 @@ function useWarmSections(): void {
       cancelled = true;
       cancelWait();
     };
-  }, []);
+  }, [enabled]);
 }
 
 /** Permanent alias for the pre-rename Connectors page. Keeps search + hash:
@@ -131,9 +135,10 @@ function Main() {
   const location = useLocation();
   const isMobile = useIsMobile();
   useSyncUserLocale();
-  useWarmSections();
   // Key by top-level path segment so /chat sub-routes share a key (no re-animation)
   const pageKey = location.pathname.split('/')[1] || 'dashboard';
+  // Background route downloads compete with the desktop on slower connections.
+  useWarmSections(pageKey !== 'computers');
 
   // A chunk a deploy deleted rejects rather than stays pending, so Suspense
   // hands the throw straight up; without a boundary it reaches the root and
@@ -154,6 +159,8 @@ function Main() {
         <Routes location={location}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/chat" element={<ChatAgent />} />
+          <Route path="/computers" element={<Computers />} />
+          <Route path="/computers/:computerId/desktop" element={<Computers />} />
           <Route path="/chat/t/:threadId/:taskId" element={<ChatAgent />} />
           <Route path="/chat/t/:threadId" element={<ChatAgent />} />
           <Route path="/chat/:workspaceId" element={<ChatAgent />} />

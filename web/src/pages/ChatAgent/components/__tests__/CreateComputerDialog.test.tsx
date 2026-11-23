@@ -82,6 +82,28 @@ beforeEach(() => {
   mockQuota.mockResolvedValue(OPEN_QUOTA);
 });
 
+it('filters hosted providers by OS and sends the matching region', async () => {
+  mockProviders.mockResolvedValue({ providers: [
+    { ...DAYTONA, os_platforms: ['linux', 'macos'], regions: ['us-west'], os_images: ['managed-image'] },
+    { ...E2B, os_platforms: ['linux'] },
+    { ...SSH, os_platforms: ['linux', 'macos'] },
+  ] });
+  const user = userEvent.setup();
+  const onSubmit = open();
+  await screen.findByRole('radiogroup', { name: 'Operating system' });
+  expect(radio('E2B')).toBeEnabled();
+  expect(screen.queryByRole('radio', { name: 'Windows' })).not.toBeInTheDocument();
+
+  await user.click(radio('macOS'));
+  expect(screen.queryByRole('radio', { name: /^E2B/ })).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText('Region'), 'us-west');
+  await user.selectOptions(screen.getByLabelText('System image'), 'managed-image');
+  await user.click(screen.getByRole('button', { name: 'Create computer' }));
+  expect(onSubmit).toHaveBeenCalledWith({
+    kind: 'daytona', os_platform: 'macos', os_image: 'managed-image', region: 'us-west', resource_tier: 'standard',
+  });
+});
+
 describe('CreateComputerDialog, sizes', () => {
   it("names each size and describes it with the provider's machine", async () => {
     open();

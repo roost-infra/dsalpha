@@ -171,6 +171,9 @@ class DaytonaConfig(CredentialedSandboxConfig):
     TIER_CEILING: ClassVar[ResourceTier | None] = DAYTONA_TIER_CEILING
 
     base_url: str = "https://app.daytona.io/api"
+    # Only targets offered by the operator may be selected on a new computer.
+    offered_regions: tuple[str, ...] = ()
+    target: str | None = None
     auto_stop_interval: int = 3600  # 1 hour
     auto_archive_interval: int = 604800  # 7 days, keep stopped (fast restart) before cold storage
     auto_delete_interval: int = 7776000  # 90 days, total dormant lifetime

@@ -575,6 +575,13 @@ async def test_providers_lists_only_the_default_when_nothing_is_offered(client):
     assert resp.json()["providers"] == [
         {
             "kind": "daytona",
+            "os_platforms": ["linux"],
+            "desktop_transports": ["novnc"],
+            "supports_ssh": True,
+            "supports_sleep": True,
+            "requires_reservation": False,
+            "regions": [],
+            "os_images": [],
             "is_default": True,
             "allowed": True,
             "tiers": ANY,
@@ -599,7 +606,8 @@ async def test_providers_lists_the_default_first_with_what_the_caller_may_pick(
 
     assert resp.status_code == 200
     assert [
-        {k: v for k, v in p.items() if k != "tiers"} for p in resp.json()["providers"]
+        {k: p[k] for k in ("kind", "is_default", "allowed", "default_name")}
+        for p in resp.json()["providers"]
     ] == [
         {"kind": "e2b", "is_default": True, "allowed": True, "default_name": "Cloud computer"},
         {"kind": "daytona", "is_default": False, "allowed": False, "default_name": "Cloud computer"},
@@ -619,11 +627,44 @@ async def test_providers_reads_an_ungated_offer_as_unknown_in_oss_mode(
 
     assert resp.json()["providers"][1] == {
         "kind": "e2b",
+        "os_platforms": ["linux"],
+        "desktop_transports": [],
+        "supports_ssh": False,
+        "supports_sleep": True,
+        "requires_reservation": False,
+        "regions": [],
+        "os_images": [],
         "is_default": False,
         "allowed": None,
         "tiers": ANY,
         "default_name": "Cloud computer",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", [
+    {"os_platform": "windows"}, {"os_platform": "macos"},
+    {"region": "unlisted-target"}, {"os_image": "unlisted-image"},
+])
+async def test_unsupported_cloud_selection_is_refused_before_start(client, selection):
+    with patch("src.server.app.computers._computer_manager") as manager:
+        response = await client.post("/api/v1/computers", json=selection)
+    assert response.status_code == 422
+    manager.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_selected_region_reaches_provider_settings(
+    client, computer, entitled, prepares, sandbox_config
+):
+    sandbox_config.daytona.offered_regions = ("qa-east",)
+    matrix = (await client.get("/api/v1/computers/providers")).json()["providers"]
+    assert matrix[0]["regions"] == ["qa-east"]
+    manager = _creating_manager(computer)
+    with patch("src.server.app.computers._computer_manager", return_value=manager):
+        response = await client.post("/api/v1/computers", json={"os_platform": "linux", "region": "qa-east"})
+    assert response.status_code == 201
+    assert manager.create_computer_for_user.await_args.kwargs["provider_config"] == {"target": "qa-east"}
 
 
 @pytest.mark.asyncio

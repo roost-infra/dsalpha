@@ -256,7 +256,11 @@ export function StartFailureAction({ computer, actions }: { computer: Computer; 
 }
 
 /** Start or Stop, whichever the machine is not. */
-export function PowerButton({ computer, actions }: { computer: Computer; actions: MachineActions }) {
+export function PowerButton({ computer, actions, sleep = false }: {
+  computer: Computer;
+  actions: Pick<MachineActions, 'power' | 'powerBusy'>;
+  sleep?: boolean;
+}) {
   const { t } = useTranslation();
   const specChange = activeSpecChange(computer);
   // Second to the fix a failed start offers, so one button leads.
@@ -264,7 +268,7 @@ export function PowerButton({ computer, actions }: { computer: Computer; actions
   if (computer.status === 'running') {
     return (
       <Button size="sm" disabled={actions.powerBusy || !!specChange} onClick={() => actions.power('stop')} data-computer-power>
-        {t('computer.stop', 'Stop')}
+        {sleep ? t('computer.cloud.sleep') : t('computer.stop', 'Stop')}
       </Button>
     );
   }
@@ -278,7 +282,7 @@ export function PowerButton({ computer, actions }: { computer: Computer; actions
       onClick={() => actions.power('start')}
       data-computer-power
     >
-      {t('computer.start', 'Start')}
+      {sleep && computer.provider_ref ? t('computer.cloud.wake') : t('computer.start', 'Start')}
     </Button>
   );
 }

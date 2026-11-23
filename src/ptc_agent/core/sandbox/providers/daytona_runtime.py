@@ -1,6 +1,7 @@
 """The runtime half of the Daytona provider: one SDK sandbox behind ``SandboxRuntime``."""
 
 import asyncio
+import base64
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
@@ -8,10 +9,12 @@ import structlog
 from daytona import (
     DaytonaNotFoundError,
     FileUpload,
+    ScreenshotOptions,
     SessionExecuteRequest,
 )
 
 from ptc_agent.core.paths import DEFAULT_SANDBOX_ROOT
+from ptc_agent.core.sandbox.desktop_ports import DAYTONA_NOVNC_PORT, check_preview_port
 from ptc_agent.core.sandbox.providers._daytona_stream import open_daytona_stream
 from ptc_agent.core.sandbox.runtime import (
     ExecResult,
@@ -317,6 +320,36 @@ class DaytonaRuntime(SandboxRuntime):
 
     # -- Preview URLs --
 
+    async def start_desktop(self) -> None:
+        desktop = self._sandbox.computer_use
+        status = await desktop.get_status(request_timeout=5)
+        if status.status != "active":
+            await desktop.start(request_timeout=35)
+
+    async def desktop_screenshot(self) -> bytes:
+        frame = await self._sandbox.computer_use.screenshot.take_compressed(
+            ScreenshotOptions(fmt="jpeg", quality=65), request_timeout=5
+        )
+        if not frame.screenshot:
+            raise RuntimeError("Daytona returned an empty desktop screenshot")
+        return base64.b64decode(frame.screenshot, validate=True)
+
+    async def desktop_preview(self) -> PreviewInfo:
+        # A port-specific credential expires just after the gateway handshake.
+        result = await self._sandbox.create_signed_preview_url(
+            DAYTONA_NOVNC_PORT, expires_in_seconds=60, request_timeout=10
+        )
+        return PreviewInfo(url=result.url, token=None)
+
+    async def desktop_heartbeat(self) -> None:
+        await self._sandbox.refresh_activity(request_timeout=5)
+
+    async def ssh_command(self, minutes: int) -> str:
+        access = await self._sandbox.create_ssh_access(
+            expires_in_minutes=minutes, request_timeout=10
+        )
+        return access.ssh_command
+
     async def get_preview_url(self, port: int, expires_in: int = 3600) -> PreviewInfo:
         """Get a signed preview URL for a service running on the given port.
 
@@ -324,6 +357,7 @@ class DaytonaRuntime(SandboxRuntime):
         token must be embedded as a query parameter since iframes cannot set
         custom headers.
         """
+        check_preview_port("daytona", port)
         result = await self._sandbox.create_signed_preview_url(port, expires_in)
         url = result.url
         # Embed token in URL if not already present (required for iframe access)
@@ -334,6 +368,7 @@ class DaytonaRuntime(SandboxRuntime):
 
     async def get_preview_link(self, port: int) -> PreviewInfo:
         """Get a standard (non-signed) preview URL with header-based auth token."""
+        check_preview_port("daytona", port)
         result = await self._sandbox.get_preview_link(port)
         return PreviewInfo(
             url=result.url,

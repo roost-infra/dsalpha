@@ -74,7 +74,7 @@ export function localePreload(localesDir: string): Plugin {
         const found = new Map<string, string>();
         for (const out of Object.values(ctx.bundle ?? {})) {
           const id = out.type === 'chunk' ? out.facadeModuleId : null;
-          if (id && path.dirname(id) === dir && id.endsWith('.json')) {
+          if (id && path.normalize(path.dirname(id)) === dir && id.endsWith('.json')) {
             found.set(path.basename(id, '.json'), base + out.fileName);
           }
         }

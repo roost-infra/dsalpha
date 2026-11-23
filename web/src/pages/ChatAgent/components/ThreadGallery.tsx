@@ -182,7 +182,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
-  const [showFilePanel, setShowFilePanel] = useState(false);
+  const [showFilePanel, setShowFilePanel] = useState(() => new URLSearchParams(location.search).get('panel') === 'files');
   const [showSandboxPanel, setShowSandboxPanel] = useState(false);
   const [filePanelWidth, setFilePanelWidth] = useState(850);
   // Expanded, the panel lies over the whole gallery, as it does over a chat.

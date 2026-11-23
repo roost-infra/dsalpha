@@ -36,7 +36,7 @@ _REVOKED = 1008
 _UNSENDABLE = {1005: 1000, 1006: 1011, 1015: 1011}
 
 
-class _connect_once(connect):
+class ConnectOnce(connect):
     """The upstream handshake, failing on a redirect as a browser's does.
 
     Following one would resend the sandbox's traffic token, the cookies and
@@ -80,7 +80,7 @@ async def relay_websocket(
         websocket=True,
     )
     try:
-        upstream = await _connect_once(
+        upstream = await ConnectOnce(
             url,
             additional_headers=headers,
             subprotocols=scope.get("subprotocols") or None,

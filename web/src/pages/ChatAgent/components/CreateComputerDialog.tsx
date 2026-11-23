@@ -21,12 +21,13 @@ import { isPlatformMode } from '@/config/hostMode';
 import { clientOs } from '@/lib/clientOs';
 import { isDesktopShell } from '@/lib/desktop';
 import { DesktopDownloadLink } from '@/pages/Plugins/components/DesktopDownloadLink';
-import type { ComputerCreate, ComputerProviderOption, ResourceTier, WorkspaceQuota } from '@/types/api';
+import type { ComputerCreate, ComputerPlatform, ComputerProviderOption, ResourceTier, WorkspaceQuota } from '@/types/api';
 
 import { useComputerProviders, useComputers } from '../hooks/useComputers';
 import { serverTakesRemoteControl, useThisMacAvailability } from '../hooks/useRemoteControl';
 import { useTierQuota } from '../hooks/useTierQuota';
 import { COMPUTER_NAME_MAX, nextComputerName } from '../utils/computerName';
+import { PLATFORM_NAMES } from '../utils/computerPlatform';
 import { NameRefusal } from './computerParts';
 import { SshSetup } from './sshSetup';
 import { useSshSetup } from './sshSetupState';
@@ -126,6 +127,11 @@ function CreateComputerDialog({
   const [typed, setTyped] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const [picked, setPicked] = useState<string | null>(initialPick);
+  const [pickedPlatform, setPickedPlatform] = useState<ComputerPlatform | 'own' | null>(
+    initialPick === THIS_MAC_OPTION || initialPick === 'ssh' ? 'own' : null,
+  );
+  const [pickedRegion, setPickedRegion] = useState('');
+  const [pickedImage, setPickedImage] = useState('');
   const [pickedTier, setPickedTier] = useState<ResourceTier>('standard');
   const errorRef = useRef<HTMLDivElement>(null);
 
@@ -142,12 +148,21 @@ function CreateComputerDialog({
   const { data: providerData } = useComputerProviders({ enabled: true });
   const { data: quota } = useTierQuota({ enabled: true });
   const { data: computerList } = useComputers({ enabled: true });
-  const providers = providerData?.providers ?? [];
-  // One provider is no choice: the request then names none and the server
-  // uses its default, as it does while the list is still loading.
-  const choosesProvider = providers.length > 1;
-
+  const allProviders = providerData?.providers ?? [];
   const atCap = computerCapReached(quota);
+  const hasPlatforms = allProviders.some((p) => p.os_platforms !== undefined);
+  const platforms = [...new Set(allProviders.flatMap((p) => p.kind === 'ssh' ? [] : p.os_platforms ?? []))];
+  const ownAvailable = allProviders.some((p) => p.kind === 'ssh');
+  const available = (os: ComputerPlatform) => allProviders.some(
+    (p) => p.kind !== 'ssh' && p.os_platforms?.includes(os) && !isProviderLocked(p, atCap),
+  );
+  const platform = pickedPlatform === 'own' && ownAvailable ? 'own'
+    : pickedPlatform && pickedPlatform !== 'own' && available(pickedPlatform) ? pickedPlatform
+    : platforms.find(available) ?? (ownAvailable ? 'own' : platforms[0]);
+  const providers = !hasPlatforms ? allProviders : allProviders.filter((p) =>
+    platform === 'own' ? p.kind === 'ssh' : p.kind !== 'ssh' && !!platform && p.os_platforms?.includes(platform),
+  );
+  const choosesProvider = providers.length > 1;
 
   // This Mac, where the desktop app can pair it and this server can reach it.
   // Once a computer is this Mac the card says so instead of pairing it again,
@@ -159,7 +174,9 @@ function CreateComputerDialog({
   // that could land mid-entrance.
   const thisMac = useThisMacAvailability({ enabled: true, reread: false });
   let thisMacCard: ThisMacCard | null = null;
-  if (thisMac.offered) {
+  if (hasPlatforms && platform !== 'own') {
+    thisMacCard = null;
+  } else if (thisMac.offered) {
     if (thisMac.added !== undefined) thisMacCard = thisMac.added ? 'added' : 'offered';
   } else if (serverTakesRemoteControl(providerData)) {
     const os = clientOs();
@@ -170,7 +187,12 @@ function CreateComputerDialog({
   const source = sourceOf(picked, providers, thisMacCard, atCap);
   const hosted = typeof source === 'object' ? source.hosted : null;
   // A size the picked provider does not run falls back the same way.
-  const offer = offeredTiers(providers.find((p) => p.kind === hosted));
+  const hostedProvider = providers.find((p) => p.kind === hosted);
+  const offer = offeredTiers(hostedProvider);
+  const regions = hostedProvider?.regions ?? [];
+  const region = regions.includes(pickedRegion) ? pickedRegion : '';
+  const images = hostedProvider?.os_images ?? [];
+  const image = images.includes(pickedImage) ? pickedImage : '';
   const tier: ResourceTier =
     offer.tiers.includes(pickedTier) && !isTierBlocked(tierCapacity(quota, pickedTier)) ? pickedTier : 'standard';
   const ssh = useSshSetup(source === 'ssh');
@@ -214,11 +236,14 @@ function CreateComputerDialog({
     : {
       ...(trimmedName ? { name: trimmedName } : {}),
       resource_tier: tier,
-      ...(choosesProvider && hosted ? { kind: hosted } : {}),
+      ...((choosesProvider || hasPlatforms) && hosted ? { kind: hosted } : {}),
+      ...(hasPlatforms && platform && platform !== 'own' ? { os_platform: platform } : {}),
+      ...(region ? { region } : {}),
+      ...(image ? { os_image: image } : {}),
     };
   // Every provider on offer locked leaves nothing to create on. The cap locks
   // even a lone provider, which the form shows no choice for.
-  const blocked = ((choosesProvider || atCap) && !own && hosted === null) || !fields;
+  const blocked = ((choosesProvider || atCap || hasPlatforms) && !own && hosted === null) || !fields;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -278,6 +303,18 @@ function CreateComputerDialog({
       footer={footer}
     >
       <form id={formId} onSubmit={submit} className="flex flex-col gap-4">
+        {hasPlatforms && (
+          <RadioCardGroup<ComputerPlatform | 'own'>
+            label={t('computer.cloud.system')}
+            value={platform ?? null}
+            options={[
+              ...platforms.map((value) => ({ value, title: PLATFORM_NAMES[value], disabled: !available(value) })),
+              ...(ownAvailable ? [{ value: 'own' as const, title: t('computer.card.ownMachine'), disabled: false }] : []),
+            ]}
+            onChange={(next) => { setPickedPlatform(next); setPicked(null); setPickedRegion(''); setPickedImage(''); }}
+            columns={2}
+          />
+        )}
         <MachinePreview
           machine={
             own
@@ -376,6 +413,24 @@ function CreateComputerDialog({
           />
         )}
 
+        {regions.length > 0 && !own && (
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            {t('computer.cloud.region')}
+            <select value={region} onChange={(event) => setPickedRegion(event.target.value)} disabled={busy} className="rounded-md border bg-background p-2 text-sm">
+              <option value="">{t('computer.cloud.defaultRegion')}</option>
+              {regions.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        )}
+        {images.length > 0 && !own && (
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            {t('computer.cloud.image')}
+            <select value={image} onChange={(event) => setPickedImage(event.target.value)} disabled={busy} className="rounded-md border bg-background p-2 text-sm">
+              <option value="">{t('computer.cloud.defaultImage')}</option>
+              {images.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        )}
         {elsewhere && (
           <p className="text-xs" data-testid="create-computer-tier-elsewhere" style={{ color: 'var(--color-text-secondary)' }}>
             {t('computer.tierElsewhere', '{{tier}} is available on {{provider}}.', {

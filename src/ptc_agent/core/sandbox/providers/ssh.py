@@ -778,6 +778,9 @@ class SSHProvider(SandboxProvider):
     """
 
     label = "SSH"
+    os_platforms = ("linux", "macos")
+    supports_ssh = True
+    supports_sleep = False  # Stopping a workspace does not power down its owner's machine.
     runs_remote = True
     # The machine has no runtime cap; it runs as long as its owner keeps it on.
     holds_always_on = True

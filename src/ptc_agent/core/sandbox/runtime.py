@@ -585,6 +585,13 @@ class SandboxProvider(ABC):
 
     # The backend's name as a person reads it.
     label: ClassVar[str]
+
+    # Platforms supported by the whole workspace runtime on this provider.
+    os_platforms: ClassVar[tuple[str, ...]] = ("linux",)
+    desktop_transports: ClassVar[tuple[str, ...]] = ()
+    supports_ssh: ClassVar[bool] = False
+    supports_sleep: ClassVar[bool] = True
+    requires_reservation: ClassVar[bool] = False
     # Whether its sandboxes run off this host, where only a publicly routable
     # address reaches the server.
     runs_remote: ClassVar[bool] = True

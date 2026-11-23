@@ -7,18 +7,16 @@ semantics are unchanged.
 
 import asyncio
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-
+from ptc_agent.core.sandbox.desktop_ports import check_preview_port
 from ptc_agent.core.sandbox.retry import RetryPolicy
 from ptc_agent.core.sandbox.runtime import (
     PreviewInfo,
     SessionCommandResult,
 )
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ptc_agent.core.sandbox.ptc_sandbox import PTCSandbox
@@ -40,6 +38,7 @@ async def get_preview_url(
         Returns:
             PreviewInfo with url and token.
         """
+    check_preview_port(sandbox.channel, port)
     await sandbox._wait_ready()
     assert sandbox.runtime is not None
     return await sandbox._runtime_call(
@@ -65,6 +64,7 @@ async def get_preview_link(
         ``wake=False`` is for probes: one attempt and no reconnect, because
         the reconnect that rescues a stopped sandbox would start it.
         """
+    check_preview_port(sandbox.channel, port)
     cached = sandbox._preview_link_cache.get(port)
     if cached is not None:
         return cached
@@ -98,6 +98,7 @@ async def start_preview_server(
         Returns:
             The command ID from the session.
         """
+    check_preview_port(sandbox.channel, port)
     await sandbox._wait_ready()
     assert sandbox.runtime is not None
 
@@ -204,6 +205,7 @@ async def start_and_get_preview_url(
     owner: str | None = None,
 ) -> PreviewInfo:
     """Ports belong to the computer; callers must choose an unused one."""
+    check_preview_port(sandbox.channel, port)
     await sandbox._wait_ready()
     assert sandbox.runtime is not None
 

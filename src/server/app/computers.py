@@ -97,6 +97,7 @@ from src.server.services.spec_change import (
     spec_change_from_row,
     spec_refusal,
 )
+from src.server.services.sandbox_billing import estimate_open_run
 from src.server.services.ssh_computers import (
     SSH_KIND,
     SSHComputerLimit,
@@ -319,10 +320,23 @@ def computer_to_response(
     tunnels: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ComputerResponse:
     """Withhold provider_ref from non-owners because it addresses a real billed machine."""
+    provider = provider_class(computer["kind"])
+    transport = computer.get("desktop_transport") or next(iter(provider.desktop_transports), None)
     return ComputerResponse(
         computer_id=str(computer["computer_id"]),
         user_id=computer["user_id"],
         kind=computer["kind"],
+        os_platform=computer.get("os_platform"),
+        os_image=computer.get("os_image"),
+        region=computer.get("region"),
+        supports_ssh=provider.supports_ssh,
+        desktop_transport=transport,
+        desktop_state=(
+            computer.get("desktop_state", "off") if computer["status"] == "running" else "off"
+        ),
+        reservation_expires_at=computer.get("reservation_expires_at"),
+        running_since=computer.get("running_since"),
+        estimated_credits=estimate_open_run(computer),
         name=computer.get("name") or "",
         status=computer["status"],
         resource_tier=computer.get("resource_tier") or "standard",
@@ -456,6 +470,14 @@ async def create_computer(
             # The manager refuses it too, but an ssh create dials the machine
             # it names first, which only a kind on offer may cause.
             raise ProviderNotOffered("Provider not offered")
+        provider = provider_class(kind)
+        settings = sandbox.settings_for(kind)
+        if request.os_platform and request.os_platform not in provider.os_platforms:
+            raise HTTPException(422, f"{kind} does not offer {request.os_platform} workspaces")
+        if request.region and request.region not in getattr(settings, "offered_regions", ()):
+            raise HTTPException(422, "The region is not offered by this provider")
+        if request.os_image and request.os_image not in _offered_images(settings):
+            raise HTTPException(422, "The image is not offered by this provider")
         if request.resource_tier not in sandbox.settings_for(kind).resource_tiers:
             # Ahead of the plan gate, which would offer an upgrade for a size
             # this provider never builds (xlarge on Daytona).
@@ -473,7 +495,11 @@ async def create_computer(
                 plan = await plan_create(
                     x_user_id, request.ssh, settings=sandbox.settings_for(SSH_KIND)
                 )
-        if not request.files_backup and provider_class(kind).recreatable:
+            if request.os_platform:
+                actual = {"Linux": "linux", "Darwin": "macos"}.get(plan.provider_config.get("os"))
+                if actual != request.os_platform:
+                    raise HTTPException(422, "The machine's operating system differs from the selection")
+        if not request.files_backup and provider.recreatable:
             raise HTTPException(
                 status_code=422,
                 detail=_FILES_BACKUP_REQUIRED,
@@ -486,12 +512,20 @@ async def create_computer(
                     raise taken
                 with _ssh_create_refusals():
                     await plan.recheck(x_user_id)
-            if provider_class(kind).metered:
+            if provider.metered:
                 # The cap first: a user at it who asked for a size their plan
                 # refuses would step down only to be refused again.
                 await enforce_computer_count(x_user_id)
                 await assert_spec_allowed(x_user_id, request.resource_tier)
                 await enforce_computer_limit(x_user_id)
+            overrides = {}
+            if region := request.region or getattr(settings, "target", None):
+                overrides["target"] = region
+            if request.os_image:
+                overrides["image"] = request.os_image
+            create_args = plan.create_kwargs() if plan is not None else {}
+            if overrides:
+                create_args["provider_config"] = overrides
             computer = await _computer_manager().create_computer_for_user(
                 x_user_id,
                 kind=kind,
@@ -505,7 +539,7 @@ async def create_computer(
                 is_primary=True,
                 prepare=True,
                 files_backup=request.files_backup,
-                **(plan.create_kwargs() if plan is not None else {}),
+                **create_args,
             )
         computer_id = str(computer["computer_id"])
         status = await _schedule_claimed_start(computer_id)
@@ -592,29 +626,35 @@ async def list_computer_providers(x_user_id: ReadUserId):
     allowed = await get_provider_allowances(
         x_user_id, kinds, default_kind=sandbox.provider
     )
-    return ComputerProvidersResponse(
-        providers=[
+    options = []
+    for kind in kinds:
+        provider = provider_class(kind)
+        settings = sandbox.settings_for(kind)
+        options.append(
             ComputerProviderOption(
                 kind=kind,
                 is_default=kind == sandbox.provider,
                 allowed=allowed[kind],
-                tiers=_tier_specs(sandbox, kind),
-                default_name=provider_class(kind).default_computer_name,
+                tiers=_tier_specs(settings.resource_tiers) if provider.recreatable else [],
+                default_name=provider.default_computer_name,
+                os_platforms=list(provider.os_platforms),
+                desktop_transports=list(provider.desktop_transports),
+                supports_ssh=provider.supports_ssh,
+                supports_sleep=provider.supports_sleep,
+                requires_reservation=provider.requires_reservation,
+                regions=list(getattr(settings, "offered_regions", ())),
+                os_images=_offered_images(settings),
             )
-            for kind in kinds
-        ],
-        tunnels=tunnels_enabled(),
-    )
+        )
+    return ComputerProvidersResponse(providers=options, tunnels=tunnels_enabled())
 
 
-def _tier_specs(sandbox: Any, kind: str) -> list[ComputerTierSpec]:
-    """The sizes ``kind`` offers, from the settings its sandboxes are built from.
+def _offered_images(settings: Any) -> list[str]:
+    image = getattr(settings, "image", None)
+    return [image] if image else []
 
-    Empty for a machine its owner sizes, whose one tier is a placeholder.
-    """
-    if not provider_class(kind).recreatable:
-        return []
-    tiers = sandbox.settings_for(kind).resource_tiers
+
+def _tier_specs(tiers: dict) -> list[ComputerTierSpec]:
     return [
         ComputerTierSpec(
             tier=name, cpu=preset.cpu, memory_gib=preset.memory, disk_gib=preset.disk

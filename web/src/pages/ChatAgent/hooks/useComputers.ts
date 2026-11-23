@@ -77,18 +77,21 @@ function cachedComputerStatus(queryClient: QueryClient, computerId: string): str
  * status frame names its outcome, so the list re-reads itself while any row
  * has one in progress. Observers share the timer: every fetch resets them all.
  */
-function computersList() {
+function computersList(refreshRunning = false) {
   return queryOptions({
     queryKey: queryKeys.computers.lists(),
     queryFn: getComputers,
     staleTime: 30_000,
-    refetchInterval: (query) =>
-      query.state.data?.computers.some((c) => activeSpecChange(c)) ? SPEC_CHANGE_POLL_MS : false,
+    refetchInterval: (query) => {
+      const computers = query.state.data?.computers;
+      if (computers?.some((c) => activeSpecChange(c))) return SPEC_CHANGE_POLL_MS;
+      return refreshRunning && computers?.some((c) => c.running_since) ? 30_000 : false;
+    },
   });
 }
 
-export function useComputers(options: { enabled?: boolean } = {}) {
-  return useQuery({ ...computersList(), enabled: options.enabled ?? true });
+export function useComputers(options: { enabled?: boolean; refreshRunning?: boolean } = {}) {
+  return useQuery({ ...computersList(options.refreshRunning), enabled: options.enabled ?? true });
 }
 
 /**

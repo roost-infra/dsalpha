@@ -341,20 +341,20 @@ function AuthenticatedShell() {
     };
   }, [sidebarWidthVar]);
 
-  // While the user profile is loading, show the loading state to avoid
-  // flashing protected content before the gate check completes.
-  if (isLoading) {
+  // Computer access is already authenticated here and needs no model setup.
+  const needsModelSetup = section !== 'computers';
+  if (needsModelSetup && isLoading) {
     return <PageLoading />;
   }
 
-  if (needsSetup) {
+  if (needsModelSetup && needsSetup) {
     return <Navigate to="/setup/method" replace />;
   }
 
   return (
     <OnboardingProvider>
       <ThreadLifecycleFeed />
-      <WarmHome />
+      {needsModelSetup && <WarmHome />}
       {onWelcome ? (
         // Full screen and none of the app's chrome: the flow is the page.
         // The hosts below stay, since a brokerage connect it starts asks for

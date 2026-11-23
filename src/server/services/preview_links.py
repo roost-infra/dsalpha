@@ -20,6 +20,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
+from ptc_agent.core.sandbox.desktop_ports import check_preview_port
 from ptc_agent.core.sandbox.preview_probe import head_preview
 from ptc_agent.core.sandbox.runtime import PreviewInfo
 from src.server.database.workspace import get_preview_command
@@ -279,6 +280,7 @@ async def resolve_preview(
     (skips the DB lookup).  Omit the argument (or pass ``UNSET``) to have
     this function look it up from the database.
     """
+    check_preview_port(getattr(sandbox, "channel", ""), port)
     # Resolve command: explicit arg → DB lookup (only when caller didn't provide)
     cmd = command
     if cmd is UNSET:

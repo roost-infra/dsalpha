@@ -221,6 +221,9 @@ export interface ComputerSsh {
   memory_bytes?: number | null;
 }
 
+export type ComputerPlatform = 'linux' | 'macos' | 'windows';
+export type DesktopTransport = 'novnc' | 'vnc-ws' | 'screenshot';
+
 export interface Computer {
   computer_id: string;
   user_id: string;
@@ -233,6 +236,15 @@ export interface Computer {
    *  status table instead, so adding a state there forces its copy. */
   status: string;
   resource_tier: ResourceTier;
+  os_platform?: ComputerPlatform | null;
+  os_image?: string | null;
+  region?: string | null;
+  running_since?: string | null;
+  estimated_credits?: number | null;
+  desktop_transport?: DesktopTransport | null;
+  supports_ssh?: boolean;
+  desktop_state?: 'off' | 'starting' | 'ready' | 'error';
+  reservation_expires_at?: string | null;
   is_always_on: boolean;
   /** The machine a workspace is bound to when it names no other. */
   is_primary: boolean;
@@ -426,6 +438,13 @@ export interface ComputerKeyRemoval {
 
 /** One entry of `GET /api/v1/computers/providers`. */
 export interface ComputerProviderOption {
+  os_platforms?: ComputerPlatform[];
+  regions?: string[];
+  os_images?: string[];
+  desktop_transports?: DesktopTransport[];
+  supports_ssh?: boolean;
+  supports_sleep?: boolean;
+  requires_reservation?: boolean;
   /** A sandbox backend, plain like {@link Computer.kind}: a deployment can
    *  offer one this build does not know. */
   kind: string;
@@ -512,6 +531,9 @@ export interface MakePrimaryResponse {
 /** Request body for `POST /api/v1/computers`. Tier is the machine's, not a workspace's. */
 export interface ComputerCreate {
   name?: string;
+  os_platform?: ComputerPlatform;
+  region?: string;
+  os_image?: string;
   resource_tier?: ResourceTier;
   /** Omitted means the deployment's default provider. */
   kind?: string;

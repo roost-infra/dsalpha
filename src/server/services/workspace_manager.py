@@ -982,6 +982,9 @@ class WorkspaceManager(ComputerManager):
                         await self.cleanup_idle_workspaces()
                         await self.reap_stuck_starting_workspaces()
                         await self.reap_retirement_pending_computers()
+                        from src.server.database import desktop_sessions
+
+                        await desktop_sessions.close_stale()
                 except asyncio.CancelledError:
                     break
                 except Exception as e:
