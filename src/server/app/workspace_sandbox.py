@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Path as PathParam, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
+from ptc_agent.core.sandbox.desktop_ports import DesktopPortReserved, check_preview_port
 from src.server.database.share_codes import share_url
 from src.server.database.share_links import ensure_app_link
 from src.server.utils.api import CurrentUserId
@@ -611,6 +612,8 @@ async def owner_preview_url(
                 command=command, force=force, expires_in=expires_in,
                 work_dir=_preview_work_dir(workspace),
             )
+    except DesktopPortReserved as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     except HTTPException:
         raise
     except NotImplementedError:
@@ -778,6 +781,10 @@ async def restart_preview_server(
 ) -> PreviewRestartResponse:
     """Restart a preview server process in the workspace sandbox."""
     _session, sandbox = await _get_sandbox(workspace_id, x_user_id)
+    try:
+        check_preview_port(sandbox.channel, body.port)
+    except DesktopPortReserved as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
     # The server starts in the folder, which a settle on any worker would
     # otherwise move between the read and the launch.
     async with held_workspace_row(workspace_id) as workspace:

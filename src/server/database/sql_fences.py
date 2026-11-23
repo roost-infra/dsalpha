@@ -104,7 +104,8 @@ _COMPUTER_COLUMNS = (
     "provider_config", "artifacts", "last_activity_at", "stopped_at",
     "created_at", "updated_at", "config", "disk_total_bytes", "disk_used_bytes",
     "disk_free_bytes", "disk_measured_at", "disk_sandbox_ref", "spec_change",
-    "files_backup", "start_failure",
+    "files_backup", "start_failure", "os_platform", "os_image", "region",
+    "desktop_transport", "desktop_state", "reservation_expires_at",
 )
 
 

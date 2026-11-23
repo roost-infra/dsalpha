@@ -21,6 +21,7 @@ import logging
 from typing import Any
 from urllib.parse import urlsplit
 
+from ptc_agent.core.sandbox.desktop_ports import is_desktop_port
 from src.server.database.computer import get_computer_for_workspace
 from src.server.models.computer import ComputerStatus
 from src.server.services.preview_base import preview_base
@@ -49,11 +50,16 @@ async def upstream_for(capability: Capability) -> Upstream | None:
     ``PreviewProxyUnavailable`` when Postgres cannot say whether the computer
     runs the sandbox.
     """
-    if capability.upstream is not None:
+    if capability.upstream is not None and not is_desktop_port(capability.port):
         return capability.upstream
     computer = await _running_computer(capability)
     if computer is None:
         return None
+    # A capability minted before desktop ports were reserved may still be in Redis.
+    if computer["kind"] == "daytona" and is_desktop_port(capability.port):
+        return None
+    if capability.upstream is not None:
+        return capability.upstream
     from src.server.services.workspace_manager import WorkspaceManager
 
     manager = WorkspaceManager.get_instance()

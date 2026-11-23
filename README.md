@@ -367,6 +367,8 @@ A turn runs as a background run, independent of the HTTP connection that started
 
 **Files outlive the sandbox.** After each turn, and whenever a computer stops, every workspace folder that changed is snapshotted. The manifest is one Postgres row per path. The bytes go from the sandbox straight to S3-compatible object storage, or stay in Postgres when you run without one. The file browser and downloads keep working while the computer is off, and a recreated sandbox is restored from the snapshot. A Daytona computer left stopped for a week also archives its whole disk to cold storage and resumes from it on the next start.
 
+**Cloud computers.** Open **Computers** to manage machines, browse their workspace files, and see running time and estimated credits on metered deployments. Daytona Linux computers offer a browser desktop and a temporary SSH command. The browser desktop starts on demand. New Daytona snapshots include the desktop packages, and existing custom snapshots need those packages for desktop access. Run `make daytona-snapshots` to prebuild the new snapshots. Set `sandbox.daytona.offered_regions` in `agent_config.yaml` to offer specific Daytona targets when adding a computer.
+
 The **channel gateway** is part of dsalpha. It carries Slack, Discord, Telegram, Feishu and iMessage conversations into the same chat API the web app uses, and posts automation results to the channel you pick.
 
 ### Governed orders

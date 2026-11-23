@@ -21,6 +21,7 @@ type RouteSection = AppSection;
 const routeChunks = {
   dashboard: () => import('../../pages/Dashboard/Dashboard'),
   chat: () => import('../../pages/ChatAgent/ChatAgent'),
+  computers: () => import('../../pages/Computers/Computers'),
   rooms: () => import('../../pages/Rooms/Rooms'),
   market: () => import('../../pages/MarketView/MarketView'),
   news: () => import('../../pages/Detail/NewsDetailPage'),
@@ -36,6 +37,7 @@ const routeChunks = {
 
 const Dashboard = lazyWithMotion(routeChunks.dashboard);
 const ChatAgent = lazyWithMotion(routeChunks.chat);
+const Computers = lazyWithMotion(routeChunks.computers);
 // The Rooms page animates nothing, so it skips the framer download.
 const Rooms = preloadableLazy(routeChunks.rooms);
 const MarketView = lazyWithMotion(routeChunks.market);
@@ -55,6 +57,7 @@ const Settings = lazyWithMotion(routeChunks.settings);
 const routePreloads = {
   dashboard: Dashboard.preload,
   chat: ChatAgent.preload,
+  computers: Computers.preload,
   rooms: Rooms.preload,
   market: MarketView.preload,
   news: NewsDetailPage.preload,
@@ -154,6 +157,8 @@ function Main() {
         <Routes location={location}>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/chat" element={<ChatAgent />} />
+          <Route path="/computers" element={<Computers />} />
+          <Route path="/computers/:computerId/desktop" element={<Computers />} />
           <Route path="/chat/t/:threadId/:taskId" element={<ChatAgent />} />
           <Route path="/chat/t/:threadId" element={<ChatAgent />} />
           <Route path="/chat/:workspaceId" element={<ChatAgent />} />

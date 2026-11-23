@@ -88,6 +88,8 @@ class DaytonaProvider(SandboxProvider):
     """Provider that manages sandboxes via the Daytona SDK."""
 
     label = "Daytona"
+    desktop_transports = ("novnc",)
+    supports_ssh = True
     platform_secret_namespace_env = DaytonaConfig.ENV_FIELDS["secret_namespace"]
     scrubs_platform_secrets = True
     reports_metrics = True
@@ -102,7 +104,9 @@ class DaytonaProvider(SandboxProvider):
     ) -> None:
         self._config = config
         self._working_dir = working_dir or DEFAULT_SANDBOX_ROOT
-        sdk_config = SDKDaytonaConfig(api_key=config.api_key, api_url=config.base_url)
+        sdk_config = SDKDaytonaConfig(
+            api_key=config.api_key, api_url=config.base_url, target=config.target
+        )
         self._client = contextvars.Context().run(AsyncDaytona, sdk_config)
         _detach_event_dispatcher(self._client)
 
@@ -369,11 +373,23 @@ class DaytonaProvider(SandboxProvider):
     def _image_steps(
         self, mcp_packages: list[str] | None, resources: Resources | None
     ) -> list[Step]:
-        return image_steps(
+        steps = image_steps(
             working_dir=self._working_dir,
             mcp_packages=mcp_packages,
             cpu=resources.cpu if resources is not None else SANDBOX_FALLBACK_CPU,
         )
+        # Daytona's toolbox starts the desktop on demand. Custom snapshots
+        # must supply the binaries, including websockify on minimal images.
+        steps.append(
+            Run((
+                "apt-get update && DEBIAN_FRONTEND=noninteractive"
+                " apt-get install -y --no-install-recommends"
+                " xvfb xfce4 xfce4-terminal x11vnc novnc websockify dbus-x11 x11-utils scrot"
+                " libx11-6 libxrandr2 libxext6 libxrender1 libxfixes3 libxss1 libxtst6 libxi6"
+                " && apt-get clean && rm -rf /var/lib/apt/lists/*",
+            ))
+        )
+        return steps
 
     def _get_snapshot_hash(
         self,

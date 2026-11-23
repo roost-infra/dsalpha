@@ -55,6 +55,7 @@ interface TabStripProps {
   backArrow?: boolean;
   /** The close is the host's panel toggle, shown pressed: see FilePanel. */
   panelToggle?: boolean;
+  desktopLink?: React.ReactNode;
 }
 
 /** What a tool or sources tab is named from; the tab itself holds only an id. */
@@ -290,6 +291,7 @@ export function TabStrip({
   onPanelClose,
   backArrow = false,
   panelToggle = false,
+  desktopLink,
 }: TabStripProps): React.ReactElement {
   const { t } = useTranslation();
   // A tool tab is named the way its row is, and a row reads its paths under
@@ -422,6 +424,7 @@ export function TabStrip({
       )}
 
       <div className="file-panel-strip-right">
+        {desktopLink}
         {history && (
           <>
             <button type="button" onClick={history.onBack ?? undefined} disabled={!history.onBack} className="file-panel-icon-btn" title={t('filePanel.back')} aria-label={t('filePanel.back')}>

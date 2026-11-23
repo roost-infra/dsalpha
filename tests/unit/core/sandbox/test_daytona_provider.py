@@ -64,6 +64,26 @@ class TestDaytonaRuntime:
         return DaytonaRuntime(mock_sdk_sandbox)
 
     @pytest.mark.asyncio
+    async def test_desktop_gateway_uses_a_dedicated_preview(self, runtime, mock_sdk_sandbox):
+        from ptc_agent.core.sandbox.desktop_ports import (
+            DAYTONA_NOVNC_PORT,
+            DesktopPortReserved,
+        )
+
+        mock_sdk_sandbox.create_signed_preview_url.return_value = SimpleNamespace(
+            url="https://sandbox-preview.example.test"
+        )
+        with pytest.raises(DesktopPortReserved):
+            await runtime.get_preview_url(DAYTONA_NOVNC_PORT)
+        mock_sdk_sandbox.create_signed_preview_url.assert_not_awaited()
+
+        preview = await runtime.desktop_preview()
+        assert preview.url == "https://sandbox-preview.example.test"
+        mock_sdk_sandbox.create_signed_preview_url.assert_awaited_once_with(
+            DAYTONA_NOVNC_PORT, expires_in_seconds=60, request_timeout=10
+        )
+
+    @pytest.mark.asyncio
     async def test_exec_delegates(self, runtime, mock_sdk_sandbox):
         result = await runtime.exec("echo hello")
         mock_sdk_sandbox.process.exec.assert_called_once()

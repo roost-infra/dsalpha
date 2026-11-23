@@ -47,6 +47,8 @@ CLAIMABLE_FOR_START = (ComputerStatus.STOPPED, ComputerStatus.CREATING)
 
 
 ComputerKind = Literal["daytona", "docker", "e2b", "ssh"]
+ComputerPlatform = Literal["linux", "macos", "windows"]
+DesktopTransport = Literal["novnc", "vnc-ws", "screenshot"]
 
 # Spec presets a request may name. Shown as Small, Medium, Large and Extra
 # Large; the ids predate those names and are persisted on computer rows. Each
@@ -307,6 +309,9 @@ class ComputerSSHPairingCreate(BaseModel):
 class ComputerCreate(BaseModel):
     """Request model for creating a computer."""
 
+    os_platform: ComputerPlatform | None = None
+    os_image: str | None = Field(None, min_length=1, max_length=128)
+    region: str | None = Field(None, min_length=1, max_length=32)
     name: Optional[str] = Field(
         None,
         min_length=1,
@@ -604,6 +609,13 @@ class ComputerProviderOption(BaseModel):
     """One sandbox provider a new computer may be created on."""
 
     kind: ComputerKind = Field(description="Sandbox provider")
+    os_platforms: list[ComputerPlatform]
+    desktop_transports: list[DesktopTransport]
+    supports_ssh: bool
+    supports_sleep: bool
+    requires_reservation: bool
+    regions: list[str]
+    os_images: list[str]
     is_default: bool = Field(
         description="Whether a computer created without a kind runs here"
     )
@@ -829,6 +841,15 @@ class ComputerResponse(BaseModel):
     computer_id: str = Field(description="Unique computer identifier")
     user_id: str = Field(description="Owner user ID")
     kind: str = Field(description="Execution backend: daytona, docker, e2b, ssh")
+    os_platform: ComputerPlatform | None = None
+    os_image: str | None = None
+    region: str | None = None
+    supports_ssh: bool = False
+    desktop_transport: DesktopTransport | None = None
+    desktop_state: Literal["off", "starting", "ready", "error"] = "off"
+    reservation_expires_at: datetime | None = None
+    running_since: datetime | None = None
+    estimated_credits: int | None = Field(None, description="Estimated charge for the current run in Roost credits")
     name: str = Field(description="User-facing computer name")
     status: str = Field(
         description=(

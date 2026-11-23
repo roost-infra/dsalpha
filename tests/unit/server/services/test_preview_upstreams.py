@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -157,6 +158,18 @@ class TestStoredOrigins:
         assert await upstream_for(_capability(stored)) == stored
         assert rows.reads == 0
         assert manager.providers == []
+
+    @pytest.mark.asyncio
+    async def test_a_legacy_daytona_desktop_capability_cannot_be_dialed(self, manager, rows):
+        stored = Upstream("https://6080-sbx.proxy.daytona.work", {})
+        capability = replace(_capability(stored), port=6080)
+        rows.row["kind"] = "daytona"
+
+        assert await upstream_for(capability) is None
+        assert manager.providers == []
+
+        rows.row["kind"] = "ssh"
+        assert await upstream_for(capability) == stored
 
 
 class TestInProcess:

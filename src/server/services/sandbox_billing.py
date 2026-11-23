@@ -286,6 +286,19 @@ def compute_charge(
     )
 
 
+def estimate_open_run(computer: Mapping[str, Any]) -> int | None:
+    started = computer.get("running_since")
+    cpu, memory = computer.get("run_cpu"), computer.get("run_memory")
+    if (
+        computer["kind"] != PROVIDER
+        or started is None or cpu is None or memory is None
+        or not usage_limits.platform_gating_active()
+    ):
+        return None
+    seconds = max(0.0, (datetime.now(UTC) - started).total_seconds())
+    return compute_charge(cpu, memory, computer.get("run_disk") or 0, seconds).total_credits
+
+
 def unit_price_snapshot(
     prices: SandboxPrices,
     markup_bps: int,

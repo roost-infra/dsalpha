@@ -251,9 +251,11 @@ async def get_computer(
     async with _computer_cursor(conn) as cur:
         await cur.execute(
             f"""
-            SELECT {_COMPUTER_COLS}
-            FROM computers
-            WHERE computer_id = %s AND {FENCE_NOT_DELETED}
+            SELECT {computer_cols("c")}, r.started_at AS running_since,
+                   r.cpu AS run_cpu, r.memory_gb AS run_memory, r.disk_gb AS run_disk
+            FROM computers c
+            LEFT JOIN computer_runs r ON r.computer_id = c.computer_id AND r.ended_at IS NULL
+            WHERE c.computer_id = %s AND c.{FENCE_NOT_DELETED}
             """,
             (computer_id,),
         )
@@ -294,16 +296,17 @@ async def get_computers_for_user(
     include_deleted: bool = False,
     conn=None,
 ) -> List[Dict[str, Any]]:
-    status_filter = "" if include_deleted else f"AND {FENCE_NOT_DELETED}"
+    status_filter = "" if include_deleted else f"AND c.{FENCE_NOT_DELETED}"
     async with _computer_cursor(conn) as cur:
         await cur.execute(
             f"""
-            SELECT {_COMPUTER_COLS}
-            FROM computers
-            WHERE user_id = %s {status_filter}
-            ORDER BY is_primary DESC,
-                     COALESCE(last_activity_at, updated_at) DESC,
-                     computer_id
+            SELECT {computer_cols("c")}, r.started_at AS running_since,
+                   r.cpu AS run_cpu, r.memory_gb AS run_memory, r.disk_gb AS run_disk
+            FROM computers c
+            LEFT JOIN computer_runs r ON r.computer_id = c.computer_id AND r.ended_at IS NULL
+            WHERE c.user_id = %s {status_filter}
+            ORDER BY c.is_primary DESC, COALESCE(c.last_activity_at, c.updated_at) DESC,
+                     c.computer_id
             """,
             (user_id,),
         )

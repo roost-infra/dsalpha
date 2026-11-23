@@ -56,6 +56,7 @@ import { useFileBodyCache, useFileBody } from './filePanel/useFileBody';
 import { useChangedFiles } from './filePanel/useChangedFiles';
 import { countLines } from '../utils/fileLocation';
 import { TabStrip } from './filePanel/TabStrip';
+import { FilePanelDesktopLink } from './filePanel/FilePanelDesktopLink';
 import { AnimatePresence } from '@/lib/framer';
 import { TreeColumn } from './filePanel/TreeColumn';
 import { FileCrumbs } from './filePanel/FileCrumbs';
@@ -818,6 +819,9 @@ function FilePanel({
         onPanelClose={closePanel}
         backArrow={isMobile}
         panelToggle={panelToggle}
+        desktopLink={!readOnly && wsData?.computer_id
+          ? <FilePanelDesktopLink computerId={wsData.computer_id} workspaceId={workspaceId} guardLeave={guardLeave} />
+          : null}
       />
 
       {onReturnHome && (
