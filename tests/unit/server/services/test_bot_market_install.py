@@ -88,6 +88,7 @@ async def test_install_copies_the_template_and_records_where_it_came_from():
     assert kwargs.kwargs["tools_allow"] == ["get_quote", "get_daily_prices"]
     assert kwargs.kwargs["tools_deny"] == ["send_bot_message"]
     assert kwargs.kwargs["model"] is None
+    assert kwargs.kwargs["avatar"] == {"kind": "emoji", "emoji": "🤖"}
     record.assert_awaited_once_with(
         user_id=USER_ID,
         slug="example-bot",

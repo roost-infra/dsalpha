@@ -79,12 +79,21 @@ export function BotMark({ bot, name, size = 22, decorative = false }: BotMarkPro
   }
 
   if (look.kind === 'emoji') {
+    // A bare emoji floats on whatever is behind it. A tinted disc gives it the
+    // same avatar silhouette as a mark and keeps it legible on any row.
+    const fallback = lookOfBot({ ...(identity ?? {}), avatar: {} });
+    const emojiColor = botColorToken(fallback.kind === 'mark' ? fallback.color : 'slate');
     return (
       <span
         {...data}
         {...a11y}
-        className="inline-flex shrink-0 items-center justify-center"
-        style={{ ...box, fontSize: `${Math.round(size * 0.72)}px`, lineHeight: 1 }}
+        className="inline-flex shrink-0 items-center justify-center rounded-full"
+        style={{
+          ...box,
+          fontSize: `${Math.round(size * 0.62)}px`,
+          lineHeight: 1,
+          backgroundColor: emojiColor,
+        }}
       >
         {look.emoji}
       </span>

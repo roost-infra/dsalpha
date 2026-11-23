@@ -22,6 +22,8 @@ export interface MarketCategory {
 export interface MarketBotCard {
   slug: string;
   name: string;
+  /** The catalogue's emoji, shown as the card's face. */
+  icon?: string;
   summary: string;
   category: string;
   tags: string[];
@@ -48,6 +50,7 @@ export interface MarketBotInstallRef {
 export interface MarketBotDetail {
   slug: string;
   name: string;
+  icon?: string;
   summary: string;
   description: string;
   category: string;

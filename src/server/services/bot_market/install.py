@@ -78,7 +78,10 @@ async def install_bot(
                 candidate,
                 role="analyst",
                 persona=bot.template.persona,
-                avatar={},
+                # The card's icon becomes the Bot's face. Without it every
+                # installed Bot falls back to a letter mark, which is what the
+                # market looked like before this.
+                avatar={"kind": "emoji", "emoji": bot.icon},
                 provider=None,
                 model=bot.template.model,
                 skills=bot.template.skills,
