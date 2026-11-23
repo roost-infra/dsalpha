@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useUser } from '@/hooks/useUser';
 import { getRoostBilling, type RoostBilling } from '@/lib/roostBilling';
-import { getAccessToken } from '@/lib/authToken';
+import { authHeaders } from '@/lib/authToken';
 import { PLAN_URL } from '@/config/supportLinks';
 import { ConsoleLink } from '../components/ConsoleLink';
 
@@ -129,11 +129,9 @@ export function PlanPanel() {
     let alive = true;
     const tick = async () => {
       try {
-        const token = await getAccessToken();
-        if (!token) return;
-        const res = await fetch(`/console-api/v1/billing/orders/${id}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const headers = await authHeaders();
+        if (!headers.Authorization) return;
+        const res = await fetch(`/console-api/v1/billing/orders/${id}`, { headers });
         if (!res.ok) return;
         const body = await res.json() as { order?: CheckoutOrder };
         if (!alive || !body.order) return;
@@ -154,14 +152,14 @@ export function PlanPanel() {
     setPaying(sku);
     setCheckout({ sku });
     try {
-      const token = await getAccessToken();
-      if (!token) {
+      const headers = await authHeaders();
+      if (!headers.Authorization) {
         setCheckout({ sku, error: zh ? '请先登录后再订阅。' : 'Sign in before subscribing.' });
         return;
       }
       const res = await fetch('/console-api/v1/billing/orders', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ sku }),
       });
       const body = await res.json().catch(() => null) as { order?: CheckoutOrder; error?: { message?: string } } | null;
