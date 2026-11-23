@@ -10,7 +10,7 @@ const apiMock = vi.hoisted(() => ({
 
 vi.mock('@/api/client', () => ({ api: apiMock }));
 
-import { getIndex, getIndices, getStockPrices } from '../api';
+import { getIndex, getIndices, getStockPrices, updatePreferences } from '../api';
 
 describe('getStockPrices', () => {
   beforeEach(() => {
@@ -234,5 +234,33 @@ describe('getIndices', () => {
 
     expect(gspc.quoteAvailable).toBe(true);
     expect(gspc.asOfDate).toBe('2025-01-13');
+  });
+});
+
+
+describe('updatePreferences transient server failures', () => {
+  beforeEach(() => {
+    apiMock.put.mockReset();
+    vi.useRealTimers();
+  });
+
+  it('retries a dropped connection once the API is back', async () => {
+    vi.useFakeTimers();
+    apiMock.put
+      .mockRejectedValueOnce(new Error('Network Error'))
+      .mockResolvedValueOnce({ data: { saved: true } });
+
+    const write = updatePreferences({ other_preference: { dashboard: {} } });
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(write).resolves.toEqual({ saved: true });
+    expect(apiMock.put).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not repeat a request the server refused', async () => {
+    const refused = { response: { status: 422 } };
+    apiMock.put.mockRejectedValueOnce(refused);
+
+    await expect(updatePreferences({ other_preference: { dashboard: {} } })).rejects.toBe(refused);
+    expect(apiMock.put).toHaveBeenCalledTimes(1);
   });
 });

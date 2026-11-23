@@ -13,13 +13,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import ConfirmDialog from '@/pages/Dashboard/components/ConfirmDialog';
-import { INTEGRATIONS_URL, PLATFORM_URL } from '@/config/supportLinks';
+import { INTEGRATIONS_URL } from '@/config/supportLinks';
 
 /** The account console's pages the menu opens; none on a self-hosted build. */
 const CONSOLE_ITEMS = [
-  { href: PLATFORM_URL, icon: CreditCard, labelKey: 'sidebar.account' },
   { href: INTEGRATIONS_URL, icon: Plug, labelKey: 'sidebar.integrations' },
 ];
+
+/** Plan & usage lives in Settings, not the account portal: the portal's
+ *  `/account` path has no route in this SPA and fell through to the dashboard. */
+const USAGE_PLAN_PATH = '/settings?tab=plan';
 
 interface AccountMenuProps {
   /** 'rail' = avatar-only trigger (collapsed sidebar); 'row' = full-width
@@ -220,6 +223,16 @@ const AccountMenu: React.FC<AccountMenuProps> = ({ variant = 'rail' }) => {
             >
               {email}
             </div>
+          )}
+
+          {isPlatformMode && (
+            <DropdownMenuItem onSelect={() => navigate(USAGE_PLAN_PATH)}>
+              <CreditCard className="h-4 w-4" style={{ color: 'var(--color-accent-light)' }} />
+              <span className="flex-1" style={{ color: 'var(--color-text-primary)' }}>
+                {t('sidebar.account')}
+              </span>
+              <ChevronRight className="h-3.5 w-3.5" style={{ color: 'var(--color-text-tertiary)' }} />
+            </DropdownMenuItem>
           )}
 
           {CONSOLE_ITEMS.map(({ href, icon: Icon, labelKey }) => href && (
