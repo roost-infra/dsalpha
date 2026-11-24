@@ -153,7 +153,8 @@ export const queryKeys = {
     // What a new machine can run on, per user: the plan decides `allowed`.
     providers: () => [...queryKeys.computers.all, 'providers'],
     sshKey: () => [...queryKeys.computers.all, 'ssh-key'],
-    desktopPreview: (computerId: string) => [...queryKeys.computers.all, 'desktop-preview', computerId],
+    desktopPreview: (computerId: string, providerRef: string | null, runningSince: string | null) =>
+      [...queryKeys.computers.all, 'desktop-preview', computerId, providerRef, runningSince],
     desktopHistory: (computerId: string) => [...queryKeys.computers.all, 'desktop-history', computerId],
   },
   // A pairing is minted by a POST and then polled; the mint is cached so a
