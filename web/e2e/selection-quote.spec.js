@@ -53,7 +53,7 @@ async function select(page, text) {
 
 const FILE_LINE = 'Revenue grew because the data center segment doubled year on year.';
 
-async function openFile(page) {
+async function openFile(page, overrides = {}) {
   await mockAPI(page, {
     ...chatViewOverrides(),
     [`GET /workspaces/${WS}/files`]: { files: ['notes.md'] },
@@ -62,6 +62,7 @@ async function openFile(page) {
       contentType: 'application/json',
       body: JSON.stringify({ workspace_id: WS, path: 'notes.md', content: `# Notes\n\n${FILE_LINE}\n`, mime: 'text/markdown', truncated: false }),
     }),
+    ...overrides,
   });
   await replayNothing();
   await page.goto(`/chat/t/${TH}`);
@@ -476,8 +477,11 @@ test.describe('quoting a selection', () => {
     await configureSSE({ method: 'POST', path: `/api/v1/threads/${TH}/messages`, events: [sseEvents.messageChunk('ok'), sseEvents.finishStop()], delay: 5 });
     await page.locator('.chat-input-container textarea').press('Enter');
     await expect(page.locator('.draft-token-quote')).toHaveCount(0);
-    const requests = await getCapturedRequests();
-    expect(JSON.stringify(requests.filter((r) => r.method === 'POST').at(-1))).toContain("source=\\\"User's message\\\"");
+    await expect.poll(async () => {
+      const requests = await getCapturedRequests();
+      const send = requests.find((r) => r.method === 'POST' && r.url === `/api/v1/threads/${TH}/messages`);
+      return JSON.stringify(send?.body ?? null);
+    }).toContain("source=\\\"User's message\\\"");
   });
 
   test('resting on a block offers its whole text, and only on finished reply text', async ({ page }) => {
@@ -593,6 +597,55 @@ test.describe('quoting a selection', () => {
     await popover.getByRole('textbox').press('Enter');
 
     await expect(page.locator('.draft-token-quote')).toContainText('Revenue grew because');
+  });
+
+  test('a Markdown block comment queues with its source anchor and goes with the next message', async ({ page }) => {
+    const artifact = { artifact_id: 'notes-artifact', workspace_id: WS, path: 'notes.md', open_comments: 0, unread: 0 };
+    const destination = { thread_id: TH, workspace_id: WS, title: 'Research', usable: true, home: false };
+    let comment;
+    const list = () => ({ comments: comment ? [comment] : [] });
+    await openFile(page, {
+      [`GET /workspaces/${WS}/artifacts`]: { artifact },
+      [`POST /workspaces/${WS}/artifacts`]: artifact,
+      'GET /artifacts/notes-artifact/destinations': {
+        default: { rule: 'beside', thread: destination, workspace_id: WS },
+        beside: destination,
+        bound: null,
+        creator: null,
+      },
+      'GET /artifacts/notes-artifact/comments': (route) => route.fulfill({ json: list() }),
+      [`GET /artifacts/threads/${TH}/queued-comments`]: (route) => route.fulfill({ json: list() }),
+      'POST /artifacts/notes-artifact/comments': (route) => {
+        const { anchor, body, delivery, thread_id: threadId } = route.request().postDataJSON();
+        comment = {
+          comment_id: 'notes-comment', artifact_id: artifact.artifact_id, number: 1, workspace_id: WS,
+          path: artifact.path, anchor, delivery, thread_id: threadId, status: 'open',
+          messages: [{ message_id: 'owner-message', seq: 1, author: 'user', body, sent_at: null }],
+          read_through: 1, unread: 0,
+        };
+        return route.fulfill({ json: comment });
+      },
+    });
+    await page.getByTitle('Comment on the file (C)', { exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Click a paragraph' })).toBeVisible();
+    const block = page.locator('[data-source-lines="3"]');
+    await block.click();
+    const dialog = page.getByRole('dialog').filter({ has: page.locator('textarea[data-page-draft]') });
+    await dialog.getByRole('textbox').fill('Check the source for this claim');
+    await dialog.getByRole('button', { name: 'Add to queue', exact: true }).click();
+    await expect.poll(() => comment).toMatchObject({
+      anchor: { kind: 'block', lines: '3', quote: FILE_LINE },
+      delivery: 'queued',
+      thread_id: TH,
+    });
+    await expect(page.getByText(/queued comment/, { exact: false }).first()).toBeVisible();
+
+    const path = `/api/v1/threads/${TH}/messages`;
+    await configureSSE({ method: 'POST', path, events: [sseEvents.messageChunk('ok'), sseEvents.finishStop()], delay: 5 });
+    await page.locator('textarea').first().fill('Please revise the notes.');
+    await page.getByRole('button', { name: 'Send message', exact: true }).click();
+    await expect.poll(async () => (await getCapturedRequests()).find((request) => request.url === path && request.method === 'POST'))
+      .toMatchObject({ body: { artifact_comment_ids: ['notes-comment'] } });
   });
 
   test('a selection in the editor keeps its popover until the reply is done', async ({ page }) => {
