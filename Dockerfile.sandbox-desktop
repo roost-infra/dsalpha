@@ -1,0 +1,8 @@
+FROM langalpha-sandbox:latest
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    dbus-x11 imagemagick openbox tint2 x11-utils x11vnc xterm xvfb \
+    && rm -rf /var/lib/apt/lists/*
+COPY --chmod=0755 scripts/langalpha-start-desktop.sh /usr/local/bin/langalpha-start-desktop
+USER workspace

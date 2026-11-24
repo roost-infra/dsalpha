@@ -211,6 +211,12 @@ async def test_large_preview_frames_can_be_served_without_caching(desktop):
     await leases.finish_preview(capture, b"x" * (leases.PREVIEW_MAX_BYTES + 1))
 
     assert desktop.redis.eval.await_args.args[-2] == b""
+def test_docker_desktop_is_available_only_for_opted_in_computers():
+    legacy = {"kind": "docker"}
+    enabled = {"kind": "docker", "provider_config": {"desktop_enabled": True}}
+
+    assert computers.computer_desktop_transport(legacy) is None
+    assert computers.computer_desktop_transport(enabled) == "vnc-ws"
 
 
 def test_websocket_requires_origin_and_consumes_ticket_once(desktop, monkeypatch):

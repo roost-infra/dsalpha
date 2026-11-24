@@ -17,7 +17,7 @@ from starlette.websockets import WebSocketDisconnect, WebSocketState
 from ptc_agent.core.sandbox.providers import provider_class
 from src.config.env import PUBLIC_APP_URL
 from src.config.settings import get_allowed_origins
-from src.server.app.computers import _computer_manager, _owned_computer
+from src.server.app.computers import _computer_manager, _owned_computer, computer_desktop_transport
 from src.server.database import desktop_sessions
 from src.server.database.session_lock import try_own_session_lock
 from src.server.dependencies.principal import CurrentPrincipal
@@ -70,10 +70,10 @@ async def _running(computer_id: UUID, user: str) -> dict:
 
 
 def _transport(row: dict) -> str:
-    transports = provider_class(row["kind"]).desktop_transports
-    if not transports:
+    transport = computer_desktop_transport(row)
+    if not transport:
         raise HTTPException(409, "This computer has no browser desktop.")
-    return transports[0]
+    return transport
 
 
 @contextlib.contextmanager

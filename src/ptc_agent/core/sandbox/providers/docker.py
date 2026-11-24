@@ -20,6 +20,7 @@ import tarfile
 import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
@@ -122,6 +123,19 @@ def _published_ports(info: dict[str, Any], proxy_ports: list[int]) -> dict[int, 
         if bound and bound[0].get("HostPort"):
             published[port] = int(bound[0]["HostPort"])
     return published
+
+
+class _DockerDesktopStream:
+    def __init__(self, attach: Any) -> None:
+        self._attach = attach
+
+    async def send(self, data: bytes) -> None:
+        await self._attach.write_in(data)
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        while (message := await self._attach.read_out()) is not None:
+            if message.stream == 1:
+                yield message.data
 
 
 class DockerRuntime(ExecSessionRuntime):
@@ -468,6 +482,39 @@ class DockerRuntime(ExecSessionRuntime):
 
     # -- Capabilities & metadata --
 
+    async def start_desktop(self) -> None:
+        result = await self._exec("langalpha-start-desktop", timeout=15, workdir="/")
+        if result.exit_code != 0:
+            raise RuntimeError("Could not start the Docker desktop")
+
+    async def desktop_screenshot(self) -> bytes:
+        result = await self._exec(
+            "set -o pipefail; import -display :99 -window root -quality 78 jpeg:- | base64 -w0",
+            timeout=5,
+            workdir="/",
+        )
+        if result.exit_code != 0 or not result.stdout:
+            raise RuntimeError("Could not capture the Docker desktop")
+        return base64.b64decode(result.stdout, validate=True)
+
+    @asynccontextmanager
+    async def desktop_stream(self) -> AsyncIterator[_DockerDesktopStream]:
+        # inetd mode expects a duplex socket. socat supplies a socketpair
+        # without opening a listening port in the container.
+        command = await self._container.exec(
+            cmd=["socat", "STDIO", "EXEC:x11vnc -norc -q -inetd -nopw"],
+            stdin=True,
+            environment={"DISPLAY": ":99"},
+            workdir="/",
+        )
+        async with command.start(detach=False) as attach:
+            yield _DockerDesktopStream(attach)
+
+    async def desktop_heartbeat(self) -> None:
+        result = await self._exec("xdpyinfo -display :99 >/dev/null", timeout=5, workdir="/")
+        if result.exit_code != 0:
+            raise RuntimeError("The Docker desktop stopped")
+
     async def archive(self) -> None:
         raise NotImplementedError("Docker provider does not support archive")
 
@@ -579,6 +626,7 @@ class DockerProvider(SandboxProvider):
     """Provider that manages sandboxes as Docker containers."""
 
     label = "Docker"
+    desktop_transports = ("vnc-ws",)
     runs_remote = False
     default_computer_name = "Local computer"
     # Commands run as the image's user, but a write goes through the daemon as
