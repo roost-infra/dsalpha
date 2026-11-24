@@ -48,8 +48,12 @@ def _first_scheduled_model():
 
 _SCHEDULED = _first_scheduled_model()
 # Every visible model with rates to size a budget from, read at one fixed stamp
-# so the set does not move with the hour the suite runs.
-_PRICED = [m for m in _visible_models() if blended_rate(m, at=_PEAK) is not None]
+# so the set does not move with the hour the suite runs. A card of zeros (the
+# relay lists some image models before it prices them) sizes nothing.
+_PRICED = [m for m in _visible_models() if blended_rate(m, at=_PEAK)]
+# Image generation bills almost all of a call as output, so the chat traffic
+# mix the blend is weighed by does not describe it.
+_IMAGE_MODELS = {m for m in _PRICED if "image" in m or "banana" in m}
 
 needs_schedule = pytest.mark.skipif(
     _SCHEDULED is None, reason="no visible model is priced by the hour"
@@ -74,8 +78,8 @@ def test_a_pricier_model_buys_a_bigger_budget():
     models can rank differently on the two without either being mispriced."""
     sized = [
         (rate, chunk_multiplier(model, at=_PEAK), model)
-        for model in _visible_models()
-        if (rate := blended_rate(model, at=_PEAK)) is not None
+        for model in _PRICED
+        if (rate := blended_rate(model, at=_PEAK))
     ]
     assert len({m for _, m, _ in sized}) > 1, "every model snapped to one rung"
     for rate, multiplier, model in sized:
@@ -91,7 +95,7 @@ def test_an_hourly_card_is_cheaper_off_peak():
     assert blended_rate(_SCHEDULED, at=_OFF_PEAK) < blended_rate(_SCHEDULED, at=_PEAK)
 
 
-@pytest.mark.parametrize("model", _PRICED)
+@pytest.mark.parametrize("model", [m for m in _PRICED if m not in _IMAGE_MODELS])
 def test_the_mix_weights_reads_far_above_input(model):
     """Traffic is mostly cache reads, so the blended rate has to sit nearer the
     read rate than the input rate. A blend that landed at or above input would

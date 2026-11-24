@@ -2,6 +2,9 @@ import pytest
 
 from src.llms.llm import ModelConfig
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 class TestFlattenProviders:
     """Tests for ModelConfig._flatten_providers() static method."""

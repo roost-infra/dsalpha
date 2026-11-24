@@ -9,7 +9,12 @@ it accepts.
 
 from __future__ import annotations
 
+import pytest
+
 from src.llms.llm import create_llm_from_custom
+
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
 
 #: An OpenAI-shaped entry, stored the way the preferences bag holds one.
 _CONFIG = {

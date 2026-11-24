@@ -685,6 +685,8 @@ async def test_a_thread_renders_as_recorded(monkeypatch, target):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["claude-sonnet-5-5", "claude-haiku-5-5"])
+# Claude's own route, which the relay's catalog names no longer reach.
+@pytest.mark.usefixtures("direct_routes_for_test")
 async def test_every_stamp_claude_is_sent_stays_turn_scoped(monkeypatch, target):
     """No path the thread takes (a skill load, a deploy, the summary that
     brings it in, images) sends a stamp to Claude as a user turn: one there

@@ -24,6 +24,9 @@ from ptc_agent.agent.middleware.file_operations.multimodal_strip import (
 )
 from src.llms.llm import LLM, get_input_modalities
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 def _system_text(request) -> str:
     """The system message as flat text, whether it is a string or block list."""

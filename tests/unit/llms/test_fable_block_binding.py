@@ -14,6 +14,9 @@ from langchain_core.messages import HumanMessage
 
 from tests.unit.ptc_agent.agent.prefix_stability import BINDING_BETA, Wire, anthropic_model, reply
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["claude-fable-5-1", "claude-fable-5-1-oauth"])

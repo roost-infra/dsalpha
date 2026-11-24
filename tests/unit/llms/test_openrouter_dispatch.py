@@ -22,6 +22,9 @@ from src.llms.error_classification import (
 from src.llms.extension import OpenRouterStreamError
 from src.llms.llm import create_llm_from_custom
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 # OpenRouter carries no manifest models: a user saves the ones they route to.
 _GROQ_ROUTED = {
     "name": "or-gpt-oss",

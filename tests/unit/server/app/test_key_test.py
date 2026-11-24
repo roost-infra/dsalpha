@@ -8,6 +8,9 @@ No HTTP calls — tests the validation model and utility function directly.
 import pytest
 from pydantic import ValidationError
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 # ---------------------------------------------------------------------------
 # TestApiKeyRequest validation

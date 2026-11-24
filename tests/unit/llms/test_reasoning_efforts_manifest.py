@@ -15,6 +15,9 @@ import pytest
 from src.llms import LLM
 from src.llms.reasoning import REASONING_LEVELS, apply_reasoning_effort
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 #: The clamp is implemented twice — here and as ``resolveEffort`` in
 #: ``web/src/lib/modelTuning.ts``, which labels what a model inherits. Both read
 #: this table so a change to one side fails the other's suite instead of quietly

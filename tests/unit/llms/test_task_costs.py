@@ -20,6 +20,9 @@ from src.llms.task_costs import (
     task_cost_baseline,
 )
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 LADDER = ["low", "medium", "high", "xhigh", "max"]
 
 

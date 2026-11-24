@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from src.llms.llm import ModelConfig
+from tests.unit.direct_routes import direct_model_config
 from src.server.services.llm import provider_models as pm
 from src.server.services.oauth_protocol import TokenSet
 from src.server.services.oauth_providers import SUBSCRIPTIONS
@@ -17,7 +17,9 @@ from src.server.services.oauth_providers import SUBSCRIPTIONS
 
 @pytest.fixture(scope="module")
 def mc():
-    return ModelConfig()
+    # The direct routes these tests list models for; the relay now serves the
+    # catalog's names (see tests.unit.direct_routes).
+    return direct_model_config()
 
 
 class TestNormalize:

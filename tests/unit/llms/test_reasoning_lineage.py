@@ -7,6 +7,8 @@ prevent, and one that shows up in production as a hard 400 rather than a test
 failure. These tests are the tripwire.
 """
 
+import pytest
+
 from src.llms.llm import LLM
 from src.llms.reasoning_lineage import (
     ANTHROPIC_LINEAGE,
@@ -16,6 +18,9 @@ from src.llms.reasoning_lineage import (
     lineage_for_route,
     tool_turns_need_reasoning,
 )
+
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
 
 # Where an SDK points when a provider declares no base_url of its own. Only the
 # SDKs appearing in a declared group need an entry; an unmapped one raises here

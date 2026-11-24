@@ -10,6 +10,9 @@ from src.llms.llm import LLM, ModelConfig, create_llm, get_configured_llm_models
 from src.llms.pricing_utils import find_model_pricing
 from src.llms.reasoning_lineage import ANTHROPIC_LINEAGE, lineage_for_route
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 CODE_ROWS = {"claude-haiku-5-5-code", "claude-sonnet-5-5-code", "claude-opus-5-5-code"}
 
 

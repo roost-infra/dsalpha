@@ -1,0 +1,510 @@
+{
+  "_comment": "Pre-relay catalog: entries the relay took over, and the visibility and tier the relay changed on the rest. See tests/unit/direct_routes.py.",
+  "entries": {
+    "gpt-6-astra": {
+      "prompt_guidance": "lean",
+      "model_id": "gpt-6-astra",
+      "provider": "openai",
+      "display_name": "GPT-6 Astra",
+      "visible": true,
+      "speed": 2,
+      "intelligence": 5,
+      "context": 1050000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "reasoning": {
+          "summary": "auto"
+        },
+        "prompt_cache_options": {
+          "mode": "implicit"
+        }
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.reasoning.effort"
+      }
+    },
+    "gpt-6.1-sol": {
+      "prompt_guidance": "lean",
+      "model_id": "gpt-6.1-sol",
+      "provider": "openai",
+      "display_name": "GPT-6.1 Sol",
+      "visible": true,
+      "speed": 3,
+      "intelligence": 5,
+      "context": 1050000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "reasoning": {
+          "summary": "auto"
+        },
+        "prompt_cache_options": {
+          "mode": "implicit"
+        }
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.reasoning.effort"
+      }
+    },
+    "gpt-6-luna": {
+      "model_id": "gpt-6-luna",
+      "provider": "openai",
+      "display_name": "GPT-6 Luna",
+      "visible": true,
+      "speed": 5,
+      "intelligence": 3,
+      "context": 1050000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "reasoning": {
+          "summary": "auto"
+        },
+        "prompt_cache_options": {
+          "mode": "implicit"
+        }
+      },
+      "reasoning": {
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.reasoning.effort"
+      }
+    },
+    "claude-fable-5-1": {
+      "prompt_guidance": "lean",
+      "model_id": "claude-fable-5-1",
+      "provider": "anthropic",
+      "display_name": "Claude Fable 5.1",
+      "visible": true,
+      "speed": 3,
+      "intelligence": 5,
+      "context": 1000000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "max_tokens": 128000,
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized",
+          "block_binding": {
+            "prefix_mismatch_behavior": "drop_block"
+          }
+        }
+      },
+      "additional_betas": [
+        "thinking-binding-controls-2026-08-01",
+        "mid-conversation-system-clear-at-2026-08-21",
+        "compact-2026-09-04"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "high",
+        "write": "parameters.output_config.effort"
+      }
+    },
+    "claude-opus-5-5": {
+      "prompt_guidance": "lean",
+      "model_id": "claude-opus-5-5",
+      "provider": "anthropic",
+      "display_name": "Claude Opus 5.5",
+      "visible": true,
+      "speed": 3,
+      "intelligence": 5,
+      "context": 1000000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "max_tokens": 128000,
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized",
+          "block_binding": {
+            "prefix_mismatch_behavior": "drop_block"
+          }
+        }
+      },
+      "additional_betas": [
+        "thinking-binding-controls-2026-08-01",
+        "mid-conversation-system-clear-at-2026-08-21",
+        "compact-2026-09-04"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.output_config.effort"
+      }
+    },
+    "claude-haiku-5-5": {
+      "model_id": "claude-haiku-5-5",
+      "provider": "anthropic",
+      "display_name": "Claude Haiku 5.5",
+      "visible": true,
+      "speed": 5,
+      "intelligence": 3,
+      "context": 1000000,
+      "compaction_profile": "expansive",
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "parameters": {
+        "max_tokens": 128000,
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized",
+          "block_binding": {
+            "prefix_mismatch_behavior": "drop_block"
+          }
+        }
+      },
+      "additional_betas": [
+        "thinking-binding-controls-2026-08-01",
+        "mid-conversation-system-clear-at-2026-08-21",
+        "compact-2026-09-04"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.output_config.effort"
+      }
+    },
+    "gemini-4-argon": {
+      "prompt_guidance": "lean",
+      "model_id": "gemini-4-argon",
+      "provider": "gemini",
+      "display_name": "Gemini 4 Argon",
+      "visible": true,
+      "speed": 3,
+      "intelligence": 5,
+      "context": 1000000,
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf",
+        "video"
+      ],
+      "parameters": {
+        "include_thoughts": true
+      },
+      "reasoning": {
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default": "medium",
+        "write": "parameters.thinking_level"
+      }
+    },
+    "glm-5.3": {
+      "prompt_guidance": "lean",
+      "model_id": "glm-5.3",
+      "provider": "z-ai",
+      "display_name": "GLM-5.3",
+      "visible": true,
+      "speed": 2,
+      "intelligence": 4,
+      "context": 1000000,
+      "parameters": {
+        "max_tokens": 128000
+      },
+      "extra_body": {
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": false
+        }
+      },
+      "input_modalities": [
+        "text"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "default": "high",
+        "write": "extra_body.reasoning_effort"
+      }
+    },
+    "glm-5.3-flash": {
+      "prompt_guidance": "lean",
+      "model_id": "glm-5.3-flash",
+      "provider": "z-ai",
+      "display_name": "GLM-5.3 Flash",
+      "visible": true,
+      "speed": 3,
+      "intelligence": 3,
+      "context": 1000000,
+      "parameters": {
+        "max_tokens": 128000
+      },
+      "extra_body": {
+        "thinking": {
+          "type": "enabled",
+          "clear_thinking": false
+        }
+      },
+      "input_modalities": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "default": "high",
+        "write": "extra_body.reasoning_effort"
+      }
+    },
+    "qwen3.8-flash": {
+      "model_id": "qwen3.8-flash",
+      "provider": "dashscope",
+      "display_name": "Qwen3.8 Flash",
+      "visible": true,
+      "speed": 2,
+      "intelligence": 3,
+      "context": 1000000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "reasoning": {
+        "efforts": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "default": "medium",
+        "write": "parameters.reasoning.effort"
+      }
+    },
+    "kimi-k3.1-pro": {
+      "prompt_guidance": "lean",
+      "model_id": "kimi-k3.1-pro",
+      "provider": "moonshot",
+      "display_name": "Kimi K3.1 Pro",
+      "visible": true,
+      "speed": 2,
+      "intelligence": 5,
+      "context": 1000000,
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "reasoning": {
+        "efforts": [
+          "low",
+          "high",
+          "max"
+        ],
+        "default": "high",
+        "write": "parameters.output_config.effort"
+      }
+    }
+  },
+  "overrides": {
+    "gpt-6.1-terra": {
+      "visible": true
+    },
+    "claude-sonnet-5-5": {
+      "visible": true
+    },
+    "gemini-3.8-flash": {
+      "visible": true
+    },
+    "gemini-3.1-flash-lite": {
+      "visible": true
+    },
+    "deepseek-flash": {
+      "visible": true
+    },
+    "glm-5.2": {
+      "visible": true
+    },
+    "glm-5.2-cn": {
+      "visible": true
+    },
+    "glm-5.3-cn": {
+      "visible": true,
+      "tier": null
+    },
+    "glm-5.3-flash-cn": {
+      "visible": true,
+      "tier": null
+    },
+    "minimax-m3.1-flash": {
+      "visible": true
+    },
+    "minimax-m3": {
+      "visible": true
+    },
+    "qwen3.8-max": {
+      "visible": true
+    },
+    "qwen3.7-plus": {
+      "visible": true
+    },
+    "qwen3.8-max-intl": {
+      "visible": true
+    },
+    "qwen3.8-flash-intl": {
+      "visible": true,
+      "tier": null
+    },
+    "qwen3.7-plus-intl": {
+      "visible": true
+    },
+    "kimi-k3.1-pro-highspeed": {
+      "visible": true
+    },
+    "kimi-k3.1-pro-coding": {
+      "visible": true
+    },
+    "kimi-k3.1-pro-highspeed-coding": {
+      "visible": true
+    },
+    "kimi-k3-coding": {
+      "visible": true
+    },
+    "gpt-5.3-codex-spark-oauth": {
+      "visible": true
+    },
+    "gpt-6.1-terra-oauth": {
+      "visible": true
+    },
+    "gpt-6-astra-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "gpt-6.1-sol-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "gpt-6-luna-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "grok-4.7": {
+      "visible": true
+    },
+    "grok-4.6": {
+      "visible": true
+    },
+    "grok-4.5": {
+      "visible": true
+    },
+    "grok-4.3": {
+      "visible": true
+    },
+    "grok-build": {
+      "visible": true
+    },
+    "grok-4.7-oauth": {
+      "visible": true
+    },
+    "grok-4.6-oauth": {
+      "visible": true
+    },
+    "grok-4.5-oauth": {
+      "visible": true
+    },
+    "grok-4.3-oauth": {
+      "visible": true
+    },
+    "grok-build-oauth": {
+      "visible": true
+    },
+    "claude-fable-5-1-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "claude-opus-5-5-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "claude-sonnet-5-5-oauth": {
+      "visible": true
+    },
+    "claude-haiku-5-5-oauth": {
+      "visible": true,
+      "tier": null
+    },
+    "claude-opus-5-5-code": {
+      "tier": null
+    },
+    "claude-haiku-5-5-code": {
+      "tier": null
+    }
+  }
+}

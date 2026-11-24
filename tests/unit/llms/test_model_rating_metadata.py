@@ -10,6 +10,9 @@ from src.llms.llm import ModelConfig
 from src.llms import pricing_utils
 from src.llms.pricing_utils import PRICE_TIER_BANDS, _representative_rate, get_price_tier
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 MANIFEST = Path(__file__).resolve().parents[3] / "src/llms/manifest/models.json"
 
 
