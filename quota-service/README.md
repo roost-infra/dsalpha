@@ -82,11 +82,16 @@ docker run --rm -p 8080:8080 \
 
 ## 用量入账（M2）
 
-服务进程内每 60s 跑一次（`INGEST_ENABLED` 控制），直接读 dsalpha 的库：
+服务进程内每 60s 跑一次（`INGEST_ENABLED` 控制），直接读 dsalpha 的库。
+升级时请先应用主服务的 Alembic 迁移 127，再启动新的 quota service。若关闭了
+`QUOTA_AUTO_MIGRATE`，还需先应用本服务的 `schema.sql`。
 
 - `public.conversation_usages` → 扣 `token_credits` / `infrastructure_credits`
 - `public.computer_runs` → 按 `resource_tier` 和运行秒数扣沙箱积分
 - 每月按套餐发放 `monthly_credits`（`Asia/Shanghai`，同月只发一次）
+
+会话用量跨过 PostgreSQL 快照的最早活跃事务之后才向前推进，可以处理多 worker
+写入的乱序提交。迁移前的记录继续使用原游标。沙箱每批优先检查最久未检查的运行记录。
 
 多副本用 `pg_try_advisory_xact_lock` 保证只有一个实例入账；所有流水靠
 `ledger (source, source_id)` 唯一约束幂等。`GET /metrics` 暴露入账健康度。

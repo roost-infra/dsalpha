@@ -70,8 +70,12 @@ CREATE TABLE IF NOT EXISTS billing.run_billing (
     run_id         uuid PRIMARY KEY,
     user_id        text NOT NULL,
     billed_until   timestamptz NOT NULL,
-    credits_billed numeric(20,6) NOT NULL DEFAULT 0
+    credits_billed numeric(20,6) NOT NULL DEFAULT 0,
+    last_checked_at timestamptz
 );
+
+ALTER TABLE billing.run_billing
+    ADD COLUMN IF NOT EXISTS last_checked_at timestamptz;
 
 CREATE TABLE IF NOT EXISTS billing.ingest_state (
     name       text PRIMARY KEY,
