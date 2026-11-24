@@ -1302,12 +1302,11 @@ def _gzip_exempt(path: str) -> bool:
     for one) asks for gzip whatever its client asked, and decompressing for
     the daemon, which asks for no encoding, weakens or drops that tag.
 
-    The history replay is a server-sent event stream, and the gateway already
-    compresses this route (``deploy/nginx/dsalpha.roostbots.com.conf`` sets
-    ``gzip on`` for it). Compressing it here as well spends a second pass over
-    the same bytes for no further saving — and the buffering a compressor needs
-    is the last thing a stream that is meant to arrive as it is built should
-    have in front of it.
+    Replay must not acquire an application compression buffer between its
+    assembled transcript and its trailing snapshot read. Recent Starlette
+    versions already exclude text/event-stream; the explicit exemption keeps
+    that property independent of the middleware version. It does not make
+    projection incremental, nor imply that nginx recompresses a gzip response.
     """
     return (
         path.endswith("/files/download")

@@ -1207,15 +1207,10 @@ async def replay_thread_messages(
             headers={
                 "Cache-Control": "no-cache",
                 "X-Replay-Source": resolved_source,
-                # The gateway buffers this route on purpose (see
-                # deploy/nginx/dsalpha.roostbots.com.conf: it serves the replay
-                # as one compressed body so a slow read cannot hold a worker).
-                # That turns the stream into a single response: nothing reaches
-                # the reader until every turn of the page has been projected,
-                # so the first page's wait is the whole read's wait. This header
-                # overrides the buffer for this response alone, without touching
-                # the shared gateway config — the first page now arrives while
-                # the rest is still being built.
+                # Do not hold the assembled transcript behind the trailing
+                # snapshot read at the proxy. Projection and finish_lines above
+                # still complete before headers: this is transport streaming,
+                # not incremental checkpoint projection.
                 "X-Accel-Buffering": "no",
             },
         )
