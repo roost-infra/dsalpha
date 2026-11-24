@@ -38,8 +38,8 @@ from src.utils.tracking.infrastructure_costs import (
     calculate_infrastructure_credits,
     format_infrastructure_usage
 )
-from src.config.env import USD_TO_CREDITS_RATE
 from src.config.settings import is_task_usage_charge_outbox_enabled
+from src.config.billing_rates import usd_to_credits_rate
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +71,17 @@ class UsagePersistenceService:
             thread_id: Thread identifier
             workspace_id: Workspace identifier
             user_id: User identifier
-            credit_conversion_rate: Optional custom conversion rate (default: 1000)
+            credit_conversion_rate: Optional custom conversion rate. Defaults
+                to the console-published fx.usd_to_credits (env fallback), read
+                at construction so a rate change mid-process is picked up by
+                the next turn rather than by a restart.
         """
         self.thread_id = thread_id
         self.workspace_id = workspace_id
         self.user_id = user_id
-        self.credit_conversion_rate = credit_conversion_rate or USD_TO_CREDITS_RATE
+        self.credit_conversion_rate = (
+            credit_conversion_rate or usd_to_credits_rate()
+        )
 
         # Internal tracking
         self._token_usage: Optional[Dict[str, Any]] = None

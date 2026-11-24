@@ -129,6 +129,8 @@ class TestTrackLlmUsageBilling:
 
     @pytest.mark.asyncio
     async def test_token_credits_from_platform_cost(self):
+        from src.config.billing_rates import usd_to_credits_rate
+
         svc = _make_service()
 
         mock_result = {
@@ -145,8 +147,8 @@ class TestTrackLlmUsageBilling:
         ):
             await svc.track_llm_usage([{"dummy": "record"}])
 
-        # Credits = platform_cost * 1000 (default rate)
-        expected = Decimal("0.04") * Decimal("1000")
+        # Credits = platform_cost * the console-published fx (env fallback).
+        expected = Decimal("0.04") * Decimal(str(usd_to_credits_rate()))
         assert svc._token_credits == expected
 
     @pytest.mark.asyncio

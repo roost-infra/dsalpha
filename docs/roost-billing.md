@@ -9,10 +9,25 @@ the existing `PlatformCreditGatePort` talks to the compatibility routes.
 ```bash
 AUTH_SERVICE_URL=https://www.roostbots.com/console-api
 INTERNAL_SERVICE_TOKEN=<Roost API SERVICE_SECRET>
-USD_TO_CREDITS_RATE=720     # 1 USD ≈ 720 Roost credits (100 credits = ¥1)
+HOST_MODE=platform
 ```
 
-`HOST_MODE=platform` must be set as usual.
+The USD→credit rate and the sandbox markup are **console settings**, not local
+configuration: the server reads `fx.usd_to_credits` and `sandbox.markup_bps`
+from Roost Console at startup (`services/billing_rates.py`) and refreshes them
+every `BILLING_RATES_INTERVAL_SECONDS` (default 300). A changed setting reaches
+a running deployment without a deploy. The sources tried, in order: the public
+`GET /v1/pricing/book` (fx + model spellings), `GET
+/internal/v1/pricing/book` (fx/markup), and the flat settings surface `GET
+/internal/v1/billing/settings` (`sandbox.markup_bps` / `fx.usd_to_credits`),
+then older alternate settings paths.
+
+`USD_TO_CREDITS_RATE` / `SANDBOX_MARKUP_BPS` are only the fallback for an OSS
+or console-less deployment, or one whose console has never answered. The old
+`USD_TO_CREDITS_RATE=720` line is no longer required; setting it explicitly is
+warned about at boot when it disagrees with the console, because the console
+value is the one used. The code default is 720 (was 1000, a third undocumented
+rate); the hard-coded "canonical credit unit" check is gone.
 
 ## Compatibility surface
 
@@ -25,10 +40,48 @@ POST /api/auth/billing/leases/release
 GET  /api/auth/billing/leases/capability
 ```
 
-The release payload includes `spent_credits`, read from the run's own
-`in_flight_credits` heartbeat, so the turn is settled against the organization
-wallet exactly once. A failed release leaves the lease to expire; the expiry
-worker releases the reservation.
+The release settles the turn against the organization wallet exactly once. Its
+payload is the console contract's:
+
+```json
+{
+  "user_id": "…", "run_ref": "…", "generation": 3, "byok": false,
+  "model_usage": [{ "model": "claude-sonnet-5.5", "input": 150000,
+                    "output": 2000, "cache_read": 0, "cache_write": 0,
+                    "calls": 3 }],
+  "spent_usd": 0.0123,
+  "surcharge_minor": 250
+}
+```
+
+`model_usage` is aggregated from the turn's own per-call records, platform
+calls only (BYOK calls are the user's own spend and would be charged twice);
+cache tokens are split out of LangChain's inclusive `input_tokens` into their
+own components. Model names are respelled to the public price book's spelling
+(`claude-sonnet-5-5` → `claude-sonnet-5.5`) so the console can price them
+instead of answering `unknown_model`.
+
+`spent_usd` is the transitional scalar fallback, compared against the console's
+`charged_credits` on every release; a model more than 5% off the book is logged
+and is what retires the fallback. `byok=true` records the usage without debit.
+
+`surcharge_minor` (int64 minor, 1000 minor = 1 credit) carries **non-token**
+platform spend — tools and other metered infrastructure. It is deliberately not
+folded into `spent_usd`: the console prices the token side from `model_usage`,
+so a token-shaped scalar holding both either loses the infrastructure (the
+console ignores the legacy field) or double-charges the tokens.
+`spent_credits` is still sent for a legacy quota service (full figure: tokens +
+infrastructure) and ignored by the console.
+
+A release with no spend figure at all is **not** sent: releasing it would
+retire the whole reserved ceiling and give the turn away. The run is marked
+`billing_settle_pending` (migration 129) and the settlement worker
+(`services/billing_settlement.py`) later reads its `conversation_usages` row —
+the durable record finalize writes just after teardown — and settles with the
+same `model_usage` / `spent_usd` payload. Retryable failures (402, 401/403/404,
+429/5xx, network) leave it queued; an answer nothing can change (400/409/422)
+settles it with the reason so the queue drains. A failed inline release queues
+the run the same way instead of letting the lease expire unbilled.
 
 ## Sandbox usage
 
@@ -42,8 +95,13 @@ POST /internal/v1/orgs/resolve-user    {"user_id": "<supabase user id>"}
 POST /internal/v1/usage/sandbox        {org_id,user_id,product:"dsalpha",...}
 ```
 
-The price is Daytona's list rate, marked up 1.3× and converted at
-`USD_TO_CREDITS_RATE`:
+The report is usage-only for pricing purposes: the console prices the interval
+from its own `sandbox.markup_bps` and `fx.usd_to_credits` settings. The legacy
+`*_credits`, `total_credits` and `unit_prices` fields are still sent during the
+transition, and the console's `charged_credits` is compared with the local
+estimate — a difference is logged and the console's figure is what the run
+records. The local estimate uses Daytona's list rate, the console markup and
+the console fx:
 
 | Resource | Daytona rate | Included |
 |---|---|---|
@@ -68,12 +126,18 @@ its error so it leaves the queue.
 
 ```bash
 SANDBOX_BILLING_INTERVAL_SECONDS=300   # reporter cycle
-SANDBOX_MARKUP_BPS=13000               # 1.3×, in basis points
+SANDBOX_MARKUP_BPS=13000               # fallback only; console settings win
+BILLING_RATES_INTERVAL_SECONDS=300     # fx/markup refresh cycle
+BILLING_SETTLEMENT_INTERVAL_SECONDS=120  # pending-settlement worker cycle
 DAYTONA_CPU_USD_PER_HOUR=0.0504
 DAYTONA_MEMORY_USD_PER_GIB_HOUR=0.0162
 DAYTONA_DISK_USD_PER_GIB_HOUR=0.000108
 DAYTONA_DISK_FREE_GIB=5
 ```
+
+The body's usage quantities are `billable_seconds`, `cpu_cores`, `memory_gb`,
+`disk_gb`, `gpu_seconds` plus the resource×time fields (`cpu_seconds`,
+`memory_mib_seconds`, `disk_mib_seconds`).
 
 Known limits, deliberately not papered over:
 

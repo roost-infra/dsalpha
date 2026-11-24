@@ -41,15 +41,14 @@ from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from typing import Any, Mapping, Optional
 from urllib.parse import urlsplit
 
+from src.config import billing_rates as billing_rates_cache
 from src.config.env import (
     DAYTONA_CPU_USD_PER_HOUR,
     DAYTONA_DISK_FREE_GIB,
     DAYTONA_DISK_USD_PER_GIB_HOUR,
     DAYTONA_MEMORY_USD_PER_GIB_HOUR,
     SANDBOX_BILLING_INTERVAL_SECONDS,
-    SANDBOX_MARKUP_BPS,
     STOPPED_DISK_MAX_SECONDS,
-    USD_TO_CREDITS_RATE,
 )
 from src.config.settings import AUTH_SERVICE_URL
 from src.server.database import computer as computers_db
@@ -191,8 +190,8 @@ def compute_charge(
     memory_gb: float,
     disk_gb: float,
     seconds: float,
-    markup_bps: int = SANDBOX_MARKUP_BPS,
-    usd_to_credits: float = USD_TO_CREDITS_RATE,
+    markup_bps: Optional[int] = None,
+    usd_to_credits: Optional[float] = None,
     *,
     prices: Optional[SandboxPrices] = None,
 ) -> SandboxCharge:
@@ -208,6 +207,19 @@ def compute_charge(
     interval. Only ``disk_credits`` applies the free allowance, so
     ``disk_mib_seconds`` is not the billed disk quantity.
     """
+    # The two figures that come from Roost Console settings; the list rates
+    # below are Daytona's and stay local. Resolved here so a caller that does
+    # not name them (the open-run estimate) still prices at the live settings.
+    markup_bps = (
+        billing_rates_cache.sandbox_markup_bps()
+        if markup_bps is None
+        else markup_bps
+    )
+    usd_to_credits = (
+        billing_rates_cache.usd_to_credits_rate()
+        if usd_to_credits is None
+        else usd_to_credits
+    )
     rates = prices or SandboxPrices()
     cpu_d = _number("cpu", cpu)
     memory_d = _number("memory_gb", memory_gb)
@@ -346,15 +358,31 @@ def build_usage_body(
     charge: SandboxCharge,
     *,
     prices: Optional[SandboxPrices] = None,
-    markup_bps: int = SANDBOX_MARKUP_BPS,
-    usd_to_credits: float = USD_TO_CREDITS_RATE,
+    markup_bps: Optional[int] = None,
+    usd_to_credits: Optional[float] = None,
 ) -> dict[str, Any]:
     """The console's sandbox-usage body for one run.
 
     ``sandbox_id`` is the logical sandbox -- the computer, which survives a
     provider sandbox being replaced -- while ``provider_sandbox_id`` names the
     Daytona sandbox the interval actually ran on.
+
+    The console now prices a sandbox from its own settings (fx + markup), so
+    the authoritative part of this body is the usage: the interval and the
+    provisioned resources. The legacy ``*_credits`` / ``unit_prices`` fields
+    are kept for the transition and compared against the console's answer; they
+    are not the price once the console prices the run itself.
     """
+    markup_bps = (
+        billing_rates_cache.sandbox_markup_bps()
+        if markup_bps is None
+        else markup_bps
+    )
+    usd_to_credits = (
+        billing_rates_cache.usd_to_credits_rate()
+        if usd_to_credits is None
+        else usd_to_credits
+    )
     rates = prices or SandboxPrices()
     run_id = str(run["run_id"])
     return {
@@ -368,6 +396,12 @@ def build_usage_body(
         "started_at": _iso(run["started_at"]),
         "ended_at": _iso(run["ended_at"]),
         "billable_seconds": charge.billable_seconds,
+        # The quantities the console prices from, in the plan's units …
+        "cpu_cores": charge.cpu_cores,
+        "memory_gb": charge.memory_gb,
+        "disk_gb": charge.disk_gb,
+        # … and the existing resource × time fields, kept so either shape can
+        # be consumed during the transition.
         "cpu_seconds": charge.cpu_seconds,
         "memory_mib_seconds": charge.memory_mib_seconds,
         "disk_mib_seconds": charge.disk_mib_seconds,
@@ -404,10 +438,14 @@ def _response_text(response: Any) -> str:
     return text.strip()[:300]
 
 
-def _charged_credits(response: Any, fallback: int) -> int:
+def _charged_credits(response: Any, fallback: Optional[int] = None) -> Optional[int]:
     """The console's total when it names one, so the row records what was
     actually debited. A replay reports the original charge, and a retry after
-    a price change must not rewrite that number on our side."""
+    a price change must not rewrite that number on our side.
+
+    None when the console named no figure and no fallback was given: the
+    caller needs to tell "the console priced this" apart from "we assumed".
+    """
     try:
         body = response.json()
     except Exception:
@@ -582,7 +620,25 @@ async def _attempt_run(
 
     status = int(response.status_code)
     if 200 <= status < 300:
-        charged = _charged_credits(response, charge.total_credits)
+        console_charged = _charged_credits(response)
+        charged = (
+            console_charged
+            if console_charged is not None
+            else charge.total_credits
+        )
+        if console_charged is not None and console_charged != charge.total_credits:
+            # The transition's comparison: the console now prices the usage
+            # from its own settings, so a difference means this build's
+            # estimate (fx/markup snapshot, rounding) drifted from it. Logged
+            # per run; the console's figure is the one recorded.
+            logger.warning(
+                "Sandbox price disagreement for run %s: this build estimated %d "
+                "credits, console charged %d — usage-only reporting and the "
+                "shared settings should make these equal",
+                run_id,
+                charge.total_credits,
+                console_charged,
+            )
         await runs_db.mark_run_billed(run_id, charged)
         logger.info(
             "Billed sandbox run %s: %d credits (HTTP %d)",
@@ -633,8 +689,8 @@ async def report_closed_runs(
     *,
     client: Any = None,
     prices: Optional[SandboxPrices] = None,
-    markup_bps: int = SANDBOX_MARKUP_BPS,
-    usd_to_credits: float = USD_TO_CREDITS_RATE,
+    markup_bps: Optional[int] = None,
+    usd_to_credits: Optional[float] = None,
 ) -> BillingSweepResult:
     """Report up to ``limit`` closed runs, oldest debt first.
 
@@ -658,6 +714,16 @@ async def report_closed_runs(
     runs = await runs_db.list_runs_for_billing(limit=limit)
     result.listed = len(runs)
     rates = prices or SandboxPrices()
+    markup_bps = (
+        billing_rates_cache.sandbox_markup_bps()
+        if markup_bps is None
+        else markup_bps
+    )
+    usd_to_credits = (
+        billing_rates_cache.usd_to_credits_rate()
+        if usd_to_credits is None
+        else usd_to_credits
+    )
     org_cache: dict[str, str] = {}
     org_failures: dict[str, BillingError] = {}
     for run in runs:
@@ -694,8 +760,8 @@ async def report_once(
     *,
     client: Any = None,
     prices: Optional[SandboxPrices] = None,
-    markup_bps: int = SANDBOX_MARKUP_BPS,
-    usd_to_credits: float = USD_TO_CREDITS_RATE,
+    markup_bps: Optional[int] = None,
+    usd_to_credits: Optional[float] = None,
 ) -> BillingOutcome:
     """Report one named run, for tests and for an operator's retry."""
     run = await runs_db.get_computer_run(run_id)
@@ -708,8 +774,16 @@ async def report_once(
         org_cache={},
         org_failures={},
         prices=prices or SandboxPrices(),
-        markup_bps=markup_bps,
-        usd_to_credits=usd_to_credits,
+        markup_bps=(
+            billing_rates_cache.sandbox_markup_bps()
+            if markup_bps is None
+            else markup_bps
+        ),
+        usd_to_credits=(
+            billing_rates_cache.usd_to_credits_rate()
+            if usd_to_credits is None
+            else usd_to_credits
+        ),
     )
 
 
@@ -718,8 +792,8 @@ async def report_stopped_disks(
     *,
     client: Any = None,
     prices: Optional[SandboxPrices] = None,
-    markup_bps: int = SANDBOX_MARKUP_BPS,
-    usd_to_credits: float = USD_TO_CREDITS_RATE,
+    markup_bps: Optional[int] = None,
+    usd_to_credits: Optional[float] = None,
 ) -> BillingSweepResult:
     """Meter disk reserved while a computer is stopped or paused.
 
@@ -735,6 +809,16 @@ async def report_stopped_disks(
     rows = await computers_db.list_stopped_for_disk_billing(limit=limit)
     result.listed = len(rows)
     rates = prices or SandboxPrices()
+    markup_bps = (
+        billing_rates_cache.sandbox_markup_bps()
+        if markup_bps is None
+        else markup_bps
+    )
+    usd_to_credits = (
+        billing_rates_cache.usd_to_credits_rate()
+        if usd_to_credits is None
+        else usd_to_credits
+    )
     org_cache: dict[str, str] = {}
     org_failures: dict[str, BillingError] = {}
     now = datetime.now(UTC)
@@ -885,6 +969,13 @@ class SandboxBillingReporter:
                     return
                 async with try_own_session_lock(_REPORTER_LOCK) as held:
                     if held:
+                        # Price this cycle at the console's live settings, not
+                        # the env fallback a worker that just booted holds.
+                        from src.server.services.billing_rates import (
+                            ensure_console_rates,
+                        )
+
+                        await ensure_console_rates()
                         await report_closed_runs(limit=self.limit)
                         await report_stopped_disks(limit=self.limit)
             except asyncio.CancelledError:

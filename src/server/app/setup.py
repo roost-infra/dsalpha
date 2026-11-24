@@ -440,6 +440,24 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"Failed to start SandboxBillingReporter: {e}")
 
+        # Keep the console-published fx/markup within one interval, and settle
+        # the runs whose inline release had no spend figure. Both loops are
+        # inert without platform gating; neither may fail startup.
+        try:
+            from src.server.services.billing_rates import BillingRatesRefresher
+
+            BillingRatesRefresher.get_instance().start()
+        except Exception as e:
+            logger.warning(f"Failed to start BillingRatesRefresher: {e}")
+        try:
+            from src.server.services.billing_settlement import (
+                BillingSettlementWorker,
+            )
+
+            BillingSettlementWorker.get_instance().start()
+        except Exception as e:
+            logger.warning(f"Failed to start BillingSettlementWorker: {e}")
+
         # An ssh computer logs in with its owner's key, which the provider
         # reads through this loader; any worker may start one. A machine that
         # connects out is reached through the gateway the second loader names.
@@ -1031,6 +1049,24 @@ async def lifespan(app: FastAPI):
         await SandboxBillingReporter.get_instance().stop()
     except Exception as e:
         logger.warning(f"Error stopping SandboxBillingReporter: {e}")
+
+    # 3.6. Same contract for the settlement worker and the rate refresher: an
+    # interrupted settlement stays pending and is retried on the next start,
+    # and a rates snapshot outlives the process only in the console's settings.
+    try:
+        from src.server.services.billing_settlement import (
+            BillingSettlementWorker,
+        )
+
+        await BillingSettlementWorker.get_instance().stop()
+    except Exception as e:
+        logger.warning(f"Error stopping BillingSettlementWorker: {e}")
+    try:
+        from src.server.services.billing_rates import BillingRatesRefresher
+
+        await BillingRatesRefresher.get_instance().stop()
+    except Exception as e:
+        logger.warning(f"Error stopping BillingRatesRefresher: {e}")
 
     # 4. Forget this worker's PTC handles. A sibling worker may still be using
     # the same computer, so process shutdown must not stop the shared sandbox.

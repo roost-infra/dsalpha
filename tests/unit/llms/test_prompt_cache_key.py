@@ -118,12 +118,15 @@ class TestOpenAIOptIn:
 
 
 class TestNonOpenAIProvidersUnaffected:
-    """Other SDKs should not receive a cache_key kwarg at all — no error."""
+    """Other SDKs must not receive prompt_cache_key; Anthropic does receive the
+    cache key only to derive metadata.user_id/session headers for relay
+    analytics (see _anthropic_metadata), never as a prompt_cache_key field."""
 
-    def test_anthropic_with_cache_key_does_not_pass(self):
+    def test_anthropic_with_cache_key_passes_only_for_metadata(self):
         llm, calls = _make_llm("anthropic")
         llm.get_llm(cache_key="thread-abc-123")
-        assert calls == [{}]
+        assert calls == [{"cache_key": "thread-abc-123"}]
+        assert "prompt_cache_key" not in calls[0]
 
 
 class TestModelKwargsInjection:
