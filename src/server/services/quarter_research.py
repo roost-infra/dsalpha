@@ -360,7 +360,9 @@ async def load_quarter(symbol: str, period: date | None) -> dict:
         "symbol": symbol, "company": company["name"], "currency": "USD",
         "fetched_at": data["fetched_at"], "stale": stale, "selected": selected.response(),
         "periods": [filing.response() for filing in filings[:12]], "metrics": metrics,
-        "uncertainty": ["amendment_unverified"] if any(f.form.endswith('/A') for f in filings) else [],
+        # Only the filing this page reads: an older period's amendment says
+        # nothing about the numbers shown, and flags of its own ride the metric.
+        "uncertainty": ["amendment_unverified"] if selected.form.endswith('/A') else [],
     }
     age = (datetime.now(UTC) - datetime.fromisoformat(data["fetched_at"])).total_seconds()
     remaining_fresh = int(_COMPANY_FRESH_SECONDS - age)
