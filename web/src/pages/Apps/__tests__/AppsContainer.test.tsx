@@ -21,6 +21,9 @@ vi.mock('@/pages/ChatAgent/utils/api/marketplace', () => ({ getMarketplace: vi.f
 vi.mock('@/pages/Plugins/components/shell/useShellData', () => ({ useShellData: () => ({}) }));
 vi.mock('@/pages/Plugins/components/WorkspacesLoadNote', () => ({ WorkspacesLoadNote: () => null }));
 vi.mock('@/pages/Plugins/components/McpServers', () => ({ McpServers: () => <p>your connectors</p> }));
+// The managed-apps body has its own suite (`Apps.test.tsx`); the frame and the
+// section title are what this file is for.
+vi.mock('../AppsList', () => ({ AppsList: () => <p>your managed apps</p> }));
 
 function Address() {
   return <output data-testid="address">{useLocation().search}</output>;
@@ -51,6 +54,26 @@ beforeEach(() => {
 });
 
 describe('the /apps container', () => {
+  // The heading is the one thing that says which section you are in, and it is
+  // drawn from `SECTION_LABEL_KEYS` — a map, so "the locale has the right
+  // value" and "the page shows the right value" are two different facts. The
+  // locale parity test pins the values; these pin that each section reaches
+  // its own key. `/apps` added its section to that map in this change, which is
+  // exactly when a mis-wired entry would slip through unnoticed.
+  it('heads the managed-apps section with its own title', async () => {
+    renderPage('/apps');
+
+    expect(await screen.findByRole('heading', { name: 'Managed apps' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Connectors' })).not.toBeInTheDocument();
+  });
+
+  it('heads the connectors section with its own title', async () => {
+    renderPage('/apps?tab=mcp');
+
+    expect(await screen.findByRole('heading', { name: 'Connectors' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Managed apps' })).not.toBeInTheDocument();
+  });
+
   it('reaches the connectors surface under ?tab=mcp', async () => {
     renderPage('/apps?tab=mcp');
     expect(await screen.findByText('your connectors')).toBeInTheDocument();

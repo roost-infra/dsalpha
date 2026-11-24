@@ -5040,7 +5040,7 @@
     },
     "tab": {
       "plugins": "Connected apps",
-      "pluginsHint": "Connectors, skills, sign-ins and keys on your account",
+      "pluginsHint": "Managed apps and connectors on your account",
       "accountHint": "Connectors live on your account and are switched on per workspace. One you add here stays off in your other workspaces, and in new ones, until you switch it on there.",
       "addNote": "Adds the connector to your account and switches it on only in this workspace. Your other workspaces, including new ones, start with it off.",
       "editTitle": "Edit connector",

@@ -562,7 +562,16 @@ describe('McpTab: the account connectors button names where it goes', () => {
     renderWithProviders(<McpTab workspaceId="ws-1" />, { route: '/chat' });
 
     const button = await screen.findByRole('button', { name: /connected apps/i });
-    expect(button).toHaveAttribute('title', expect.stringContaining('account'));
+
+    // The tooltip has to describe the page it opens too. `/apps` hosts managed
+    // apps and connectors and nothing else, so a hint that also promises skills
+    // or keys sends the user looking for things that are not there.
+    const hint = button.getAttribute('title') ?? '';
+    expect(hint).toMatch(/managed apps/i);
+    expect(hint).toMatch(/connectors/i);
+    expect(hint).not.toMatch(/skills/i);
+    expect(hint).not.toMatch(/keys/i);
+    expect(hint).not.toMatch(/sign-ins/i);
 
     fireEvent.click(button);
 

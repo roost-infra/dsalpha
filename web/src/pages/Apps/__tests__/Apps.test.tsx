@@ -72,9 +72,10 @@ beforeEach(() => {
   );
 });
 
-// The section body alone: the page frame and the section title belong to
-// `/apps` (the shared container), which `discoverOff.test.tsx` covers for the
-// Plugins page and `SectionPage`'s own test covers for both.
+// The section body alone. The page frame and the section title are the
+// container's, and `AppsContainer.test.tsx` renders the whole page and asserts
+// the headings for both sections — that is where the title is covered, because
+// this file never mounts `SectionPage`/`PageHeader`.
 describe('/apps managed apps section', () => {
   it('draws connected accounts and starts a connection', async () => {
     renderWithProviders(<AppsList />);
