@@ -16,6 +16,9 @@ from src.server.services.llm.claude_code import CLAUDE_CODE_OFF
 from tests.unit.server.services.claude_code.fakes import Cache, serving
 from src.server.services.llm.config import resolve_llm_config, saved_default_model
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 HANDLER = "src.server.services.llm.config"
 CODE = "claude-sonnet-5-5-code"
 

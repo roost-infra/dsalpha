@@ -2,6 +2,9 @@ import pytest
 
 from src.llms.llm import LLM, get_max_pdf_pages
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 class TestGetMaxPdfPages:
     """The published per-request PDF page ceilings, read off the manifest.

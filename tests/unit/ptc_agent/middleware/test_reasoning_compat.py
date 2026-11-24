@@ -27,6 +27,9 @@ from ptc_agent.agent.middleware.reasoning_compat import (
     _sanitize,
 )
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 REAL_SIGNATURE = "CAISrAUKkwEIDxgCKkAw" * 40
 SHIM_SIGNATURE = "60156c35-166d-41eb-9899-1a2b3c4d5e6f"
 

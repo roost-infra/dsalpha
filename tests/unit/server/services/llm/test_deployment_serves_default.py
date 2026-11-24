@@ -11,6 +11,9 @@ import pytest
 
 from src.server.services.llm import config as llm_config
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 MODEL = "deepseek-flash"
 
 

@@ -12,6 +12,9 @@ from src.server.services.llm import provider_models as pm
 from src.server.services.llm.byok import call_endpoint, key_fits
 from src.server.services.llm.provider_models.catalog import GatewayCatalog
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 GATEWAY = "opencode-go"
 ROUTES = ["opencode-go-chat", "opencode-go-responses", "opencode-go-google"]
 

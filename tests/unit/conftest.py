@@ -123,3 +123,23 @@ def shipped_skill_md():
         raise AssertionError(f"no bundle ships a {name!r} skill")
 
     return find
+
+
+@pytest.fixture(scope="module")
+def direct_routes():
+    """The catalog as each provider's own route served it, before the Roost
+    relay took the catalog's names; see ``tests.unit.direct_routes``. Module
+    scoped so a module's own config fixtures read it too."""
+    from tests.unit.direct_routes import use_direct_routes
+
+    with pytest.MonkeyPatch.context() as mp:
+        use_direct_routes(mp)
+        yield
+
+
+@pytest.fixture
+def direct_routes_for_test(monkeypatch):
+    """``direct_routes`` for one test of a module that reads the real catalog."""
+    from tests.unit.direct_routes import use_direct_routes
+
+    use_direct_routes(monkeypatch)

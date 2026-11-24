@@ -19,6 +19,9 @@ from src.llms.preferences import COMPACTION_PROFILE_NAMES
 from ptc_agent.config.core import DaytonaConfig, FilesystemConfig, LoggingConfig, MCPConfig, SandboxConfig, SecurityConfig
 from tests.conftest import create_test_app
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 DB = "src.server.app.api_keys"
 
 

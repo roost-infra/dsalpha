@@ -8,6 +8,9 @@ from src.llms.llm import (
     image_route,
 )
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 class TestImageRoute:
     """Which vendor's image rules a client has to meet, read off its stamp.

@@ -12,6 +12,9 @@ from src.llms import LLM
 from src.llms.preferences import COMPACTION_PROFILE_BANDS, COMPACTION_PROFILE_NAMES
 from ptc_agent.config.agent import COMPACTION_PROFILES
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 
 @pytest.fixture(scope="module")
 def config():

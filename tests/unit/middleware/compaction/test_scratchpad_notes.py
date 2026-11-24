@@ -49,6 +49,9 @@ from ptc_agent.agent.transcript import TranscriptTarget, Window
 from ptc_agent.core.paths import WorkspaceLayout
 from tests.unit.ptc_agent.agent.prefix_stability import reply
 
+# Catalog names as their provider's own route served them; see tests.unit.direct_routes.
+pytestmark = pytest.mark.usefixtures("direct_routes")
+
 THREAD = "a1b2c3d4-0000-4000-8000-000000000000"
 ROOT = WorkspaceLayout("/home/workspace", "acme").workspace
 
