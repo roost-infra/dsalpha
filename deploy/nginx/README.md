@@ -1,4 +1,4 @@
-# dslalpha nginx site
+# dsalpha nginx site
 
 This is the production `dsalpha.roostbots.com` site config. It is tracked so the
 SPA, API, SSE/WebSocket, relay, console proxy and cache rules survive a host
