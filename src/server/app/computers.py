@@ -312,6 +312,13 @@ def _spec_in_progress() -> HTTPException:
     )
 
 
+def computer_desktop_transport(computer: dict[str, Any]) -> str | None:
+    kind = computer["kind"]
+    if kind == "docker" and not (computer.get("provider_config") or {}).get("desktop_enabled"):
+        return None
+    return computer.get("desktop_transport") or next(iter(provider_class(kind).desktop_transports), None)
+
+
 def computer_to_response(
     computer: Dict[str, Any],
     *,
@@ -321,7 +328,6 @@ def computer_to_response(
 ) -> ComputerResponse:
     """Withhold provider_ref from non-owners because it addresses a real billed machine."""
     provider = provider_class(computer["kind"])
-    transport = computer.get("desktop_transport") or next(iter(provider.desktop_transports), None)
     return ComputerResponse(
         computer_id=str(computer["computer_id"]),
         user_id=computer["user_id"],
@@ -330,7 +336,7 @@ def computer_to_response(
         os_image=computer.get("os_image"),
         region=computer.get("region"),
         supports_ssh=provider.supports_ssh,
-        desktop_transport=transport,
+        desktop_transport=computer_desktop_transport(computer),
         desktop_state=(
             computer.get("desktop_state", "off") if computer["status"] == "running" else "off"
         ),
@@ -523,6 +529,8 @@ async def create_computer(
                 overrides["target"] = region
             if request.os_image:
                 overrides["image"] = request.os_image
+            if kind == "docker" and settings.desktop_enabled:
+                overrides.update(desktop_enabled=True, image=settings.image)
             create_args = plan.create_kwargs() if plan is not None else {}
             if overrides:
                 create_args["provider_config"] = overrides
@@ -638,7 +646,9 @@ async def list_computer_providers(x_user_id: ReadUserId):
                 tiers=_tier_specs(settings.resource_tiers) if provider.recreatable else [],
                 default_name=provider.default_computer_name,
                 os_platforms=list(provider.os_platforms),
-                desktop_transports=list(provider.desktop_transports),
+                desktop_transports=(
+                    [] if kind == "docker" and not settings.desktop_enabled else list(provider.desktop_transports)
+                ),
                 supports_ssh=provider.supports_ssh,
                 supports_sleep=provider.supports_sleep,
                 requires_reservation=provider.requires_reservation,

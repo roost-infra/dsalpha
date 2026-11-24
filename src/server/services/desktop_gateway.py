@@ -108,6 +108,11 @@ async def _relay(ws, session, runtime, traffic) -> None:
         await _first_ended(_browser_input(ws, session, None, traffic),
                            _pictures(ws, session, runtime, traffic))
         return
+    if session.transport == "vnc-ws" and (stream := runtime.desktop_stream()) is not None:
+        async with stream as upstream:
+            await _first_ended(_browser_input(ws, session, upstream, traffic),
+                               _desktop_output(ws, session, upstream, traffic))
+        return
     endpoint = await runtime.desktop_preview()
     parts = urlsplit(endpoint.url)
     if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username:

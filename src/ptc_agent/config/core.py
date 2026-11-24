@@ -443,6 +443,7 @@ class DockerConfig(ResourceTieredConfig):
     # No TIER_CEILING: the host is the limit, and Docker refuses a container
     # above it at create.
     image: str = "langalpha-sandbox:latest"
+    desktop_enabled: bool = False
     working_dir: str = "/home/workspace"  # fallback; filesystem.working_directory is authoritative
     # Docker never stops a container on idle, so the server's idle reaper
     # stops a docker computer by this interval. Daytona's default, which is

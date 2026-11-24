@@ -5,10 +5,11 @@ import base64
 import shlex
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 if TYPE_CHECKING:
     from ptc_agent.core.sandbox.platform_secrets import (
@@ -275,6 +276,12 @@ class StreamProcess(ABC):
     async def close(self) -> None:
         """Free what the stream holds on the provider, killing a process still
         running. Safe to call again, and to cancel: the teardown still runs."""
+
+
+class DesktopByteStream(Protocol):
+    def __aiter__(self) -> AsyncIterator[bytes]: ...
+
+    async def send(self, data: bytes) -> None: ...
 
 
 class SandboxRuntime(ABC):
@@ -553,6 +560,10 @@ class SandboxRuntime(ABC):
     async def delete_session(self, session_id: str) -> None:
         """Delete a session and stop what runs in it."""
         ...
+
+    def desktop_stream(self) -> AbstractAsyncContextManager[DesktopByteStream] | None:
+        """Optional binary RFB stream for runtimes without a WebSocket upstream."""
+        return None
 
     async def get_preview_url(self, port: int, expires_in: int = 3600) -> PreviewInfo:
         """Get a signed preview URL for a service running on the given port.
