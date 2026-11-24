@@ -25,11 +25,14 @@ from ptc_agent.agent.middleware.credit_gate import (
     LeaseVerdict,
 )
 
-from src.config.env import USD_TO_CREDITS_RATE
+from src.config import billing_rates
 from src.config.settings import AUTH_SERVICE_URL
 from src.llms.pricing_utils import chunk_multiplier
+from src.server.database.runs import billing_settlement as settlement_db
 from src.server.database.runs import credit_ledger
 from src.server.dependencies import usage_limits
+from src.server.services import billing_rates as console_rates
+from src.utils.tracking.model_usage import ReleaseSettlement, price_difference_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +51,6 @@ _MAX_REPORTABLE_SPEND = 1_000_000.0
 # from asking for a reservation too small to cover a single call; the ceiling
 # keeps one from reserving a user's whole balance against one turn. A figure
 # outside them is a manifest or arithmetic fault, not a price.
-# The unit both services count in. Not a deployment knob while a quota
-# service is comparing against it: see the boot check below.
-_CANONICAL_CREDIT_UNIT = 1000
 _MIN_RATE_MULTIPLIER = 0.1
 _MAX_RATE_MULTIPLIER = 100.0
 
@@ -75,6 +75,10 @@ def _reportable_multiplier(value: Any) -> float:
 # attempts, so the attempt count is this plus the first try.
 _RELEASE_BACKOFF_SECONDS = (0.5, 1.5)
 _RELEASE_ATTEMPTS = len(_RELEASE_BACKOFF_SECONDS) + 1
+
+# 4xx answers a later attempt (or a top-up) can change. 404/409 are handled
+# before this set is consulted: both mean the lease is already retired.
+_RETRYABLE_RELEASE_4XX = frozenset({401, 402, 403, 408, 425, 429})
 
 # The ceiling that makes "and no more" true. Retries and backoffs bound the
 # attempts but not the wait: a service that accepts connections and then does
@@ -290,14 +294,29 @@ class PlatformCreditGatePort:
         return _normalize_verdict(body)
 
     async def release(
-        self, user_id: str, run_ref: str, generation: Optional[int] = None
+        self,
+        user_id: str,
+        run_ref: str,
+        generation: Optional[int] = None,
+        settlement: Optional[ReleaseSettlement] = None,
     ) -> None:
-        """Retire the run's reservation. Best-effort, but not one-shot.
+        """Retire the run's reservation and settle what it spent.
 
         ``generation`` fences it against a lane that rejoined and re-acquired
         while this teardown was in flight: the release names the grant it is
         retiring, so it cannot retire one this teardown never held. Omitted,
         the release is unconditional and that race is live.
+
+        ``settlement`` is what the turn's own tracker saw: per-model token
+        usage plus the platform USD figure, which is the contract's
+        authoritative release input. It is what makes the console price the
+        turn from the shared book instead of from a scalar. When it is absent,
+        or carries no model calls, the ledger's heartbeated ``in_flight``
+        figure is the fallback — and if *that* cannot be read, the lease is
+        deliberately left standing and the run is marked ``settle_pending``:
+        releasing with no figure at all retires the whole reserved ceiling and
+        gives the turn away. The settlement worker reads the run's usage row
+        (finalize commits it after this runs) and settles then.
 
         Retried only for the failures a second attempt can fix. A 4xx is an
         answer — including the 404 that means there was nothing to release,
@@ -312,20 +331,131 @@ class PlatformCreditGatePort:
         payload: dict[str, Any] = {"user_id": user_id, "run_ref": run_ref}
         if generation is not None:
             payload["generation"] = generation
-        # Roost's compatibility release settles the turn's measured spend at
-        # teardown. The old quota service ignores the extra field, so the same
-        # payload is safe against either endpoint.
+
+        model_usage = [
+            {**entry, "model": billing_rates.console_model_name(entry["model"])}
+            for entry in (settlement.model_usage if settlement else ())
+        ]
+        spent_usd = settlement.spent_usd if settlement else None
+        has_model_usage = bool(model_usage)
+        has_settlement = has_model_usage or spent_usd is not None
+
+        # Best-effort even when a settlement was passed: the legacy
+        # ``spent_credits`` field is what an old quota service settles from,
+        # and it also carries infrastructure credits the model payload does
+        # not (the contract's release body has no tool charges).
+        in_flight: Optional[float] = None
+        in_flight_error: Optional[str] = None
         try:
-            spent = await credit_ledger.in_flight_credits(run_ref)
-            if spent > 0:
-                payload["spent_credits"] = spent
-        except Exception:
+            in_flight = await credit_ledger.in_flight_credits(run_ref)
+        except Exception as e:
+            in_flight_error = f"{type(e).__name__}: {e}"
             logger.warning(
                 "[CreditGate] could not read settle spend for %s", run_ref,
                 exc_info=True,
             )
+
+        if settlement is not None and settlement.byok:
+            payload["byok"] = True
+
+        if has_settlement:
+            if has_model_usage:
+                payload["model_usage"] = model_usage
+            if spent_usd is not None:
+                payload["spent_usd"] = round(float(spent_usd), 10)
+            if in_flight is not None and in_flight > 0:
+                payload["spent_credits"] = in_flight
+            elif spent_usd is not None:
+                # The old-compatibility figure, from the same rate the
+                # heartbeat used. A model_usage turn has a Console price; this
+                # field only keeps a legacy quota service settling the same
+                # tokens until the fallback is retired.
+                payload["spent_credits"] = round(
+                    float(spent_usd) * billing_rates.usd_to_credits_rate(), 6
+                )
+        elif in_flight is None:
+            await self._leave_pending(
+                run_ref,
+                "in_flight_credits unreadable"
+                + (f": {in_flight_error}" if in_flight_error else ""),
+            )
+            return
+        elif in_flight > 0:
+            payload["spent_credits"] = in_flight
+
+        outcome = await self._post_release(client, run_ref, payload)
+        if outcome == "sent":
+            return
+        if outcome.startswith("refused:"):
+            # A refusal another attempt cannot change. Leave the queue with the
+            # reason recorded rather than retrying it forever; the log is the
+            # operator's signal.
+            try:
+                await settlement_db.mark_settled(
+                    run_ref, detail=f"release {outcome}"
+                )
+            except Exception:
+                logger.error(
+                    "[CreditGate] run %s was refused (%s) and could not be "
+                    "recorded",
+                    run_ref,
+                    outcome,
+                    exc_info=True,
+                )
+            return
+        # Every attempt failed on a retryable answer. The lease will expire
+        # un-billed, which is the leak this queue exists to close.
+        await self._leave_pending(run_ref, f"release failed ({outcome})")
+
+    async def _leave_pending(self, run_ref: str, reason: str) -> None:
+        """Queue the run for settlement by the worker, and say so.
+
+        Called only on the path that does not release. If even the marker
+        cannot be written the run is un-settled and the log is the only
+        evidence; that is a database outage, not a billing decision.
+        """
+        try:
+            queued = await settlement_db.mark_settle_pending(run_ref, reason)
+        except Exception:
+            logger.error(
+                "[CreditGate] run %s has no settle figure and could not be "
+                "queued for settlement (%s); its spend is unrecorded",
+                run_ref,
+                reason,
+                exc_info=True,
+            )
+            return
+        if queued:
+            logger.warning(
+                "[CreditGate] run %s left unreleased for settlement: %s",
+                run_ref,
+                reason,
+            )
+        else:
+            logger.warning(
+                "[CreditGate] run %s could not be settled (%s) and its ledger "
+                "row was already settled",
+                run_ref,
+                reason,
+            )
+
+    async def _post_release(
+        self, client: Any, run_ref: str, payload: dict[str, Any]
+    ) -> str:
+        """Post the release with bounded retries.
+
+        Answers split three ways: settled (2xx, or 404/409 — nothing left to
+        retire, or already retired), a permanent refusal (another attempt
+        cannot change a 400/422), and everything else (a 4xx that a top-up or a
+        fixed secret resolves, plus 5xx/network). A permanent refusal returns
+        ``"refused: HTTP n"`` so the caller can stamp the run with its reason
+        and leave the queue; the rest returns a failure description and queues
+        the run for the settlement worker.
+        """
         detail = "no attempt made"
         deadline = time.monotonic() + _RELEASE_BUDGET_SECONDS
+        model_usage_sent = "model_usage" in payload
+        spent_usd = payload.get("spent_usd")
         for attempt in range(_RELEASE_ATTEMPTS):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -340,11 +470,26 @@ class PlatformCreditGatePort:
                     headers=usage_limits.signed_service_headers("POST", urlsplit(release_url).path, raw_payload),
                     timeout=remaining,
                 )
-                if resp.status_code < 500:
-                    return
-                detail = f"HTTP {resp.status_code}"
             except Exception as e:
                 detail = str(e)
+            else:
+                status = int(resp.status_code)
+                if 200 <= status < 300 or status in (404, 409):
+                    await self._record_release(
+                        run_ref, resp, spent_usd, model_usage_sent
+                    )
+                    return "sent"
+                if status < 500 and status not in _RETRYABLE_RELEASE_4XX:
+                    detail = f"HTTP {status}"
+                    logger.error(
+                        "[CreditGate] lease release of run %s refused permanently "
+                        "(HTTP %d): %.200s",
+                        run_ref,
+                        status,
+                        getattr(resp, "text", "") or "",
+                    )
+                    return f"refused: {detail}"
+                detail = f"HTTP {status}"
             if attempt < len(_RELEASE_BACKOFF_SECONDS):
                 backoff = min(
                     _RELEASE_BACKOFF_SECONDS[attempt],
@@ -358,6 +503,64 @@ class PlatformCreditGatePort:
             _RELEASE_ATTEMPTS,
             detail,
         )
+        return detail
+
+    async def _record_release(
+        self,
+        run_ref: str,
+        response: Any,
+        spent_usd: Any,
+        model_usage_sent: bool,
+    ) -> None:
+        """Record what the console answered, and report a pricing disagreement.
+
+        The run is stamped settled with the console's ``charged_credits`` so
+        the local record matches the ledger. The comparison against
+        ``spent_usd × fx`` is the migration's day report: it is expected to
+        disagree once the book prices a turn, and a model over 5% moves the
+        fallback out of service deliberately.
+        """
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        charged = body.get("charged_credits")
+        if isinstance(charged, bool) or not isinstance(charged, int):
+            charged = None
+        if body.get("fallback") is True:
+            logger.warning(
+                "[CreditGate] release of run %s fell back to the scalar "
+                "spent_usd price (a model was not in the price book)",
+                run_ref,
+            )
+        ratio = price_difference_ratio(
+            charged,
+            spent_usd,
+            billing_rates.usd_to_credits_rate(),
+        )
+        if ratio is not None and ratio > 0.05:
+            logger.warning(
+                "[CreditGate] release of run %s charged %d credits, %.1f%% off "
+                "the spent_usd estimate%s",
+                run_ref,
+                charged,
+                ratio * 100.0,
+                "" if model_usage_sent else " (no model_usage was sent)",
+            )
+        try:
+            queued = await settlement_db.mark_settled(
+                run_ref, charged_credits=charged, detail="released"
+            )
+        except Exception:
+            queued = False
+        if not queued:
+            logger.debug(
+                "[CreditGate] release of run %s settled outside the local "
+                "pending queue",
+                run_ref,
+            )
 
     async def capability(self) -> Optional[dict]:
         """What the lease service reports about itself, or None if it did not
@@ -487,6 +690,10 @@ async def verify_credit_gate_wiring() -> None:
     """
     if not usage_limits.platform_gating_active():
         return
+    # Before the capability check, and on every platform deployment rather than
+    # only a healthy one: fx/markup are also what the sandbox reporter prices
+    # with, and that loop runs whether or not lease reservations are on.
+    await _verify_billing_rates()
     body = await _port.capability()
     if body is None:
         return  # the check logged what it found
@@ -523,17 +730,46 @@ async def verify_credit_gate_wiring() -> None:
                 _MIN_RATE_MULTIPLIER,
                 _MAX_RATE_MULTIPLIER,
             )
-    # The service counts in credits and has no view of what one cost to
-    # produce, so it cannot detect a build that converts at a different rate:
-    # halving this reports half the credits for the same work, which from there
-    # is indistinguishable from a cheaper turn. The check only exists here.
-    if USD_TO_CREDITS_RATE != _CANONICAL_CREDIT_UNIT:
-        logger.error(
-            "[CreditGate] USD_TO_CREDITS_RATE is %s, not the canonical %s, so "
-            "every spend this build reports is scaled %.4gx against the "
-            "ceilings it is compared with.",
-            USD_TO_CREDITS_RATE,
-            _CANONICAL_CREDIT_UNIT,
-            USD_TO_CREDITS_RATE / _CANONICAL_CREDIT_UNIT,
-        )
     logger.info("[CreditGate] lease service ready (TTL %ss)", ttl)
+
+
+async def _verify_billing_rates() -> None:
+    """Refresh the console's fx/markup and report where they came from.
+
+    The old check compared a local env rate with a hard-coded canonical unit
+    and therefore fired on every correctly configured deployment (720 vs
+    1000). The rate now has one source — the console's ``settings`` — and the
+    only local failure left is "the console never answered", which startup is
+    the first place able to see. A stale but previously fetched snapshot is
+    not an error; the refresher will heal it.
+    """
+    try:
+        rates = await console_rates.ensure_console_rates()
+    except Exception:
+        logger.warning("[CreditGate] billing settings refresh failed", exc_info=True)
+        return
+    if not rates.from_console:
+        logger.error(
+            "[CreditGate] fx.usd_to_credits was not read from the console; "
+            "using the env fallback %.1f. A platform deployment whose rate is "
+            "not console-published cannot be reconciled against its ledger.",
+            rates.usd_to_credits,
+        )
+        return
+    if (
+        rates.console_fx is not None
+        and abs(float(rates.console_fx) - billing_rates.ENV_USD_TO_CREDITS) > 0.5
+    ):
+        logger.warning(
+            "[CreditGate] the console publishes fx=%s, but this deployment's "
+            "USD_TO_CREDITS_RATE is %s. The console value is used; the env "
+            "value only applies when the console is unreachable.",
+            rates.console_fx,
+            billing_rates.ENV_USD_TO_CREDITS,
+        )
+    if rates.markup_source != billing_rates.SOURCE_CONSOLE:
+        logger.warning(
+            "[CreditGate] the console publishes no sandbox.markup_bps; the "
+            "sandbox price uses the env fallback %s bps",
+            rates.markup_bps,
+        )

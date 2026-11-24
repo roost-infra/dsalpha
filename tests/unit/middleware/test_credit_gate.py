@@ -46,14 +46,35 @@ _DENIAL_COPY = "Out of credits. Top up to keep this run going."
 class FakeTracker:
     """Token-side meter. Raises from ``platform_usd_total`` once armed."""
 
-    def __init__(self, usd: float = 0.0) -> None:
+    def __init__(self, usd: float = 0.0, records: list | None = None) -> None:
         self.usd = usd
+        self.records = list(records or [])
         self.boom = False
 
     def platform_usd_total(self) -> float:
         if self.boom:
             raise RuntimeError("tracker read failed")
         return self.usd
+
+    def get_per_call_records(self) -> list:
+        return list(self.records)
+
+
+def call(model: str, *, input_tokens: int = 0, output_tokens: int = 0,
+         cached: int = 0, cache_5m: int = 0, cache_1h: int = 0,
+         billing_type: str = "platform") -> dict:
+    """One raw per-call record, in the tracker's shape."""
+    return {
+        "model_name": model,
+        "billing_type": billing_type,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cached_tokens": cached,
+            "cache_5m_tokens": cache_5m,
+            "cache_1h_tokens": cache_1h,
+        },
+    }
 
 
 class FakeToolTracker:
@@ -84,6 +105,7 @@ class FakePort:
         self.multipliers: list[float] = []
         self.byoks: list[bool] = []
         self.releases: list[tuple] = []
+        self.settlements: list = []
         self.heartbeats: list[tuple] = []
         self.heartbeat_results = list(heartbeat_results or [])
 
@@ -101,9 +123,14 @@ class FakePort:
         return self.verdicts.pop(0) if self.verdicts else None
 
     async def release(
-        self, user_id: str, run_ref: str, generation: int | None = None
+        self,
+        user_id: str,
+        run_ref: str,
+        generation: int | None = None,
+        settlement=None,
     ) -> None:
         self.releases.append((user_id, run_ref, generation))
+        self.settlements.append(settlement)
 
     async def heartbeat(self, kind: str, run_ref: str, credits: float):
         self.heartbeats.append((kind, run_ref, credits))
@@ -752,3 +779,99 @@ async def test_aclose_flushes_the_final_absolute_spend():
     await gate.aclose()
 
     assert len(port.heartbeats) == 1, "teardown skipped the final flush"
+
+
+# -- what the release reports ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_release_reports_the_main_lane_usage_by_model():
+    """The release is the only place the console learns what the turn ran, so
+    the tracker's records have to reach it in the contract's shape."""
+    tracker = FakeTracker(
+        usd=2.0,
+        records=[
+            call("claude-sonnet-5-5", input_tokens=150_000, output_tokens=2_000),
+            call("claude-sonnet-5-5", input_tokens=10_000, output_tokens=500,
+                 cached=4_000, cache_5m=1_000),
+        ],
+    )
+    gate = await make_gate(tracker=tracker)
+    await gate.aclose()
+
+    settlement = gate.port.settlements[-1]
+    assert settlement is not None and settlement.has_records
+    assert settlement.spent_usd == 2.0
+    assert settlement.byok is False
+    assert settlement.model_usage == [
+        {
+            "model": "claude-sonnet-5-5",
+            # LangChain's input is inclusive: cache tokens are their own
+            # components, or a cache hit is charged at the input rate too.
+            "input": 155_000,
+            "output": 2_500,
+            "cache_read": 4_000,
+            "cache_write": 1_000,
+            "calls": 2,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_child_does_not_double_bill_into_the_release():
+    """Subagent usage is charged on its own path (task usage rows); adding it
+    to the turn's release would charge it twice."""
+    parent = await make_gate(
+        tracker=FakeTracker(
+            usd=1.0, records=[call("main-model", input_tokens=1_000)]
+        )
+    )
+    child = parent.spawn_child(
+        run_ref="task-1",
+        tracker=FakeTracker(usd=1.0, records=[call("child-model", input_tokens=9_000)]),
+        tool_tracker=None,
+    )
+    await join_quiet(parent.lease, child)
+
+    await child.aclose()
+    await parent.aclose()
+
+    settlement = parent.port.settlements[-1]
+    assert [entry["model"] for entry in settlement.model_usage] == ["main-model"]
+
+
+@pytest.mark.asyncio
+async def test_the_main_settlement_survives_the_lane_leaving_first():
+    """Subagent writers routinely outlive the main stream; the release runs
+    when the last member leaves, so the main lane's records must be captured
+    at its departure rather than read from live members."""
+    parent = await make_gate(
+        tracker=FakeTracker(
+            usd=1.0, records=[call("main-model", input_tokens=1_000)]
+        )
+    )
+    child = await child_of(parent, usd=1.0)
+    assert "main-model" in [e["model"] for e in parent.lease.settlement().model_usage]
+
+    await parent.aclose()
+    assert "main-model" in [e["model"] for e in parent.lease.settlement().model_usage]
+
+    await child.aclose()
+    settlement = parent.port.settlements[-1]
+    assert [e["model"] for e in settlement.model_usage] == ["main-model"]
+
+
+@pytest.mark.asyncio
+async def test_a_byok_turn_reports_no_platform_token_usage():
+    gate = await make_gate(
+        tracker=FakeTracker(
+            usd=0.0,
+            records=[call("own-key-model", input_tokens=1_000,
+                          billing_type="byok")],
+        )
+    )
+    await gate.aclose()
+
+    settlement = gate.port.settlements[-1]
+    assert settlement.byok is True
+    assert settlement.model_usage == []

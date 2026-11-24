@@ -20,7 +20,7 @@ written out twice, in two modules, kept in agreement by hand.
 
 import logging
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from psycopg.rows import dict_row
 
@@ -255,13 +255,19 @@ async def list_credit_stopped_for_resume(
 
 
 
-async def in_flight_credits(run_id: str) -> float:
-    """The last heartbeat spend for a main run, or 0 when it is unreadable.
+async def in_flight_credits(run_id: str) -> Optional[float]:
+    """The last heartbeat spend for a main run, or None when there is no usable
+    figure.
 
     The Roost compatibility release path uses this to settle the turn's actual
     spend at teardown: the product has no other durable figure at that point,
-    and the lease is about to be retired. Read-only and best-effort; a missing
-    row (finalized by older code) settles nothing rather than guessing.
+    and the lease is about to be retired. Read-only and best-effort.
+
+    None — not 0.0 — when the row is missing or holds no figure. The release
+    now distinguishes "this run spent nothing" (a real zero, settle it) from
+    "this build cannot see what it spent" (mark it ``settle_pending`` and let
+    the worker settle from the usage row). A DB failure raises, which the
+    release treats the same way.
     """
     async with pool.get_db_connection() as conn:
         async with conn.cursor() as cur:
@@ -271,11 +277,11 @@ async def in_flight_credits(run_id: str) -> float:
             )
             row = await cur.fetchone()
             if not row or row[0] is None:
-                return 0.0
+                return None
             try:
                 return max(float(row[0]), 0.0)
             except (TypeError, ValueError):
-                return 0.0
+                return None
 
 __all__ = [
     "RunKind",

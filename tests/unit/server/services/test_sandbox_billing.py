@@ -445,3 +445,69 @@ async def test_report_once_reports_the_named_run(console, marks, monkeypatch):
 
     assert outcome.status == "reported"
     billed.assert_awaited_once_with(RUN_ID, 63)
+
+
+# -- usage-only reporting ---------------------------------------------------
+
+
+def test_the_body_carries_the_usage_quantities_the_console_prices():
+    """The console now prices a sandbox from its settings, so the body's
+    authoritative part is the usage. The legacy credit fields stay for the
+    transition (and the comparison), but they are not the price."""
+    charge = compute_charge(2, 4, 100, 3600, MARKUP_BPS, USD_TO_CREDITS)
+    body = build_usage_body(
+        _run(),
+        ORG_ID,
+        charge,
+        prices=PRICES,
+        markup_bps=MARKUP_BPS,
+        usd_to_credits=USD_TO_CREDITS,
+    )
+
+    assert body["billable_seconds"] == 3600
+    assert body["cpu_cores"] == 2.0
+    assert body["memory_gb"] == 4.0
+    assert body["disk_gb"] == 100.0
+    assert body["cpu_seconds"] == 7200
+    assert body["memory_mib_seconds"] == 4 * 1024 * 3600
+    assert body["disk_mib_seconds"] == 100 * 1024 * 3600
+
+
+def test_the_price_resolves_from_the_console_snapshot_when_not_passed():
+    from src.config import billing_rates as cache
+
+    cache.apply(
+        cache.BillingRates(
+            usd_to_credits=680,
+            markup_bps=15000,
+            source=cache.SOURCE_CONSOLE,
+            markup_source=cache.SOURCE_CONSOLE,
+        )
+    )
+    try:
+        live = compute_charge(1, 1, 5, 3600)
+        explicit = compute_charge(1, 1, 5, 3600, 15000, 680)
+        assert live == explicit
+        assert live.total_credits != compute_charge(
+            1, 1, 5, 3600, MARKUP_BPS, USD_TO_CREDITS
+        ).total_credits
+    finally:
+        cache.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_console_charge_that_disagrees_with_the_estimate_is_reported(
+    console, marks, caplog
+):
+    billed, _ = marks
+    console.responses = [FakeResponse(201, {"charged_credits": 60})]
+    with caplog.at_level("WARNING"):
+        outcome = await _attempt(_run(), console)
+
+    assert outcome.total_credits == 60
+    # The console's figure is the recorded one; the local estimate is only the
+    # transition's comparison.
+    billed.assert_awaited_once_with(RUN_ID, 60)
+    assert "price disagreement" in caplog.text
+    assert "estimated 63" in caplog.text
+    assert "console charged 60" in caplog.text

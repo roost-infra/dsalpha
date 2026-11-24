@@ -150,18 +150,45 @@ EGRESS_RELAY_BASE_URL: str = os.getenv("EGRESS_RELAY_BASE_URL", "")
 # and audit as a sandbox call, without leaving the box.
 EGRESS_RELAY_LOOPBACK_URL: str = os.getenv("EGRESS_RELAY_LOOPBACK_URL", "http://127.0.0.1:8000")
 
-# Credit conversion rate (USD → credits).  Override with USD_TO_CREDITS_RATE env var.
-USD_TO_CREDITS_RATE: int = int(os.getenv("USD_TO_CREDITS_RATE", "1000"))
+# Credit conversion rate (USD → credits). Only the fallback for a deployment
+# with no console (OSS) or a console that has not answered: a platform
+# deployment reads ``fx.usd_to_credits`` from Roost Console at startup and
+# refreshes it (see src/config/billing_rates.py). The old default of 1000 was a
+# third, undocumented rate; 720 matches the documented ¥7.2/$ settlement rate.
+USD_TO_CREDITS_RATE: int = int(os.getenv("USD_TO_CREDITS_RATE", "720"))
+
+# How often to re-read the console's fx/markup settings, and how long one fetch
+# may take. A changed rate must reach a running deployment without a deploy; a
+# hung console must never delay startup or a billing cycle.
+BILLING_RATES_INTERVAL_SECONDS: int = int(
+    os.getenv("BILLING_RATES_INTERVAL_SECONDS", "300")
+)
+BILLING_RATES_TIMEOUT_SECONDS: float = float(
+    os.getenv("BILLING_RATES_TIMEOUT_SECONDS", "3")
+)
+
+# How often the settlement worker retries runs whose release could not read a
+# spend figure, and how long it waits for the run's finalize transaction to
+# commit the usage row it settles from. Console releases are idempotent; these
+# only bound how stale an un-billed run may get.
+BILLING_SETTLEMENT_INTERVAL_SECONDS: int = int(
+    os.getenv("BILLING_SETTLEMENT_INTERVAL_SECONDS", "120")
+)
+BILLING_SETTLEMENT_GRACE_SECONDS: int = int(
+    os.getenv("BILLING_SETTLEMENT_GRACE_SECONDS", "120")
+)
 
 # Daytona sandbox billing. The unit prices are Daytona's list prices; the
 # markup is Roost's, in basis points, applied before the USD→credits
-# conversion. The first free disk GiB are Daytona's included allowance. The
-# defaults are production's; a deployment with AUTH_SERVICE_URL unset never
-# reports.
+# conversion. Both the markup and the conversion rate come from Roost Console
+# settings in a platform deployment; the values below are the fallback when it
+# has never answered. The first free disk GiB are Daytona's included
+# allowance. The defaults are production's; a deployment with AUTH_SERVICE_URL
+# unset never reports.
 SANDBOX_BILLING_INTERVAL_SECONDS: int = int(
     os.getenv("SANDBOX_BILLING_INTERVAL_SECONDS", "300")
 )
-SANDBOX_MARKUP_BPS: int = int(os.getenv("SANDBOX_MARKUP_BPS", "18000"))
+SANDBOX_MARKUP_BPS: int = int(os.getenv("SANDBOX_MARKUP_BPS", "13000"))
 # Daytona stops billing disk once auto-archive runs; cap stopped-disk metering
 # to that window so an archived sandbox is never charged as a live one.
 STOPPED_DISK_MAX_SECONDS: int = int(os.getenv("STOPPED_DISK_MAX_SECONDS", "7200"))

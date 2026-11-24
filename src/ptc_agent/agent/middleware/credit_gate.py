@@ -65,9 +65,13 @@ from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langgraph.runtime import Runtime
 from langgraph.types import interrupt
 
-from src.config.env import USD_TO_CREDITS_RATE
+from src.config import billing_rates
 from src.server.contracts.status import INTERRUPT_REASON_CREDIT_PAUSE
 from src.utils.tracking.infrastructure_costs import calculate_infrastructure_credits
+from src.utils.tracking.model_usage import (
+    ReleaseSettlement,
+    aggregate_model_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +79,13 @@ logger = logging.getLogger(__name__)
 # flush, whichever first. Each lane polls its own meter cheaply and only
 # touches the DB when a trigger fires.
 _FLUSH_INTERVAL_SECONDS = 10.0
-# Written in USD because that is the unit it was reasoned about in: 50 credits
-# reads like a threshold and is five cents, which any real model call clears,
-# so the "or" arm fired on essentially every poll and the interval above never
-# got to be the floor it was meant to be.
-_FLUSH_CREDIT_DELTA = 1.0 * USD_TO_CREDITS_RATE
+# A heartbeat is written when the elapsed interval passes OR this much spend
+# accrues since the last attempt, whichever first. Thresholded in USD because
+# that is its real size (the old one-credit threshold was five cents, which
+# any model call clears, so the interval never became the floor it was meant to
+# be) and converted per call: the USD→credit rate is console-published now and
+# can change while the process runs.
+_FLUSH_CREDIT_DELTA_USD = 1.0
 _POLL_SECONDS = 2.0
 # Extend the lease when it is this close to expiry even if spend hasn't
 # reached the ceiling — a lease that lapses mid-turn no longer covers the
@@ -189,8 +195,11 @@ class CreditLease(_GateLoop):
     - ``await port.acquire(user_id, run_ref, spent_credits, rate_multiplier,
       byok)`` → :class:`LeaseVerdict`, or None for "no verdict" (unreachable
       / 5xx — fail open).
-    - ``await port.release(user_id, run_ref, generation)`` → best-effort
-      lease retirement, fenced on the generation of the grant being retired.
+    - ``await port.release(user_id, run_ref, generation, settlement)`` →
+      best-effort lease retirement, fenced on the generation of the grant being
+      retired. ``settlement`` carries the turn's own per-model usage and
+      platform USD so the service can price it from the shared book; it may be
+      empty when no lane metered a call.
     """
 
     user_id: str
@@ -211,6 +220,12 @@ class CreditLease(_GateLoop):
     _lease_deadline: float = 0.0  # monotonic; 0 = no live lease
     _members: set["CreditGateState"] = field(default_factory=set)
     _retired_credits: float = 0.0
+    # The main lane's settlement, captured when it leaves so the release (which
+    # runs when the LAST member leaves, often a subagent) still reports the
+    # turn's own token usage. Subagent usage is charged on its own path
+    # (``task_usage_billing``), so including it here would double-bill; only the
+    # lane whose ref is this lease's ref contributes.
+    _main_settlement: Optional[ReleaseSettlement] = None
     _refresher: Optional[asyncio.Task] = None
     _closed: bool = False
     _next_acquire_at: float = 0.0
@@ -238,9 +253,16 @@ class CreditLease(_GateLoop):
             if member in self._members:
                 self._members.discard(member)
                 self._retired_credits += member.spend()
+                if (
+                    member.kind == "run"
+                    and member.run_ref == self.run_ref
+                    and self._main_settlement is None
+                ):
+                    self._main_settlement = member.release_settlement()
             if self._members or not await self._stop_refresher():
                 return
             generation = self.grant_generation
+            settlement = self.settlement()
         # Outside the lock: a release is a network call, and nothing here ever
         # makes a lane wait on the network. A lane joining while this is in
         # flight reopens the lease and acquires a grant of its own; the fence
@@ -249,7 +271,9 @@ class CreditLease(_GateLoop):
         # the lease expires on its own if the release is lost.
         with contextlib.suppress(BaseException):
             await asyncio.shield(
-                self.port.release(self.user_id, self.run_ref, generation)
+                self.port.release(
+                    self.user_id, self.run_ref, generation, settlement
+                )
             )
 
     def spend(self) -> float:
@@ -257,6 +281,22 @@ class CreditLease(_GateLoop):
         already retired. Each lane read is O(1) and none of them await, so
         this is atomic against the event loop."""
         return self._retired_credits + sum(m.spend() for m in tuple(self._members))
+
+    def settlement(self) -> ReleaseSettlement:
+        """The turn's own token usage for the release payload.
+
+        Captured from the main lane, live or retired. The lease's release runs
+        when the last lane leaves, which is often a subagent that outlived the
+        main stream, so the figure cannot be read off the currently live lane
+        alone. An empty settlement means no lane ever metered a call; the port
+        then falls back to the ledger's in-flight figure.
+        """
+        if self._main_settlement is not None:
+            return self._main_settlement
+        for member in tuple(self._members):
+            if member.kind == "run" and member.run_ref == self.run_ref:
+                return member.release_settlement()
+        return ReleaseSettlement(byok=self.is_byok)
 
     def rate_multiplier(self) -> float:
         """The priciest model boundary live on this turn right now.
@@ -428,7 +468,10 @@ class CreditGateState(_GateLoop):
         try:
             credits = 0.0
             if self.tracker is not None:
-                credits += self.tracker.platform_usd_total() * USD_TO_CREDITS_RATE
+                credits += (
+                    self.tracker.platform_usd_total()
+                    * billing_rates.usd_to_credits_rate()
+                )
             if self.tool_tracker is not None:
                 usage = self.tool_tracker.get_summary()
                 if usage:
@@ -451,6 +494,78 @@ class CreditGateState(_GateLoop):
             return self._last_spend
         self._last_spend = credits
         return credits
+
+    def _records(self) -> tuple:
+        """The lane tracker's raw per-call records, or an empty tuple.
+
+        Duck-typed: the port and the OSS build never attach a tracker that
+        carries records, and a metering read must never raise out of teardown.
+        """
+        reader = getattr(self.tracker, "get_per_call_records", None)
+        if reader is None:
+            return ()
+        try:
+            return tuple(reader() or ())
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not read per-call records for %s %s",
+                self.kind,
+                self.run_ref,
+                exc_info=True,
+            )
+            return ()
+
+    def release_settlement(self) -> ReleaseSettlement:
+        """This lane's platform usage in the release contract's shape.
+
+        Only platform-billed calls are included: a BYOK call pays the user's own
+        vendor, so pricing it like platform-funded tokens would bill the turn
+        twice. ``byok`` on the returned settlement is true only when the lane
+        made calls and none of them used the platform key.
+        """
+        records = self._records()
+        if not records:
+            return ReleaseSettlement(byok=self.lease.is_byok)
+        try:
+            model_usage = aggregate_model_usage(records)
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not aggregate model usage for %s %s",
+                self.kind,
+                self.run_ref,
+                exc_info=True,
+            )
+            return ReleaseSettlement(byok=self.lease.is_byok)
+        platform_calls = any(
+            record.get("billing_type", "platform") == "platform"
+            for record in records
+        )
+        return ReleaseSettlement(
+            model_usage=model_usage,
+            spent_usd=self.platform_usd(),
+            byok=not platform_calls,
+            has_records=True,
+            call_count=len(records),
+        )
+
+    def platform_usd(self) -> Optional[float]:
+        """The lane tracker's platform USD total, or None when unreadable.
+
+        None rather than 0.0 so an unreadable tracker does not read as "this
+        turn spent nothing" and settle the reservation at zero.
+        """
+        if self.tracker is None:
+            return None
+        try:
+            return float(self.tracker.platform_usd_total())
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not read platform spend for %s %s",
+                self.kind,
+                self.run_ref,
+                exc_info=True,
+            )
+            return None
 
     def spawn_child(
         self,
@@ -512,7 +627,8 @@ class CreditGateState(_GateLoop):
             return
         if (
             now - self._last_flush_at >= _FLUSH_INTERVAL_SECONDS
-            or credits - self._last_attempted_credits >= _FLUSH_CREDIT_DELTA
+            or credits - self._last_attempted_credits
+            >= _FLUSH_CREDIT_DELTA_USD * billing_rates.usd_to_credits_rate()
         ):
             await self._flush_heartbeat(credits)
 

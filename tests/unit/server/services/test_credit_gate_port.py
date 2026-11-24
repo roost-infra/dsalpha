@@ -14,6 +14,13 @@ from src.server.services import credit_gate_port as port_module
 from src.server.services.credit_gate_port import PlatformCreditGatePort
 
 
+def _async_return(value):
+    async def _inner(*args, **kwargs):
+        return value
+
+    return _inner
+
+
 class FakeResponse:
     def __init__(self, status_code: int, payload=None, text: str = ""):
         self.status_code = status_code
@@ -57,6 +64,36 @@ def client(monkeypatch):
     monkeypatch.setattr(port_module.usage_limits, "service_headers", lambda *a: {})
     monkeypatch.setattr(port_module.usage_limits, "service_token_missing", lambda: False)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def settlement_db(monkeypatch):
+    """No database in these tests: the release path's queue writes are recorded.
+
+    ``credits`` is what the ledger's in-flight read answers; ``error`` makes it
+    raise, which is the teardown that used to give the turn away.
+    """
+    state = {"credits": 0.0, "error": None}
+    pending: list[tuple[str, str]] = []
+    settled: list[tuple[str, object]] = []
+
+    async def _in_flight(run_id):
+        if state["error"] is not None:
+            raise state["error"]
+        return state["credits"]
+
+    async def _mark_pending(run_id, reason):
+        pending.append((run_id, reason))
+        return True
+
+    async def _mark_settled(run_id, *, charged_credits=None, detail=None):
+        settled.append((run_id, charged_credits))
+        return True
+
+    monkeypatch.setattr(port_module.credit_ledger, "in_flight_credits", _in_flight)
+    monkeypatch.setattr(port_module.settlement_db, "mark_settle_pending", _mark_pending)
+    monkeypatch.setattr(port_module.settlement_db, "mark_settled", _mark_settled)
+    return {"state": state, "pending": pending, "settled": settled}
 
 
 @pytest.fixture
@@ -234,6 +271,11 @@ async def test_the_wiring_check_never_raises_on_any_ttl(client, monkeypatch, ttl
     """It runs inside the lifespan. Whatever it finds, the server still boots —
     the gate is an extra guard, not an availability dependency."""
     monkeypatch.setattr(port_module.usage_limits, "platform_gating_active", lambda: True)
+    monkeypatch.setattr(
+        port_module.console_rates,
+        "ensure_console_rates",
+        _async_return(_console_rates()),
+    )
     client.responses = [FakeResponse(200, {"enabled": True, "lease_ttl_seconds": ttl})]
     await port_module.verify_credit_gate_wiring()
     assert len(client.gets) == 1
@@ -326,6 +368,11 @@ async def test_the_wiring_check_reports_a_bounds_disagreement(
     monkeypatch.setattr(
         port_module.usage_limits, "platform_gating_active", lambda: True
     )
+    monkeypatch.setattr(
+        port_module.console_rates,
+        "ensure_console_rates",
+        _async_return(_console_rates()),
+    )
     client.responses = [
         FakeResponse(
             200,
@@ -342,12 +389,37 @@ async def test_the_wiring_check_reports_a_bounds_disagreement(
     assert "bounds disagree" in caplog.text
 
 
+def _console_rates(**overrides):
+    """A console-published snapshot for the wiring check's rate leg."""
+    from src.config.billing_rates import (
+        ENV_SANDBOX_MARKUP_BPS,
+        ENV_USD_TO_CREDITS,
+        SOURCE_CONSOLE,
+        BillingRates,
+    )
+
+    fields = {
+        "usd_to_credits": ENV_USD_TO_CREDITS,
+        "markup_bps": ENV_SANDBOX_MARKUP_BPS,
+        "source": SOURCE_CONSOLE,
+        "markup_source": SOURCE_CONSOLE,
+        "console_fx": ENV_USD_TO_CREDITS,
+    }
+    fields.update(overrides)
+    return BillingRates(**fields)
+
+
 @pytest.mark.asyncio
 async def test_the_wiring_check_is_quiet_when_the_bounds_agree(
     client, monkeypatch, caplog
 ):
     monkeypatch.setattr(
         port_module.usage_limits, "platform_gating_active", lambda: True
+    )
+    monkeypatch.setattr(
+        port_module.console_rates,
+        "ensure_console_rates",
+        _async_return(_console_rates()),
     )
     client.responses = [
         FakeResponse(
@@ -362,4 +434,264 @@ async def test_the_wiring_check_is_quiet_when_the_bounds_agree(
     ]
     with caplog.at_level("ERROR"):
         await port_module.verify_credit_gate_wiring()
-    assert caplog.text == ""
+    assert "bounds disagree" not in caplog.text
+    assert "fx.usd_to_credits was not read" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_wiring_check_reports_unpublished_fx(client, monkeypatch, caplog):
+    """The old check compared env against a hard-coded canonical unit, so it
+    fired on every correctly configured deployment. The failure that matters
+    now is a platform deployment whose rate the console never published: its
+    ledger cannot be reconciled against anything."""
+    from src.config.billing_rates import env_fallback
+
+    monkeypatch.setattr(
+        port_module.usage_limits, "platform_gating_active", lambda: True
+    )
+    monkeypatch.setattr(
+        port_module.console_rates,
+        "ensure_console_rates",
+        _async_return(env_fallback()),
+    )
+    client.responses = [
+        FakeResponse(
+            200,
+            {
+                "enabled": True,
+                "lease_ttl_seconds": port_module.LEASE_RENEW_MARGIN_SECONDS + 60,
+            },
+        )
+    ]
+    with caplog.at_level("ERROR"):
+        await port_module.verify_credit_gate_wiring()
+    assert "fx.usd_to_credits was not read" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_wiring_check_reports_an_env_rate_that_disagrees(
+    client, monkeypatch, caplog
+):
+    monkeypatch.setattr(
+        port_module.usage_limits, "platform_gating_active", lambda: True
+    )
+    monkeypatch.setattr(
+        port_module.console_rates,
+        "ensure_console_rates",
+        _async_return(_console_rates(console_fx=680.0, usd_to_credits=680.0)),
+    )
+    client.responses = [
+        FakeResponse(
+            200,
+            {
+                "enabled": True,
+                "lease_ttl_seconds": port_module.LEASE_RENEW_MARGIN_SECONDS + 60,
+            },
+        )
+    ]
+    with caplog.at_level("WARNING"):
+        await port_module.verify_credit_gate_wiring()
+    assert "console publishes fx=680" in caplog.text
+
+
+# -- what the release reports ---------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rates():
+    """The rates snapshot is process-global; a rate one test installs must not
+    price the next one."""
+    from src.config import billing_rates
+
+    billing_rates.clear()
+    yield
+    billing_rates.clear()
+
+
+def _settlement(**overrides):
+    from src.utils.tracking.model_usage import ReleaseSettlement
+
+    fields = {
+        "model_usage": [
+            {
+                "model": "claude-sonnet-5-5",
+                "input": 1000,
+                "output": 200,
+                "cache_read": 0,
+                "cache_write": 0,
+                "calls": 2,
+            }
+        ],
+        "spent_usd": 0.0123,
+        "byok": False,
+        "has_records": True,
+        "call_count": 2,
+    }
+    fields.update(overrides)
+    return ReleaseSettlement(**fields)
+
+
+@pytest.mark.asyncio
+async def test_release_sends_model_usage_and_respells_it_for_the_book(client):
+    """The manifest keys hyphens, the console's book keys dots. Sending the
+    manifest spelling answers unknown_model and silently lands the turn on the
+    scalar fallback, which is exactly the same-price failure this fixes."""
+    from src.config import billing_rates
+
+    billing_rates.apply(
+        billing_rates.BillingRates(
+            usd_to_credits=720,
+            markup_bps=13000,
+            source=billing_rates.SOURCE_CONSOLE,
+            markup_source=billing_rates.SOURCE_CONSOLE,
+            console_fx=720,
+            book_models=("claude-sonnet-5.5",),
+        )
+    )
+
+    await PlatformCreditGatePort().release(
+        "u", "run-1", 3, _settlement()
+    )
+
+    payload = client.posts[0][1]
+    assert payload["model_usage"] == [
+        {
+            "model": "claude-sonnet-5.5",
+            "input": 1000,
+            "output": 200,
+            "cache_read": 0,
+            "cache_write": 0,
+            "calls": 2,
+        }
+    ]
+    assert payload["spent_usd"] == 0.0123
+
+
+@pytest.mark.asyncio
+async def test_release_falls_back_to_the_in_flight_figure_without_usage(
+    client, settlement_db
+):
+    settlement_db["state"]["credits"] = 7.5
+    await PlatformCreditGatePort().release("u", "run-1", 1)
+
+    assert client.posts[0][1]["spent_credits"] == 7.5
+    assert "model_usage" not in client.posts[0][1]
+    assert settlement_db["pending"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_ledger_with_no_usage_is_not_released(
+    client, settlement_db
+):
+    """Releasing with no figure retires the whole reserved ceiling and gives
+    the turn away. The lease is left to stand and the run queued instead."""
+    settlement_db["state"]["error"] = RuntimeError("pool exhausted")
+    await PlatformCreditGatePort().release("u", "run-1", 1)
+
+    assert client.posts == []
+    assert settlement_db["pending"]
+    assert settlement_db["pending"][0][0] == "run-1"
+    assert "in_flight_credits unreadable" in settlement_db["pending"][0][1]
+
+
+@pytest.mark.asyncio
+async def test_its_own_usage_settles_even_when_the_ledger_is_unreadable(
+    client, settlement_db
+):
+    """The tracker's figure is a real spend record; only its absence needs the
+    queue."""
+    settlement_db["state"]["error"] = RuntimeError("pool exhausted")
+    await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+
+    assert client.posts[0][1]["model_usage"]
+    assert settlement_db["pending"] == []
+
+
+@pytest.mark.asyncio
+async def test_byok_travels_on_the_release_and_never_on_a_platform_turn(
+    client, settlement_db
+):
+    await PlatformCreditGatePort().release(
+        "u", "run-1", 1, _settlement(byok=True, model_usage=[], has_records=False)
+    )
+    await PlatformCreditGatePort().release("u", "run-2", 1, _settlement())
+
+    assert client.posts[0][1]["byok"] is True
+    assert "byok" not in client.posts[1][1]
+
+
+@pytest.mark.asyncio
+async def test_a_release_that_never_lands_is_queued_for_settlement(
+    client, settlement_db, no_sleep
+):
+    client.responses = [FakeResponse(500) for _ in range(10)]
+    await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+
+    assert len(client.posts) == port_module._RELEASE_ATTEMPTS
+    assert settlement_db["pending"]
+    assert "release failed" in settlement_db["pending"][0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_successful_release_records_the_console_charge(
+    client, settlement_db, caplog
+):
+    """charged_credits is the only priced figure a model_usage release has;
+    stamping it is what makes the run reconcilable against the ledger."""
+    client.responses = [FakeResponse(200, {"released": True, "charged_credits": 900})]
+    with caplog.at_level("WARNING"):
+        await PlatformCreditGatePort().release(
+            "u", "run-1", 1, _settlement(spent_usd=0.0123)
+        )
+
+    # 0.0123 * 720 ≈ 8.9 credits against a charged 900: the paths disagree.
+    assert "off the spent_usd estimate" in caplog.text
+    assert settlement_db["settled"] == [("run-1", 900)]
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_answer_is_reported(client, caplog):
+    client.responses = [
+        FakeResponse(200, {"released": True, "fallback": True, "charged_credits": 9})
+    ]
+    with caplog.at_level("WARNING"):
+        await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+    assert "fell back to the scalar" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [404, 409])
+async def test_an_already_retired_lease_is_an_answer(
+    client, settlement_db, status
+):
+    """404 is "no lease to retire" and 409 is "already settled" — both are the
+    idempotent case, not a failure, and both stamp the run settled."""
+    client.responses = [FakeResponse(status, text="gone")]
+    await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+
+    assert len(client.posts) == 1
+    assert settlement_db["pending"] == []
+    assert settlement_db["settled"]
+
+
+@pytest.mark.asyncio
+async def test_a_top_up_answer_keeps_the_run_queued(client, settlement_db):
+    """402 is a wallet state, not a report the console refuses: the lease is
+    still standing, so the run must be settled later rather than dropped."""
+    client.responses = [
+        FakeResponse(402, text="insufficient credits")
+        for _ in range(port_module._RELEASE_ATTEMPTS)
+    ]
+    await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+
+    assert settlement_db["pending"]
+    assert "release failed" in settlement_db["pending"][0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_nothing_can_change_leaves_the_queue(client, settlement_db):
+    client.responses = [FakeResponse(422, text="unknown_model")]
+    await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
+
+    assert settlement_db["pending"] == []
+    assert settlement_db["settled"]
