@@ -74,7 +74,10 @@ function SessionList({ computerId }: { computerId: string }) {
   );
 }
 
-export function DesktopHistory({ computerId }: { computerId: string }) {
+export function DesktopHistory({ computerId, portalContainer }: {
+  computerId: string;
+  portalContainer: HTMLElement | null;
+}) {
   const { t } = useTranslation();
   return (
     <Dialog>
@@ -83,7 +86,8 @@ export function DesktopHistory({ computerId }: { computerId: string }) {
           <History aria-hidden="true" /> {t('computer.cloud.history')}
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      {/* Keep the dialog and backdrop inside the section in both display modes. */}
+      <DialogContent portalContainer={portalContainer}>
         <DialogHeader>
           <DialogTitle>{t('computer.cloud.history')}</DialogTitle>
           <DialogDescription>{t('computer.cloud.historyDescription')}</DialogDescription>

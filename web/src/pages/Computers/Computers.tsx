@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { ArrowLeft, FolderOpen, Maximize2, Monitor, Plus, Terminal } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
@@ -149,7 +149,7 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
 }) {
   const { t } = useTranslation();
   const { state, vnc, picture, connect, disconnect } = useDesktopSession(computer.computer_id);
-  const fullscreen = useRef<HTMLElement>(null);
+  const [desktopSection, setDesktopSection] = useState<HTMLElement | null>(null);
   const [fullscreenError, setFullscreenError] = useState(false);
   const running = computer.status === 'running';
   const connecting = state.status === 'connecting' || state.status === 'reconnecting';
@@ -160,14 +160,14 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
     setFullscreenError(false);
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
-      else await fullscreen.current?.requestFullscreen();
+      else await desktopSection?.requestFullscreen();
     } catch {
       setFullscreenError(true);
     }
   }
 
   return (
-    <section ref={fullscreen} className="flex min-h-full flex-col gap-4 bg-page p-4 sm:p-6">
+    <section ref={setDesktopSection} className="flex min-h-full flex-col gap-4 bg-page p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <Link to="/computers" className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground">
@@ -181,7 +181,7 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <WorkspaceFiles workspaces={workspaces} selectedId={selectedId} />
-          {computer.desktop_transport && <DesktopHistory computerId={computer.computer_id} />}
+          {computer.desktop_transport && <DesktopHistory computerId={computer.computer_id} portalContainer={desktopSection} />}
           {!running && <ComputerPower computer={computer} power={power} sleep={sleep} />}
           {active && <Button size="sm" variant="outline" onClick={disconnect}>{t('computer.cloud.disconnect')}</Button>}
           {connected && document.fullscreenEnabled && (

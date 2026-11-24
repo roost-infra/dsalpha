@@ -36,13 +36,17 @@ test('opens a desktop, releases its session, and links back through workspace fi
   const workspace = sampleWorkspace({ workspace_id: WORKSPACE_ID, computer_id: COMPUTER_ID });
   let connected = false;
   let released = false;
-  await page.routeWebSocket(`**${WS_PATH}`, () => { connected = true; });
+  await page.routeWebSocket(`**${WS_PATH}`, (socket) => {
+    connected = true;
+    socket.send(Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  });
   await mockAPI(page, {
     'GET /computers': { computers: [COMPUTER] },
     'GET /computers/providers': { providers: [{ kind: 'daytona', is_default: true, os_platforms: ['linux'], supports_ssh: true }] },
     'GET /workspaces': { workspaces: [workspace], total: 1 },
     'GET /workspaces/*': workspace,
     'GET /workspaces/*/files': { files: [] },
+    [`GET /computers/${COMPUTER_ID}/desktop/sessions`]: (route) => route.fulfill({ json: [] }),
     [`POST /computers/${COMPUTER_ID}/desktop/session`]: async (route) => {
       expect(route.request().postDataJSON()).toEqual({ role: 'view' });
       await route.fulfill({ json: { role: 'view', transport: 'screenshot', ticket: 'test-ticket', session_id: SESSION_ID, ws_url: WS_PATH } });
@@ -60,6 +64,17 @@ test('opens a desktop, releases its session, and links back through workspace fi
   await expect(page).toHaveURL(new RegExp(`${DESKTOP_ROUTE}$`));
   await page.getByRole('button', { name: 'View only' }).click();
   await expect.poll(() => connected).toBe(true);
+
+  await page.getByRole('button', { name: 'Full screen' }).click();
+  const fullscreen = page.locator('section:fullscreen');
+  await expect(fullscreen).toBeVisible();
+  await fullscreen.getByRole('button', { name: 'Desktop history' }).click();
+  await expect(fullscreen.getByRole('dialog', { name: 'Desktop history' })).toContainText('No desktop sessions yet');
+  await page.evaluate(() => document.exitFullscreen());
+  const history = page.getByRole('dialog', { name: 'Desktop history' });
+  await expect(history).toBeVisible();
+  await history.getByRole('button', { name: 'Close' }).click();
+  await expect(history).toBeHidden();
 
   await page.getByRole('link', { name: 'Browse files' }).click();
   await expect.poll(() => released).toBe(true);
