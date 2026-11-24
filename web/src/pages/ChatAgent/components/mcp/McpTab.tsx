@@ -15,6 +15,7 @@ import {
 } from '@/hooks/useMcpServers';
 import { toast } from '@/components/ui/use-toast';
 import { secretSetupHref } from '@/pages/Plugins/utils/secretParam';
+import { CONNECTORS_HREF } from '@/pages/Plugins/utils/routes';
 import { connectRequestFor } from '@/pages/Plugins/hooks/useMcpOauthActions';
 import { probeMcpServer, type EffectiveServer, type McpServerInput } from '../../utils/api';
 import { McpServerRow } from './McpServerRow';
@@ -37,12 +38,12 @@ import { toastConnectorAdded } from './mcpAddedToast';
  * per workspace, so "Add server" creates an account server that is on here
  * only, an edit changes the account server everywhere it is on, and the
  * toggle is this workspace's on/off. Removal and the OAuth lifecycle belong
- * to /plugins, which account rows link to, with one exception: a server that
- * is saved, or switched on, only by its sign-in starts that sign-in from here,
- * since that is where the user asked for it. The vendor's round trip lands on
- * /plugins; Back from the vendor's page lands on this workspace's page, where
- * the app shell explains a sign-in that never came back whether or not this
- * panel is open.
+ * to the connectors surface on /apps, which account rows link to, with one
+ * exception: a server that is saved, or switched on, only by its sign-in starts
+ * that sign-in from here, since that is where the user asked for it. The
+ * vendor's round trip lands on /apps; Back from the vendor's page lands on this
+ * workspace's page, where the app shell explains a sign-in that never came back
+ * whether or not this panel is open.
  *
  * The list mechanics (modals, toggle) are the shared `useMcpServerList`.
  * Three UX guarantees are this component's own:
@@ -209,7 +210,7 @@ export function McpTab({ workspaceId }: McpTabProps) {
   );
 
   const handleManageInPlugins = useCallback(() => {
-    navigate('/plugins?tab=mcp');
+    navigate(CONNECTORS_HREF);
   }, [navigate]);
 
   async function handleDiscoverFromModal(body: McpServerInput) {

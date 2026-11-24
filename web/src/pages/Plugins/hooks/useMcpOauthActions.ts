@@ -276,11 +276,14 @@ function settleQuestion(request: ConnectRequest) {
 }
 
 export function useMcpOauthActions({
-  returnTo = '/plugins?tab=mcp',
+  returnTo = '/apps?tab=mcp',
 }: {
   /** Where the backend callback should land the user. Each surface that can
    *  start a connect names its own, so the vendor's round trip returns to the
-   *  tab the user actually left. */
+   *  tab the user actually left. The default is the connectors surface, which
+   *  `/apps` hosts: the workspace MCP panel and the connectors list both start
+   *  a connect for a connector, so a connect that named none of its own would
+   *  otherwise land on a `/plugins` tab that no longer exists. */
   returnTo?: string;
 } = {}) {
   const { t } = useTranslation();

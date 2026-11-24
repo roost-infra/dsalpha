@@ -558,12 +558,15 @@ describe('startPendingMcpOauth', () => {
     expect([...form.keys()].sort()).toEqual(['file', 'return_to']);
   });
 
-  it('defaults where the callback lands to the plugins page', async () => {
+  it('defaults where the callback lands to the connectors surface', async () => {
     inBrowser();
 
     await startPendingMcpOauth({ kind: 'server', server });
 
-    expect(body().return_to).toBe('/plugins');
+    // The connectors section is hosted by /apps now, so a connect that named no
+    // landing of its own has to come home there rather than to a /plugins tab
+    // that no longer exists.
+    expect(body().return_to).toBe('/apps?tab=mcp');
   });
 
   // The same arming as a reconnect: the listener's URI travels with the

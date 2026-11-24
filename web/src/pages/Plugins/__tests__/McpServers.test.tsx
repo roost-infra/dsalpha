@@ -592,7 +592,7 @@ describe('McpServers — OAuth connect affordance', () => {
       // backend can refuse a row that moved while the page sat here.
       expect(mockStartMcpOauth).toHaveBeenCalledWith(
         'remote_connector',
-        '/plugins?tab=mcp',
+        '/apps?tab=mcp',
         {
           vendorRefusesHostedCallback: false,
           expectedUrl: 'https://mcp.example.test/mcp',
@@ -639,7 +639,7 @@ describe('McpServers — OAuth connect affordance', () => {
     await waitFor(() =>
       expect(mockStartMcpOauth).toHaveBeenCalledWith(
         'ibkr',
-        '/plugins?tab=mcp',
+        '/apps?tab=mcp',
         {
           vendorRefusesHostedCallback: false,
           expectedUrl: EXCLUSIVE_VENDOR.url,
@@ -678,7 +678,7 @@ describe('McpServers — OAuth connect affordance', () => {
     await waitFor(() =>
       expect(mockStartMcpOauth).toHaveBeenCalledWith(
         'ibkr',
-        '/plugins?tab=mcp',
+        '/apps?tab=mcp',
         expect.objectContaining({ grantedCapabilities: ['market_data'] }),
       ),
     );
