@@ -436,7 +436,7 @@ describe('McpTab: account servers', () => {
     catalogData = makeCatalog(3, 3);
     renderTab();
 
-    const reason = 'Your account is at its limit of 3 connectors. Remove one in Plugins first.';
+    const reason = 'Your account is at its limit of 3 connectors. Remove one in Apps first.';
     for (const name of [/add connector/i, /import json/i]) {
       const button = screen.getByRole('button', { name });
       expect(button).toBeDisabled();

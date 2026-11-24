@@ -209,7 +209,7 @@ describe('McpServerRow — status-specific affordances', () => {
   it('offers exactly one next step on a revoked row with a stale needs_secret status', () => {
     // Regression: the needs_secret gate was missing the `!oauthBroken` conjunct
     // its two sibling gates had, so a revoked inherited row rendered BOTH
-    // "Set up NAME" and "Reconnect in Plugins" — two contradictory fixes,
+    // "Set up NAME" and "Reconnect in Apps" — two contradictory fixes,
     // only one of which works. The missing secret is not the real problem here;
     // the cached status predates the disconnect.
     const h = handlers();
@@ -228,7 +228,7 @@ describe('McpServerRow — status-specific affordances', () => {
     );
 
     expect(screen.queryByText('Set up PLACEHOLDER_TOKEN')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('Reconnect in Plugins'));
+    fireEvent.click(screen.getByText('Reconnect in Apps'));
     expect(onManageInPlugins).toHaveBeenCalledTimes(1);
     expect(h.onSetupSecret).not.toHaveBeenCalled();
   });
@@ -251,7 +251,7 @@ describe('McpServerRow — status-specific affordances', () => {
     );
     fireEvent.click(screen.getByText('Set up PLACEHOLDER_TOKEN'));
     expect(h.onSetupSecret).toHaveBeenCalledWith('PLACEHOLDER_TOKEN');
-    expect(screen.queryByText('Reconnect in Plugins')).not.toBeInTheDocument();
+    expect(screen.queryByText('Reconnect in Apps')).not.toBeInTheDocument();
   });
 
   it('suppresses the tool count while still verifying', () => {

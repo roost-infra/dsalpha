@@ -131,7 +131,7 @@
     "forward": "前进",
     "expand": "展开侧边栏",
     "resize": "调整侧边栏宽度",
-    "plugins": "插件",
+    "plugins": "扩展",
     "orders": "订单",
     "menu": "菜单",
     "store": "Bot 市场",
@@ -478,7 +478,7 @@
       "compactionModel": "上下文压缩模型",
       "compactionModelDesc": "用于压缩过长的对话上下文。",
       "defaultsToConversationModel": "与对话所用模型相同",
-      "subagentsLink": "每个子 Agent 的模型和推理强度在<pane>插件 → 子 Agent</pane>中设置。",
+      "subagentsLink": "每个子 Agent 的模型和推理强度在<pane>扩展 → 子 Agent</pane>中设置。",
       "showAdvanced": "高级模型设置",
       "showAdvancedDesc": "账户默认值、单模型调优和路由。"
     },
@@ -5026,11 +5026,11 @@
       "addServer": "添加连接器",
       "importJson": "导入 JSON",
       "importHint": "粘贴 Claude Desktop 或 Cursor 格式的 mcpServers JSON 配置",
-      "atCap": "你的账户已达到 {{max}} 个连接器的上限。请先在插件页移除一个。",
+      "atCap": "你的账户已达到 {{max}} 个连接器的上限。请先在应用连接页移除一个。",
       "empty": "还没有连接器。添加一个，或导入 JSON 配置。"
     },
     "tab": {
-      "plugins": "插件",
+      "plugins": "扩展",
       "pluginsHint": "你账户中的连接器、技能、登录与密钥",
       "accountHint": "连接器保存在你的账户中，并按工作区开启。在此添加的连接器在你的其他工作区以及之后新建的工作区中保持关闭，直到你在那里开启它。",
       "addNote": "将连接器添加到你的账户，并仅在当前工作区开启。你的其他工作区（包括之后新建的）默认不开启它。",
@@ -5044,12 +5044,12 @@
       "builtin": "内置",
       "account": "账户",
       "accountHint": "已安装在你的账户中。在此关闭只影响当前工作区。",
-      "userDisabled": "已在插件页停用",
+      "userDisabled": "已在账户级停用",
       "toolCount_other": "{{count}} 个工具",
       "setupSecret": "设置 {{name}}",
-      "manageInPlugins": "在插件页管理",
-      "removeHint": "关闭即可在此停用。如需从账户中移除，请前往插件页。",
-      "reconnectInPlugins": "在插件页重新连接",
+      "manageInPlugins": "在应用连接页管理",
+      "removeHint": "关闭即可在此停用。如需从账户中移除，请前往应用连接页。",
+      "reconnectInPlugins": "在应用连接页重新连接",
       "edit": "编辑",
       "testConnection": "测试连接",
       "delete": "删除",
@@ -5331,7 +5331,7 @@
     "description": "Agent 在券商处发起的每一笔订单，以及最终的结果。",
     "empty": {
       "noOrders": "暂无订单。 Agent 下单后会显示在这里。",
-      "noBrokerage": "尚未连接券商。在插件页连接一个之后， Agent 下的每一笔订单都会显示在这里。",
+      "noBrokerage": "尚未连接券商。在扩展页连接一个之后， Agent 下的每一笔订单都会显示在这里。",
       "noBrokerageAction": "连接券商"
     },
     "noMatches": "没有符合筛选条件的订单。",
@@ -5471,7 +5471,7 @@
     }
   },
   "plugins": {
-    "title": "插件",
+    "title": "扩展",
     "surface": {
       "on": "已开启",
       "off": "已关闭",
@@ -5486,7 +5486,7 @@
       "mcp": "连接器",
       "skills": "技能",
       "secrets": "密钥",
-      "plugins": "软件包",
+      "plugins": "已安装",
       "discover": "发现",
       "brokerages": "券商"
     },
@@ -5701,7 +5701,7 @@
       "inheritedSection": "继承的技能",
       "inheritedHint": "这些技能来自你的账户。在此关闭仅对当前工作区生效。",
       "shadowsBadge": "覆盖你的同名技能",
-      "userDisabledBadge": "已在插件页停用",
+      "userDisabledBadge": "已在账户级停用",
       "removeHereConfirm": "从当前工作区移除“{{skill}}”？它会立即停止在此运行。"
     },
     "scope": {
@@ -6278,7 +6278,7 @@
     },
     "shell": {
       "section": {
-        "plugins": "插件",
+        "plugins": "已安装",
         "mcp": "连接器",
         "skills": "技能",
         "brokerages": "券商",
@@ -6293,7 +6293,7 @@
         "builtIn": "内置",
         "pages": "页面插件"
       },
-      "railLabel": "插件分区",
+      "railLabel": "扩展分区",
       "needsAttention": "需要处理",
       "pluginOff": "已关闭",
       "view": {
