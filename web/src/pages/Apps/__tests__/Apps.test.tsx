@@ -16,7 +16,7 @@ import {
   useDisconnectConnectedAccount,
   useSaveComposioKey,
 } from '../hooks';
-import Apps from '../Apps';
+import { AppsList } from '../AppsList';
 
 const status = (overrides: Record<string, unknown> = {}) => ({
   data: {
@@ -72,11 +72,14 @@ beforeEach(() => {
   );
 });
 
-describe('/apps', () => {
+// The section body alone. The page frame and the section title are the
+// container's, and `AppsContainer.test.tsx` renders the whole page and asserts
+// the headings for both sections — that is where the title is covered, because
+// this file never mounts `SectionPage`/`PageHeader`.
+describe('/apps managed apps section', () => {
   it('draws connected accounts and starts a connection', async () => {
-    renderWithProviders(<Apps />);
+    renderWithProviders(<AppsList />);
 
-    expect(screen.getByRole('heading', { name: 'Connected apps' })).toBeInTheDocument();
     expect(screen.getByText('Connected')).toBeInTheDocument();
     expect(screen.getByText('work')).toBeInTheDocument();
 
@@ -86,7 +89,7 @@ describe('/apps', () => {
   });
 
   it('disconnects one account without touching the others', () => {
-    renderWithProviders(<Apps />);
+    renderWithProviders(<AppsList />);
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect work' }));
     expect(disconnectMutate).toHaveBeenCalledWith('ca-1', expect.anything());
   });
@@ -96,7 +99,7 @@ describe('/apps', () => {
       asQuery(status({ configured: false, apps: [] })),
     );
     saveMutate.mockResolvedValue({ configured: true, apps: [] });
-    renderWithProviders(<Apps />);
+    renderWithProviders(<AppsList />);
 
     expect(screen.queryByText('GitHub')).not.toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText('ak_...'), {

@@ -13,21 +13,34 @@ import { settleConnectReturn, type ConnectRecord, type ConnectRetry } from './co
 import { setConnectLanding } from './hooks/useConnectLanding';
 import { markJustAdded } from './hooks/useJustAdded';
 import { VIEW_PARAM, withDetail } from './utils/detailParam';
+import { isSectionPage, pageHref } from './utils/routes';
 
-const PLUGINS_PATH = '/plugins';
+const PLUGINS_SECTION = 'plugins';
 const DENIED = 'plugins.oauth.callbackError.denied';
 
 /**
- * Where a sign-in that did not finish puts the user back, as the Plugins
- * page's params: the entry's page for a Discover install, the section whose
- * form reopens otherwise. Null for one with no form to reopen (a reconnect, a
- * brokerage, a workspace's), which only gets its sentence.
+ * Where a sign-in that did not finish puts the user back, as the page's params:
+ * the entry's page for a Discover install, the section whose form reopens
+ * otherwise. Null for one with no form to reopen (a reconnect, a brokerage, a
+ * workspace's), which only gets its sentence.
+ *
+ * The section decides the page, not the other way round: these params are
+ * handed to `pageHref`, which sends a `mcp` form to `/apps` and everything else
+ * to `/plugins`. That is what keeps a failed connect retryable — the form
+ * reopens on the page that hosts it, not on a page that no longer renders the
+ * section.
  */
 export function landingPlace(retry: ConnectRetry, params: URLSearchParams): URLSearchParams | null {
   switch (retry.kind) {
     case 'catalog': {
       const next = withDetail(params, { kind: 'catalog', name: retry.entry });
-      if (!['plugins', 'mcp', 'skills'].includes(next.get('tab') ?? '')) next.set('tab', 'plugins');
+      // Reachable only from Discover, whose own tab is already one of these
+      // three — a connector's browsing (`mcp`) or a plugin's (`plugins`,
+      // `skills`). So this default is a guard against drift, not a step users
+      // take: a new catalogue entry point reached from any other section would
+      // wake it up and land that install on the Plugins page, and must revisit
+      // this line rather than assume it is dead.
+      if (!['plugins', 'mcp', 'skills'].includes(next.get('tab') ?? '')) next.set('tab', PLUGINS_SECTION);
       next.set(VIEW_PARAM, 'discover');
       return next;
     }
@@ -36,7 +49,7 @@ export function landingPlace(retry: ConnectRetry, params: URLSearchParams): URLS
     case 'server':
     case 'server_edit': {
       const next = withDetail(params, null);
-      next.set('tab', retry.kind === 'server' || retry.kind === 'server_edit' ? 'mcp' : 'plugins');
+      next.set('tab', retry.kind === 'server' || retry.kind === 'server_edit' ? 'mcp' : PLUGINS_SECTION);
       next.delete(VIEW_PARAM);
       return next;
     }
@@ -47,11 +60,12 @@ export function landingPlace(retry: ConnectRetry, params: URLSearchParams): URLS
 
 type Place = Pick<Location, 'pathname' | 'search' | 'hash'>;
 
-/** The Plugins page's params to build on: the page's own where the user is on
- *  it, so the section they are in is kept where the step allows it. */
-function pluginsParams(at: Place = window.location): URLSearchParams {
-  const params =
-    at.pathname === PLUGINS_PATH ? new URLSearchParams(at.search) : new URLSearchParams();
+/** The container page's own params to build on: its params where the user is
+ *  on it, so the section they are in is kept where the step allows it. Read
+ *  from both pages — a connect started on `/apps` and landing back there keeps
+ *  its section the same way one started on `/plugins` does. */
+function pageParams(at: Place = window.location): URLSearchParams {
+  const params = isSectionPage(at.pathname) ? new URLSearchParams(at.search) : new URLSearchParams();
   for (const key of CALLBACK_PARAMS) params.delete(key);
   return params;
 }
@@ -80,14 +94,19 @@ function askedToLand(record: ConnectRecord | null): Place {
   return window.location;
 }
 
-function goToPlugins(navigate: NavigateFunction, params: URLSearchParams, replace: boolean) {
-  const search = `${params}`;
-  navigate(`${PLUGINS_PATH}${search ? `?${search}` : ''}`, {
-    // Already there: a second entry would make Back a no-op.
-    replace:
-      replace ||
-      (window.location.pathname === PLUGINS_PATH &&
-        search === new URLSearchParams(window.location.search).toString()),
+/**
+ * Take the user to the page the params name.
+ *
+ * `pageHref` sends a `mcp` result to `/apps` and everything else to
+ * `/plugins`, so a connect's answer lands on the page that hosts the section it
+ * belongs to. Replaced rather than pushed when the user is already on that exact
+ * URL, so Back is not a no-op — compared on path and query, which is what the
+ * tab lives in.
+ */
+function goToPage(navigate: NavigateFunction, params: URLSearchParams, replace: boolean) {
+  const to = pageHref(params);
+  navigate(to, {
+    replace: replace || `${window.location.pathname}${window.location.search}` === to,
   });
 }
 
@@ -107,7 +126,16 @@ function goToPlugins(navigate: NavigateFunction, params: URLSearchParams, replac
 function toastAbandoned(record: ConnectRecord, t: TFunction, navigate: NavigateFunction) {
   const { label } = record;
   const needsDesktop = record.desktopOnly && !canBeginMcpOAuth();
-  const place = needsDesktop ? null : landingPlace(record.retry, pluginsParams());
+  // Frozen here, not read again in the handler. "Try again" reopens the same
+  // form with the context of *that* attempt — the section the connect left
+  // from — and that belongs to the moment the toast appeared, not to wherever
+  // the user has since navigated. A toast outlives a route change, so reading
+  // the location on click would open the form on the section they drifted to.
+  //
+  // `landingPlace` copies what it is given (`withDetail` builds a new
+  // `URLSearchParams`), so this base survives being used twice.
+  const base = pageParams();
+  const place = needsDesktop ? null : landingPlace(record.retry, base);
   toast({
     title: t('plugins.signin.abandoned', { label }),
     description: needsDesktop ? (
@@ -126,7 +154,7 @@ function toastAbandoned(record: ConnectRecord, t: TFunction, navigate: NavigateF
         altText={t('plugins.signin.tryAgain')}
         onClick={() => {
           setConnectLanding({ owner: 'page', draft: record, outcome: 'retry' });
-          goToPlugins(navigate, landingPlace(record.retry, pluginsParams()) ?? place, false);
+          goToPage(navigate, landingPlace(record.retry, base) ?? place, false);
         }}
       >
         {t('plugins.signin.tryAgain')}
@@ -197,7 +225,7 @@ export function landConnectReturn({ t, navigate }: { t: TFunction; navigate: Nav
     // started from: Plugins and Discover both open a plugin's page.
     if (outcome.plugin) {
       markJustAdded('plugin', outcome.plugin);
-      goToPlugins(navigate, withDetail(pluginsParams(back), { kind: 'plugin', name: outcome.plugin }), true);
+      goToPage(navigate, withDetail(pageParams(back), { kind: 'plugin', name: outcome.plugin }), true);
       return;
     }
     if (server && record?.retry.kind === 'server') markJustAdded('server', server);
@@ -208,7 +236,7 @@ export function landConnectReturn({ t, navigate }: { t: TFunction; navigate: Nav
   // What the sign-in was in the middle of. Only one this tab started has a
   // record, so params a link carries cannot reopen a form of their choosing.
   const denied = outcome.reasonKey === DENIED;
-  const place = record && landingPlace(record.retry, pluginsParams(back));
+  const place = record && landingPlace(record.retry, pageParams(back));
   if (record && place) {
     // Said where the user can act on it: the entry's page, or the form the
     // sign-in was saving, open again on what they had typed.
@@ -219,7 +247,7 @@ export function landConnectReturn({ t, navigate }: { t: TFunction; navigate: Nav
       reasonKey: outcome.reasonKey,
       detail: outcome.detail,
     });
-    goToPlugins(navigate, place, true);
+    goToPage(navigate, place, true);
     return;
   }
   if (denied) {

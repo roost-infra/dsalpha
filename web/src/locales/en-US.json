@@ -131,7 +131,7 @@
     "forward": "Forward",
     "expand": "Expand sidebar",
     "resize": "Resize sidebar",
-    "plugins": "Plugins",
+    "plugins": "Extensions",
     "orders": "Orders",
     "menu": "Menu",
     "store": "Bot Store",
@@ -430,7 +430,7 @@
       "compactionModel": "Compaction model",
       "compactionModelDesc": "Used for compacting long conversation context.",
       "defaultsToConversationModel": "Same as the conversation's model",
-      "subagentsLink": "Each subagent's model and effort are set in <pane>Plugins → Subagents</pane>.",
+      "subagentsLink": "Each subagent's model and effort are set in <pane>Extensions → Subagents</pane>.",
       "showAdvanced": "Advanced model settings",
       "showAdvancedDesc": "Account defaults, per-model tuning and routing."
     },
@@ -5035,12 +5035,12 @@
       "addServer": "Add connector",
       "importJson": "Import JSON",
       "importHint": "Paste an mcpServers JSON config, as Claude Desktop or Cursor writes it",
-      "atCap": "Your account is at its limit of {{max}} connectors. Remove one in Plugins first.",
+      "atCap": "Your account is at its limit of {{max}} connectors. Remove one in Apps first.",
       "empty": "No connectors yet. Add one or import a JSON config."
     },
     "tab": {
-      "plugins": "Plugins",
-      "pluginsHint": "Connectors, skills, sign-ins and keys on your account",
+      "plugins": "Connected apps",
+      "pluginsHint": "Managed apps and connectors on your account",
       "accountHint": "Connectors live on your account and are switched on per workspace. One you add here stays off in your other workspaces, and in new ones, until you switch it on there.",
       "addNote": "Adds the connector to your account and switches it on only in this workspace. Your other workspaces, including new ones, start with it off.",
       "editTitle": "Edit connector",
@@ -5053,13 +5053,13 @@
       "builtin": "built-in",
       "account": "account",
       "accountHint": "Installed on your account. Switching it off here affects only this workspace.",
-      "userDisabled": "Disabled in Plugins",
+      "userDisabled": "Disabled on your account",
       "toolCount_one": "{{count}} tool",
       "toolCount_other": "{{count}} tools",
       "setupSecret": "Set up {{name}}",
-      "manageInPlugins": "Manage in Plugins",
-      "removeHint": "Switch it off to stop using it here. To remove it from your account, go to Plugins.",
-      "reconnectInPlugins": "Reconnect in Plugins",
+      "manageInPlugins": "Manage in Apps",
+      "removeHint": "Switch it off to stop using it here. To remove it from your account, go to Apps.",
+      "reconnectInPlugins": "Reconnect in Apps",
       "edit": "Edit",
       "testConnection": "Test connection",
       "delete": "Delete",
@@ -5354,7 +5354,7 @@
     "description": "Every order the agent proposed at a broker, and what happened to it.",
     "empty": {
       "noOrders": "No orders yet. When the agent places one, it lands here.",
-      "noBrokerage": "No brokerage connected. Connect one on the Plugins page and every order the agent places lands here.",
+      "noBrokerage": "No brokerage connected. Connect one on the Extensions page and every order the agent places lands here.",
       "noBrokerageAction": "Connect a brokerage"
     },
     "noMatches": "No orders match these filters.",
@@ -5494,7 +5494,7 @@
     }
   },
   "plugins": {
-    "title": "Plugins",
+    "title": "Extensions",
     "surface": {
       "on": "On",
       "off": "Off",
@@ -5511,7 +5511,7 @@
       "mcp": "Connectors",
       "skills": "Skills",
       "secrets": "Secrets",
-      "plugins": "Packages",
+      "plugins": "Installed",
       "discover": "Discover",
       "brokerages": "Brokerages"
     },
@@ -5727,7 +5727,7 @@
       "inheritedSection": "Inherited",
       "inheritedHint": "These come from your account. Switching one off here hides it in this workspace only.",
       "shadowsBadge": "Overrides your skill",
-      "userDisabledBadge": "Disabled in Plugins",
+      "userDisabledBadge": "Disabled on your account",
       "removeHereConfirm": "Remove \"{{skill}}\" from this workspace? It stops running here right away."
     },
     "scope": {
@@ -6342,7 +6342,7 @@
     },
     "shell": {
       "section": {
-        "plugins": "Plugins",
+        "plugins": "Installed",
         "mcp": "Connectors",
         "skills": "Skills",
         "brokerages": "Brokerages",
@@ -6357,7 +6357,7 @@
         "builtIn": "Built in",
         "pages": "Page plugins"
       },
-      "railLabel": "Plugin sections",
+      "railLabel": "Extension sections",
       "needsAttention": "needs attention",
       "pluginOff": "switched off",
       "view": {
@@ -7650,6 +7650,15 @@
     }
   },
   "apps": {
+    "shell": {
+      "railLabel": "Connect sections",
+      "section": {
+        "apps": "Managed apps"
+      },
+      "definition": {
+        "apps": "Accounts connected through Composio"
+      }
+    },
     "title": "Connected apps",
     "tagline": "Give your bots tools for GitHub, Gmail, Slack and the other apps you use. Connections are authorized in your browser; provider tokens stay with Composio.",
     "setupTitle": "Connect your first app",

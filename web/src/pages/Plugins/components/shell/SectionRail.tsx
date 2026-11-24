@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
@@ -9,38 +9,47 @@ import type { DetailRef } from '../../utils/detailParam';
 import { pluginMark } from '../../utils/pluginSurface';
 import { StatusDot } from '../surface/Surface';
 import {
-  ACCOUNTS,
-  CUSTOMIZE,
-  PAGES,
   SECTION_ICONS,
   SECTION_LABEL_KEYS,
+  type PageShell,
   type Section,
 } from './sections';
 import { connectorAttention, type ShellData } from './useShellData';
 
 /**
- * The page's own navigation: the sections, then every installed plugin as a
- * one-click hop to its page, with the bundled ones folded under "Built in".
+ * A container page's own navigation: the sections the page hosts, then — on the
+ * page that lists installed plugins — every one of them as a one-click hop to
+ * its page, with the bundled ones folded under "Built in".
  *
- * The installed list is a jump list, not a second inventory: a logo, a name
- * and a dot when something needs the user. Counts and states stay on the
+ * Both pages draw through this, and the page hands it the sections, so the rail
+ * cannot offer a section its page does not render. The installed list is
+ * omitted where the page does not list plugins at all (`/apps`), since a jump
+ * list into a section this page does not show would navigate away from it.
+ *
+ * The installed list itself is a jump list, not a second inventory: a logo, a
+ * name and a dot when something needs the user. Counts and states stay on the
  * cells, so the rail never says the same thing twice beside them. It stays on
- * every section, Plugins → Yours included: a rail that changes shape between
- * tabs reads as navigation that moved, which costs more than one list shown
- * beside the grid it mirrors.
+ * every section of the page that has it, Plugins → Yours included: a rail that
+ * changes shape between tabs reads as navigation that moved, which costs more
+ * than one list shown beside the grid it mirrors.
  */
-export function PluginsRail({
+export function SectionRail({
+  shell,
   section,
   detail,
   data,
 }: {
+  shell: PageShell;
   section: Section;
   detail: DetailRef | null;
   data: ShellData;
 }) {
   const { t } = useTranslation();
-  const installed = data.plugins?.installed ?? [];
-  const builtIn = data.plugins?.builtIn ?? [];
+  // The jump list belongs to the page that actually lists plugins. `/apps`
+  // hosts none, so its rail is the sections alone.
+  const withPlugins = shell.sections.includes('plugins');
+  const installed = withPlugins ? (data.plugins?.installed ?? []) : [];
+  const builtIn = withPlugins ? (data.plugins?.builtIn ?? []) : [];
   const problems = data.plugins?.problems;
 
   // A plugin page opened from here lights its own entry, not the section's.
@@ -59,7 +68,7 @@ export function PluginsRail({
   }
   const builtInAttention = builtIn.some((p) => problems?.has(p.name));
 
-  const counts: Record<Section, number | null> = {
+  const counts: Partial<Record<Section, number | null>> = {
     pages: null,
     plugins: data.plugins ? installed.length + builtIn.length : null,
     mcp: data.connectors?.total ?? null,
@@ -68,7 +77,7 @@ export function PluginsRail({
     brokerages: data.brokerages?.connected ?? null,
     secrets: data.secrets,
   };
-  const attention: Record<Section, boolean> = {
+  const attention: Partial<Record<Section, boolean>> = {
     pages: false,
     // The installed entries carry each plugin's dot right below.
     plugins: false,
@@ -84,7 +93,7 @@ export function PluginsRail({
   // desktop rail every entry already is, so this moves nothing. Again whenever
   // a count or a dot lands: each widens the pills before the current one and
   // pushes it back past the edge it was just brought inside.
-  const pillShape = [...PAGES, ...CUSTOMIZE, ...ACCOUNTS]
+  const pillShape = shell.sections
     .map((s) => `${counts[s] ?? ''}${attention[s] ? '*' : ''}`)
     .join('|');
   const navRef = useRef<HTMLElement>(null);
@@ -93,6 +102,9 @@ export function PluginsRail({
     current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [section, openPlugin, pillShape]);
 
+  // A section link stays on the page the rail belongs to: the href names the
+  // page, because a rail entry on `/apps` must not send the user to absent
+  // `/plugins?tab=apps`, and vice versa.
   const sectionLink = (s: Section) => {
     const Icon = SECTION_ICONS[s];
     const active = s === section && !pluginInRail;
@@ -100,7 +112,7 @@ export function PluginsRail({
     return (
       <Link
         key={s}
-        to={`?tab=${s}`}
+        to={`${shell.path}?tab=${s}`}
         className={cn('plugins-rail-link', active && 'is-active')}
         aria-current={active ? 'page' : undefined}
       >
@@ -126,7 +138,7 @@ export function PluginsRail({
     return (
       <Link
         key={plugin.name}
-        to={`?${search.toString()}`}
+        to={`${shell.path}?${search.toString()}`}
         className={cn('plugins-rail-link', active && 'is-active', !plugin.enabled && 'is-off')}
         aria-current={active ? 'page' : undefined}
         title={plugin.name}
@@ -145,13 +157,17 @@ export function PluginsRail({
   };
 
   return (
-    <nav ref={navRef} className="plugins-rail" aria-label={t('plugins.shell.railLabel')}>
-      <div className="plugins-rail-label">{t('plugins.shell.group.pages')}</div>
-      {PAGES.map(sectionLink)}
-      <div className="plugins-rail-label">{t('plugins.shell.group.customize')}</div>
-      {CUSTOMIZE.map(sectionLink)}
-      <div className="plugins-rail-label">{t('plugins.shell.group.accounts')}</div>
-      {ACCOUNTS.map(sectionLink)}
+    <nav ref={navRef} className="plugins-rail" aria-label={t(shell.railLabelKey)}>
+      {/* Groups are flattened into the rail rather than wrapped: the rail's
+          first heading trims its own top margin, and on a phone the rail
+          becomes a single row of pills, so an intermediate box would put the
+          margins inside it and hide the pills behind it. */}
+      {shell.groups.map((group, i) => (
+        <Fragment key={group.labelKey ?? `group-${i}`}>
+          {group.labelKey && <div className="plugins-rail-label">{t(group.labelKey)}</div>}
+          {group.sections.map(sectionLink)}
+        </Fragment>
+      ))}
 
       {/* The label heads the built-in fold as well: without it, an account
           with only bundled plugins showed "Built in" straight under Accounts,

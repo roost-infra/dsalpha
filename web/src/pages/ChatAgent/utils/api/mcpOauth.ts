@@ -3,6 +3,7 @@
  * desktop shell's loopback callback. Per-server OAuth *state* lives in mcp.ts.
  */
 import { api } from '@/api/client';
+import { CONNECTORS_HREF } from '@/pages/Plugins/utils/routes';
 import type { McpServerInput } from './mcp';
 import {
   beginMcpOAuth,
@@ -230,13 +231,18 @@ function startFields(
  * Phase 1 of the reconnect of a saved row; the caller navigates to
  * `authorize_url`.
  *
+ * The default landing is the connectors surface on `/apps`, which is where a
+ * server's row is managed since the section moved there. A caller with its own
+ * place to come back to names it: the workspace panel passes its own URL, and a
+ * catalog install passes its entry's page.
+ *
  * Everything past `returnTo` is named rather than positional. Three of the four
  * are optional and two of them are a boolean beside a callback, which is the
  * shape an argument gets silently passed in the wrong slot.
  */
 export async function startMcpOauth(
   name: string,
-  returnTo = '/plugins',
+  returnTo = CONNECTORS_HREF,
   { expectedUrl, grantedCapabilities, ...arming }: StartMcpOauthOptions = {},
 ): Promise<McpOauthStart | null> {
   return armedStart(async (redirectUri) => {
@@ -357,7 +363,7 @@ function pendingBody(request: Exclude<PendingSignIn, { kind: 'plugin_upload' }>)
  */
 export async function startPendingMcpOauth(
   request: PendingSignIn,
-  returnTo = '/plugins',
+  returnTo = CONNECTORS_HREF,
   { grantedCapabilities, ...arming }: Omit<StartMcpOauthOptions, 'expectedUrl'> = {},
 ): Promise<McpPendingStart | null> {
   // A brokerage is refused without a selection, and `[]` is the selection of a

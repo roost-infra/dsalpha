@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, type ReactNode } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router';
 import PageLoading from '@/components/PageLoading/PageLoading';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -10,6 +10,8 @@ import NetworkBanner from '@/components/NetworkBanner/NetworkBanner';
 import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
 import { lazyWithMotion, preloadableLazy } from '@/lib/lazyWithMotion';
 import type { AppSection } from '@/lib/appRoutes';
+import { DETAIL_KIND_TAB, parseDetail } from '@/pages/Plugins/utils/detailParam';
+import { PLUGINS_PATH, relocatedHref } from '@/pages/Plugins/utils/routes';
 
 type RouteSection = AppSection;
 
@@ -125,10 +127,54 @@ function useWarmSections(enabled: boolean): void {
 /** Permanent alias for the pre-rename Connectors page. Keeps search + hash:
  * OAuth `return_to` values persisted before the rename (Redis ConnectState,
  * 600s TTL) still land on `/connectors?mcp_connected=…` and must reach the
- * page that renders the toast. */
+ * page that renders the toast — which is `/apps` since the connectors section
+ * moved there. One hop, not two: pointing it at `/plugins` would leave the
+ * app shell's other redirect to finish the job, and an alias that needs a
+ * second alias is a loop waiting to happen the day the tab stops matching. */
 export function LegacyConnectorsRedirect() {
   const { search, hash } = useLocation();
-  return <Navigate to={`/plugins${search}${hash}`} replace />;
+  // No tab was the old Connectors page's own list, so the connectors section
+  // is the default rather than a last resort — but an explicit tab still wins,
+  // since the alias was reachable with one.
+  //
+  // The fallback is this page's own path with `search` appended as text, not
+  // rebuilt from params: a section that already belongs to `/plugins` keeps
+  // everything it carried. Round-tripping through `URLSearchParams` would
+  // re-encode it — `detail=skill:ledger` comes back as `skill%3Aledger` — and
+  // dropping the search entirely (the old fallback) lost the section, the
+  // detail and the search along with it.
+  const to = relocatedHref(search, { defaultSection: 'mcp' }) ?? `${PLUGINS_PATH}${search}`;
+  return <Navigate to={`${to}${hash}`} replace />;
+}
+
+/**
+ * The connectors section is hosted by `/apps` now, so a `/plugins` link that
+ * resolves to it is taken there rather than answered with a tab this page no
+ * longer renders.
+ *
+ * What "resolves to it" covers is the point: not only `?tab=mcp`, but the old
+ * `?tab=servers` spelling and a bare `?detail=server:NAME`, which names its
+ * section through its kind and nothing else. All three go through the same
+ * normalisation the page's own section reader uses, so a link the reader would
+ * have resolved to a section this page does not host is exactly what is
+ * redirected, and no hand-written tab comparison can fall out of step with it.
+ *
+ * Every other location renders `children` — the page itself — in place, so a
+ * section this page *does* host is served with no second hop and no URL
+ * rewrite. A redirect that returned null and hoped another route would match
+ * would leave the two racing, which is not a thing to leave to a router.
+ *
+ * `replace`, and search and hash carried whole: these are bookmarks and OAuth
+ * returns, and the user should not have to press Back through a hop they never
+ * asked for.
+ */
+export function LegacyMcpTabRedirect({ children }: { children?: ReactNode }) {
+  const { search, hash } = useLocation();
+  const detail = parseDetail(new URLSearchParams(search));
+  const to = relocatedHref(search, {
+    impliedSection: detail && DETAIL_KIND_TAB[detail.kind],
+  });
+  return to ? <Navigate to={`${to}${hash}`} replace /> : <>{children}</>;
 }
 
 function Main() {
@@ -169,7 +215,14 @@ function Main() {
           <Route path="/p/:pluginId/*" element={<PluginPageHost />} />
           <Route path="/automations" element={<Automations />} />
           <Route path="/orders" element={<Orders />} />
-          <Route path="/plugins" element={<Plugins />} />
+          <Route
+            path="/plugins"
+            element={
+              <LegacyMcpTabRedirect>
+                <Plugins />
+              </LegacyMcpTabRedirect>
+            }
+          />
           <Route path="/store" element={<Store />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/connectors" element={<LegacyConnectorsRedirect />} />
