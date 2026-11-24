@@ -514,7 +514,7 @@ async def _recover(thread, run_id):
     """The recovery scanner's settle of a run whose worker died, which a
     sibling worker makes from the run's row alone."""
     from src.server.app import setup
-    from src.server.database.runs.lifecycle import ProducerRecord, list_open_runs
+    from src.server.database.runs.lifecycle import ProducerRecord, get_run
     from src.server.services.runs.coordinator import RunCoordinator
     from src.server.services.runs.recovery import RecoveryScanner
 
@@ -530,9 +530,8 @@ async def _recover(thread, run_id):
     scanner._salvage = AsyncMock(
         return_value=(ProducerRecord(provenance=[]), "empty_stream")
     )
-    [run] = [
-        r for r in await list_open_runs() if str(r["conversation_response_id"]) == run_id
-    ]
+    run = await get_run(run_id)
+    assert run and run["status"] == "in_progress"
     with (
         patch.object(setup, "checkpointer", thread.saver),
         patch(

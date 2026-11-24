@@ -1263,16 +1263,23 @@ async def run_has_dispatch_gen(run_id: str, dispatch_gen: str) -> bool:
             return await cur.fetchone() is not None
 
 
-async def list_open_runs() -> List[Dict[str, Any]]:
-    """All in_progress runs, oldest first (Phase-1 startup sweep input)."""
+async def list_open_runs(
+    *, limit: int, after: str | None = None
+) -> List[Dict[str, Any]]:
+    """A recovery page ordered by the partial unique active-thread index."""
+    after_filter = "AND conversation_thread_id > %s::uuid" if after is not None else ""
+    params = (after, limit) if after is not None else (limit,)
     async with pool.get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """
+                f"""
                 SELECT * FROM conversation_responses
                 WHERE status = 'in_progress'
-                ORDER BY created_at
-                """
+                  {after_filter}
+                ORDER BY conversation_thread_id
+                LIMIT %s
+                """,
+                params,
             )
             rows = await cur.fetchall()
             return [dict(r) for r in rows]

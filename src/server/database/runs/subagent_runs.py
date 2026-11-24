@@ -731,16 +731,23 @@ async def count_open_runs_for_computer(computer_id: str) -> int:
             return (await cur.fetchone())[0]
 
 
-async def list_open_task_runs() -> List[Dict[str, Any]]:
-    """All in_progress task runs, oldest first (orphan-recovery scan input)."""
+async def list_open_task_runs(
+    *, limit: int, after: tuple[str, str] | None = None
+) -> List[Dict[str, Any]]:
+    """A recovery page ordered by the partial unique active-task index."""
+    after_filter = "AND (thread_id, task_id) > (%s::uuid, %s)" if after is not None else ""
+    params = (*after, limit) if after is not None else (limit,)
     async with pool.get_db_connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                """
+                f"""
                 SELECT * FROM subagent_runs
                 WHERE status = 'in_progress'
-                ORDER BY started_at
-                """
+                  {after_filter}
+                ORDER BY thread_id, task_id
+                LIMIT %s
+                """,
+                params,
             )
             rows = await cur.fetchall()
             return [dict(r) for r in rows]

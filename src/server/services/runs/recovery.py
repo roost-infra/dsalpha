@@ -40,6 +40,10 @@ SALVAGE_MAX_EVENTS = 5000
 # its current run's commit-to-emission section before being cancelled.
 STOP_GRACE = 30.0
 
+# A periodic tick handles one page per ledger. One extra row tells us
+# whether a full page is the end of the current sweep.
+RECOVERY_PAGE_SIZE = 100
+
 
 # A healthy stop settles within admission's teardown wait (the checkpoint
 # flush timeout plus a margin, seconds). A run still fenced this long after
@@ -62,6 +66,9 @@ class RecoveryScanner:
         self._stop_event = asyncio.Event()
         self._sweep_tick = 0
         self._warned_stuck: set[str] = set()
+        self._seen_warned_stuck: set[str] = set()
+        self._run_cursor: str | None = None
+        self._task_cursor: tuple[str, str] | None = None
 
     @classmethod
     def get_instance(cls) -> "RecoveryScanner":
@@ -138,27 +145,15 @@ class RecoveryScanner:
     # ----------------------------------------------------------------- scan
 
     async def scan_once(self, *, assume_dead: bool = False) -> int:
-        """One pass over open runs. ``assume_dead`` (startup, single worker,
-        no fence) finalizes without a lock probe — this process restarting
-        is the proof no executor exists."""
+        """Scan one page per ledger, or exhaust the pages at startup.
+
+        Startup without the fence may finalize without a lock probe: the
+        process restarting is the proof no executor exists.
+        """
         from src.server.services import writer_guard as wg
 
-        try:
-            open_runs = await tl_db.list_open_runs()
-        except Exception:
-            logger.error("[RecoveryScanner] open-run query failed", exc_info=True)
-            open_runs = []
-        try:
-            open_task_runs = await sr_db.list_open_task_runs()
-        except Exception:
-            logger.error(
-                "[RecoveryScanner] open-task-run query failed", exc_info=True
-            )
-            open_task_runs = []
-
-        # Before the early-return: an idle deployment is exactly where
-        # cascade-orphaned task rows sit unnoticed, so the heal must not be
-        # conditional on there being open runs to recover.
+        guarded = wg.guard_enabled()
+        # Idle deployments can still have cascade-orphaned task rows.
         await self.heal_task_chains()
 
         # Same reasoning for billing settle: a terminal row whose settle stamp
@@ -173,39 +168,86 @@ class RecoveryScanner:
                 release_abandoned_claims,
             )
 
-            await release_abandoned_claims(
-                assume_dead=assume_dead and not wg.guard_enabled()
-            )
+            await release_abandoned_claims(assume_dead=assume_dead and not guarded)
 
-        if not open_runs and not open_task_runs:
+        if not guarded and not assume_dead:
             return 0
+        if assume_dead:
+            self._run_cursor = None
+            self._task_cursor = None
+            self._seen_warned_stuck.clear()
 
-        if wg.guard_enabled():
-            try:
-                async with wg.get_writer_pool().connection() as lock_conn:
-                    # The pool's reset callback re-runs unlock_all on the way
-                    # out, backstopping any probe lock this scan leaks.
-                    recovered = (
-                        await self._scan(open_runs, lock_conn) if open_runs else 0
-                    )
-                    if open_task_runs:
-                        recovered += await self._scan_task_runs(
-                            open_task_runs, lock_conn
-                        )
-                    return recovered
-            except Exception:
-                logger.error(
-                    "[RecoveryScanner] guarded scan session failed", exc_info=True
-                )
-                return 0
-        if not assume_dead:
-            # No fence, no liveness oracle: a periodic scan here would reap
-            # LIVE runs of this very process.
-            return 0
-        recovered = await self._scan(open_runs, None) if open_runs else 0
-        if open_task_runs:
-            recovered += await self._scan_task_runs(open_task_runs, None)
+        recovered = 0
+        scan_main = scan_tasks = True
+        while (scan_main or scan_tasks) and not self._stop_event.is_set():
+            main = await self._read_run_page() if scan_main else None
+            tasks = await self._read_task_page() if scan_tasks else None
+            if guarded and (main or tasks):
+                try:
+                    # Return the writer session between pages. The pool reset
+                    # clears any leftover advisory probe lock on the session.
+                    async with wg.get_writer_pool().connection() as lock_conn:
+                        recovered += await self._scan_pages(main, tasks, lock_conn)
+                except Exception:
+                    logger.error("[RecoveryScanner] guarded scan session failed", exc_info=True)
+                    break
+            elif main or tasks:
+                recovered += await self._scan_pages(main, tasks, None)
+
+            if self._stop_event.is_set():
+                break
+            if main is not None:
+                self._advance_run_cursor(main)
+            if tasks is not None:
+                self._task_cursor = None
+                if len(tasks) > RECOVERY_PAGE_SIZE:
+                    last = tasks[RECOVERY_PAGE_SIZE - 1]
+                    self._task_cursor = str(last["thread_id"]), str(last["task_id"])
+            scan_main = assume_dead and main is not None and self._run_cursor is not None
+            scan_tasks = assume_dead and tasks is not None and self._task_cursor is not None
         return recovered
+
+    async def _read_run_page(self) -> List[Dict[str, Any]] | None:
+        try:
+            return await tl_db.list_open_runs(
+                after=self._run_cursor, limit=RECOVERY_PAGE_SIZE + 1
+            )
+        except Exception:
+            logger.error("[RecoveryScanner] open-run query failed", exc_info=True)
+            return None
+
+    async def _read_task_page(self) -> List[Dict[str, Any]] | None:
+        try:
+            return await sr_db.list_open_task_runs(
+                after=self._task_cursor, limit=RECOVERY_PAGE_SIZE + 1
+            )
+        except Exception:
+            logger.error("[RecoveryScanner] open-task-run query failed", exc_info=True)
+            return None
+
+    async def _scan_pages(
+        self, main: List[Dict[str, Any]] | None, tasks: List[Dict[str, Any]] | None, lock_conn
+    ) -> int:
+        recovered = await self._scan(main[:RECOVERY_PAGE_SIZE], lock_conn) if main else 0
+        if tasks:
+            recovered += await self._scan_task_runs(tasks[:RECOVERY_PAGE_SIZE], lock_conn)
+        return recovered
+
+    def _advance_run_cursor(self, candidates: List[Dict[str, Any]]) -> None:
+        page = candidates[:RECOVERY_PAGE_SIZE]
+        self._seen_warned_stuck.update(
+            str(row["conversation_response_id"])
+            for row in page
+            if str(row["conversation_response_id"]) in self._warned_stuck
+        )
+        if len(candidates) > RECOVERY_PAGE_SIZE:
+            self._run_cursor = str(page[-1]["conversation_thread_id"])
+        else:
+            self._run_cursor = None
+            # Prune after a full sweep so warnings on other pages keep their
+            # deduplication until their ledger rows disappear.
+            self._warned_stuck.intersection_update(self._seen_warned_stuck)
+            self._seen_warned_stuck.clear()
 
     async def _scan(
         self, open_runs: List[Dict[str, Any]], lock_conn
@@ -213,7 +255,6 @@ class RecoveryScanner:
         from src.server.services import writer_guard as wg
 
         recovered = 0
-        self._warned_stuck &= {str(r["conversation_response_id"]) for r in open_runs}
         for run in open_runs:
             if self._stop_event.is_set():
                 # Shutting down: current run finished cleanly; leave the

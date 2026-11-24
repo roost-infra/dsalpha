@@ -332,9 +332,7 @@ def get_writer_pool_max() -> int:
 
 
 def get_recovery_scan_interval() -> float:
-    """Env RECOVERY_SCAN_INTERVAL seconds, default 30. Bounds how long a
-    dead worker's orphaned runs stay in_progress before another worker's
-    scanner finalizes them."""
+    """Env RECOVERY_SCAN_INTERVAL seconds, default 30, between recovery pages."""
     raw = os.getenv("RECOVERY_SCAN_INTERVAL", "30")
     try:
         value = float(raw)

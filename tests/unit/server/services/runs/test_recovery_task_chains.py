@@ -7,11 +7,15 @@ an IDLE deployment, which is exactly where orphaned task rows accumulate
 unnoticed and where the scanner's open-run early-return would skip it.
 """
 
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.server.services import writer_guard
+from src.server.services.runs import recovery
 from src.server.services.runs.recovery import RecoveryScanner
 
 SR_DB = "src.server.services.runs.recovery.sr_db"
@@ -73,6 +77,110 @@ async def test_scan_survives_a_failing_sweep():
         f"{REPAIR}.repair_dangling_task_chains", new=repair
     ):
         assert await RecoveryScanner().scan_once(assume_dead=True) == 0
+
+
+def _mock_pages(monkeypatch, main, tasks):
+    async def main_page(*, after, limit):
+        return [row for row in main if after is None or row["conversation_thread_id"] > after][:limit]
+
+    async def task_page(*, after, limit):
+        return [row for row in tasks if after is None or (row["thread_id"], row["task_id"]) > after][:limit]
+
+    get_main = AsyncMock(side_effect=main_page)
+    get_tasks = AsyncMock(side_effect=task_page)
+    monkeypatch.setattr(recovery.tl_db, "list_open_runs", get_main)
+    monkeypatch.setattr(recovery.sr_db, "list_open_task_runs", get_tasks)
+    monkeypatch.setattr(recovery, "RECOVERY_PAGE_SIZE", 2)
+    monkeypatch.setattr(RecoveryScanner, "heal_task_chains", AsyncMock())
+    monkeypatch.setattr(RecoveryScanner, "settle_abandoned_usage", AsyncMock())
+    monkeypatch.setattr("src.server.services.artifacts.comments.release_abandoned_claims", AsyncMock())
+    return get_main, get_tasks
+
+
+@pytest.mark.asyncio
+async def test_periodic_pages_advance_past_live_fences_and_wrap(monkeypatch):
+    old_cancel = datetime.now(timezone.utc) - timedelta(minutes=3)
+    main = [
+        {"conversation_thread_id": thread, "conversation_response_id": run, "cancel_requested_at": old_cancel}
+        for thread, run in [("a", "live-a"), ("b", "live-b"), ("c", "orphan-c")]
+    ]
+    tasks = [
+        {"thread_id": "a", "task_id": task, "task_run_id": run}
+        for task, run in [("one", "live-one"), ("two", "live-two"), ("zzz", "orphan-zzz")]
+    ]
+    get_main, get_tasks = _mock_pages(monkeypatch, main, tasks)
+    # Use the real probe loops with independent main and task namespace fences.
+    held = {
+        writer_guard.namespace_key("a", writer_guard.ROOT_NS),
+        writer_guard.namespace_key("b", writer_guard.ROOT_NS),
+        writer_guard.namespace_key("a", "task:one"),
+        writer_guard.namespace_key("a", "task:two"),
+    }
+
+    async def execute(sql, params):
+        return SimpleNamespace(fetchone=AsyncMock(return_value=(params[0] not in held,)))
+
+    @asynccontextmanager
+    async def connection():
+        yield SimpleNamespace(execute=execute)
+
+    monkeypatch.setattr(writer_guard, "guard_enabled", lambda: True)
+    monkeypatch.setattr(writer_guard, "get_writer_pool", lambda: SimpleNamespace(connection=connection))
+    task_finalize = AsyncMock(return_value={"applied": True, "run": {"status": "error"}})
+    monkeypatch.setattr(
+        "src.server.services.subagent_run_coordinator.SubagentRunCoordinator",
+        lambda _thread_id: SimpleNamespace(finalize_task_run=task_finalize),
+    )
+    scanner = RecoveryScanner()
+    scanner._recover_run = AsyncMock(return_value=True)
+    scanner._stamp_task_retention = AsyncMock(return_value=True)
+
+    assert await scanner.scan_once() == 0
+    assert scanner._warned_stuck == {"live-a", "live-b"}
+    scanner._recover_run.assert_not_awaited()
+    task_finalize.assert_not_awaited()
+
+    assert await scanner.scan_once() == 2
+    assert scanner._warned_stuck == {"live-a", "live-b"}
+    scanner._recover_run.assert_awaited_once_with(main[-1], "orphan-c", "c")
+    assert task_finalize.await_args.args == ("orphan-zzz", "error")
+
+    # A canceled run disappears between ticks, while another in its old
+    # range needs discovery. The cursor wraps and the stale warning ages out.
+    main[0] = {"conversation_thread_id": "a", "conversation_response_id": "replacement"}
+    main.pop()
+    tasks.pop()
+    assert await scanner.scan_once() == 0
+    assert scanner._warned_stuck == {"live-b"}
+    assert [call.kwargs for call in get_main.await_args_list] == [
+        {"after": None, "limit": 3}, {"after": "b", "limit": 3}, {"after": None, "limit": 3},
+    ]
+    assert [call.kwargs for call in get_tasks.await_args_list] == [
+        {"after": None, "limit": 3}, {"after": ("a", "two"), "limit": 3},
+        {"after": None, "limit": 3},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_startup_exhausts_each_ledger_without_rewalking_finished_pages(monkeypatch):
+    main = [
+        {"conversation_thread_id": thread, "conversation_response_id": f"run-{thread}"}
+        for thread in "abcde"
+    ]
+    tasks = [{"thread_id": "a", "task_id": "one"}]
+    get_main, get_tasks = _mock_pages(monkeypatch, main, tasks)
+    monkeypatch.setattr(writer_guard, "guard_enabled", lambda: False)
+    scanner = RecoveryScanner()
+    scanner._scan = AsyncMock(side_effect=[2, 2, 1])
+    scanner._scan_task_runs = AsyncMock(return_value=1)
+
+    assert await scanner.scan_once(assume_dead=True) == 6
+    assert [call.kwargs["after"] for call in get_main.await_args_list] == [None, "b", "d"]
+    get_tasks.assert_awaited_once_with(after=None, limit=3)
+    assert [call.args for call in scanner._scan.await_args_list] == [
+        (main[:2], None), (main[2:4], None), (main[4:], None),
+    ]
+    scanner._scan_task_runs.assert_awaited_once_with(tasks, None)
 
 
 _ORPHAN_RUN = {
