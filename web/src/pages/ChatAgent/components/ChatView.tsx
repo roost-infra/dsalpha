@@ -1,7 +1,8 @@
-import React, { Suspense, useEffect, useEffectEvent, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { Suspense, useEffect, useEffectEvent, useId, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { MessageSelectionQuote } from './selectionQuote/MessageSelectionQuote';
+import { PanelDivider } from './filePanel/PanelDivider';
 import { ArrowLeft, PanelRight, Menu } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useStableHandler } from '@/hooks/useStableHandler';
@@ -149,6 +150,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
   const { t } = useTranslation();
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
+  const rightPanelId = useId();
   const chatInputRef = useRef<ChatInputHandle>(null);
   const location = useLocation();
   const navigate = useNavigate();
@@ -936,6 +938,8 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
     isDragging,
     dragJustEnded,
     handleDividerMouseDown,
+    clampDividerWidth,
+    setRightPanelWidth,
     popPanelHistory,
     handleOpenFileFromChat,
     handleOpenSourcesFromChat,
@@ -1960,8 +1964,13 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
         <>
         {/* Resize divider — outside overflow-hidden panel so its wide hover zone isn't clipped */}
         {rightPanelType && !panelExpanded && (
-          <div
+          <PanelDivider
             className={`chat-split-divider${isDragging ? ' dragging' : ''}`}
+            panelId={rightPanelId}
+            width={rightPanelWidth}
+            containerRef={containerRef}
+            clampWidth={clampDividerWidth}
+            onWidthChange={setRightPanelWidth}
             onMouseDown={handleDividerMouseDown}
           />
         )}
@@ -1984,6 +1993,7 @@ function ChatView({ workspaceId, threadId, initialTaskId, onBack, workspaceName:
                   element, so a running app's iframe does not reload. */}
               <div
                 ref={panelInnerRef}
+                id={rightPanelId}
                 data-panel-inner
                 className={panelExpanded ? 'absolute inset-0 z-10' : 'shrink-0 h-full'}
                 style={panelExpanded ? undefined : { width: rightPanelWidth }}

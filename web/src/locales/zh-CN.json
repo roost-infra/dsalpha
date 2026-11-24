@@ -3025,6 +3025,7 @@
     "goToPageWithComments_other": "第 {{page}} 页，{{count}} 条评论"
   },
   "filePanel": {
+    "resize": "调整文件面板宽度",
     "tabs": {
       "files": "工作区",
       "memory": "记忆",

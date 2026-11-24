@@ -99,5 +99,13 @@ describe("ThreadGallery's file panel", () => {
     // Read-only, with the way back to Home's own files.
     expect(screen.getByText('In NVDA')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Home' })).toBeTruthy();
+
+    const divider = screen.getByRole('separator');
+    const panel = document.getElementById(divider.getAttribute('aria-controls')!);
+    expect(panel).toContainElement(screen.getByText('The NVDA model'));
+    fireEvent.keyDown(divider, { key: 'Home' });
+    expect(panel).toHaveStyle({ width: '280px' });
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+    expect(panel).toHaveStyle({ width: '304px' });
   });
 });

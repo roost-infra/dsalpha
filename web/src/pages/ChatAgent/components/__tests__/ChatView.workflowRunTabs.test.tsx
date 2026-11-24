@@ -257,6 +257,20 @@ describe('ChatView workflow run tabs', () => {
     expect(stopButton()).toBeEnabled();
   });
 
+  it('resizes the workspace file panel with the keyboard', () => {
+    mountAtRun('wfa');
+    fireEvent.click(screen.getByRole('button', { name: 'chat.workspaceFiles' }));
+    const divider = screen.getByRole('separator', { name: 'filePanel.resize' });
+    const panel = document.getElementById(divider.getAttribute('aria-controls')!);
+    expect(panel).toHaveAttribute('data-panel-inner');
+
+    fireEvent.keyDown(divider, { key: 'Home' });
+    expect(panel).toHaveStyle({ width: '280px' });
+    fireEvent.keyDown(divider, { key: 'ArrowLeft' });
+    expect(panel).toHaveStyle({ width: '304px' });
+    expect(divider).toHaveAttribute('aria-valuenow', '304');
+  });
+
   it('gives the second run its own stop state after a tab switch', () => {
     const { rerender } = mountAtRun('wfa');
 
