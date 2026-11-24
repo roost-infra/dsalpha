@@ -75,7 +75,7 @@ infrastructure) and ignored by the console.
 
 A release with no spend figure at all is **not** sent: releasing it would
 retire the whole reserved ceiling and give the turn away. The run is marked
-`billing_settle_pending` (migration 127) and the settlement worker
+`billing_settle_pending` (migration 129) and the settlement worker
 (`services/billing_settlement.py`) later reads its `conversation_usages` row —
 the durable record finalize writes just after teardown — and settles with the
 same `model_usage` / `spent_usd` payload. Retryable failures (402, 401/403/404,
