@@ -150,6 +150,12 @@ async def open_session_connection() -> AsyncConnection:
     return conn
 
 
+async def check_database_connection() -> None:
+    """Check the application pool using the same path as a request."""
+    async with get_db_connection() as conn:
+        await conn.execute("SELECT 1")
+
+
 @asynccontextmanager
 async def get_db_connection(conn=None):
     """
