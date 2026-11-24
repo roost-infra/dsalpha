@@ -9,6 +9,7 @@ import InsightDetailModal from './components/InsightDetailModal';
 import AddWatchlistItemDialog from './components/AddWatchlistItemDialog';
 import AddPortfolioHoldingDialog from './components/AddPortfolioHoldingDialog';
 import ChatInputCard from './components/ChatInputCard';
+import { ResearchSearch } from '@/pages/Research/ResearchSearch';
 import { FormCard } from './components/FormCard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
@@ -199,6 +200,11 @@ function DashboardPage({ marketEnabled, enabledPlugins, dashboardPrefs }: Dashbo
           edit={canEdit ? { editMode, onEditModeChange: setEditMode } : undefined}
         />
         <div className="mx-auto max-w-[1920px] w-full p-3 sm:p-6 pb-6">
+          {!editMode && (
+            <div className="mb-4 border-b pb-4">
+              <ResearchSearch />
+            </div>
+          )}
           {/* Investing onboarding belongs to the market-center plugin. */}
           {marketEnabled && showPersonalizationBanner && (
             <WelcomeBanner

@@ -1461,6 +1461,7 @@ from src.server.app.news import router as news_router
 from src.gateway.wechat.router import router as wechat_router
 from src.gateway.agui.router import router as agui_router
 from src.server.app.calendar import router as calendar_router
+from src.server.app.quarter_research import router as quarter_research_router
 from src.server.app.sec_proxy import router as sec_proxy_router
 from src.server.app.api_keys import router as api_keys_router
 from src.server.app.automations import router as automations_router
@@ -1580,6 +1581,7 @@ app.include_router(
     calendar_router
 )  # /api/v1/calendar/* - Economic & earnings calendars
 app.include_router(sec_proxy_router)  # /api/v1/sec-proxy/* - SEC EDGAR document proxy
+app.include_router(quarter_research_router)
 app.include_router(
     api_keys_router
 )  # /api/v1/users/me/api-keys + /api/v1/models - BYOK & model config
