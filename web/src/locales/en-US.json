@@ -2991,6 +2991,7 @@
     "goToPageWithComments_other": "Page {{page}}, {{count}} comments"
   },
   "filePanel": {
+    "resize": "Resize file panel",
     "tabs": {
       "files": "Workspace",
       "memory": "Memory",

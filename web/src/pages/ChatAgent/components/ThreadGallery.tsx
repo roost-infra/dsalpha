@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useId, useMemo, useRef, useCallback } from 'react';
 import { ArrowLeft, Folder, FileText, Archive } from 'lucide-react';
 import { Loader } from '@/components/ui/loader';
 import { SwapCell } from '@/components/ui/crossfade';
@@ -27,6 +27,7 @@ import type { ChatInputHandle } from '../../../components/ui/chat-input';
 import type { ComposerSend, ContextPayload } from '../../../components/ui/chat-input.types';
 import { attachmentsToContexts } from '../utils/fileUpload';
 import FilePanel, { SYSTEM_DIR_PREFIXES } from './FilePanel';
+import { PanelDivider } from './filePanel/PanelDivider';
 import { clampPanelWidth as clampPanelWidthUtil } from '@/lib/panelUtils';
 import SandboxSettingsPanel from './SandboxSettingsPanel';
 import { updateThreadTitle, updateThread } from '../utils/api';
@@ -185,6 +186,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const [showFilePanel, setShowFilePanel] = useState(() => new URLSearchParams(location.search).get('panel') === 'files');
   const [showSandboxPanel, setShowSandboxPanel] = useState(false);
   const [filePanelWidth, setFilePanelWidth] = useState(850);
+  const filePanelId = useId();
   // Expanded, the panel lies over the whole gallery, as it does over a chat.
   // Closing the panel ends it, so the next open starts beside the cards.
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -202,7 +204,6 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   const dragCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => dragCleanupRef.current?.(), []);
   const containerRef = useRef<HTMLDivElement>(null);
-  const containerWidthRef = useRef<number>(0);
   const DIVIDER_WIDTH = 4; // px -- matches w-[4px] divider
   const chatInputRef = useRef<ChatInputHandle>(null);
   const handleAddContext = useCallback((ctx: ContextPayload) => {
@@ -294,20 +295,9 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
   }, []);
 
   const clampPanelWidth = useCallback(
-    (desired: number) => clampPanelWidthUtil(desired, containerWidthRef.current),
+    (desired: number) => clampPanelWidthUtil(desired, containerRef.current?.offsetWidth || window.innerWidth),
     [],
   );
-
-  // Track container width via ResizeObserver
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-      containerWidthRef.current = entries[0].contentRect.width;
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
 
   // Derive sorted file list from hook data
   useEffect(() => {
@@ -560,8 +550,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
     const onMouseMove = (moveEvent: MouseEvent) => {
       if (!isDraggingRef.current) return;
       const delta = startX - moveEvent.clientX;
-      const containerW = containerWidthRef.current > 0 ? containerWidthRef.current : window.innerWidth;
-      setFilePanelWidth(clampPanelWidthUtil(startWidth + delta, containerW));
+      setFilePanelWidth(clampPanelWidth(startWidth + delta));
     };
 
     // Hoisted declarations: teardown and onMouseUp reference each other.
@@ -584,7 +573,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     dragCleanupRef.current = teardown;
-  }, [filePanelWidth]);
+  }, [filePanelWidth, clampPanelWidth]);
 
   if (error) {
     return (
@@ -868,8 +857,13 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
             style={isMobile ? { position: 'absolute', inset: 0, zIndex: 30 } : undefined}
           >
             {!isMobile && !panelExpanded && (
-              <div
+              <PanelDivider
                 className="w-[4px] bg-transparent hover:bg-foreground/20 cursor-col-resize shrink-0 transition-colors"
+                panelId={filePanelId}
+                width={filePanelWidth}
+                containerRef={containerRef}
+                clampWidth={clampPanelWidth}
+                onWidthChange={setFilePanelWidth}
                 onMouseDown={handleDividerMouseDown}
               />
             )}
@@ -877,6 +871,7 @@ function ThreadGallery({ workspaceId, onBack, onThreadSelect }: ThreadGalleryPro
                 keeps its width in the row, so the panel stays the same
                 element and a running app's iframe does not reload. */}
             <div
+              id={filePanelId}
               className={panelExpanded ? 'absolute inset-0 z-10' : 'shrink-0'}
               style={panelExpanded ? undefined : { width: isMobile ? '100%' : filePanelWidth }}
             >

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useId, useRef, useCallback, useMemo } from 'react';
 import { Link } from 'react-router';
 import { ArrowLeft, PanelRight } from 'lucide-react';
 import { motion, type PanInfo } from '@/lib/framer';
@@ -13,6 +13,7 @@ import {
   type MessageActions,
 } from '../ChatAgent/components/messageList/MessageActionsContext';
 import FilePanel, { type PanelTarget } from '../ChatAgent/components/FilePanel';
+import { PanelDivider } from '../ChatAgent/components/filePanel/PanelDivider';
 import { dirTarget, fileTarget, stampTarget, type ChartTabSpec } from '../ChatAgent/components/filePanel/types';
 import type { FileTab } from '../ChatAgent/components/filePanel/useFileTabs';
 import { handOffToggleFocus } from '../ChatAgent/components/filePanel/panelToggleFocus';
@@ -93,6 +94,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
   const { isLoggedIn, isInitialized: authInitialized } = useAuth();
   const isMobile = useIsMobile();
   const [rightPanelWidth, setRightPanelWidth] = useState(750);
+  const rightPanelId = useId();
   // What the panel has in front: a chart holds the divider at its floor.
   const [panelTabKind, setPanelTabKind] = useState<FileTab['kind'] | null>(null);
   // Expanded, the panel lies over the whole view, as it does in the owner's.
@@ -525,6 +527,11 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
     handleOpenFile(fileParam);
   }, [metadata, canBrowseFiles, handleOpenFile]);
 
+  const clampDividerWidth = useCallback((desired: number) => Math.max(
+    PANEL_MIN_WIDTH,
+    Math.min(Math.max(desired, panelMinWidth), window.innerWidth * panelMaxRatio),
+  ), [panelMinWidth, panelMaxRatio]);
+
   // Drag-to-resize file panel (matches ChatView)
   const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -536,8 +543,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
       if (!isDraggingRef.current) return;
       const delta = startX - moveEvent.clientX;
       // The floor goes in before the cap so a narrow window still wins.
-      const newWidth = Math.max(PANEL_MIN_WIDTH, Math.min(Math.max(startWidth + delta, panelMinWidth), window.innerWidth * panelMaxRatio));
-      setRightPanelWidth(newWidth);
+      setRightPanelWidth(clampDividerWidth(startWidth + delta));
     };
 
     const onMouseUp = () => teardown();
@@ -556,7 +562,7 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup', onMouseUp);
     dragCleanupRef.current = teardown;
-  }, [rightPanelWidth, panelMinWidth, panelMaxRatio]);
+  }, [rightPanelWidth, clampDividerWidth]);
 
   // One panel for both layouts; only its container differs by viewport.
   const filePanel = (
@@ -751,8 +757,16 @@ export default function SharedChatView({ shareToken, metadata }: SharedChatViewP
         </motion.div>
       ) : (
         <>
-          {!panelExpanded && <div className="chat-split-divider" onMouseDown={handleDividerMouseDown} />}
+          {!panelExpanded && <PanelDivider
+            className="chat-split-divider"
+            panelId={rightPanelId}
+            width={rightPanelWidth}
+            clampWidth={clampDividerWidth}
+            onWidthChange={setRightPanelWidth}
+            onMouseDown={handleDividerMouseDown}
+          />}
           <div
+            id={rightPanelId}
             className={panelExpanded ? 'absolute inset-0 z-10' : 'shrink-0'}
             style={panelExpanded ? undefined : { width: rightPanelWidth }}
           >

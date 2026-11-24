@@ -160,6 +160,11 @@ export function useRightPanel({
   // it back on the first pixel, so the ask is recorded rather than inferred
   // from the width.
   const panelMaxRatioRef = useRef<number | undefined>(undefined);
+  const clampDividerWidth = useCallback((desired: number) => clampPanelWidthUtil(
+    Math.max(desired, panelMinWidth),
+    containerRef.current?.offsetWidth || window.innerWidth,
+    panelMaxRatioRef.current,
+  ), [containerRef, panelMinWidth]);
   const applyPanelWidth = useCallback((desired: number, maxRatio?: number) => {
     panelMaxRatioRef.current = maxRatio;
     setRightPanelWidth(clampPanelWidthUtil(desired, containerRef.current?.offsetWidth || window.innerWidth, maxRatio));
@@ -780,6 +785,8 @@ export function useRightPanel({
     isDragging,
     dragJustEnded,
     handleDividerMouseDown,
+    clampDividerWidth,
+    setRightPanelWidth,
     popPanelHistory,
     handleOpenFileFromChat,
     handleOpenSourcesFromChat,

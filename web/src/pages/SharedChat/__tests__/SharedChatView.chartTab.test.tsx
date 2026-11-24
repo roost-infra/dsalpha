@@ -12,6 +12,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { CHART_SURFACE_MIN_WIDTH } from '@/pages/MarketView/components/chartSurfaceLayout';
 import type { MessageActions } from '../../ChatAgent/components/messageList/MessageActionsContext';
 
 let captured: MessageActions | null = null;
@@ -197,5 +199,35 @@ describe('SharedChatView chart cards', () => {
     await waitFor(() => expect(panelProps).not.toBeNull());
     expect(document.querySelector('.chat-split-divider')).not.toBeNull();
     expect(document.querySelector('.mobile-panel-overlay')).toBeNull();
+  });
+
+  it('resizes with the keyboard and uses the chart floor and desktop cap', async () => {
+    const user = userEvent.setup();
+    const actions = await mount();
+    act(() => actions.onOpenChart!({ symbol: 'NVDA' }));
+    await waitFor(() => expect(panelProps).not.toBeNull());
+    act(() => (panelProps!.onActiveTabKindChange as (kind: string) => void)('chart'));
+
+    const divider = screen.getByRole('separator', { name: 'Resize file panel' });
+    const panel = document.getElementById(divider.getAttribute('aria-controls')!);
+    const cap = window.innerWidth * 0.92;
+    const floor = Math.min(CHART_SURFACE_MIN_WIDTH, cap);
+    expect(divider).toHaveAttribute('tabindex', '0');
+    expect(divider).toHaveAttribute('aria-orientation', 'vertical');
+    expect(panel).toContainElement(screen.getByTestId('file-panel'));
+    divider.focus();
+    expect(divider).toHaveFocus();
+
+    await user.keyboard('{Home}');
+    expect(panel).toHaveStyle({ width: `${floor}px` });
+    expect(divider).toHaveAttribute('aria-valuenow', String(Math.round(floor)));
+    await user.keyboard('{ArrowLeft}');
+    expect(panel).toHaveStyle({ width: `${Math.min(floor + 24, cap)}px` });
+    await user.keyboard('{ArrowRight}');
+    expect(panel).toHaveStyle({ width: `${floor}px` });
+    await user.keyboard('{End}');
+    expect(panel).toHaveStyle({ width: `${cap}px` });
+    expect(divider).toHaveAttribute('aria-valuenow', String(Math.round(cap)));
+    expect(divider).toHaveFocus();
   });
 });
