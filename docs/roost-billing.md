@@ -16,7 +16,11 @@ The USD→credit rate and the sandbox markup are **console settings**, not local
 configuration: the server reads `fx.usd_to_credits` and `sandbox.markup_bps`
 from Roost Console at startup (`services/billing_rates.py`) and refreshes them
 every `BILLING_RATES_INTERVAL_SECONDS` (default 300). A changed setting reaches
-a running deployment without a deploy.
+a running deployment without a deploy. The sources tried, in order: the public
+`GET /v1/pricing/book` (fx + model spellings), `GET
+/internal/v1/pricing/book` (fx/markup), and the flat settings surface `GET
+/internal/v1/billing/settings` (`sandbox.markup_bps` / `fx.usd_to_credits`),
+then older alternate settings paths.
 
 `USD_TO_CREDITS_RATE` / `SANDBOX_MARKUP_BPS` are only the fallback for an OSS
 or console-less deployment, or one whose console has never answered. The old
@@ -45,7 +49,8 @@ payload is the console contract's:
   "model_usage": [{ "model": "claude-sonnet-5.5", "input": 150000,
                     "output": 2000, "cache_read": 0, "cache_write": 0,
                     "calls": 3 }],
-  "spent_usd": 0.0123
+  "spent_usd": 0.0123,
+  "surcharge_minor": 250
 }
 ```
 
@@ -58,9 +63,15 @@ instead of answering `unknown_model`.
 
 `spent_usd` is the transitional scalar fallback, compared against the console's
 `charged_credits` on every release; a model more than 5% off the book is logged
-and is what retires the fallback. `spent_credits` is still sent for a legacy
-quota service and ignored by the console. `byok=true` records the usage without
-debit.
+and is what retires the fallback. `byok=true` records the usage without debit.
+
+`surcharge_minor` (int64 minor, 1000 minor = 1 credit) carries **non-token**
+platform spend — tools and other metered infrastructure. It is deliberately not
+folded into `spent_usd`: the console prices the token side from `model_usage`,
+so a token-shaped scalar holding both either loses the infrastructure (the
+console ignores the legacy field) or double-charges the tokens.
+`spent_credits` is still sent for a legacy quota service (full figure: tokens +
+infrastructure) and ignored by the console.
 
 A release with no spend figure at all is **not** sent: releasing it would
 retire the whole reserved ceiling and give the turn away. The run is marked

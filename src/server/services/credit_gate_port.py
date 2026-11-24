@@ -32,7 +32,11 @@ from src.server.database.runs import billing_settlement as settlement_db
 from src.server.database.runs import credit_ledger
 from src.server.dependencies import usage_limits
 from src.server.services import billing_rates as console_rates
-from src.utils.tracking.model_usage import ReleaseSettlement, price_difference_ratio
+from src.utils.tracking.model_usage import (
+    ReleaseSettlement,
+    credits_to_minor,
+    price_difference_ratio,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +341,7 @@ class PlatformCreditGatePort:
             for entry in (settlement.model_usage if settlement else ())
         ]
         spent_usd = settlement.spent_usd if settlement else None
+        infra_credits = settlement.infra_credits if settlement else None
         has_model_usage = bool(model_usage)
         has_settlement = has_model_usage or spent_usd is not None
 
@@ -357,6 +362,16 @@ class PlatformCreditGatePort:
 
         if settlement is not None and settlement.byok:
             payload["byok"] = True
+        # Non-token platform spend (tools and other metered infrastructure) is
+        # its own field: Console prices the token side from model_usage, so a
+        # token-shaped scalar holding both would either be ignored (the legacy
+        # field) or double-charge the tokens. Sent whenever it is known, even
+        # on the in-flight fallback path, so infrastructure is never lost.
+        surcharge_minor = (
+            credits_to_minor(infra_credits) if infra_credits is not None else None
+        )
+        if surcharge_minor is not None and surcharge_minor > 0:
+            payload["surcharge_minor"] = surcharge_minor
 
         if has_settlement:
             if has_model_usage:
@@ -364,14 +379,18 @@ class PlatformCreditGatePort:
             if spent_usd is not None:
                 payload["spent_usd"] = round(float(spent_usd), 10)
             if in_flight is not None and in_flight > 0:
+                # Full legacy figure (tokens + infrastructure) for the old
+                # quota service. Console ignores it once model_usage /
+                # spent_usd carry the token side and surcharge_minor the rest.
                 payload["spent_credits"] = in_flight
             elif spent_usd is not None:
-                # The old-compatibility figure, from the same rate the
-                # heartbeat used. A model_usage turn has a Console price; this
-                # field only keeps a legacy quota service settling the same
-                # tokens until the fallback is retired.
+                # Rebuild the same full figure when the heartbeat is
+                # unreadable, so the legacy path is not silently short by the
+                # infrastructure part.
                 payload["spent_credits"] = round(
-                    float(spent_usd) * billing_rates.usd_to_credits_rate(), 6
+                    float(spent_usd) * billing_rates.usd_to_credits_rate()
+                    + float(infra_credits or 0.0),
+                    6,
                 )
         elif in_flight is None:
             await self._leave_pending(
@@ -456,6 +475,9 @@ class PlatformCreditGatePort:
         deadline = time.monotonic() + _RELEASE_BUDGET_SECONDS
         model_usage_sent = "model_usage" in payload
         spent_usd = payload.get("spent_usd")
+        # The priced comparison must include the non-token surcharge, or an
+        # infra-bearing turn always reads as a disagreement.
+        extra_credits = float(payload.get("surcharge_minor") or 0) / 1000.0
         for attempt in range(_RELEASE_ATTEMPTS):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -476,7 +498,11 @@ class PlatformCreditGatePort:
                 status = int(resp.status_code)
                 if 200 <= status < 300 or status in (404, 409):
                     await self._record_release(
-                        run_ref, resp, spent_usd, model_usage_sent
+                        run_ref,
+                        resp,
+                        spent_usd,
+                        model_usage_sent,
+                        extra_credits,
                     )
                     return "sent"
                 if status < 500 and status not in _RETRYABLE_RELEASE_4XX:
@@ -511,6 +537,7 @@ class PlatformCreditGatePort:
         response: Any,
         spent_usd: Any,
         model_usage_sent: bool,
+        extra_credits: Any = None,
     ) -> None:
         """Record what the console answered, and report a pricing disagreement.
 
@@ -539,6 +566,7 @@ class PlatformCreditGatePort:
             charged,
             spent_usd,
             billing_rates.usd_to_credits_rate(),
+            extra_credits=extra_credits,
         )
         if ratio is not None and ratio > 0.05:
             logger.warning(

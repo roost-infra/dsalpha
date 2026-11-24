@@ -325,3 +325,30 @@ async def test_a_missing_markup_keeps_the_last_published_one(monkeypatch):
     assert installed.usd_to_credits == 720
     assert installed.markup_bps == 13000
     assert installed.markup_source == cache.SOURCE_CONSOLE
+
+
+def test_the_billing_settings_route_is_tried_first():
+    assert rates.SETTINGS_PATHS[0] == "/internal/v1/billing/settings"
+
+
+@pytest.mark.asyncio
+async def test_flat_settings_can_supply_both_figures():
+    """Console's settings surface carries flat keys; it may be the only place
+    they are exposed, so fx must be read from it as well as from the book."""
+    client = FakeClient(
+        {
+            rates.BOOK_PATH: FakeResponse(404),
+            rates.INTERNAL_BOOK_PATH: FakeResponse(404),
+            "/internal/v1/billing/settings": FakeResponse(
+                200,
+                {"sandbox.markup_bps": 13000, "fx.usd_to_credits": 680},
+            ),
+        }
+    )
+    fetched = await rates.fetch_billing_rates(client=client)
+
+    assert fetched.usd_to_credits == 680
+    assert fetched.source == cache.SOURCE_CONSOLE
+    assert fetched.markup_bps == 13000
+    assert fetched.markup_source == cache.SOURCE_CONSOLE
+    assert "/internal/v1/billing/settings" in client.gets

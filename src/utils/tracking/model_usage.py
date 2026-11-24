@@ -31,6 +31,7 @@ is zero.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 
@@ -103,6 +104,12 @@ class ReleaseSettlement:
     not list). ``byok`` says the turn ran on the user's own key: Console records
     the usage but must not debit for it.
 
+    ``infra_credits`` is the non-token platform spend (tools and other metered
+    infrastructure). It is deliberately apart from ``spent_usd``: Console prices
+    the token side from ``model_usage``, so leaving infrastructure inside a
+    token-shaped field either loses it (the scalar fallback is ignored) or
+    double-charges it. The release carries it as ``surcharge_minor``.
+
     ``has_records`` distinguishes "no model calls at all" (settle nothing, or
     fall back to the ledger's in-flight figure) from "calls that priced to
     zero" — the difference matters because an empty ``model_usage`` must not be
@@ -114,6 +121,7 @@ class ReleaseSettlement:
     byok: bool = False
     has_records: bool = False
     call_count: int = 0
+    infra_credits: Optional[float] = None
 
 
 def aggregate_model_usage(
@@ -244,21 +252,43 @@ def merge_model_usage(
     return [models[name].as_dict() for name in sorted(models)]
 
 
+def credits_to_minor(credits: Any) -> Optional[int]:
+    """Credits as integer minor units (1000 minor = 1 credit), or None.
+
+    The console's ``surcharge_minor`` is int64 minor; a fractional credit is
+    rounded half away from zero at the minor boundary, matching the contract's
+    per-component rounding.
+    """
+    value = _number_float(credits)
+    if value is None:
+        return None
+    minor = (Decimal(str(value)) * Decimal(1000)).to_integral_value(
+        rounding=ROUND_HALF_UP
+    )
+    return max(int(minor), 0)
+
+
 def price_difference_ratio(
-    charged_credits: Any, spent_usd: Any, usd_to_credits: Any
+    charged_credits: Any,
+    spent_usd: Any,
+    usd_to_credits: Any,
+    extra_credits: Any = 0.0,
 ) -> Optional[float]:
     """How far a priced charge sits from the transitional USD estimate.
 
-    None when either side is unavailable. Expressed against the priced charge
-    (the figure that was actually debited), so a disagreement reads as a
-    percentage of the money, not of an estimate that may itself be wrong.
+    None when either side is unavailable. ``extra_credits`` is the non-token
+    spend (infrastructure) that the same release carried separately; without it
+    an infra-bearing turn always reads as a disagreement. Expressed against the
+    priced charge (the figure that was actually debited), so a disagreement
+    reads as a percentage of the money, not of an estimate that may itself be
+    wrong.
     """
     charged = _number_float(charged_credits)
     spent = _number_float(spent_usd)
     rate = _number_float(usd_to_credits)
     if charged is None or spent is None or rate is None:
         return None
-    estimate = spent * rate
+    estimate = spent * rate + (_number_float(extra_credits) or 0.0)
     return abs(charged - estimate) / max(abs(charged), 1.0)
 
 
@@ -283,5 +313,6 @@ __all__ = [
     "merge_model_usage",
     "model_usage_from_token_usage",
     "platform_usd_from_token_usage",
+    "credits_to_minor",
     "price_difference_ratio",
 ]

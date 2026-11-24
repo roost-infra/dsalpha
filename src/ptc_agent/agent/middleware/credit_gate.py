@@ -523,9 +523,18 @@ class CreditGateState(_GateLoop):
         twice. ``byok`` on the returned settlement is true only when the lane
         made calls and none of them used the platform key.
         """
+        infra = self.infra_credits()
         records = self._records()
         if not records:
-            return ReleaseSettlement(byok=self.lease.is_byok)
+            # A live tracker with no records read the token spend as a real
+            # zero; one that is absent leaves it unknown and the port falls
+            # back to the ledger. Infrastructure is reported either way: tools
+            # are platform spend even when no model call was metered here.
+            return ReleaseSettlement(
+                byok=self.lease.is_byok,
+                spent_usd=self.platform_usd(),
+                infra_credits=infra,
+            )
         try:
             model_usage = aggregate_model_usage(records)
         except Exception:
@@ -535,7 +544,9 @@ class CreditGateState(_GateLoop):
                 self.run_ref,
                 exc_info=True,
             )
-            return ReleaseSettlement(byok=self.lease.is_byok)
+            return ReleaseSettlement(
+                byok=self.lease.is_byok, infra_credits=infra
+            )
         platform_calls = any(
             record.get("billing_type", "platform") == "platform"
             for record in records
@@ -546,7 +557,44 @@ class CreditGateState(_GateLoop):
             byok=not platform_calls,
             has_records=True,
             call_count=len(records),
+            infra_credits=infra,
         )
+
+    def infra_credits(self) -> Optional[float]:
+        """This lane's metered infrastructure credits, or None when unreadable.
+
+        Non-token platform spend has to travel as its own field: Console prices
+        the token side from ``model_usage``, and a token-shaped scalar that also
+        holds infrastructure either loses it (the console ignores the legacy
+        field) or double-charges it. None rather than 0.0 on a read failure —
+        the release then omits the surcharge instead of claiming nothing was
+        used.
+        """
+        if self.tool_tracker is None:
+            return 0.0
+        try:
+            usage = self.tool_tracker.get_summary()
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not read tool usage for %s %s",
+                self.kind,
+                self.run_ref,
+                exc_info=True,
+            )
+            return None
+        if not usage:
+            return 0.0
+        try:
+            total = calculate_infrastructure_credits(usage).get("total_credits")
+            return float(total or 0.0)
+        except Exception:
+            logger.warning(
+                "[CreditGate] could not price infrastructure for %s %s",
+                self.kind,
+                self.run_ref,
+                exc_info=True,
+            )
+            return None
 
     def platform_usd(self) -> Optional[float]:
         """The lane tracker's platform USD total, or None when unreadable.

@@ -45,6 +45,7 @@ from src.server.database import session_lock
 from src.server.database.runs import billing_settlement as settlement_db
 from src.server.dependencies import usage_limits
 from src.utils.tracking.model_usage import (
+    credits_to_minor,
     model_usage_from_token_usage,
     platform_usd_from_token_usage,
 )
@@ -140,6 +141,12 @@ def build_release_payload(row: Mapping[str, Any]) -> dict[str, Any]:
         payload["spent_usd"] = round(spent_usd, 10)
     if row.get("is_byok"):
         payload["byok"] = True
+    # Non-token platform spend, apart from the token payload: Console prices
+    # the tokens from model_usage and adds this. Leaving it inside the legacy
+    # scalar loses it (the console ignores spent_credits).
+    surcharge_minor = credits_to_minor(row.get("infrastructure_credits"))
+    if surcharge_minor is not None and surcharge_minor > 0:
+        payload["surcharge_minor"] = surcharge_minor
     # Transitional legacy field: the old quota service settles from it, and the
     # console ignores it. Carries the run's full credits (tokens + infra) so
     # that path is unchanged.
@@ -171,7 +178,12 @@ def _response_body(response: Any) -> Mapping[str, Any]:
     return body if isinstance(body, Mapping) else {}
 
 
-def _log_price_difference(run_id: str, response: Any, spent_usd: Optional[float]) -> None:
+def _log_price_difference(
+    run_id: str,
+    response: Any,
+    spent_usd: Optional[float],
+    infrastructure_credits: Any = None,
+) -> None:
     """Report a priced charge that disagrees with the transitional estimate."""
     body = _response_body(response)
     charged = _charged_credits(response)
@@ -184,7 +196,9 @@ def _log_price_difference(run_id: str, response: Any, spent_usd: Optional[float]
         )
     if charged is None or spent_usd is None:
         return
-    estimate = spent_usd * rates_cache.usd_to_credits_rate()
+    estimate = spent_usd * rates_cache.usd_to_credits_rate() + float(
+        infrastructure_credits or 0.0
+    )
     denominator = max(abs(charged), 1.0)
     ratio = abs(charged - estimate) / denominator
     if ratio > _DIFF_REPORT_RATIO:
@@ -229,8 +243,12 @@ async def settle_pending_run(
         return ReleaseOutcome(run_id, "failed", error=message)
 
     payload = build_release_payload(row)
-    if "model_usage" not in payload and "spent_usd" not in payload:
-        message = "usage row carries neither model_usage nor spent_usd"
+    if (
+        "model_usage" not in payload
+        and "spent_usd" not in payload
+        and "surcharge_minor" not in payload
+    ):
+        message = "usage row carries neither model_usage nor spent_usd nor surcharge"
         await settlement_db.mark_settled(run_id, detail=message)
         logger.error(
             "[Billing] pending run %s has no settleable spend figure; leaving "
@@ -250,7 +268,12 @@ async def settle_pending_run(
     status = int(getattr(response, "status_code", 0))
     if 200 <= status < 300:
         charged = _charged_credits(response)
-        _log_price_difference(run_id, response, platform_usd_from_token_usage(row.get("token_usage") or {}))
+        _log_price_difference(
+            run_id,
+            response,
+            platform_usd_from_token_usage(row.get("token_usage") or {}),
+            row.get("infrastructure_credits"),
+        )
         await settlement_db.mark_settled(
             run_id, charged_credits=charged, detail="settled"
         )

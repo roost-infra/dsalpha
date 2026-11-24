@@ -875,3 +875,45 @@ async def test_a_byok_turn_reports_no_platform_token_usage():
     settlement = gate.port.settlements[-1]
     assert settlement.byok is True
     assert settlement.model_usage == []
+
+
+@pytest.mark.asyncio
+async def test_the_settlement_carries_infrastructure_apart_from_tokens():
+    """Infrastructure is platform spend but not a token: the console prices the
+    tokens from model_usage, so the tool component has to travel in its own
+    field or it is lost with the legacy scalar."""
+    gate = await make_gate(
+        tracker=FakeTracker(usd=1.0, records=[call("m", input_tokens=10)]),
+        tool_tracker=FakeToolTracker({"TavilySearchTool": 3}),
+    )
+    await gate.aclose()
+
+    settlement = gate.port.settlements[-1]
+    assert settlement.infra_credits is not None
+    assert settlement.infra_credits > 0
+    assert settlement.model_usage and settlement.spent_usd is not None
+
+
+@pytest.mark.asyncio
+async def test_infrastructure_is_reported_even_with_no_model_records():
+    """A turn whose tracker saw no calls still owes for tools; the settlement
+    must not read as "nothing spent"."""
+    tracker = FakeTracker(usd=0.0)
+    tools = FakeToolTracker({"TavilySearchTool": 2})
+    gate = await make_gate(tracker=tracker, tool_tracker=tools)
+    await gate.aclose()
+
+    settlement = gate.port.settlements[-1]
+    assert settlement.model_usage == []
+    assert settlement.spent_usd == 0.0, "a live tracker's token spend is a real zero"
+    assert settlement.infra_credits and settlement.infra_credits > 0
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_tool_meter_omits_the_surcharge():
+    tools = FakeToolTracker({"TavilySearchTool": 2})
+    tools.boom = True
+    gate = await make_gate(tracker=FakeTracker(), tool_tracker=tools)
+    await gate.aclose()
+
+    assert gate.port.settlements[-1].infra_credits is None

@@ -48,7 +48,14 @@ INTERNAL_BOOK_PATH = "/internal/v1/pricing/book"
 # Settings surfaces a console may expose for the values that are not part of
 # the public book. Tried in order; a 404 simply falls through to the env
 # fallback, which is a documented state rather than an error.
-SETTINGS_PATHS = ("/internal/v1/settings", "/internal/v1/pricing/settings")
+SETTINGS_PATHS = (
+    # What the console publishes as its billing settings surface: flat
+    # ``sandbox.markup_bps`` / ``fx.usd_to_credits`` keys.
+    "/internal/v1/billing/settings",
+    # Older/alternate spellings a compatible console may expose instead.
+    "/internal/v1/settings",
+    "/internal/v1/pricing/settings",
+)
 
 # Log the missing-markup fact once per process. A console that predates the
 # settings surface answers every refresh the same way; one warning is the
@@ -237,6 +244,12 @@ async def fetch_billing_rates(*, client: Any = None) -> BillingRates:
     if markup is None:
         for path in SETTINGS_PATHS:
             settings = await _get_json(http, path, client_signed=True)
+            if settings is None:
+                continue
+            # The settings surface publishes both figures as flat keys; a
+            # console may expose fx only here (the public book may not be up
+            # yet), so read it from whatever answers first.
+            fx = fx or fx_from_book(settings)
             markup = markup_bps_from_body(settings)
             if markup is not None:
                 markup_source = rates_cache.SOURCE_CONSOLE

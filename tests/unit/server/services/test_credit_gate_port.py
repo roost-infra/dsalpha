@@ -650,13 +650,19 @@ async def test_a_successful_release_records_the_console_charge(
 
 
 @pytest.mark.asyncio
-async def test_a_fallback_answer_is_reported(client, caplog):
+async def test_a_fallback_answer_is_reported_and_still_settles(
+    client, settlement_db, caplog
+):
+    """Console's ``fallback: true`` says a model missed the book and the scalar
+    priced the turn. The charge is still real, so the run records it."""
     client.responses = [
         FakeResponse(200, {"released": True, "fallback": True, "charged_credits": 9})
     ]
     with caplog.at_level("WARNING"):
         await PlatformCreditGatePort().release("u", "run-1", 1, _settlement())
     assert "fell back to the scalar" in caplog.text
+    assert settlement_db["settled"] == [("run-1", 9)]
+    assert settlement_db["pending"] == []
 
 
 @pytest.mark.asyncio
@@ -695,3 +701,75 @@ async def test_a_refusal_nothing_can_change_leaves_the_queue(client, settlement_
 
     assert settlement_db["pending"] == []
     assert settlement_db["settled"]
+
+
+# -- the non-token surcharge ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_infrastructure_travels_as_surcharge_minor(client, settlement_db):
+    """Console prices tokens from model_usage; infrastructure inside the legacy
+    scalar would be ignored. It has its own int64 minor field."""
+    await PlatformCreditGatePort().release(
+        "u", "run-1", 1, _settlement(infra_credits=0.25)
+    )
+
+    payload = client.posts[0][1]
+    assert payload["surcharge_minor"] == 250
+    assert isinstance(payload["surcharge_minor"], int)
+    # The legacy field is rebuilt as the full figure (tokens + infra) so an old
+    # quota service is not short the infrastructure part.
+    from src.config.billing_rates import usd_to_credits_rate
+
+    assert payload["spent_credits"] == pytest.approx(
+        0.0123 * usd_to_credits_rate() + 0.25
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_infra_only_turn_still_reports_its_surcharge(
+    client, settlement_db
+):
+    from src.utils.tracking.model_usage import ReleaseSettlement
+
+    await PlatformCreditGatePort().release(
+        "u",
+        "run-1",
+        1,
+        ReleaseSettlement(spent_usd=0.0, infra_credits=0.75),
+    )
+
+    payload = client.posts[0][1]
+    assert payload["surcharge_minor"] == 750
+    assert payload["spent_usd"] == 0.0
+    assert "model_usage" not in payload
+
+
+@pytest.mark.asyncio
+async def test_zero_infrastructure_adds_no_surcharge(client, settlement_db):
+    await PlatformCreditGatePort().release(
+        "u", "run-1", 1, _settlement(infra_credits=0.0)
+    )
+    assert "surcharge_minor" not in client.posts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_the_surcharge_counts_in_the_priced_comparison(
+    client, settlement_db, caplog
+):
+    """An infra-bearing turn must not read as a pricing disagreement: the
+    estimate it is compared with includes the surcharge."""
+    from src.config.billing_rates import usd_to_credits_rate
+
+    # 0.0123 USD × 720 + 0.25 credits of infrastructure ≈ 9.1 credits.
+    expected = int(round(0.0123 * usd_to_credits_rate() + 0.25))
+    client.responses = [
+        FakeResponse(200, {"released": True, "charged_credits": expected})
+    ]
+    with caplog.at_level("WARNING"):
+        await PlatformCreditGatePort().release(
+            "u", "run-1", 1, _settlement(infra_credits=0.25)
+        )
+
+    assert "off the spent_usd estimate" not in caplog.text
+    assert settlement_db["settled"] == [("run-1", expected)]

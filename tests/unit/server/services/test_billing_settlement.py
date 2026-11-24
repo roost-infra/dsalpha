@@ -233,7 +233,7 @@ async def test_a_run_with_no_spend_figure_leaves_the_queue_with_a_reason(marks):
 
     assert outcome.status == "failed"
     assert client.posts == []
-    assert "neither model_usage nor spent_usd" in marks["settled"][0][2]
+    assert "neither model_usage nor spent_usd nor surcharge" in marks["settled"][0][2]
 
 
 @pytest.mark.asyncio
@@ -301,3 +301,65 @@ async def test_the_sweep_is_skipped_without_a_console_url(monkeypatch):
     monkeypatch.setattr(worker, "AUTH_SERVICE_URL", "")
     result = await worker.settle_pending_runs(client=FakeClient())
     assert result.listed == 0
+
+
+# -- the non-token surcharge ------------------------------------------------
+
+
+def test_the_payload_splits_infrastructure_into_surcharge_minor():
+    payload = worker.build_release_payload(row(infrastructure_credits=0.25))
+    assert payload["surcharge_minor"] == 250
+    assert isinstance(payload["surcharge_minor"], int)
+    # The legacy compatibility field still carries the full figure.
+    assert payload["spent_credits"] == 9.5
+
+
+def test_zero_infrastructure_adds_no_surcharge():
+    payload = worker.build_release_payload(row(infrastructure_credits=0.0))
+    assert "surcharge_minor" not in payload
+
+
+@pytest.mark.asyncio
+async def test_an_infra_only_usage_row_settles_by_its_surcharge(marks):
+    """A run whose row has only infrastructure spend is billable, and used to
+    be dropped as "no spend figure"."""
+    client = FakeClient([FakeResponse(200, {"charged_credits": 1})])
+    outcome = await worker.settle_pending_run(
+        row(
+            token_usage={},
+            total_credits=0.4,
+            token_credits=0.0,
+            infrastructure_credits=0.4,
+        ),
+        client=client,
+    )
+
+    assert outcome.status == "settled"
+    assert client.posts[0]["surcharge_minor"] == 400
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_answer_is_reported_and_still_settles(marks, caplog):
+    client = FakeClient(
+        [FakeResponse(200, {"charged_credits": 9, "fallback": True})]
+    )
+    with caplog.at_level("WARNING"):
+        outcome = await worker.settle_pending_run(row(), client=client)
+
+    assert outcome.status == "settled"
+    assert "fell back to the spent_usd path" in caplog.text
+    assert marks["settled"] and marks["settled"][0][1] == 9
+
+
+@pytest.mark.asyncio
+async def test_the_surcharge_counts_in_the_worker_comparison(marks, caplog):
+    from src.config.billing_rates import usd_to_credits_rate
+
+    expected = int(round(0.0123 * usd_to_credits_rate() + 0.25))
+    client = FakeClient([FakeResponse(200, {"charged_credits": expected})])
+    with caplog.at_level("WARNING"):
+        await worker.settle_pending_run(
+            row(infrastructure_credits=0.25), client=client
+        )
+
+    assert "off the spent_usd estimate" not in caplog.text

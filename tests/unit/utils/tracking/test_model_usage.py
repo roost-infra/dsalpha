@@ -261,3 +261,42 @@ def test_price_difference_ratio_needs_both_figures(charged, spent, rate):
 def test_price_difference_ratio_is_against_the_charged_figure():
     assert price_difference_ratio(100, 1.0, 110) == pytest.approx(0.1)
     assert price_difference_ratio(0, 0.0, 720) == 0.0
+
+
+# -- minor conversion and the priced comparison ----------------------------
+
+
+@pytest.mark.parametrize(
+    "credits, expected",
+    [
+        (0, 0),
+        (0.001, 1),
+        (0.0004, 0),
+        (0.5, 500),
+        (1, 1000),
+        (1.2345, 1235),
+        (None, None),
+        (-2, 0),
+        ("nan", None),
+        (True, None),
+    ],
+)
+def test_credits_convert_to_integer_minor(credits, expected):
+    from src.utils.tracking.model_usage import credits_to_minor
+
+    assert credits_to_minor(credits) == expected
+
+
+def test_the_surcharge_is_part_of_the_estimate_it_is_compared_with():
+    from src.utils.tracking.model_usage import credits_to_minor
+
+    # token estimate 1.0 USD × 720 = 720 credits; 280 credits of infrastructure
+    # makes 1000 — matching the console's charge, so no disagreement.
+    assert price_difference_ratio(1000, 1.0, 720, extra_credits=280) == 0.0
+    assert credits_to_minor(280) == 280_000
+
+
+def test_a_settlement_with_only_infrastructure_is_still_a_settlement():
+    settlement = ReleaseSettlement(spent_usd=0.0, infra_credits=0.25)
+    assert settlement.has_records is False
+    assert settlement.infra_credits == 0.25
