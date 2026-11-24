@@ -515,6 +515,29 @@ def _derive_codex_affinity(cache_key: str) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"codex-session:{cache_key}"))
 
 
+def _session_affinity_headers(cache_key: str) -> dict[str, str]:
+    """Headers the relay reads to attribute a request to a session.
+
+    ``session-id`` is one of the standard carriers codex-rs/opencode already
+    send; the Roost relay forwards it upstream and derives the analytics
+    session from it without requiring a proprietary header.
+    """
+    if not cache_key:
+        return {}
+    return {"session-id": _derive_codex_affinity(cache_key)}
+
+
+def _anthropic_metadata(cache_key: str) -> dict[str, str]:
+    """Anthropic ``metadata.user_id`` carrying the session marker.
+
+    The relay parses the ``..._session_<uuid>`` suffix (Claude Code's format)
+    and uses it as the session id for usage analytics/cache affinity.
+    """
+    if not cache_key:
+        return {}
+    return {"user_id": f"roost_session_{_derive_codex_affinity(cache_key)}"}
+
+
 def _client_service_tier(client) -> str | None:
     """The service tier the built client will actually send, if any.
 
@@ -854,6 +877,14 @@ class LLM:
                 session_header: _derive_codex_affinity(cache_key) if cache_key else str(uuid.uuid4()),
             }
 
+        if cache_key:
+            headers = dict(getattr(self, "default_headers", None) or {})
+            present = {k.lower() for k in headers}
+            for name, value in _session_affinity_headers(cache_key).items():
+                if name.lower() not in present:
+                    headers[name] = value
+            self.default_headers = headers
+
         effective_cache_key: str | None = None
         if cache_key and (
             self.sdk == "codex"
@@ -868,7 +899,7 @@ class LLM:
         elif self.sdk == "dashscope":
             client = self._get_dashscope_llm(cache_key=effective_cache_key)
         elif self.sdk == "deepseek":
-            client = self._get_deepseek_llm()
+            client = self._get_deepseek_llm(cache_key=cache_key)
         elif self.sdk == "openrouter":
             client = self._get_openrouter_llm()
         elif self.sdk == "glm":
@@ -876,7 +907,7 @@ class LLM:
         elif self.sdk == "qwq":
             client = self._get_qwq_llm()
         elif self.sdk == "anthropic":
-            client = self._get_anthropic_llm()
+            client = self._get_anthropic_llm(cache_key=cache_key)
         elif self.sdk == "gemini":
             client = self._get_gemini_llm()
         elif self.sdk == claude_code.SDK:
@@ -1171,7 +1202,7 @@ class LLM:
         self._hold_params_to_egress(params, "openai")
         return ChatCodexOpenAI(**params)
 
-    def _get_deepseek_llm(self):
+    def _get_deepseek_llm(self, cache_key: str | None = None):
         """Get DeepSeek or DeepSeek-compatible LLM."""
         params = {
             "model": self.model,
@@ -1268,7 +1299,7 @@ class LLM:
         self._hold_params_to_egress(params, "openai")
         return ChatQwen(**params)
 
-    def _get_anthropic_llm(self):
+    def _get_anthropic_llm(self, cache_key: str | None = None):
         """Get Anthropic LLM."""
         from langchain_anthropic import ChatAnthropic
         from src.llms.extension import ChatAnthropicOAuth
@@ -1305,6 +1336,8 @@ class LLM:
         merged_headers = _merged_default_headers(params, self.default_headers)
         if merged_headers:
             params["default_headers"] = merged_headers
+        if cache_key:
+            params["metadata"] = {**(params.get("metadata") or {}), **_anthropic_metadata(cache_key)}
 
         # Pass extra_body via model_kwargs so ChatAnthropic's Pydantic validator
         # doesn't warn about an unknown field (extra_body isn't a declared field).
