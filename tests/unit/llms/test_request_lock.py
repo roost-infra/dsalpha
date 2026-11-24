@@ -40,7 +40,10 @@ LOCK_PATH = Path(__file__).with_name("request_lock.json")
 MANIFEST = Path(__file__).resolve().parents[3] / "src" / "llms" / "manifest" / "models.json"
 #: Credentials, and headers that name the machine's Python or SDK build or the decoders it has installed.
 _DROPPED_HEADERS = ("authorization", "x-api-key", "api-key", "x-goog-api-key", "x-goog-api-client", "user-agent",
-                    "content-length", "accept-encoding", "x-stainless-")
+                    "content-length", "accept-encoding", "x-stainless-",
+                    # Per-request and secret: the relay session id changes for every run, and the
+                    # internal token must never enter a committed lock.
+                    "x-roost-session", "x-roost-internal-token")
 #: Query parameters that carry a credential.
 _CREDENTIAL_PARAMS = ("key", "api_key", "apikey", "access_token")
 #: Endpoint overrides the provider SDKs and ``src/llms`` read from the environment; a capture
