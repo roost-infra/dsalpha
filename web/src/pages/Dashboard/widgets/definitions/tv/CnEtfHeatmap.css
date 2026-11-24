@@ -1,0 +1,133 @@
+/* A-share ETF treemap. The board fills the widget; each row is one ETF family
+   and each cell's width follows its turnover, so the layout still reads as a
+   heatmap rather than a table. */
+
+.cn-etf {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  gap: 8px;
+  background: var(--color-bg-page);
+  color: var(--color-text-primary);
+}
+
+.cn-etf-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  font-size: 11px;
+}
+
+.cn-etf-title {
+  font-weight: 600;
+}
+
+.cn-etf-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+}
+
+.cn-etf-swatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+
+.cn-etf-swatch--up { background: #c84a4a; }
+.cn-etf-swatch--down { background: #2f9664; }
+
+.cn-etf-loader { flex: none; }
+
+.cn-etf-board {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 6px;
+}
+
+.cn-etf-row {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 4px;
+}
+
+.cn-etf-row-label {
+  position: absolute;
+  z-index: 1;
+  top: 3px;
+  left: 5px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-bg-page) 72%, transparent);
+  color: var(--color-text-tertiary);
+  font-size: 9px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+.cn-etf-cells {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cn-etf-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-bg-tag) 65%, transparent);
+  color: #fff;
+  line-height: 1.15;
+}
+
+.cn-etf-cell.is-up {
+  background: rgba(200, 74, 74, var(--cn-strength, 0.5));
+}
+
+.cn-etf-cell.is-down {
+  background: rgba(47, 150, 100, var(--cn-strength, 0.5));
+}
+
+.cn-etf-cell.is-flat {
+  background: var(--color-bg-tag);
+  color: var(--color-text-secondary);
+}
+
+.cn-etf-name {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cn-etf-pct {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .cn-etf { padding: 6px; gap: 5px; }
+  .cn-etf-legend { display: none; }
+  .cn-etf-name { font-size: 9px; }
+  .cn-etf-pct { font-size: 8px; }
+}
