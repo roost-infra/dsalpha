@@ -259,6 +259,10 @@ async def test_a_read_leaves_gzip_and_any_cdn_its_body_and_strong_etag(client, t
         ("/api/v1/livefs/read", True),
         ("/api/v1/livefs/list", True),
         ("/api/v1/workspaces/w/files/download", True),
+        # The replay stream is compressed by the gateway already; a second pass
+        # here costs a worker's CPU and, worse, puts a compressor's buffering in
+        # front of events that are meant to arrive as they are built.
+        ("/api/v1/threads/t/messages/replay", True),
         ("/api/v1/livefsx/read", False),
         ("/api/v1/threads", False),
     ],

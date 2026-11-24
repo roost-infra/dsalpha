@@ -1301,8 +1301,18 @@ def _gzip_exempt(path: str) -> bool:
     next save is checked against. A CDN in front of the server (Cloudflare
     for one) asks for gzip whatever its client asked, and decompressing for
     the daemon, which asks for no encoding, weakens or drops that tag.
+
+    Replay must not acquire an application compression buffer between its
+    assembled transcript and its trailing snapshot read. Recent Starlette
+    versions already exclude text/event-stream; the explicit exemption keeps
+    that property independent of the middleware version. It does not make
+    projection incremental, nor imply that nginx recompresses a gzip response.
     """
-    return path.endswith("/files/download") or path.startswith(f"{LIVEFS_PREFIX}/")
+    return (
+        path.endswith("/files/download")
+        or path.startswith(f"{LIVEFS_PREFIX}/")
+        or path.endswith("/messages/replay")
+    )
 
 
 class _SelectiveGZip(GZipMiddleware):

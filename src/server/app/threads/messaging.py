@@ -1207,6 +1207,11 @@ async def replay_thread_messages(
             headers={
                 "Cache-Control": "no-cache",
                 "X-Replay-Source": resolved_source,
+                # Do not hold the assembled transcript behind the trailing
+                # snapshot read at the proxy. Projection and finish_lines above
+                # still complete before headers: this is transport streaming,
+                # not incremental checkpoint projection.
+                "X-Accel-Buffering": "no",
             },
         )
 
