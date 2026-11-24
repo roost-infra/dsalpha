@@ -106,6 +106,10 @@ function pluginClause(
 
 function summaryParts(t: TFunction, section: Section, data: ShellData): SummaryLine | null {
   switch (section) {
+    // The managed apps have no problem state to summarise, and their own
+    // toolbar already counts what is connected.
+    case 'apps':
+      return null;
     case 'pages':
       return null;
     case 'plugins': {

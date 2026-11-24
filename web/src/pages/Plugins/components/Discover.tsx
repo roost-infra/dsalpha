@@ -14,6 +14,7 @@ import {
 } from '@/pages/ChatAgent/utils/api';
 import { useDetailParam } from '../hooks/useDetailParam';
 import { VIEW_PARAM } from '../utils/detailParam';
+import { pageForSection } from '../utils/routes';
 import {
   addsConnector,
   categoryCounts,
@@ -80,14 +81,18 @@ export function Discover({ scope = 'plugins' }: { scope?: DiscoverScope }) {
     data !== undefined,
   );
   const detailOpen = !!pluginDetail.target || !!catalogDetail.target;
-  // A sign-in started here comes back to this same view. An install that
-  // does not happen opens the entry's page, which says why beside Install.
-  const install = useCatalogInstall(`/plugins?tab=${SCOPE_TAB[scope]}&${VIEW_PARAM}=discover`, {
-    onFailed: (name) => {
-      if (catalogDetail.target?.name !== name) catalogDetail.open(name);
+  // A sign-in started here comes back to this same view, on whichever page
+  // hosts the section. An install that does not happen opens the entry's page,
+  // which says why beside Install.
+  const install = useCatalogInstall(
+    `${pageForSection(SCOPE_TAB[scope])}?tab=${SCOPE_TAB[scope]}&${VIEW_PARAM}=discover`,
+    {
+      onFailed: (name) => {
+        if (catalogDetail.target?.name !== name) catalogDetail.open(name);
+      },
+      onOpenPlugin: (name) => pluginDetail.open(name),
     },
-    onOpenPlugin: (name) => pluginDetail.open(name),
-  });
+  );
   // The order the catalog first showed in, held for this visit: a card that
   // is installed here stays where the user found it rather than jumping to
   // the end under their cursor. Installed entries sink on the next visit.

@@ -14,7 +14,7 @@ vi.mock('@/pages/ChatAgent/utils/api/marketplace', () => ({
 
 // The page shell is under test here; each section's own list is not.
 vi.mock('../components/shell/useShellData', () => ({ useShellData: () => ({}) }));
-vi.mock('../components/shell/PluginsRail', () => ({ PluginsRail: () => null }));
+vi.mock('../components/shell/SectionRail', () => ({ SectionRail: () => null }));
 vi.mock('../components/shell/YoursSummary', () => ({ YoursSummary: () => null }));
 vi.mock('../components/WorkspacesLoadNote', () => ({ WorkspacesLoadNote: () => null }));
 vi.mock('../components/PluginsList', () => ({ PluginsList: () => <p>your plugins</p> }));
@@ -87,19 +87,38 @@ describe('the Plugins page on a server with no plugin catalog', () => {
   });
 
   // A way in shown while the listing loads would be taken away on a server
-  // without one, so it waits, and appears once the catalog is there.
+  // without one, so it waits, and appears once the catalog is there. Run on
+  // the connectors section, which this page no longer hosts — see the fallback
+  // case below — is not what this pins.
   it('holds the switch back until the server says it has a catalog', async () => {
     let answer: (value: MarketplaceResponse) => void = () => {};
     vi.mocked(getMarketplace).mockReturnValue(new Promise((resolve) => (answer = resolve)));
-    renderPage('/plugins?tab=mcp');
+    renderPage('/plugins?tab=plugins');
 
-    expect(screen.getByText('your connectors')).toBeInTheDocument();
+    expect(screen.getByText('your plugins')).toBeInTheDocument();
     expect(viewSwitch()).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Browse catalog' })).not.toBeInTheDocument();
 
     answer(listing(true));
     expect(await screen.findByRole('button', { name: 'Discover' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Browse catalog' })).toBeInTheDocument();
+  });
+
+  // The connectors section moved to /apps, so this page must not answer a
+  // stray `?tab=mcp` with a blank column: it falls back to its own default,
+  // the same as any other tab it does not host. The app shell redirects the
+  // real deep links; this is the defence for one that gets here anyway.
+  it('falls back to its default section for a tab it does not host', async () => {
+    vi.mocked(getMarketplace).mockResolvedValue(listing(false));
+    const { answered } = renderPage('/plugins?tab=mcp');
+    await answered();
+
+    expect(await screen.findByText('your plugins')).toBeInTheDocument();
+    expect(screen.queryByText('your connectors')).not.toBeInTheDocument();
+    // The address keeps the tab the user arrived with; only the section shown
+    // falls back. Rewriting it would need a state mirror this page does not
+    // have, and the redirect is what fixes a real link.
+    await waitFor(() => expect(address().get('tab')).toBe('mcp'));
   });
 
   it('keeps the way into a catalog that is set but cannot be read, where Discover offers the retry', async () => {
@@ -111,14 +130,14 @@ describe('the Plugins page on a server with no plugin catalog', () => {
 
   it("opens a link into Discover as the section's own list, and moves the address there", async () => {
     vi.mocked(getMarketplace).mockResolvedValue(listing(false));
-    const { answered } = renderPage('/plugins?tab=mcp&view=discover&q=fmp&detail=catalog:fmp');
+    const { answered } = renderPage('/plugins?tab=plugins&view=discover&q=fmp&detail=catalog:fmp');
     await answered();
 
-    expect(await screen.findByText('your connectors')).toBeInTheDocument();
+    expect(await screen.findByText('your plugins')).toBeInTheDocument();
     expect(screen.queryByText('the catalog')).not.toBeInTheDocument();
     await waitFor(() => expect(address().has('view')).toBe(false));
     // The search stays; the catalog entry, which only Discover has, does not.
-    expect(address().get('tab')).toBe('mcp');
+    expect(address().get('tab')).toBe('plugins');
     expect(address().get('q')).toBe('fmp');
     expect(address().has('detail')).toBe(false);
   });

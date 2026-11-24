@@ -7,6 +7,7 @@ import { useCatalogOn } from '../hooks/useCatalogOn';
 import { useSectionNav } from '../hooks/useSectionNav';
 import type { AddIntent } from '../utils/addParam';
 import { inScope, SCOPE_TAB, type DiscoverScope } from '../utils/marketplace';
+import { pageForSection } from '../utils/routes';
 import { DiscoverCard } from './DiscoverCard';
 import { CatalogInstallDialogs, InstallNotice, useCatalogInstall } from './discover/useCatalogInstall';
 import { ADD_ROUTES, type InstallSection } from './shell/sections';
@@ -58,11 +59,15 @@ export function CatalogStart({
   const { data } = useMarketplace();
   const catalogOn = useCatalogOn();
   const { data: pluginList } = usePlugins();
-  // A sign-in an install starts here comes back to this same section. The
-  // report's way forward is the installed plugin's page.
-  const install = useCatalogInstall(`/plugins?tab=${SCOPE_TAB[scope]}`, {
-    onOpenPlugin: (name) => openDetail({ kind: 'plugin', name }),
-  });
+  // A sign-in an install starts here comes back to this same section, on
+  // whichever page hosts it (the connectors live on `/apps`). The report's way
+  // forward is the installed plugin's page.
+  const install = useCatalogInstall(
+    `${pageForSection(SCOPE_TAB[scope])}?tab=${SCOPE_TAB[scope]}`,
+    {
+      onOpenPlugin: (name) => openDetail({ kind: 'plugin', name }),
+    },
+  );
 
   // Chosen once: an entry installed from here stays, now with its check,
   // rather than the row reshuffling under the pointer.

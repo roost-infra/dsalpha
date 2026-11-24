@@ -1,5 +1,6 @@
-import { useSearchParams } from 'react-router';
-import { readSection } from '../components/shell/sections';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
+import { readSection, shellFor } from '../components/shell/sections';
+import { pageForSection } from '../utils/routes';
 import { SCOPE_TAB, type DiscoverScope } from '../utils/marketplace';
 import {
   DETAIL_KIND_TAB,
@@ -13,7 +14,7 @@ import {
 type Ref = { kind: DetailKind; name: string; workspaceId?: string | null };
 
 /**
- * Every way one place on the Plugins page opens another, so each link keeps
+ * Every way one place on a container page opens another, so each link keeps
  * the same params.
  *
  * The section moves with the detail, and a move to another section leaves the
@@ -21,20 +22,28 @@ type Ref = { kind: DetailKind; name: string; workspaceId?: string | null };
  * rows, and carried along it filters the other section's list by them, often
  * to nothing. Pushed, like every overlay open, so Back returns to where the
  * link was.
+ *
+ * Which sections exist depends on the page — `/apps` hosts the connectors but
+ * not the plugins, and `/plugins` the other way round — so a link whose section
+ * lives elsewhere navigates to that page rather than writing a tab this page
+ * does not render. The pair (tab, page) comes from one place (`pageForSection`),
+ * the same one the app shell's redirect reads, so an open from here and a
+ * bookmark of the same thing land on the same URL.
  */
 export function useSectionNav() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const shell = shellFor(useLocation().pathname);
 
-  /** `view` null keeps the one showing, within the same section. */
   function go(ref: Ref | null, tab: string, view: SectionView | null, opts?: { replace?: boolean }) {
     const next = withDetail(searchParams, ref);
-    const moving = readSection(searchParams) !== tab;
+    const moving = readSection(searchParams, shell) !== tab;
     if (moving) next.delete('q');
     const shown = view ?? (moving ? 'yours' : readView(searchParams));
     next.set('tab', tab);
     if (shown === 'discover') next.set(VIEW_PARAM, 'discover');
     else next.delete(VIEW_PARAM);
-    setSearchParams(next, opts);
+    navigate(`${pageForSection(tab)}?${next}`, opts);
   }
 
   /**

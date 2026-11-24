@@ -7570,6 +7570,15 @@
     }
   },
   "apps": {
+    "shell": {
+      "railLabel": "接入分区",
+      "section": {
+        "apps": "托管应用"
+      },
+      "definition": {
+        "apps": "通过 Composio 连接的账号"
+      }
+    },
     "title": "应用连接",
     "tagline": "给你的 Bot 接上 GitHub、Gmail、Slack 等你常用的应用。授权在浏览器里完成，上游 token 留在 Composio。",
     "setupTitle": "连接第一个应用",

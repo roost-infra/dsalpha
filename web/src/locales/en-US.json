@@ -7650,6 +7650,15 @@
     }
   },
   "apps": {
+    "shell": {
+      "railLabel": "Connect sections",
+      "section": {
+        "apps": "Managed apps"
+      },
+      "definition": {
+        "apps": "Accounts connected through Composio"
+      }
+    },
     "title": "Connected apps",
     "tagline": "Give your bots tools for GitHub, Gmail, Slack and the other apps you use. Connections are authorized in your browser; provider tokens stay with Composio.",
     "setupTitle": "Connect your first app",

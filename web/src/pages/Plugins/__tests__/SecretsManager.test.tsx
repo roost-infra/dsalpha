@@ -166,7 +166,7 @@ describe('SecretsManager via the user vault adapter — list', () => {
 
     expect(screen.getByRole('link', { name: 'gamma' })).toHaveAttribute(
       'href',
-      '/plugins?tab=mcp&detail=server%3Agamma',
+      '/apps?tab=mcp&detail=server%3Agamma',
     );
     expect(screen.getByText('No connector reads it')).toBeInTheDocument();
     const many = screen.getByRole('button', { name: /used by 2 connectors/i });

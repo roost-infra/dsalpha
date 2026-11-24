@@ -8,6 +8,8 @@
  * same navigation.
  */
 
+import { pageForSection } from './routes';
+
 export type DetailKind = 'server' | 'brokerage' | 'skill' | 'plugin' | 'catalog' | 'subagent';
 
 export interface DetailRef {
@@ -84,11 +86,15 @@ export function withDetail(
   return next;
 }
 
-/** A link to an item's own page on the Plugins page, from anywhere in the app. */
+/** A link to an item's own page, from anywhere in the app. */
 export function detailHref(ref: {
   kind: DetailKind;
   name: string;
   workspaceId?: string | null;
 }): string {
-  return `/plugins?${withDetail(new URLSearchParams({ tab: DETAIL_KIND_TAB[ref.kind] }), ref)}`;
+  const tab = DETAIL_KIND_TAB[ref.kind];
+  // The page is the one that hosts the section: a connector's page lives on
+  // `/apps` now, so a link written against `/plugins` would be a hop through
+  // the app shell's redirect, and a bookmark of it a URL that renders nothing.
+  return `${pageForSection(tab)}?${withDetail(new URLSearchParams({ tab }), ref)}`;
 }
