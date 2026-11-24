@@ -226,11 +226,7 @@ async def test_resolve_org_reads_the_flat_org_object_and_signs_with_the_service_
     url, content, headers = console.posts[0]
     assert url == "https://console.test/console-api/internal/v1/orgs/resolve-user"
     assert json.loads(content) == {"user_id": USER_ID}
-    # "dslpha" is the console's service id spelling, not a typo to fix here:
-    # signed_service_headers signs every Roost call with it (see the
-    # "dslpha compatibility calls" commit and roost-console's API types). The
-    # usage body's product key below is the differently-spelled "dsalpha".
-    assert headers["X-Roost-Service"] == "dslpha"
+    assert headers["X-Roost-Service"] == "dsalpha"
     assert headers["Content-Type"] == "application/json"
     assert headers["X-Roost-Signature"]
 

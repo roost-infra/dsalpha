@@ -33,6 +33,10 @@ from src.server.utils.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
+# First-party service name. Console accepts this and the historical "dslpha"
+# key during the compatibility window.
+ROOST_SERVICE_NAME = "dsalpha"
+
 
 class QuotaServiceUnavailable(Exception):
     """The quota service could not be asked at all.
@@ -128,10 +132,10 @@ def signed_service_headers(method: str, path: str, body: bytes, user_id: Optiona
     ts = str(int(time.time()))
     nonce = secrets.token_hex(16)
     digest = hashlib.sha256(body).hexdigest()
-    signing_input = "\n".join(["dslpha", ts, nonce, method, path, digest]).encode()
+    signing_input = "\n".join([ROOST_SERVICE_NAME, ts, nonce, method, path, digest]).encode()
     signature = hmac.new(secret.encode(), signing_input, hashlib.sha256).hexdigest()
     headers.update({
-        "X-Roost-Service": "dslpha",
+        "X-Roost-Service": ROOST_SERVICE_NAME,
         "X-Roost-Timestamp": ts,
         "X-Roost-Nonce": nonce,
         "X-Roost-Signature": signature,
