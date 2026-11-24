@@ -5,10 +5,11 @@
  * has to open that workspace's file rather than a lookup inside Home.
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, screen } from '@testing-library/react';
 
 import { renderWithProviders } from '@/test/utils';
+import { LazyCommentLayer } from '../viewers/html/comments/lazyCommentLayer';
 
 // Home, bound to the same computer as the NVDA workspace.
 const { HOME, NVDA, ROWS, FILES, CONTENT } = vi.hoisted(() => {
@@ -80,6 +81,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
 });
+
+afterAll(() => LazyCommentLayer.preload());
 
 describe("ThreadGallery's file panel", () => {
   it("opens a Home document's absolute link into a sibling's folder in that workspace", async () => {
