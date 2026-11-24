@@ -13,17 +13,24 @@ put() {
 }
 
 # One run at a time sets the tunnel up, so a second one started beside it
-# waits, then finds the first one's key and with it the same tunnel. mkdir is
-# the lock because it is atomic everywhere, and macOS has no flock.
+# waits, then finds the first one's key and with it the same tunnel. The lock
+# is created with the shell's create-exclusive, since mkdir reports success to
+# every racer on uutils (Ubuntu 26.04 and after), and macOS has no flock.
 lock_setup() {
   waited=0
-  until mkdir "$lock" 2>/dev/null; do
-    owner=$(cat "$lock/pid" 2>/dev/null)
+  until (set -C; : > "$lock") 2>/dev/null; do
+    owner=$(cat "$lock" 2>/dev/null)
     # A run killed while holding it leaves it behind: its pid is gone, or the
-    # lock is older than any setup takes, should the pid have been reused.
+    # lock is older than any setup takes, should the pid have been reused. An
+    # older version's lock is a folder holding the pid, taken the same way.
+    if [ -d "$lock" ] \
+      && [ -n "$(find "$lock" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+      rm -rf "$lock"
+      continue
+    fi
     if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } \
       || [ -n "$(find "$lock" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
-      rm -rf "$lock"
+      rm -f "$lock"
       continue
     fi
     [ "$waited" -gt 0 ] || echo "Another run of the command is setting up the tunnel. Waiting for it..."
@@ -34,11 +41,15 @@ lock_setup() {
   done
   held=1
   trap unlock_setup EXIT
-  echo $$ > "$lock/pid"
+  echo $$ > "$lock"
 }
 
 unlock_setup() {
-  [ -z "$held" ] || rm -rf "$lock"
+  # Only the run whose pid the lock holds takes it away, so one that waited
+  # out a stale lock cannot drop the success that let it in.
+  if [ -n "$held" ] && [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then
+    rm -f "$lock"
+  fi
   held=
 }
 

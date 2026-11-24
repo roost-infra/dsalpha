@@ -421,25 +421,27 @@ async def test_the_script_parses(monkeypatch, tunnels):
 # config on its stdin, the host keys asked of the machine's own sshd when no
 # file has them, the tunnel loop's waits, drawn at random, the run each
 # report and stop names, and the tunnel's folder and service, named for the
-# deployment (named ``tunnel``, the tunneled ones render as pinned before).
+# deployment (named ``tunnel``, the tunneled ones render as pinned before),
+# and the setup lock, made create-exclusive by the shell, so no coreutils can
+# tell two racers they made it.
 _RENDERED = {
     ("https://langalpha.example.com", False): (
         "54f3019c3d8ab15d12c60dfd636905ec6de1bd2c96d36760ea0bf5272f85e061"
     ),
     ("https://langalpha.example.com", True): (
-        "9e7b1f7c84e04b74c63d827e434c83879189202be83a4a04a9cc8750cae37edc"
+        "f464e24ce2c7aa1bd47e02a611400c9e666155ff7a56fee247699d6bdb1a40b8"
     ),
     ("http://127.0.0.1:8000", False): (
         "e37da24b6ceb1d40e1dc5708522877ec8c6c21cb6cfeaeecc470ac4958e4b85f"
     ),
     ("http://127.0.0.1:8000", True): (
-        "c620053525f59081016fc3a9b522ae4181c2ed0cadb9e95ada8c7ce738a2ddee"
+        "e1a12a8a3c668e398970b4fda0d58367e53009e6cc28776958aa2236d51a35c3"
     ),
     ("http://[::1]:8000", False): (
         "e8adf353794b7452fb521d5033e0c81ef2e73c6cb6f8ae8ed87a30bd614e2377"
     ),
     ("http://[::1]:8000", True): (
-        "28a824032a4d426a71d2a6e1fbc4e1d0fbe702ce31a5401058f78bb00dd350fd"
+        "9aa4b04ddd996bdbe4267e737d1a8aadb52a32ed340dc99abe869c8a912d09a5"
     ),
     (None, False): "57ce86ee407b0f2d9746490b86a75caf4e0ec9a2626f6233195c77778c3cd32c",
 }

@@ -9,6 +9,8 @@ user chose.
 from __future__ import annotations
 
 import asyncio
+import shlex
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -121,6 +123,69 @@ def test_the_retry_can_claim_the_root_once_the_folder_is_gone(tmp_path):
     assert sh(delete_script(computer_dir(home, "c1"))) == 0
 
     assert claim("c2") == 0
+
+
+
+def _lying_mkdir(tmp_path) -> str:
+    """A bin folder whose mkdir makes the folder and says yes to every racer,
+    as uutils' does on Ubuntu 26.04, and whose sleep is short."""
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    real = shutil.which("mkdir", path="/usr/bin:/bin")
+    (stub / "mkdir").write_text(
+        f'#!/bin/sh\n{shlex.quote(real)} "$@" 2>/dev/null\nexit 0\n'
+    )
+    (stub / "mkdir").chmod(0o755)
+    (stub / "sleep").write_text(
+        f"#!/bin/sh\nexec {shutil.which('sleep', path='/usr/bin:/bin')} 0.05\n"
+    )
+    (stub / "sleep").chmod(0o755)
+    return f"{stub}:/usr/bin:/bin"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell")
+def test_a_claim_lock_a_run_holds_keeps_both_out_even_if_mkdir_says_yes(tmp_path):
+    """The claim lock is not a folder, so no coreutils can report it taken.
+
+    This run holds it, as another start mid-claim would, and mkdir says yes
+    to everyone; both claims must still wait it out rather than mark a root.
+    """
+    home = str(tmp_path.resolve())
+    (tmp_path / ".langalpha" / "computers").mkdir(parents=True)
+    (tmp_path / ".langalpha" / "computers" / ".claiming").write_text("held\n")
+    path = _lying_mkdir(tmp_path)
+    env = {"HOME": home, "PATH": path}
+    scripts = [
+        root_dir_script(f"{home}/langalpha", computers=computers_dir(home), computer_id=c)
+        for c in ("c1", "c2")
+    ]
+
+    exits = sorted(
+        subprocess.Popen(["bash", "-c", s], stdout=subprocess.DEVNULL, env=env).wait()
+        for s in scripts
+    )
+
+    assert exits == [15, 15]
+    assert not (tmp_path / "langalpha").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell")
+def test_a_mkdir_that_says_yes_to_every_racer_still_takes_one_root(tmp_path):
+    """Two starts at once, with mkdir lying as uutils' does, still see one win."""
+    home = str(tmp_path.resolve())
+    path = _lying_mkdir(tmp_path)
+    env = {"HOME": home, "PATH": path}
+    scripts = [
+        root_dir_script(f"{home}/langalpha", computers=computers_dir(home), computer_id=c)
+        for c in ("c1", "c2")
+    ]
+
+    exits = sorted(
+        subprocess.Popen(["bash", "-c", s], stdout=subprocess.DEVNULL, env=env).wait()
+        for s in scripts
+    )
+
+    assert exits == [0, 10]
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell")
