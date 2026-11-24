@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Monitor } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { ApiError } from '@/api/client';
 import { queryKeys } from '@/lib/queryKeys';
 import type { Computer } from '@/types/api';
 
@@ -25,10 +26,19 @@ export function DesktopPreview({ computer }: { computer: Computer }) {
   const [visible, setVisible] = useState(false);
   const desktopReady = computer.status === 'running' && computer.desktop_state === 'ready' && !!computer.desktop_transport;
   const { data, isError } = useQuery({
-    queryKey: queryKeys.computers.desktopPreview(computer.computer_id),
+    queryKey: queryKeys.computers.desktopPreview(
+      computer.computer_id, computer.provider_ref ?? null, computer.running_since ?? null,
+    ),
     queryFn: ({ signal }) => getDesktopPreview(computer.computer_id, signal),
     enabled: desktopReady && visible,
-    refetchInterval: desktopReady && visible ? 5_000 : false,
+    refetchInterval: ({ state }) => {
+      if (!desktopReady || !visible) return false;
+      if (state.error instanceof ApiError) {
+        if (state.error.status === 403 || state.error.status === 404) return false;
+        if (state.error.retryAfter && state.error.retryAfter > 0) return state.error.retryAfter * 1_000;
+      }
+      return state.error ? 15_000 : 5_000;
+    },
     gcTime: 0,
     retry: false,
   });

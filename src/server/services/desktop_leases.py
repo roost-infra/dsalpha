@@ -11,6 +11,9 @@ from src.utils.cache.redis_cache import get_cache_client
 
 TICKET_SECONDS = 60
 LEASE_SECONDS = 20
+PREVIEW_REUSE_SECONDS = 3
+PREVIEW_CLAIM_SECONDS = 12
+PREVIEW_MAX_BYTES = 512 * 1024
 Role = Literal["control", "view"]
 
 
@@ -19,6 +22,10 @@ class DesktopBusy(Exception):
 
 
 class DesktopRevoked(Exception):
+    pass
+
+
+class PreviewPending(Exception):
     pass
 
 
@@ -83,6 +90,82 @@ _RELEASE = """
 if redis.call('get', KEYS[1]) == ARGV[1] then redis.call('del', KEYS[1]) end
 return redis.call('del', KEYS[2])
 """
+
+# Preview lookup checks the holder in the same Redis operation that returns
+# bytes. The generation survives a control lease ending during a capture.
+_BEGIN_PREVIEW = """
+if redis.call('get', KEYS[1]) then return {'busy'} end
+local generation = redis.call('get', KEYS[2]) or ''
+local preview = redis.call('hmget', KEYS[3], 'generation', 'frame', 'claim')
+if preview[1] == generation then
+    if preview[2] then return {'frame', preview[2]} end
+    if preview[3] then return {'pending'} end
+end
+redis.call('del', KEYS[3])
+redis.call('hset', KEYS[3], 'generation', generation, 'claim', ARGV[1])
+redis.call('expire', KEYS[3], ARGV[2])
+return {'capture', generation}
+"""
+
+_FINISH_PREVIEW = """
+if redis.call('get', KEYS[1]) or (redis.call('get', KEYS[2]) or '') ~= ARGV[1] then
+    return 0
+end
+if redis.call('hget', KEYS[3], 'claim') ~= ARGV[2] then return 0 end
+if ARGV[3] == '' then
+    redis.call('del', KEYS[3])
+else
+    redis.call('hset', KEYS[3], 'frame', ARGV[3])
+    redis.call('hdel', KEYS[3], 'claim')
+    redis.call('expire', KEYS[3], ARGV[4])
+end
+return 1
+"""
+
+
+@dataclass(frozen=True)
+class PreviewCapture:
+    keys: tuple[str, str, str]
+    generation: bytes
+    claim: str
+
+
+def preview_identity(computer: dict) -> tuple[str, str, str, str]:
+    return (
+        str(computer["computer_id"]),
+        str(computer["user_id"]),
+        str(computer["provider_ref"]),
+        str(computer.get("running_since") or ""),
+    )
+
+
+async def begin_preview(computer: dict) -> bytes | PreviewCapture:
+    computer_id, *scope = preview_identity(computer)
+    digest = hashlib.sha256(json.dumps(scope).encode()).hexdigest()
+    prefix = _prefix(computer_id)
+    keys = (prefix + "holder", prefix + "generation", prefix + "preview:" + digest)
+    claim = str(uuid4())
+    action, *data = await get_cache_client().client.eval(
+        _BEGIN_PREVIEW, len(keys), *keys, claim, PREVIEW_CLAIM_SECONDS,
+    )
+    if action == b"busy":
+        raise DesktopBusy
+    if action == b"pending":
+        raise PreviewPending
+    if action == b"frame":
+        return data[0]
+    return PreviewCapture(keys, data[0], claim)
+
+
+async def finish_preview(capture: PreviewCapture, frame: bytes) -> None:
+    reusable = frame if len(frame) <= PREVIEW_MAX_BYTES else b""
+    client = get_cache_client().client
+    ok = await client.eval(
+        _FINISH_PREVIEW, len(capture.keys), *capture.keys, capture.generation,
+        capture.claim, reusable, PREVIEW_REUSE_SECONDS,
+    )
+    if not ok:
+        raise DesktopBusy
 
 
 async def issue(computer: dict, role: Role, transport: str, *, takeover: bool) -> tuple[Session, str]:

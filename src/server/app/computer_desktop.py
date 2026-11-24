@@ -84,6 +84,8 @@ def _errors(message: str):
         raise HTTPException(409, {
             "code": "desktop_busy", "message": "A browser has control of this desktop.",
         }) from None
+    except leases.PreviewPending:
+        raise HTTPException(429, "A desktop preview is being captured.", headers={"Retry-After": "2"}) from None
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - SDK and storage errors need the same redaction.
@@ -166,14 +168,20 @@ async def screenshot(computer_id: UUID, user: str = Depends(_owner_session)):
     if row.get("desktop_state") != "ready":
         raise HTTPException(409, "Open the desktop to start a preview.")
     with _errors("The desktop preview is unavailable."):
-        generation = await leases.viewer_generation(str(computer_id))
-        async with (
-            asyncio.timeout(10),
-            _computer_manager().computer_runtime(row, str(row["provider_ref"])) as runtime,
-        ):
-            frame = await runtime.desktop_screenshot()
-        if await leases.viewer_generation(str(computer_id)) != generation:
-            raise leases.DesktopBusy
+        preview = await leases.begin_preview(row)
+        if isinstance(preview, bytes):
+            frame = preview
+        else:
+            identity = leases.preview_identity(row)
+            async with (
+                asyncio.timeout(10),
+                _computer_manager().computer_runtime(row, str(row["provider_ref"])) as runtime,
+            ):
+                frame = await runtime.desktop_screenshot()
+            current = await _running(computer_id, user)
+            if current.get("desktop_state") != "ready" or leases.preview_identity(current) != identity:
+                raise HTTPException(409, "The computer changed while capturing the preview.")
+            await leases.finish_preview(preview, frame)
     return Response(frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 

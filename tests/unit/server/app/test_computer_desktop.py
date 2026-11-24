@@ -33,9 +33,11 @@ def desktop(monkeypatch):
     async def lock(_key):
         yield True
 
+    runtime_api = SimpleNamespace(start_desktop=AsyncMock(), desktop_screenshot=AsyncMock(return_value=b"frame"))
+
     @asynccontextmanager
     async def runtime(_row, _provider_ref):
-        yield SimpleNamespace(start_desktop=AsyncMock(), desktop_screenshot=AsyncMock(return_value=b"frame"))
+        yield runtime_api
 
     monkeypatch.setattr(computers, "get_computer", AsyncMock(return_value=row))
     monkeypatch.setattr(gateway, "get_computer", AsyncMock(return_value=row))
@@ -46,11 +48,14 @@ def desktop(monkeypatch):
     monkeypatch.setattr(leases, "issue", AsyncMock(return_value=(issued, "a" * 43)))
     monkeypatch.setattr(leases, "check", AsyncMock())
     monkeypatch.setattr(leases, "release", AsyncMock())
+    redis = SimpleNamespace(eval=AsyncMock())
+    monkeypatch.setattr(leases, "get_cache_client", lambda: SimpleNamespace(client=redis))
 
     app = FastAPI()
     app.include_router(api.router)
     app.dependency_overrides[get_principal] = lambda: Principal(user_id="owner", auth="session")
-    return SimpleNamespace(app=app, row=row, issued=issued, base=f"/api/v1/computers/{computer_id}")
+    return SimpleNamespace(app=app, row=row, issued=issued, base=f"/api/v1/computers/{computer_id}",
+                           redis=redis, runtime=runtime_api)
 
 
 def test_owner_session_starts_display_before_issuing_ticket(desktop):
@@ -115,6 +120,97 @@ def test_history_requires_owner_with_first_party_auth(desktop, monkeypatch, auth
 
     assert response.status_code == 403
     recent.assert_not_awaited()
+
+
+@pytest.mark.parametrize("auth,user", [("session", "another-owner"), ("computer", "owner")])
+def test_preview_checks_owner_before_serving_cache(desktop, auth, user):
+    desktop.row["desktop_state"] = "ready"
+    desktop.app.dependency_overrides[get_principal] = lambda: Principal(user_id=user, auth=auth)
+    response = TestClient(desktop.app).post(f"{desktop.base}/desktop/screenshot")
+
+    assert response.status_code == 403
+    desktop.redis.eval.assert_not_awaited()
+    desktop.runtime.desktop_screenshot.assert_not_awaited()
+
+
+def test_preview_reuses_a_short_lived_frame_and_keeps_http_no_store(desktop):
+    desktop.row.update(desktop_state="ready", running_since="current boot")
+    desktop.redis.eval.side_effect = [[b"capture", b"gen-1"], 1, [b"frame", b"frame"]]
+    client = TestClient(desktop.app)
+    path = f"{desktop.base}/desktop/screenshot"
+
+    for _ in range(2):
+        response = client.post(path)
+        assert response.status_code == 200
+        assert response.content == b"frame"
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["cache-control"] == "no-store"
+    desktop.runtime.desktop_screenshot.assert_awaited_once()
+    begin, finish, reuse = [call.args for call in desktop.redis.eval.await_args_list]
+    assert begin[2:5] == finish[2:5] == reuse[2:5]
+    assert finish[5:] == (b"gen-1", begin[5], b"frame", leases.PREVIEW_REUSE_SECONDS)
+
+
+def test_preview_refuses_active_controller(desktop):
+    desktop.row["desktop_state"] = "ready"
+    desktop.redis.eval.return_value = [b"busy"]
+    response = TestClient(desktop.app).post(f"{desktop.base}/desktop/screenshot")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "desktop_busy"
+    desktop.runtime.desktop_screenshot.assert_not_awaited()
+
+
+def test_preview_requests_wait_for_another_capture(desktop):
+    desktop.row["desktop_state"] = "ready"
+    desktop.redis.eval.return_value = [b"pending"]
+    response = TestClient(desktop.app).post(f"{desktop.base}/desktop/screenshot")
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "2"
+    desktop.runtime.desktop_screenshot.assert_not_awaited()
+
+
+def test_preview_discards_capture_if_lease_generation_changed(desktop):
+    desktop.row["desktop_state"] = "ready"
+    desktop.redis.eval.side_effect = [[b"capture", b"gen-1"], 0]
+    response = TestClient(desktop.app).post(f"{desktop.base}/desktop/screenshot")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "desktop_busy"
+    desktop.runtime.desktop_screenshot.assert_awaited_once()
+
+
+def test_preview_drops_a_frame_when_the_computer_restarts(desktop):
+    desktop.row.update(desktop_state="ready", running_since="first boot")
+    computers.get_computer.side_effect = [desktop.row, {**desktop.row, "running_since": "next boot"}]
+    desktop.redis.eval.return_value = [b"capture", b""]
+    response = TestClient(desktop.app).post(f"{desktop.base}/desktop/screenshot")
+
+    assert response.status_code == 409
+    desktop.redis.eval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cached_preview_key_changes_when_owner_instance_or_boot_changes(desktop):
+    desktop.redis.eval.return_value = [b"capture", b""]
+    original = await leases.begin_preview(desktop.row)
+    assert isinstance(original, leases.PreviewCapture)
+
+    for field in ("user_id", "provider_ref", "running_since"):
+        updated = await leases.begin_preview({**desktop.row, field: "new value"})
+        assert isinstance(updated, leases.PreviewCapture)
+        assert updated.keys[:2] == original.keys[:2]
+        assert updated.keys[2] != original.keys[2]
+
+
+@pytest.mark.asyncio
+async def test_large_preview_frames_can_be_served_without_caching(desktop):
+    capture = leases.PreviewCapture(("holder", "generation", "preview"), b"", "claim")
+    desktop.redis.eval.return_value = 1
+    await leases.finish_preview(capture, b"x" * (leases.PREVIEW_MAX_BYTES + 1))
+
+    assert desktop.redis.eval.await_args.args[-2] == b""
 
 
 def test_websocket_requires_origin_and_consumes_ticket_once(desktop, monkeypatch):
