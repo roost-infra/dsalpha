@@ -5,6 +5,7 @@ import contextlib
 import logging
 import re
 import shlex
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
@@ -51,6 +52,14 @@ http = APIRouter(prefix="/api/v1/computers", tags=["Computers"], dependencies=[D
 
 class DesktopRequest(BaseModel):
     role: Literal["control", "view"]
+
+
+class DesktopSessionSummary(BaseModel):
+    session_id: UUID
+    role: leases.Role
+    started_at: datetime
+    ended_at: datetime | None
+    end_reason: str | None
 
 
 async def _running(computer_id: UUID, user: str) -> dict:
@@ -127,6 +136,14 @@ async def _set_state(row: dict, state: str, transport: str) -> None:
 @http.post("/{computer_id}/desktop/session")
 async def open_desktop(computer_id: UUID, request: DesktopRequest, user: str = Depends(_owner_session)):
     return await _session(computer_id, user, request.role, takeover=False)
+
+
+@http.get("/{computer_id}/desktop/sessions", response_model=list[DesktopSessionSummary])
+async def desktop_history(computer_id: UUID, response: Response, user: str = Depends(_owner_session)):
+    await _owned_computer(str(computer_id), user)
+    response.headers["Cache-Control"] = "no-store"
+    with _errors("The desktop session history is unavailable."):
+        return await desktop_sessions.recent_sessions(str(computer_id), user)
 
 
 @http.post("/{computer_id}/desktop/takeover")

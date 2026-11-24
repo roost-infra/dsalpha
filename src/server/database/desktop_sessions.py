@@ -1,4 +1,18 @@
+from psycopg.rows import dict_row
+
 from src.server.database.pool import get_db_connection
+
+
+async def recent_sessions(computer_id: str, user_id: str) -> list[dict]:
+    async with get_db_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """SELECT session_id, role, started_at, ended_at, end_reason
+               FROM computer_desktop_sessions
+               WHERE computer_id=%s AND user_id=%s
+               ORDER BY started_at DESC, session_id DESC LIMIT 20""",
+            (computer_id, user_id),
+        )
+        return await cur.fetchall()
 
 
 async def set_desktop_state(computer: dict, state: str, transport: str) -> bool:

@@ -36,13 +36,17 @@ test('opens a desktop, releases its session, and links back through workspace fi
   const workspace = sampleWorkspace({ workspace_id: WORKSPACE_ID, computer_id: COMPUTER_ID });
   let connected = false;
   let released = false;
-  await page.routeWebSocket(`**${WS_PATH}`, () => { connected = true; });
+  await page.routeWebSocket(`**${WS_PATH}`, (socket) => {
+    connected = true;
+    socket.send(Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+  });
   await mockAPI(page, {
     'GET /computers': { computers: [COMPUTER] },
     'GET /computers/providers': { providers: [{ kind: 'daytona', is_default: true, os_platforms: ['linux'], supports_ssh: true }] },
     'GET /workspaces': { workspaces: [workspace], total: 1 },
     'GET /workspaces/*': workspace,
     'GET /workspaces/*/files': { files: [] },
+    [`GET /computers/${COMPUTER_ID}/desktop/sessions`]: (route) => route.fulfill({ json: [] }),
     [`POST /computers/${COMPUTER_ID}/desktop/session`]: async (route) => {
       expect(route.request().postDataJSON()).toEqual({ role: 'view' });
       await route.fulfill({ json: { role: 'view', transport: 'screenshot', ticket: 'test-ticket', session_id: SESSION_ID, ws_url: WS_PATH } });
@@ -61,11 +65,54 @@ test('opens a desktop, releases its session, and links back through workspace fi
   await page.getByRole('button', { name: 'View only' }).click();
   await expect.poll(() => connected).toBe(true);
 
+  await page.getByRole('button', { name: 'Full screen' }).click();
+  const fullscreen = page.locator('section:fullscreen');
+  await expect(fullscreen).toBeVisible();
+  await fullscreen.getByRole('button', { name: 'Desktop history' }).click();
+  await expect(fullscreen.getByRole('dialog', { name: 'Desktop history' })).toContainText('No desktop sessions yet');
+  await page.evaluate(() => document.exitFullscreen());
+  const history = page.getByRole('dialog', { name: 'Desktop history' });
+  await expect(history).toBeVisible();
+  await history.getByRole('button', { name: 'Close' }).click();
+  await expect(history).toBeHidden();
+
   await page.getByRole('link', { name: 'Browse files' }).click();
   await expect.poll(() => released).toBe(true);
   await expect(page).toHaveURL(new RegExp(`/chat/${WORKSPACE_ID}\\?panel=files$`));
   await page.getByRole('button', { name: 'Open desktop' }).click();
   await expect(page).toHaveURL(new RegExp(`${DESKTOP_ROUTE}\\?workspace=${WORKSPACE_ID}$`));
+});
+
+test('shows recent desktop sessions on a stopped computer', async ({ page }) => {
+  let reads = 0;
+  await mockAPI(page, {
+    'GET /computers': { computers: [{ ...COMPUTER, status: 'stopped' }] },
+    [`GET /computers/${COMPUTER_ID}/desktop/sessions`]: (route) => {
+      reads += 1;
+      return route.fulfill({ json: [
+        { session_id: SESSION_ID, role: 'control', started_at: '2026-11-23T15:00:00Z',
+          ended_at: '2026-11-23T15:05:00Z', end_reason: 'revoked' },
+        { session_id: 'e0000001-0000-4000-8000-000000000002', role: 'view', started_at: '2026-11-23T14:00:00Z',
+          ended_at: '2026-11-23T14:03:00Z', end_reason: 'disconnected' },
+      ] });
+    },
+  });
+
+  await page.goto(DESKTOP_ROUTE);
+  await expect(page.getByRole('heading', { name: 'Research Linux' })).toBeVisible();
+  expect(reads).toBe(0);
+  await page.getByRole('button', { name: 'Desktop history' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Desktop history' });
+  const sessions = dialog.getByRole('listitem');
+  await expect(sessions).toHaveCount(2);
+  await expect(sessions.nth(0)).toContainText('Take control');
+  await expect(sessions.nth(0)).toContainText('Access revoked');
+  await expect(sessions.nth(0)).toContainText('Started');
+  await expect(sessions.nth(1)).toContainText('View only');
+  await expect(sessions.nth(1)).toContainText('Ended');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Desktop history' })).toBeFocused();
 });
 
 test('reconnects a dropped RFB desktop with a new ticket and stops when access changes', async ({ page }) => {

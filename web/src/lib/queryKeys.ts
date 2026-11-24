@@ -154,6 +154,7 @@ export const queryKeys = {
     providers: () => [...queryKeys.computers.all, 'providers'],
     sshKey: () => [...queryKeys.computers.all, 'ssh-key'],
     desktopPreview: (computerId: string) => [...queryKeys.computers.all, 'desktop-preview', computerId],
+    desktopHistory: (computerId: string) => [...queryKeys.computers.all, 'desktop-history', computerId],
   },
   // A pairing is minted by a POST and then polled; the mint is cached so a
   // render never mints twice, and each token's status keys apart from it.

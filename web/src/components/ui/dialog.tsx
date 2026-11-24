@@ -50,11 +50,13 @@ const DIALOG_CENTERED_CLASSES =
 function DialogContent({
   className,
   children,
+  portalContainer,
   variant = 'default',
   onCloseAutoFocus,
   ref,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  portalContainer?: React.ComponentProps<typeof DialogPortal>['container'];
   /** 'default' = bottom-sheet on mobile, centered on desktop. 'centered' = always centered. */
   variant?: 'default' | 'centered';
 }) {
@@ -82,7 +84,7 @@ function DialogContent({
   // Inner: flex-1 min-h-0 scroll child for content + touch handling
   if (swipeEnabled) {
     return (
-      <DialogPortal>
+      <DialogPortal container={portalContainer}>
         <DialogOverlay />
         <DialogPrimitive.Content
           aria-describedby={undefined}
@@ -128,7 +130,7 @@ function DialogContent({
 
   // Desktop bottom-sheet or centered: single-element, native scroll
   return (
-    <DialogPortal>
+    <DialogPortal container={portalContainer}>
       <DialogOverlay />
       <DialogPrimitive.Content
         aria-describedby={undefined}

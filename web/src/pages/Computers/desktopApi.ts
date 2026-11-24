@@ -11,7 +11,20 @@ export interface DesktopSession {
   role: DesktopRole;
 }
 
+export interface DesktopSessionSummary {
+  session_id: string;
+  role: DesktopRole;
+  started_at: string;
+  ended_at: string | null;
+  end_reason: string | null;
+}
+
 const computerPath = (id: string) => `/api/v1/computers/${encodeURIComponent(id)}`;
+
+export async function getDesktopHistory(id: string, signal: AbortSignal): Promise<DesktopSessionSummary[]> {
+  const { data } = await api.get<DesktopSessionSummary[]>(`${computerPath(id)}/desktop/sessions`, { signal });
+  return data;
+}
 
 export async function requestDesktop(id: string, role: DesktopRole, takeover: boolean): Promise<DesktopSession> {
   const path = takeover ? 'takeover' : 'session';
