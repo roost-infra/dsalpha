@@ -1547,6 +1547,7 @@
       "previewUnavailable": "No live preview",
       "previewAlt": "Desktop of {{name}}",
       "spec": "Spec",
+      "specUnconfirmed": "Current spec unconfirmed",
       "uptime": "Uptime",
       "estimatedCost": "Estimated run cost",
       "credits": "{{value}} credits",
