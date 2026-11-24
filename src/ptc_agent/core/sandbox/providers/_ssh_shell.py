@@ -255,7 +255,7 @@ def uninstall_script(root: str, sandbox_id: str) -> str:
         # Not this computer's (its mark gone, or another's): left as it is.
         'elif [ -e "$r" ] || [ -L "$r" ]; then echo root kept\n'
         "fi\n"
-        'rmdir -- "$h" 2>/dev/null\n'
+        'rm -f -- "$h" 2>/dev/null\n'
         'if [ -d "$s" ] && [ ! -L "$s" ]; then\n'
         # The install's lock, so none starts, or is part done, while the
         # runtime goes; under it, a ``.install.*`` left is a dead install's.
