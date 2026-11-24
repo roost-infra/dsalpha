@@ -128,17 +128,21 @@ LC_ALL=C; export LC_ALL
 umask 077
 # One rewrite at a time, or two that overlap each put back the line the other
 # took out. A folder that takes no new file is read but never rewritten.
+# The lock is the shell's own create-exclusive, not a folder: coreutils'
+# mkdir reports success to every process that races for one folder on uutils
+# (Ubuntu 26.04 and after), which would let both rewrites in and lose a key.
 if [ -w "${{f%/*}}" ]; then
   l="$f.langalpha.lock"
   i=0
-  until mkdir "$l" 2>/dev/null; do
+  until (set -C; : > "$l") 2>/dev/null; do
     i=$((i + 1))
     [ "$i" -le 10 ] || {{ echo "Could not lock $f to rewrite it" >&2; exit 1; }}
-    # A lock a minute old was left by a run that died.
-    find "$l" -prune -mmin +1 -exec rmdir {{}} \\; 2>/dev/null
-    [ -d "$l" ] && sleep 1
+    # A lock a minute old was left by a run that died. An older version's
+    # lock is a folder, which rm takes away all the same.
+    find "$l" -prune -mmin +1 -exec rm -rf {{}} \\; 2>/dev/null
+    [ -e "$l" ] && sleep 1
   done
-  trap 'rmdir "$l" 2>/dev/null' EXIT
+  trap 'rm -f "$l" 2>/dev/null' EXIT
   trap 'exit 1' HUP INT TERM
 fi
 s=$(cksum < "$f")

@@ -412,12 +412,15 @@ ROOT_MARKER = ".langalpha-root"
 # computers folder. A claim takes moments, so a hold older than that was cut
 # off; one still held after the wait is exit 15, inside the command's timeout.
 _CLAIM_HOLD = (
+    # Create-exclusive, from the shell, for the reason _ssh_authorized_key gives:
+    # uutils' mkdir (Ubuntu 26.04 and after) tells every racer it made the
+    # folder, so two claims would both go on to mark the root.
     'h="$c/.claiming"; n=0; mkdir -p -- "$c" || exit 9\n'
-    'until mkdir -- "$h" 2>/dev/null; do\n'
+    'until (set -C; : > "$h") 2>/dev/null; do\n'
     '  n=$((n + 1)); [ "$n" -le 20 ] || exit 15\n'
-    '  if [ -n "$(find "$h" -prune -mmin +2 2>/dev/null)" ]; then rmdir -- "$h" 2>/dev/null; else sleep 1; fi\n'
+    '  if [ -n "$(find "$h" -prune -mmin +2 2>/dev/null)" ]; then rm -rf -- "$h" 2>/dev/null; else sleep 1; fi\n'
     "done\n"
-    "trap 'rmdir -- \"$h\" 2>/dev/null' EXIT; trap 'exit 1' HUP INT TERM\n"
+    "trap 'rm -f -- \"$h\" 2>/dev/null' EXIT; trap 'exit 1' HUP INT TERM\n"
 )
 
 

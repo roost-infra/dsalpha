@@ -255,14 +255,51 @@ class TestTurns:
                     ["sh", "-c", remove_script(key)],
                     env={"HOME": str(home), "PATH": f"{stub}:/usr/bin:/bin"},
                     stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                 )
                 for key in (_KEY, self._SECOND)
             ]
+            done = [run.communicate() for run in runs]
 
-            assert [run.communicate()[0].strip() for run in runs] == ["removed"] * 2
+            assert [out.strip() for out, _ in done] == ["removed"] * 2
+            assert [run.returncode for run in runs] == [0, 0]
             assert path.read_text() == "".join(f"{x}\n" for x in _OTHERS)
             assert not (home / ".ssh" / "authorized_keys.langalpha.lock").exists()
+
+    def test_a_lock_another_run_holds_keeps_this_one_out(self, tmp_path):
+        """A mkdir that says yes to every racer must not open the lock.
+
+        uutils' mkdir, which Ubuntu 26.04 ships, reports success to every
+        process that races for one folder, so a lock made with it let two
+        rewrites in and lost a key. The lock is the shell's own
+        create-exclusive instead, which no coreutils can report falsely.
+        """
+        path = _keys(tmp_path, _OTHERS[0], _KEY)
+        lock = path.parent / "authorized_keys.langalpha.lock"
+        lock.write_text("held\n")
+        stub = tmp_path / "bin"
+        stub.mkdir()
+        # The folder mkdir would have made, made, and success to everyone.
+        (stub / "mkdir").write_text("#!/bin/sh\nexit 0\n")
+        (stub / "mkdir").chmod(0o755)
+        (stub / "sleep").write_text(
+            f"#!/bin/sh\nexec {shutil.which('sleep', path='/usr/bin:/bin')} 0.05\n"
+        )
+        (stub / "sleep").chmod(0o755)
+
+        run = subprocess.run(
+            ["sh", "-c", remove_script(_KEY)],
+            env={"HOME": str(tmp_path), "PATH": f"{stub}:/usr/bin:/bin"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert run.returncode == 1
+        assert "Could not lock" in run.stderr
+        assert path.read_text() == "".join(f"{x}\n" for x in (_OTHERS[0], _KEY))
+        assert lock.read_text() == "held\n"
 
     def test_a_lock_left_by_a_run_that_died_is_broken(self, tmp_path):
         path = _keys(tmp_path, _OTHERS[0], _KEY)
