@@ -1558,6 +1558,7 @@
       "previewUnavailable": "暂无实时预览",
       "previewAlt": "{{name}} 的桌面",
       "spec": "规格",
+      "specUnconfirmed": "当前规格待确认",
       "uptime": "运行时长",
       "estimatedCost": "本次运行预估费用",
       "credits": "{{value}} 点积分",

@@ -17,9 +17,10 @@ import { createFormatter, formatTimestamp } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { PowerButton } from '@/pages/ChatAgent/components/computerParts';
 import { ComputerStatusIndicator } from '@/pages/ChatAgent/components/computerStatusUi';
-import { computerSourceLabel } from '@/pages/ChatAgent/components/providerUi';
-import { normalizeTier, tierLabel } from '@/pages/ChatAgent/components/tierUi';
-import { openComputersPanel, useComputersPanel } from '@/pages/ChatAgent/hooks/computerPanelStore';
+import { computerSourceLabel, providerManagesSpec } from '@/pages/ChatAgent/components/providerUi';
+import { activeSpecChange, knownEffectiveTier, SpecChangeProgress } from '@/pages/ChatAgent/components/specChangeUi';
+import { offeredTiers, tierFacts, tierLabel } from '@/pages/ChatAgent/components/tierUi';
+import { openComputerSpec, openComputersPanel, useComputersPanel } from '@/pages/ChatAgent/hooks/computerPanelStore';
 import { useComputerActions } from '@/pages/ChatAgent/hooks/useComputerActions';
 import { useComputers, useComputerProviders, useComputerStatusFanout } from '@/pages/ChatAgent/hooks/useComputers';
 import { desktopPath, PLATFORM_NAMES, workspaceFilesPath } from '@/pages/ChatAgent/utils/computerPlatform';
@@ -74,6 +75,40 @@ function WorkspaceFiles({ workspaces, selectedId }: { workspaces: Workspace[]; s
   );
 }
 
+function CloudComputerSpec({ computer, provider }: { computer: Computer; provider?: ComputerProviderOption }) {
+  const { t } = useTranslation();
+  if (!providerManagesSpec(computer.kind)) return null;
+
+  const change = activeSpecChange(computer);
+  const tier = knownEffectiveTier(computer);
+  const interrupted = computer.spec_change?.state === 'failed' && computer.spec_change.error?.code === 'interrupted';
+  const spec = !change && !interrupted ? provider?.tiers?.find((offer) => offer.tier === tier) : undefined;
+  const facts = tierFacts(t, spec);
+  const canChange = offeredTiers(provider, tier).tiers.some((offer) => offer !== tier);
+  const available = computer.status === 'running' || computer.status === 'stopped'
+    || (computer.status === 'error' && !computer.provider_ref);
+
+  return (
+    <div className="col-span-full">
+      <dt className="text-xs text-muted-foreground">{t('computer.cloud.spec')}</dt>
+      <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        {change
+          ? <SpecChangeProgress change={change} />
+          : <span>{interrupted
+              ? t('computer.cloud.specUnconfirmed')
+              : tier ? tierLabel(t, tier) : computer.resource_tier}</span>}
+        {(change || canChange) && (
+          <Button type="button" size="sm" variant="outline" disabled={!change && !available}
+            onClick={() => openComputerSpec(computer.computer_id)}>
+            {change ? t('computer.card.details', 'Details') : t('workspace.changeSpec', 'Change spec')}
+          </Button>
+        )}
+      </dd>
+      {facts && <dd className="mt-1 text-xs text-muted-foreground tabular-nums">{facts.join(' · ')}</dd>}
+    </div>
+  );
+}
+
 function ComputerTile({ computer, provider, workspaces, now, power, onSsh }: {
   computer: Computer;
   provider: ComputerProviderOption | undefined;
@@ -102,9 +137,7 @@ function ComputerTile({ computer, provider, workspaces, now, power, onSsh }: {
       </div>
       <DesktopPreview computer={computer} />
       <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
-        {computer.kind !== 'ssh' && (
-          <div><dt className="text-xs text-muted-foreground">{t('computer.cloud.spec')}</dt><dd>{tierLabel(t, normalizeTier(computer.resource_tier))}</dd></div>
-        )}
+        <CloudComputerSpec computer={computer} provider={provider} />
         {computer.region && <div><dt className="text-xs text-muted-foreground">{t('computer.cloud.region')}</dt><dd>{computer.region}</dd></div>}
         {startedAt !== null && Number.isFinite(startedAt) && (
           <div><dt className="text-xs text-muted-foreground">{t('computer.cloud.uptime')}</dt><dd className="tabular-nums">{formatClock(now - startedAt)}</dd></div>
@@ -140,12 +173,12 @@ function ComputerTile({ computer, provider, workspaces, now, power, onSsh }: {
   );
 }
 
-function Desktop({ computer, workspaces, selectedId, power, sleep }: {
+function Desktop({ computer, provider, workspaces, selectedId, power }: {
   computer: Computer;
+  provider: ComputerProviderOption | undefined;
   workspaces: Workspace[];
   selectedId: string | null;
   power: PowerMutation;
-  sleep?: boolean;
 }) {
   const { t } = useTranslation();
   const { state, vnc, picture, connect, disconnect } = useDesktopSession(computer.computer_id);
@@ -182,7 +215,7 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
         <div className="flex flex-wrap items-center gap-2">
           <WorkspaceFiles workspaces={workspaces} selectedId={selectedId} />
           {computer.desktop_transport && <DesktopHistory computerId={computer.computer_id} portalContainer={desktopSection} />}
-          {!running && <ComputerPower computer={computer} power={power} sleep={sleep} />}
+          {!running && <ComputerPower computer={computer} power={power} sleep={provider?.supports_sleep} />}
           {active && <Button size="sm" variant="outline" onClick={disconnect}>{t('computer.cloud.disconnect')}</Button>}
           {connected && document.fullscreenEnabled && (
             <Button type="button" size="sm" variant="outline" onClick={() => void toggleFullscreen()}>
@@ -191,6 +224,9 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
           )}
         </div>
       </div>
+      {providerManagesSpec(computer.kind) && (
+        <dl className="text-sm"><CloudComputerSpec computer={computer} provider={provider} /></dl>
+      )}
       {fullscreenError && <p role="alert" className="text-sm text-destructive">{t('computer.cloud.fullscreenFailed')}</p>}
       {power.error && power.variables?.computerId === computer.computer_id && (
         <p role="alert" className="text-sm text-destructive">{formatApiErrorDetail(power.error)}</p>
@@ -253,8 +289,8 @@ export default function Computers() {
   return (
     <div className="h-full min-h-0 overflow-y-auto bg-page">
       {computer ? (
-        <Desktop key={computer.computer_id} computer={computer} workspaces={workspacesFor(computer.computer_id)}
-          selectedId={search.get('workspace')} power={power} sleep={providerFor(computer)?.supports_sleep} />
+        <Desktop key={computer.computer_id} computer={computer} provider={providerFor(computer)}
+          workspaces={workspacesFor(computer.computer_id)} selectedId={search.get('workspace')} power={power} />
       ) : (
         <main className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 sm:py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
