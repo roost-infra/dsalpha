@@ -51,12 +51,22 @@ function fitsBeside(at: Point, width: number, boundary: HTMLElement | null): boo
   return Math.max(left, right) >= width;
 }
 
+/** The least room beside a band kept clear for the box to open there rather than beside its pin. */
+const CLEAR_MIN = 180;
+
 export interface CommentPopoverProps {
   /** The current box. False while it leaves, holding what it showed and where. */
   open: boolean;
   /** Where its pin's tail is, or null while the page has not said; the box stays where it last was. */
   point: Point | null;
   narrow: boolean;
+  /**
+   * A band the box keeps clear, its top and bottom in the boundary's
+   * coordinates: it opens under it, or over it, on the side with more room,
+   * its far edge on its pin, so what the pin marks stays in view. Beside its
+   * pin where neither side has room.
+   */
+  clear?: { top: number; bottom: number } | null;
   boundary: HTMLElement | null;
   width: number;
   label: string;
@@ -72,6 +82,8 @@ export interface CommentPopoverProps {
    * focus elsewhere (`onAskDiscard` asks instead).
    */
   draft?: { words: boolean; onLeave: () => void; onAskDiscard: () => void } | null;
+  /** Fades and lets clicks through to the page under it: Cmd is held to add a part the box may cover. */
+  seeThrough?: boolean;
   onDismiss: () => void;
   /** Its exit has played; whoever holds it can let it go. */
   onGone: () => void;
@@ -90,7 +102,7 @@ export interface CommentPopoverProps {
  * the corner Radix places beside the anchor.
  */
 export function CommentPopover({
-  open, point, narrow, boundary, width, label, focusSelf, arrival, replaced, draft, onDismiss, onGone, children,
+  open, point, narrow, clear, boundary, width, label, focusSelf, arrival, replaced, draft, seeThrough, onDismiss, onGone, children,
 }: CommentPopoverProps): React.ReactElement | null {
   const at = useKeptWhileFading(open ? point : null, samePoint);
 
@@ -102,15 +114,26 @@ export function CommentPopover({
   }, [open]);
 
   if (!at) return null;
+  // Off a band kept clear, the box is placed against the band, ending at the
+  // pin's far side, rather than against the pin: Radix still flips it and
+  // keeps it inside.
+  const room = clear && boundary
+    ? { bottom: boundary.clientHeight - clear.bottom - GAP - EDGE, top: clear.top - GAP - EDGE }
+    : null;
+  const off: 'bottom' | 'top' | null = !room || !clear || Math.max(room.bottom, room.top) < CLEAR_MIN ? null
+    : room.bottom >= room.top ? 'bottom' : 'top';
+  const anchor = off && clear
+    ? { left: at.x, width: PIN_SIZE, top: clear.top, height: clear.bottom - clear.top }
+    : { left: at.x, top: at.y - PIN_SIZE };
   return (
     <Popover open={open} onOpenChange={(next) => { if (!next && open) onDismiss(); }}>
       <PopoverAnchor asChild>
         {/* The pin's box: a bubble whose tail is the point, its body up and to the right. */}
-        <div className="page-comments-anchor" style={{ left: at.x, top: at.y - PIN_SIZE }} />
+        <div className="page-comments-anchor" style={anchor} />
       </PopoverAnchor>
       <PopoverContent
-        side={narrow || !fitsBeside(at, width, boundary) ? 'bottom' : 'right'}
-        align="start"
+        side={off ?? (narrow || !fitsBeside(at, width, boundary) ? 'bottom' : 'right')}
+        align={off ? 'end' : 'start'}
         sideOffset={GAP}
         collisionBoundary={boundary}
         collisionPadding={EDGE}
@@ -118,6 +141,7 @@ export function CommentPopover({
         updatePositionStrategy="always"
         aria-label={label}
         data-arrival={arrival || undefined}
+        data-see-through={seeThrough || undefined}
         className="page-comment-box flex flex-col overflow-hidden rounded-xl p-0 shadow-lg"
         style={{
           width,

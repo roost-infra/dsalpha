@@ -7,3 +7,6 @@
 *.sh        text eol=lf
 Dockerfile  text eol=lf
 Dockerfile.* text eol=lf
+
+# Srcdoc fixtures are compared byte for byte to the generated document.
+*.srcdoc.html text eol=lf

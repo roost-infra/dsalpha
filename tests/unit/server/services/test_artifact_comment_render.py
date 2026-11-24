@@ -286,3 +286,22 @@ def test_a_page_s_anchors_render_as_they_always_have():
         '<anchor kind="text">\n<path>#p</path>\n<quote>beat</quote>\n'
         "<before>a</before>\n<after>b</after>\n</anchor>"
     )
+
+
+def test_a_queued_region_gives_the_agent_its_image_context_and_geometry():
+    anchor = {
+        "kind": "region",
+        "label": "Revenue <margin>.png",
+        "boxes": [
+            {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4, "picture": ".agents/comments/chart.png"},
+            {"x": 0.7, "y": 0.2, "w": 0, "h": 0},
+        ],
+    }
+    claimed = [_comment(workspace_id="w1", path="chart.png", anchor=anchor)]
+    message = render_message(
+        "", claimed, reading="chat", places={"w1": FilePlace("../Research/", "Desk")}
+    )
+    assert "<label>Revenue &lt;margin>.png</label>" in message
+    assert "<box>x 0.1 to 0.4, y 0.2 to 0.6 of the image, from its top-left</box>" in message
+    assert "<point>x 0.7, y 0.2 of the image, from its top-left</point>" in message
+    assert '<picture computer="Desk">../Research/.agents/comments/chart.png</picture>' in message

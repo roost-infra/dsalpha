@@ -64,7 +64,7 @@ import { BrowserCrumbs } from './filePanel/BrowserCrumbs';
 import { PreviewCrumbs } from './filePanel/PreviewCrumbs';
 import { SiblingCrumbs } from './filePanel/SiblingCrumbs';
 import { PreviewPanes } from './filePanel/PreviewPanes';
-import { useHtmlArtifactTab } from './filePanel/useHtmlArtifactTab';
+import { commentViewer, useFileComments } from './filePanel/useFileComments';
 import { useBrowserView } from './filePanel/useBrowserView';
 import { useBrowserGone, useBrowserHere } from '../hooks/useBrowserHere';
 import type { BrowserViewSession } from './filePanel/browserStream';
@@ -287,19 +287,22 @@ function FilePanel({
   // Publishing, comments, versions and a file's record are the owner's: a
   // read-only panel, or a share's, shows a file alone. Decided here once, and
   // what acts on it reads this rather than deciding again.
-  const commentUi = useCommentUi();
   const servePrefix = apiAdapter?.servePrefix;
   const access = useMemo<PanelAccess>(
     () => (servePrefix ? { kind: 'share', servePrefix } : readOnly || !workspaceId ? { kind: 'readOnly' } : { kind: 'owner' }),
     [servePrefix, readOnly, workspaceId],
   );
-  const comments = access.kind === 'owner' ? commentUi : undefined;
 
   const { body, loading: fileLoading, error: readError, readAt, refetch } = useFileBody({
     cache, path: selectedFile, workspaceStatus: wsData?.status,
   });
   const fileContent = body?.content ?? null;
   const fileMime = body?.mime ?? null;
+
+  const { selectionTooltip, selectionComposing, beginReply, dismissSelection, contentWrapperRef, contextMenu, setContextMenu, handleEditorTextSelect, handleAddSelectionContext, askAboutWords } =
+    useSelectionContext({ selectedFile, fileContent, onAddContext });
+  const commentUi = useCommentUi(onAddContext ? askAboutWords : null);
+  const comments = access.kind === 'owner' ? commentUi : undefined;
 
   const { markRead, forget: forgetChanged, hasChanged } = useChangedFiles(transcript);
   useEffect(() => {
@@ -349,10 +352,7 @@ function FilePanel({
   useEffect(() => { reportActiveKind(activeTab.kind); }, [activeTab.kind]);
   useEffect(() => () => reportActiveKind(null), []);
 
-  const { selectionTooltip, selectionComposing, beginReply, dismissSelection, contentWrapperRef, contextMenu, setContextMenu, handleEditorTextSelect, handleAddSelectionContext } =
-    useSelectionContext({ selectedFile, fileContent, onAddContext });
-
-  const viewer = selectedFile ? viewerFor(selectedFile, fileMime, edit.isEditing) : 'other';
+  const viewer = selectedFile && !edit.isEditing ? viewerFor(selectedFile, fileMime) : 'other';
   const focus = useFileFocus({
     selectedFile,
     viewer,
@@ -368,18 +368,14 @@ function FilePanel({
   const htmlView = useHtmlViewMode(focus.replayed ? null : focus.htmlAnchor, focus.seq);
   const { setSource: setHtmlSource } = htmlView;
 
-  // An HTML file the owner reads takes comments and has versions.
-  const artifactTab = useHtmlArtifactTab({
-    workspaceId,
-    tabId: activeTab.id,
-    file: selectedFile,
-    html: viewer === 'html',
-    source: htmlView.source,
-    active: isActive,
-    readAt: readAt ?? null,
-    ui: comments,
+  // The file the owner reads takes comments, and an HTML one has versions,
+  // unless its viewer failed: the fallback drew no comment layer.
+  const [documentFailed, setDocumentFailed] = useState(false);
+  const fileComments = useFileComments({
+    workspaceId, tabId: activeTab.id, file: selectedFile, commentViewer: documentFailed ? null : commentViewer(viewer, !!body), source: htmlView.source,
+    active: isActive, readAt: readAt ?? null, ui: comments, dismissSelection,
   });
-  const htmlArtifactPath = artifactTab.path;
+  const htmlArtifactPath = fileComments.path;
   // The agent's edit to the HTML file in front is read at once, unlike other
   // files: the frame swaps it in over the old one with the place kept, and a
   // reader whose comments the agent is answering is waiting for exactly that.
@@ -731,7 +727,7 @@ function FilePanel({
   const selectedExt = selectedFile ? getFileExtension(selectedFile) : '';
   const canEdit = !!(selectedFile && !readOnly && !fileError
     && EDITABLE_EXTENSIONS.has(selectedExt)
-    && (edit.isEditing || viewer === 'code' || viewer === 'markdown' || (viewer === 'other' && selectedExt === 'csv' && fileMime !== 'image')));
+    && (edit.isEditing || viewer === 'code' || viewer === 'markdown' || viewer === 'csv'));
 
   const meta = useMemo(() => {
     if (!selectedFile || !body) return null;
@@ -845,13 +841,13 @@ function FilePanel({
           onOpenDir={revealInTree}
           // A page in front of the owner has its version and comments to say
           // there; its line count is the markup's, read under Source.
-          meta={artifactTab.hideMeta ? null : meta}
+          meta={fileComments.hideMeta ? null : meta}
           unsaved={edit.hasUnsavedChanges}
           chip={focus.chip && (
             <FocusChip state={focus.chip} onJump={focus.jump} onDismiss={() => { focus.dismiss(); tabs.clearLocation(activeTab.id); }} />
           )}
-          artifact={artifactTab.crumbs}
-          tools={artifactTab.tools}
+          artifact={fileComments.crumbs}
+          tools={fileComments.tools}
           actions={(
             <FileHeaderActions
               selectedFile={selectedFile}
@@ -866,8 +862,8 @@ function FilePanel({
               canDownload={canDownload}
               readFileFullFn={readFileFullFn}
               access={access}
-              openPublish={artifactTab.openPublish}
-              artifactDoc={artifactTab.doc}
+              openPublish={fileComments.openPublish}
+              artifactDoc={fileComments.doc}
               htmlSource={htmlView.source}
               // Only where the viewer is up to switch: not while loading, nor on an error card.
               onToggleHtmlSource={viewer === 'html' && !fileLoading && !fileError ? () => setHtmlSource((v) => !v) : null}
@@ -934,7 +930,7 @@ function FilePanel({
           <div className="file-panel-viewer">
             {/* font-content only while reading a file: the tree stays on the UI font. */}
             <div className={`file-panel-content${selectedFile ? ' font-content' : ''}`} ref={contentWrapperRef}>
-              <ImageReply surfaceRef={contentWrapperRef} enabled={!!onAddContext && isActive !== false} paused={!!selectionTooltip} agentName={agentName} onAddContext={onAddContext} />
+              <ImageReply surfaceRef={contentWrapperRef} enabled={!!onAddContext && isActive !== false} paused={!!selectionTooltip || commentUi.modeTab === activeTab.id} agentName={agentName} onAddContext={onAddContext} />
               {selectionTooltip && selectedFile && (
                 <SelectionQuote
                   key={selectionTooltip.id}
@@ -942,7 +938,7 @@ function FilePanel({
                   composing={selectionComposing}
                   hidden={!onAddContext || isActive === false}
                   boundsRef={contentWrapperRef}
-                  label={t('context.quote.from', { name: selectionSourceName(selectedFile, selectionTooltip) })}
+                  label={t('context.quote.from', { name: selectionSourceName(selectionTooltip.path ?? selectedFile, selectionTooltip) })}
                   placeholder={agentName ? t('context.quote.reply', { name: agentName }) : t('context.quote.replyGeneric')}
                   addLabel={selectionTooltip.lineStart != null
                     ? (selectionTooltip.lineEnd !== selectionTooltip.lineStart
@@ -955,6 +951,8 @@ function FilePanel({
                   }}
                   onReply={() => beginReply(selectionTooltip)}
                   onDismiss={dismissSelection}
+                  asks
+                  onComment={fileComments.selectionComment(selectionTooltip)}
                 />
               )}
               <PreviewPanes tabs={tabs.tabs} activeId={activeTab.id} previews={previews} />
@@ -985,6 +983,7 @@ function FilePanel({
                   onDownload: handleDownloadSelected,
                   downloadState: selectedDownloadState,
                   onDownloadInFallback: handleDownloadInFallback,
+                  onDocumentFailed: setDocumentFailed,
                   focus,
                   isEditing: edit.isEditing,
                   editContent: edit.editContent,
@@ -1000,7 +999,8 @@ function FilePanel({
                   onFrameLink: handleFrameLink,
                   onAnchorLink: handleAnchorLink,
                   htmlSource: htmlView.source,
-                  htmlArtifact: artifactTab.view,
+                  htmlArtifact: fileComments.view,
+                  comments: fileComments.target,
                 }}
                 onPageCount={onPageCount}
                 canUpload={!readOnly}
@@ -1085,7 +1085,7 @@ function FilePanel({
           />
         </Suspense>
       )}
-      {artifactTab.dialog}
+      {fileComments.dialog}
       {selectedFile && memoEntry && memoStaleSandboxText !== null && (
         <MemoDiffModal
           open={memoDiffOpen}
