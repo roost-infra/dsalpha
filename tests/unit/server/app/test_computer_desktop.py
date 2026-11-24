@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -78,6 +79,42 @@ def test_session_requires_owner_with_first_party_auth(desktop, auth, user):
 
     assert response.status_code == 403
     leases.issue.assert_not_awaited()
+
+
+def test_history_reads_ended_sessions_without_starting_stopped_computer(desktop, monkeypatch):
+    desktop.row["status"] = "stopped"
+    started_at = datetime(2026, 11, 23, 15, 0, tzinfo=UTC)
+    ended_at = datetime(2026, 11, 23, 15, 5, tzinfo=UTC)
+    recent = AsyncMock(return_value=[{
+        "session_id": desktop.issued.session_id, "role": "control",
+        "started_at": started_at, "ended_at": ended_at, "end_reason": "revoked",
+        "provider_ref": "internal-sandbox",
+    }])
+    monkeypatch.setattr(api.desktop_sessions, "recent_sessions", recent)
+
+    response = TestClient(desktop.app).get(f"{desktop.base}/desktop/sessions")
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json() == [{
+        "session_id": desktop.issued.session_id, "role": "control",
+        "started_at": "2026-11-23T15:00:00Z", "ended_at": "2026-11-23T15:05:00Z",
+        "end_reason": "revoked",
+    }]
+    recent.assert_awaited_once_with(desktop.row["computer_id"], "owner")
+    leases.issue.assert_not_awaited()
+
+
+@pytest.mark.parametrize("auth,user", [("session", "another-owner"), ("computer", "owner")])
+def test_history_requires_owner_with_first_party_auth(desktop, monkeypatch, auth, user):
+    recent = AsyncMock()
+    monkeypatch.setattr(api.desktop_sessions, "recent_sessions", recent)
+    desktop.app.dependency_overrides[get_principal] = lambda: Principal(user_id=user, auth=auth)
+
+    response = TestClient(desktop.app).get(f"{desktop.base}/desktop/sessions")
+
+    assert response.status_code == 403
+    recent.assert_not_awaited()
 
 
 def test_websocket_requires_origin_and_consumes_ticket_once(desktop, monkeypatch):

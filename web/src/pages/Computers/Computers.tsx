@@ -27,6 +27,7 @@ import { isComputerPreparing, liveComputers } from '@/pages/ChatAgent/utils/comp
 import type { Computer, ComputerProviderOption, Workspace } from '@/types/api';
 
 import { ComputerSshDialog } from './ComputerSshDialog';
+import { DesktopHistory } from './DesktopHistory';
 import { DesktopPreview } from './DesktopPreview';
 import { useDesktopSession } from './useDesktopSession';
 
@@ -180,6 +181,7 @@ function Desktop({ computer, workspaces, selectedId, power, sleep }: {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <WorkspaceFiles workspaces={workspaces} selectedId={selectedId} />
+          {computer.desktop_transport && <DesktopHistory computerId={computer.computer_id} />}
           {!running && <ComputerPower computer={computer} power={power} sleep={sleep} />}
           {active && <Button size="sm" variant="outline" onClick={disconnect}>{t('computer.cloud.disconnect')}</Button>}
           {connected && document.fullscreenEnabled && (

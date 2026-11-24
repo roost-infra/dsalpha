@@ -68,6 +68,38 @@ test('opens a desktop, releases its session, and links back through workspace fi
   await expect(page).toHaveURL(new RegExp(`${DESKTOP_ROUTE}\\?workspace=${WORKSPACE_ID}$`));
 });
 
+test('shows recent desktop sessions on a stopped computer', async ({ page }) => {
+  let reads = 0;
+  await mockAPI(page, {
+    'GET /computers': { computers: [{ ...COMPUTER, status: 'stopped' }] },
+    [`GET /computers/${COMPUTER_ID}/desktop/sessions`]: (route) => {
+      reads += 1;
+      return route.fulfill({ json: [
+        { session_id: SESSION_ID, role: 'control', started_at: '2026-11-23T15:00:00Z',
+          ended_at: '2026-11-23T15:05:00Z', end_reason: 'revoked' },
+        { session_id: 'e0000001-0000-4000-8000-000000000002', role: 'view', started_at: '2026-11-23T14:00:00Z',
+          ended_at: '2026-11-23T14:03:00Z', end_reason: 'disconnected' },
+      ] });
+    },
+  });
+
+  await page.goto(DESKTOP_ROUTE);
+  await expect(page.getByRole('heading', { name: 'Research Linux' })).toBeVisible();
+  expect(reads).toBe(0);
+  await page.getByRole('button', { name: 'Desktop history' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Desktop history' });
+  const sessions = dialog.getByRole('listitem');
+  await expect(sessions).toHaveCount(2);
+  await expect(sessions.nth(0)).toContainText('Take control');
+  await expect(sessions.nth(0)).toContainText('Access revoked');
+  await expect(sessions.nth(0)).toContainText('Started');
+  await expect(sessions.nth(1)).toContainText('View only');
+  await expect(sessions.nth(1)).toContainText('Ended');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Desktop history' })).toBeFocused();
+});
+
 test('reconnects a dropped RFB desktop with a new ticket and stops when access changes', async ({ page }) => {
   const version = Buffer.from('RFB 003.008\n');
   const name = Buffer.from('Test desktop');
