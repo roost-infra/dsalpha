@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Select } from '@/components/ui/select';
@@ -38,6 +39,7 @@ export function GeneralPanel() {
   // outranks the stored value (useSyncUserLocale), so the two can differ.
   const activeLocale = useLocale();
   const { replayGuides, resetOnboarding } = useOnboarding();
+  const navigate = useNavigate();
   const languageId = useId();
   // The pick shows at once; the account catches up when the save lands.
   const [timezoneDraft, setTimezoneDraft] = useState<string | null>(null);
@@ -100,6 +102,15 @@ export function GeneralPanel() {
           />
         </SettingsGroup>
       )}
+
+      <SettingsGroup title={t('settings.computersGroup')}>
+        <SettingRow {...copy(SETTINGS.computers)}>
+          <Button type="button" variant="outline" size="sm" className="h-8"
+            onClick={() => navigate('/computers')}>
+            {t('settings.openComputers', 'Open')}
+          </Button>
+        </SettingRow>
+      </SettingsGroup>
 
       <SettingsGroup title={t('settings.helpGroup')}>
         <SettingRow {...copy(SETTINGS.guides)}>
