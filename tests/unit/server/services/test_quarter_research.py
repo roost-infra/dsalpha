@@ -149,3 +149,50 @@ async def test_sec_rate_limit_reuses_stale_cache_and_backs_off(monkeypatch, cach
     assert result["fetched_at"] == previous["fetched_at"] == fetched_at
     cache.set.assert_any_await("research:sec-data-backoff:v1", True, ttl=90)
     assert fetch_json.await_count == 2
+
+
+@pytest.mark.parametrize("form", ["10-Q", "10-K"])
+def test_amendment_replaces_original_only_with_accession_evidence(form):
+    submissions = {"filings": {"recent": {
+        "form": [form, form + "/A"],
+        "reportDate": ["2025-06-30"] * 2,
+        "filingDate": ["2025-08-01", "2025-08-02"],
+        "accessionNumber": ["0000000123-25-000001", "0000000123-25-000002"],
+        "primaryDocument": ["original.htm", "amended.htm"],
+    }}}
+    filings = quarter_research._filings(123, submissions)
+    assert len(filings) == 1
+    assert filings[0].form == form + "/A"
+    rows = [_fact("0000000123-25-000001", "2025-04-01", "2025-06-30", 100)]
+    facts = {"Revenues": {"units": {"USD": rows}}}
+    assert compare_quarter(facts, filings, 0) == []
+    rows.append(_fact("0000000123-25-000002", "2025-04-01", "2025-06-30", 80))
+    metric = compare_quarter(facts, filings, 0)[0]
+    assert metric["current"]["value"] == 80
+    assert metric["current"]["evidence"][0]["accession"] == filings[0].accession
+
+
+def test_restated_comparative_cumulative_never_falls_back_to_old_basis():
+    filings = [_filing("2025-06-30", "h1"), _filing("2025-03-31", "q1"),
+               _filing("2024-06-30", "oldh1"), _filing("2024-03-31", "oldq1")]
+    rows = [_fact("h1", "2025-01-01", "2025-06-30", 200),
+            _fact("q1", "2025-01-01", "2025-03-31", 90),
+            _fact("h1", "2024-01-01", "2024-06-30", 160),
+            _fact("oldh1", "2024-01-01", "2024-06-30", 120),
+            _fact("oldq1", "2024-01-01", "2024-03-31", 50)]
+    metric = compare_quarter({"Revenues": {"units": {"USD": rows}}}, filings, 0)[0]
+    assert metric["current"]["value"] == 110
+    assert metric["year_ago"] is None
+    assert metric["yoy"] is None
+    assert metric["uncertainty"] == ["comparative_basis_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_unverified_amendment_surfaces_uncertainty(monkeypatch, cache, submissions):
+    submissions["filings"]["recent"]["form"][0] = "10-Q/A"
+    monkeypatch.setattr(quarter_research, "_fetch_company", AsyncMock(return_value=({
+        "company": submissions, "facts": {}, "fetched_at": datetime.now(UTC).isoformat(),
+    }, False)))
+    result = await quarter_research.load_quarter("DEMO", None)
+    assert result["metrics"] == []
+    assert result["uncertainty"] == ["amendment_unverified"]

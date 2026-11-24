@@ -19,6 +19,7 @@ export function exportBrief(quarter: Quarter, t: Translate, percent: (value: num
     `[${quarter.selected.form}](${quarter.selected.url}) · ${quarter.selected.filed}`, '',
     `${t('research.retrievedAt')} · ${quarter.fetched_at}`, '',
   ];
+  for (const reason of quarter.uncertainty ?? []) lines.push(t(`research.${reason}`), '');
   for (const metric of quarter.metrics) {
     lines.push(`## ${t(`research.metrics.${metric.key}`)}`, '',
       `${metric.current.value.toLocaleString('en-US')} ${quarter.currency} · ${t('research.yoy')} ${percent(metric.yoy)} · ${t('research.qoq')} ${percent(metric.qoq)}`, '');
@@ -30,6 +31,7 @@ export function exportBrief(quarter: Quarter, t: Translate, percent: (value: num
         lines.push(`  - ${fact.sign < 0 ? '− ' : '+ '}${fact.value.toLocaleString('en-US')} ${quarter.currency} · ${fact.start} – ${fact.end} · ${fact.filed} · ${fact.accession} · [${fact.form} ${fact.tag}](${fact.url})`);
       }
     }
+    for (const reason of metric.uncertainty ?? []) lines.push(t(`research.${reason}`));
     lines.push('');
   }
   download(new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' }), `${quarter.symbol}-${quarter.selected.end}.md`);
@@ -54,6 +56,10 @@ export async function exportWorkbook(quarter: Quarter, t: Translate) {
     ['Filing', { text: quarter.selected.form, hyperlink: quarter.selected.url }],
     ['Retrieved at (UTC)', quarter.fetched_at],
   ]);
+  for (const reason of quarter.uncertainty ?? []) metadata.addRow(['Uncertainty', t(`research.${reason}`)]);
+  for (const metric of quarter.metrics) {
+    for (const reason of metric.uncertainty ?? []) metadata.addRow([metric.key, t(`research.${reason}`)]);
+  }
   metadata.getColumn(1).width = 24;
   metadata.getColumn(2).width = 36;
 

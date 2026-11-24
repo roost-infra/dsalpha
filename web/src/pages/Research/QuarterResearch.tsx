@@ -23,6 +23,7 @@ function Evidence({ metric, number }: { metric: Metric; number: (value: number) 
   return (
     <aside aria-label={t('research.evidence')} className="min-w-0 lg:border-l lg:pl-6">
       <h2 className="text-base font-semibold">{t('research.evidence')}</h2>
+      {metric.uncertainty?.map((reason) => <p role="status" key={reason}>{t(`research.${reason}`)}</p>)}
       <h3 className="mt-3 text-sm font-medium">{t(`research.metrics.${metric.key}`)}</h3>
       <div className="mt-2 divide-y border-y">
         {fields.map((field) => {
@@ -131,6 +132,7 @@ export default function QuarterResearch() {
         )}
         {quarter && (
           <section className="min-w-0">
+            {quarter.uncertainty?.map((reason) => <p role="status" key={reason}>{t(`research.${reason}`)}</p>)}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-base font-semibold">{t('research.comparisons')}</h2>
               <select

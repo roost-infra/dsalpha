@@ -57,7 +57,7 @@ def _filings(cik: int, submissions: dict) -> list[Filing]:
     fields = ("form", "reportDate", "filingDate", "accessionNumber", "primaryDocument")
     by_period: dict[date, Filing] = {}
     for form, end, filed, accession, document in zip(*(recent[field] for field in fields), strict=True):
-        if form not in {"10-Q", "10-K"} or not end or not filed:
+        if form not in {"10-Q", "10-K", "10-Q/A", "10-K/A"} or not end or not filed:
             continue
         if not _ACCESSION.fullmatch(accession) or not _DOCUMENT.fullmatch(document):
             continue
@@ -65,7 +65,7 @@ def _filings(cik: int, submissions: dict) -> list[Filing]:
         url = f"{_SEC}/Archives/edgar/data/{cik}/{accession.replace('-', '')}/{document}"
         candidate = Filing(period, date.fromisoformat(filed), accession, form, url)
         previous = by_period.get(period)
-        if previous is None or candidate.filed > previous.filed:
+        if previous is None or (candidate.filed, candidate.accession) > (previous.filed, previous.accession):
             by_period[period] = candidate
     return sorted(by_period.values(), key=lambda item: item.end, reverse=True)
 
@@ -110,7 +110,14 @@ def _quarter(rows: list[dict], filings: list[Filing], index: int, tag: str,
     previous = filings[index + 1]
     if not 70 <= (filing.end - previous.end).days <= 110:
         return None
-    prior_rows = _facts(rows, previous, previous.end)
+    prior_rows = _facts(rows, filing, previous.end)
+    prior_source = filing
+    if not prior_rows:
+        # An amendment does not prove that an older cumulative input shares its basis.
+        if filing.form.endswith('/A') or previous.form.endswith('/A'):
+            return None
+        prior_rows = _facts(rows, previous, previous.end)
+        prior_source = previous
     # Subtract a prior cumulative value only when both inputs start on the same day.
     pairs = [(row, prior) for row in candidates for prior in prior_rows if row["start"] == prior["start"]]
     values = {(row["start"], row["val"], prior["val"]) for row, prior in pairs}
@@ -118,7 +125,7 @@ def _quarter(rows: list[dict], filings: list[Filing], index: int, tag: str,
         return None
     current, prior = pairs[0]
     return {"value": current["val"] - prior["val"], "method": "difference",
-            "evidence": [evidence(current, filing, 1), evidence(prior, previous, -1)]}
+            "evidence": [evidence(current, filing, 1), evidence(prior, prior_source, -1)]}
 
 
 def _change(current: dict, baseline: dict | None) -> float | None:
@@ -143,10 +150,20 @@ def compare_quarter(facts: dict, filings: list[Filing], index: int) -> list[dict
                 continue
             previous = _quarter(rows, filings, preceding, tag) if preceding is not None else None
             year = None
+            uncertainty = []
             if year_earlier is not None:
-                year = (_quarter(rows, filings, year_earlier, tag, comparative=filings[index])
-                        or _quarter(rows, filings, year_earlier, tag))
+                year = _quarter(rows, filings, year_earlier, tag, comparative=filings[index])
+                if year is None:
+                    # Presence is not absence: an unusable restated comparison must
+                    # never revive a quarter computed from superseded cumulative facts.
+                    if _facts(rows, filings[index], filings[year_earlier].end):
+                        uncertainty.append("comparative_basis_unavailable")
+                    elif filings[index].form.endswith('/A'):
+                        uncertainty.append("amendment_unverified")
+                    else:
+                        year = _quarter(rows, filings, year_earlier, tag)
             metrics.append({"key": key, "current": current, "previous": previous, "year_ago": year,
+                            "uncertainty": uncertainty,
                             "qoq": _change(current, previous), "yoy": _change(current, year)})
             break
     return metrics
@@ -306,7 +323,7 @@ async def _load_anchors(
 
 async def load_quarter(symbol: str, period: date | None) -> dict:
     cache = get_cache_client()
-    key = f"research:sec-quarter:v3:{symbol}:{period or 'latest'}"
+    key = f"research:sec-quarter:v4:{symbol}:{period or 'latest'}"
     if cached := await cache.get(key):
         return cached
     tickers = await _single_flight("tickers", lambda: _load_tickers(cache))
@@ -343,6 +360,7 @@ async def load_quarter(symbol: str, period: date | None) -> dict:
         "symbol": symbol, "company": company["name"], "currency": "USD",
         "fetched_at": data["fetched_at"], "stale": stale, "selected": selected.response(),
         "periods": [filing.response() for filing in filings[:12]], "metrics": metrics,
+        "uncertainty": ["amendment_unverified"] if any(f.form.endswith('/A') for f in filings) else [],
     }
     age = (datetime.now(UTC) - datetime.fromisoformat(data["fetched_at"])).total_seconds()
     remaining_fresh = int(_COMPANY_FRESH_SECONDS - age)

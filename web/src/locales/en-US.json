@@ -1518,6 +1518,8 @@
     "loading": "Retrieving SEC filing data",
     "notFound": "No comparable US GAAP quarter was available for this selection.",
     "failed": "Couldn't load SEC filing data. Try again.",
+    "amendment_unverified": "Amended filing detected; unreplaced financial values are marked unavailable.",
+    "comparative_basis_unavailable": "Restated comparative basis conflicts with the available filing; YoY is unavailable.",
     "metrics": {
       "revenue": "Revenue",
       "operating_income": "Operating income",

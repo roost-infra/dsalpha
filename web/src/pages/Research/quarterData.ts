@@ -21,7 +21,10 @@ export interface Observation {
   evidence: Fact[];
 }
 
+export type Uncertainty = 'amendment_unverified' | 'comparative_basis_unavailable';
+
 export interface Metric {
+  uncertainty?: Uncertainty[];
   key: 'revenue' | 'operating_income' | 'net_income' | 'operating_cash_flow';
   current: Observation;
   previous: Observation | null;
@@ -31,6 +34,7 @@ export interface Metric {
 }
 
 export interface Quarter {
+  uncertainty?: Uncertainty[];
   symbol: string;
   company: string;
   currency: string;

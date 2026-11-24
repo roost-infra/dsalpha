@@ -1566,6 +1566,8 @@
     "loading": "正在获取 SEC 财报数据",
     "notFound": "该标的或报告期没有可比较的美国会计准则季度数据。",
     "failed": "无法读取 SEC 财报数据，请重试。",
+    "amendment_unverified": "检测到修订财报；缺少已验证替代数据的财务值不可用。",
+    "comparative_basis_unavailable": "修订后的比较口径无法与现有财报核对，同比不可用。",
     "metrics": {
       "revenue": "营收",
       "operating_income": "营业利润",
