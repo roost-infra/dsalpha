@@ -75,7 +75,11 @@ function WorkspaceFiles({ workspaces, selectedId }: { workspaces: Workspace[]; s
   );
 }
 
-function CloudComputerSpec({ computer, provider }: { computer: Computer; provider?: ComputerProviderOption }) {
+function CloudComputerSpec({ computer, provider, onOpen }: {
+  computer: Computer;
+  provider?: ComputerProviderOption;
+  onOpen?: () => void;
+}) {
   const { t } = useTranslation();
   if (!providerManagesSpec(computer.kind)) return null;
 
@@ -99,7 +103,7 @@ function CloudComputerSpec({ computer, provider }: { computer: Computer; provide
               : tier ? tierLabel(t, tier) : computer.resource_tier}</span>}
         {(change || canChange) && (
           <Button type="button" size="sm" variant="outline" disabled={!change && !available}
-            onClick={() => openComputerSpec(computer.computer_id)}>
+            onClick={onOpen ?? (() => openComputerSpec(computer.computer_id))}>
             {change ? t('computer.card.details', 'Details') : t('workspace.changeSpec', 'Change spec')}
           </Button>
         )}
@@ -199,6 +203,18 @@ function Desktop({ computer, provider, workspaces, selectedId, power }: {
     }
   }
 
+  async function openSpec() {
+    setFullscreenError(false);
+    try {
+      // The shared dialog host is outside the desktop's fullscreen subtree.
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch {
+      setFullscreenError(true);
+      return;
+    }
+    openComputerSpec(computer.computer_id);
+  }
+
   return (
     <section ref={setDesktopSection} className="flex min-h-full flex-col gap-4 bg-page p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -225,7 +241,7 @@ function Desktop({ computer, provider, workspaces, selectedId, power }: {
         </div>
       </div>
       {providerManagesSpec(computer.kind) && (
-        <dl className="text-sm"><CloudComputerSpec computer={computer} provider={provider} /></dl>
+        <dl className="text-sm"><CloudComputerSpec computer={computer} provider={provider} onOpen={() => void openSpec()} /></dl>
       )}
       {fullscreenError && <p role="alert" className="text-sm text-destructive">{t('computer.cloud.fullscreenFailed')}</p>}
       {power.error && power.variables?.computerId === computer.computer_id && (
