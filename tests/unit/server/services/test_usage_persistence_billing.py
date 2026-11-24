@@ -34,6 +34,7 @@ async def test_task_usage_rolls_back_when_charge_cannot_be_enqueued(monkeypatch)
     from src.server.database.runs import credit_ledger, outbox
     from src.server.dependencies import usage_limits
 
+    monkeypatch.setenv("TASK_USAGE_CHARGE_OUTBOX_ENABLED", "true")
     committed = []
     inserts = []
     conn = MagicMock()
@@ -68,6 +69,54 @@ async def test_task_usage_rolls_back_when_charge_cannot_be_enqueued(monkeypatch)
     [charge] = enqueue.await_args.kwargs["jobs"]
     assert charge.idempotency_key == f"task-usage:{inserts[0]['conversation_usage_id']}"
     assert charge.payload == {"user_id": "user-1", "credits": 2.5}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flag, queues", [(None, False), ("false", False), ("true", True)])
+async def test_task_usage_selects_exactly_one_charge_path(monkeypatch, flag, queues):
+    from src.server.database import conversation, pool
+    from src.server.database.runs import outbox
+    from src.server.dependencies import usage_limits
+    from src.server.services import task_usage_billing
+
+    if flag is None:
+        monkeypatch.delenv("TASK_USAGE_CHARGE_OUTBOX_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("TASK_USAGE_CHARGE_OUTBOX_ENABLED", flag)
+    events = []
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def transaction():
+        yield
+        events.append("commit")
+
+    @asynccontextmanager
+    async def connection():
+        yield conn
+
+    async def enqueue(transaction_conn, **kwargs):
+        assert transaction_conn is conn
+        [job] = kwargs["jobs"]
+        assert job.idempotency_key.startswith("task-usage:")
+        events.append("queue")
+
+    async def direct(user_id, ref, credits):
+        assert (user_id, credits) == ("user-1", 2.5)
+        assert ref.startswith("task-usage:")
+        events.append("direct")
+
+    conn.transaction.side_effect = transaction
+    monkeypatch.setattr(pool, "get_db_connection", connection)
+    monkeypatch.setattr(conversation, "create_usage_record", AsyncMock())
+    monkeypatch.setattr(usage_limits, "platform_gating_active", lambda: True)
+    monkeypatch.setattr(outbox, "enqueue_hooks", enqueue)
+    monkeypatch.setattr(task_usage_billing, "charge_task_usage_direct", direct)
+
+    service = _make_service()
+    service._token_credits = Decimal("2.5")
+    assert await service.persist_usage("response", msg_type="task")
+    assert events == (["queue", "commit"] if queues else ["commit", "direct"])
 
 
 # ===================================================================

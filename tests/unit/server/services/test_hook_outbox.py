@@ -41,6 +41,7 @@ def _registered_executors():
 async def test_task_usage_charge_is_nacked_then_replayed_with_the_same_reference(monkeypatch):
     from src.server.services import task_usage_billing
 
+    monkeypatch.setenv("TASK_USAGE_CHARGE_OUTBOX_ENABLED", "false")
     task_usage_billing.register_outbox_executors()
     limits = task_usage_billing.usage_limits
     client = object()

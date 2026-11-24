@@ -41,6 +41,13 @@ from src.config.env import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
+def is_task_usage_charge_outbox_enabled() -> bool:
+    """Enable enqueueing after all workers support the charge hook."""
+    return os.getenv("TASK_USAGE_CHARGE_OUTBOX_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def background_dispatch_requires_token() -> bool:
     """True when auth is enabled but no INTERNAL_SERVICE_TOKEN is configured.
 

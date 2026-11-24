@@ -1,8 +1,8 @@
 """Charge settled subagent/task usage to the console.
 
 A task run records its own ``conversation_usages`` row but has no credit-gate
-lease of its own. The parent turn's release does not include it, so the usage
-transaction queues a charge. The console deduplicates every delivery by ref.
+lease of its own. The parent turn's release does not include it, so the task
+charges the console using a usage-derived idempotency reference.
 """
 
 import json
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 _CHARGE_PATH = "/internal/v1/usage/charge"
 _RESOLVE_PATH = "/internal/v1/orgs/resolve-user"
+_direct_org_cache: dict[str, str] = {}
 
 
 def _url(path: str) -> str:
@@ -67,6 +68,19 @@ async def _charge_org_usage(client, org_id: str, ref: str, credits: float) -> bo
         "task billing: charge %s -> %s %s", ref, resp.status_code, resp.text[:200]
     )
     return False
+
+
+async def charge_task_usage_direct(user_id: str, ref: str, credits: float) -> None:
+    """Keep direct charging available while workers are being upgraded."""
+    if usage_limits.service_token_missing():
+        return
+    client = await usage_limits.get_http_client()
+    org_id = _direct_org_cache.get(user_id) or await _org_for_user(user_id, client)
+    if org_id:
+        _direct_org_cache[user_id] = org_id
+        if await _charge_org_usage(client, org_id, ref, credits):
+            return
+    logger.warning("Task usage charge was not accepted, ref=%s", ref)
 
 
 def task_charge_job(usage_id: str, user_id: str, credits: float) -> HookJob:

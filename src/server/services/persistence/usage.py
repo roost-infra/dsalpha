@@ -39,6 +39,7 @@ from src.utils.tracking.infrastructure_costs import (
     format_infrastructure_usage
 )
 from src.config.env import USD_TO_CREDITS_RATE
+from src.config.settings import is_task_usage_charge_outbox_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -289,7 +290,10 @@ class UsagePersistenceService:
         from src.server.database import pool
         from src.server.database.runs import credit_ledger, outbox
         from src.server.dependencies.usage_limits import platform_gating_active
-        from src.server.services.task_usage_billing import task_charge_job
+        from src.server.services.task_usage_billing import (
+            charge_task_usage_direct,
+            task_charge_job,
+        )
 
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)
@@ -333,26 +337,27 @@ class UsagePersistenceService:
                 "created_at": timestamp
             }
 
+            charge = None
+            if (
+                msg_type == "task"
+                and not effective_is_byok
+                and total_credits > 0
+                and platform_gating_active()
+            ):
+                charge = task_charge_job(
+                    usage_data["conversation_usage_id"], self.user_id, float(total_credits)
+                )
+            enqueue_charge = charge is not None and is_task_usage_charge_outbox_enabled()
+
             async def write_usage(transaction_conn):
                 await qr_db.create_usage_record(usage_data, conn=transaction_conn)
                 if settle_task_run_id:
                     await credit_ledger.settle_task_run(
                         settle_task_run_id, conn=transaction_conn
                     )
-                if (
-                    msg_type == "task"
-                    and not effective_is_byok
-                    and total_credits > 0
-                    and platform_gating_active()
-                ):
+                if charge is not None and enqueue_charge:
                     await outbox.enqueue_hooks(
-                        transaction_conn,
-                        thread_id=None,
-                        jobs=[task_charge_job(
-                            usage_data["conversation_usage_id"],
-                            self.user_id,
-                            float(total_credits),
-                        )],
+                        transaction_conn, thread_id=None, jobs=[charge]
                     )
 
             if conn:
@@ -369,6 +374,11 @@ class UsagePersistenceService:
                 f"(tokens={float(self._token_credits):.2f}, "
                 f"infra={float(self._infrastructure_credits):.2f})"
             )
+
+            if charge is not None and not enqueue_charge:
+                await charge_task_usage_direct(
+                    self.user_id, charge.idempotency_key, float(total_credits)
+                )
 
             return True
 
