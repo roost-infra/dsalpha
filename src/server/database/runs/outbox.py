@@ -32,6 +32,7 @@ from src.server.database.runs.hook_jobs import (  # noqa: F401
     NeedsInputWakePayload,
     PushPayload,
     ReportBackPayload,
+    TASK_USAGE_CHARGE_HOOK,
     UserFeedPayload,
     WatchClearPayload,
     build_finalize_jobs,
@@ -56,7 +57,7 @@ _OKEY_LOCK_CLASS = 0x484F4F4B  # 'HOOK'
 
 
 async def enqueue_hooks(
-    conn, *, run_id: Optional[str] = None, thread_id: str, jobs: List[HookJob]
+    conn, *, run_id: Optional[str] = None, thread_id: Optional[str], jobs: List[HookJob]
 ) -> None:
     """Write outbox rows on the caller's transaction: a run's finalize, or a
     transition with no run that makes a notice due (a wakeup's fire).
@@ -755,13 +756,12 @@ async def close_unowed_waiting_alerts() -> List[Dict[str, Any]]:
 async def purge_terminal_jobs(
     *, retention_seconds: float, batch_size: int = 5000
 ) -> int:
-    """Delete done/dead rows older than the retention window, one batch.
+    """Delete expired terminal rows, keeping unresolved task usage charges.
 
     Terminal history is only read back within short windows (done-recents
-    wake-miss recovery, the dead-revive cool-down/ceiling ≈ a day), so
-    anything past the retention window is dead weight that the per-worker
-    sweeps would otherwise scan forever. Batched so the first purge on a
-    long-lived deployment can't hold a giant delete.
+    wake-miss recovery, the dead-revive cool-down/ceiling ≈ a day). Failed task
+    usage charges stay available for reconciliation. The batch bounds the
+    work of a purge on long-lived deployments.
     """
     async with pool.get_db_connection() as conn:
         async with conn.cursor() as cur:
@@ -771,12 +771,13 @@ async def purge_terminal_jobs(
                 WHERE hook_outbox_id IN (
                     SELECT hook_outbox_id FROM hook_outbox
                     WHERE status IN ('done', 'dead')
+                      AND NOT (status = 'dead' AND hook_type = %s)
                       AND COALESCE(completed_at, created_at)
                           <= NOW() - make_interval(secs => %s::float)
                     LIMIT %s
                 )
                 """,
-                (retention_seconds, batch_size),
+                (TASK_USAGE_CHARGE_HOOK, retention_seconds, batch_size),
             )
             return cur.rowcount
 
@@ -1596,6 +1597,23 @@ async def merge_job_payload(
                 WHERE hook_outbox_id = %s
                 """,
                 (SafeJson(patch), list(remove or []), job_id),
+            )
+            return cur.rowcount > 0
+
+
+async def bind_task_charge_org(job_id: str, *, attempts: int, org_id: str) -> bool:
+    """Persist the charge destination before the first external attempt."""
+    async with pool.get_db_connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE hook_outbox
+                SET payload = payload || jsonb_build_object('org_id', %s::text)
+                WHERE hook_outbox_id = %s AND hook_type = %s
+                  AND status = 'claimed' AND attempts = %s
+                  AND NOT (payload ? 'org_id')
+                """,
+                (org_id, job_id, TASK_USAGE_CHARGE_HOOK, attempts),
             )
             return cur.rowcount > 0
 

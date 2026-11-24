@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 METERED_KINDS = ("daytona", "docker", "e2b")
 _INGEST_LOCK = 4821001  # advisory lock: one ingester across replicas
 _CONV_CURSOR = "conversation_usages"
+_CONV_XID_CURSOR = "conversation_usages_xid"
+_MIN_USAGE_ID = "00000000-0000-0000-0000-000000000000"
 _PAGE = 1000
 
 
@@ -95,13 +97,13 @@ async def _set_state(cur: AsyncCursor, name: str, value: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def ingest_conversation_usages(cur: AsyncCursor, settings: Settings) -> int:
+async def _ingest_legacy_conversations(cur: AsyncCursor) -> int:
     cursor = await _get_state(cur, _CONV_CURSOR)
     if cursor:
         after_ts, _, after_id = cursor.partition("|")
     else:
         after_ts = "1970-01-01T00:00:00+00:00"
-        after_id = "00000000-0000-0000-0000-000000000000"
+        after_id = _MIN_USAGE_ID
 
     await cur.execute(
         """
@@ -109,6 +111,7 @@ async def ingest_conversation_usages(cur: AsyncCursor, settings: Settings) -> in
                infrastructure_credits, credit_exempt, created_at
         FROM public.conversation_usages
         WHERE status IN ('completed', 'interrupted', 'error', 'cancelled')
+          AND quota_ingest_xid IS NULL
           AND (created_at > %s::timestamptz
                OR (created_at = %s::timestamptz
                    AND conversation_usage_id > %s::uuid))
@@ -118,6 +121,56 @@ async def ingest_conversation_usages(cur: AsyncCursor, settings: Settings) -> in
         (after_ts, after_ts, after_id, _PAGE),
     )
     rows = await cur.fetchall()
+    await _book_conversation_usages(cur, rows)
+    if rows:
+        last = rows[-1]
+        created = last["created_at"]
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        await _set_state(
+            cur,
+            _CONV_CURSOR,
+            f"{created.isoformat()}|{last['conversation_usage_id']}",
+        )
+    return len(rows)
+
+
+async def ingest_conversation_usages(cur: AsyncCursor, settings: Settings) -> int:
+    legacy = await _ingest_legacy_conversations(cur)
+    cursor = await _get_state(cur, _CONV_XID_CURSOR)
+    after_xid, _, after_id = cursor.partition("|") if cursor else ("0", "", "")
+
+    # Every lower transaction ID has already committed or rolled back. Larger
+    # IDs can be visible while an older writer is still in flight, so advancing
+    # over them could leave that older writer permanently behind the cursor.
+    await cur.execute("SELECT pg_snapshot_xmin(pg_current_snapshot())::text AS horizon")
+    horizon = (await cur.fetchone())["horizon"]
+    await cur.execute(
+        """
+        SELECT conversation_usage_id, user_id, token_credits,
+               infrastructure_credits, credit_exempt, quota_ingest_xid::text AS xid
+        FROM public.conversation_usages
+        WHERE status IN ('completed', 'interrupted', 'error', 'cancelled')
+          AND quota_ingest_xid < %s::xid8
+          AND (quota_ingest_xid, conversation_usage_id) > (%s::xid8, %s::uuid)
+        ORDER BY quota_ingest_xid, conversation_usage_id
+        LIMIT %s
+        """,
+        (horizon, after_xid, after_id or _MIN_USAGE_ID, _PAGE),
+    )
+    rows = await cur.fetchall()
+    await _book_conversation_usages(cur, rows)
+    if len(rows) == _PAGE:
+        last = rows[-1]
+        await _set_state(
+            cur, _CONV_XID_CURSOR, f"{last['xid']}|{last['conversation_usage_id']}"
+        )
+    elif horizon != after_xid or after_id:
+        await _set_state(cur, _CONV_XID_CURSOR, horizon)
+    return legacy + len(rows)
+
+
+async def _book_conversation_usages(cur: AsyncCursor, rows: list[dict]) -> None:
     for row in rows:
         if row["credit_exempt"]:
             continue
@@ -143,18 +196,6 @@ async def ingest_conversation_usages(cur: AsyncCursor, settings: Settings) -> in
                 source_id=f"{usage_id}:tool",
             )
 
-    if rows:
-        last = rows[-1]
-        created = last["created_at"]
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        await _set_state(
-            cur,
-            _CONV_CURSOR,
-            f"{created.isoformat()}|{last['conversation_usage_id']}",
-        )
-    return len(rows)
-
 
 # ---------------------------------------------------------------------------
 # computer_runs -> sandbox ledger entries
@@ -165,14 +206,14 @@ async def ingest_sandbox_runs(cur: AsyncCursor, settings: Settings) -> int:
     await cur.execute(
         """
         SELECT r.run_id, r.user_id, r.provider_kind, r.resource_tier,
-               r.started_at, r.ended_at, b.billed_until
+               COALESCE(b.billed_until, r.started_at) AS bill_from,
+               date_trunc('second', LEAST(r.ended_at, now())) AS bill_through
         FROM public.computer_runs r
         LEFT JOIN billing.run_billing b ON b.run_id = r.run_id
         WHERE r.provider_kind = ANY(%s)
-          AND r.started_at < now()
-          AND COALESCE(r.ended_at, now())
+          AND date_trunc('second', LEAST(r.ended_at, now()))
               > COALESCE(b.billed_until, r.started_at)
-        ORDER BY r.started_at
+        ORDER BY COALESCE(b.last_checked_at, r.started_at), r.run_id
         LIMIT %s
         """,
         (list(METERED_KINDS), _PAGE),
@@ -183,9 +224,20 @@ async def ingest_sandbox_runs(cur: AsyncCursor, settings: Settings) -> int:
 
     plans: dict[str, Plan] = {}
     booked = 0
-    now = datetime.now(timezone.utc)
     for run in runs:
         user_id = run["user_id"]
+        start = run["bill_from"]
+        end = run["bill_through"]
+        # Move every visited run behind unvisited work, including zero-price
+        # or unconfigured runs whose billing boundary has not advanced.
+        await cur.execute(
+            """
+            INSERT INTO billing.run_billing (run_id, user_id, billed_until, last_checked_at)
+            VALUES (%s, %s, %s, now())
+            ON CONFLICT (run_id) DO UPDATE SET last_checked_at = EXCLUDED.last_checked_at
+            """,
+            (run["run_id"], user_id, start),
+        )
         plan = plans.get(user_id)
         if plan is None:
             await cur.execute(
@@ -210,12 +262,6 @@ async def ingest_sandbox_runs(cur: AsyncCursor, settings: Settings) -> int:
         if price <= 0:
             continue
 
-        start = run["billed_until"] or run["started_at"]
-        end = run["ended_at"] or now
-        end = min(end, now).replace(microsecond=0)
-        if end <= start:
-            continue
-
         credits = sandbox_credits((end - start).total_seconds(), price)
         if credits <= 0:
             continue
@@ -233,16 +279,11 @@ async def ingest_sandbox_runs(cur: AsyncCursor, settings: Settings) -> int:
             continue  # already billed to this second
         await cur.execute(
             """
-            INSERT INTO billing.run_billing (run_id, user_id, billed_until, credits_billed)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (run_id) DO UPDATE SET
-                billed_until = GREATEST(
-                    billing.run_billing.billed_until, EXCLUDED.billed_until
-                ),
-                credits_billed = billing.run_billing.credits_billed
-                                 + EXCLUDED.credits_billed
+            UPDATE billing.run_billing
+            SET billed_until = %s, credits_billed = credits_billed + %s
+            WHERE run_id = %s
             """,
-            (run["run_id"], user_id, end, credits),
+            (end, credits, run["run_id"]),
         )
         booked += 1
     return booked

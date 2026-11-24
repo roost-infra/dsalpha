@@ -69,7 +69,7 @@ async def run_sql_script(path: Path) -> None:
     is split on semicolons. The schema deliberately contains no semicolons
     inside string literals; keep it that way.
     """
-    statements = [s.strip() for s in path.read_text().split(";") if s.strip()]
+    statements = [s.strip() for s in path.read_text(encoding="utf-8").split(";") if s.strip()]
     async with pool().connection() as conn:
         # A pool connection is not autocommit; without this block every CREATE
         # is rolled back when the connection is returned.

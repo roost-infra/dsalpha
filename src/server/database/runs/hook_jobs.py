@@ -15,6 +15,8 @@ from src.config.features import is_feature_enabled_system
 from src.server.contracts.status import to_public
 from src.server.services.report_back.handoff.keys import ORIGIN_THREAD_META
 
+TASK_USAGE_CHARGE_HOOK = "task_usage_charge"
+
 
 @dataclass
 class HookJob:
