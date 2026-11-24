@@ -37,6 +37,43 @@ def _registered_executors():
     task_report_back.register_outbox_executors()
 
 
+@pytest.mark.asyncio
+async def test_task_usage_charge_is_nacked_then_replayed_with_the_same_reference(monkeypatch):
+    from src.server.services import task_usage_billing
+
+    task_usage_billing.register_outbox_executors()
+    limits = task_usage_billing.usage_limits
+    client = object()
+    monkeypatch.setattr(limits, "platform_gating_active", lambda: True)
+    monkeypatch.setattr(limits, "service_token_missing", lambda: False)
+    monkeypatch.setattr(limits, "get_http_client", AsyncMock(return_value=client))
+    resolve = AsyncMock(return_value="org")
+    monkeypatch.setattr(task_usage_billing, "_org_for_user", resolve)
+    charge_request = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(task_usage_billing, "_charge_org_usage", charge_request)
+    bind = AsyncMock(return_value=True)
+    monkeypatch.setattr(hook_outbox.outbox_db, "bind_task_charge_org", bind)
+    ack = AsyncMock(return_value=True)
+    nack = AsyncMock(return_value="pending")
+    monkeypatch.setattr(hook_outbox.outbox_db, "ack_outbox_job", ack)
+    monkeypatch.setattr(hook_outbox.outbox_db, "nack_outbox_job", nack)
+
+    pending = dataclasses.asdict(task_usage_billing.task_charge_job("usage", "user", 2.5))
+    pending["hook_outbox_id"] = "job"
+    await HookOutboxDrainer()._execute({**pending, "attempts": 1})
+    nack.assert_awaited_once_with("job", attempts=1, max_attempts=hook_outbox.MAX_ATTEMPTS)
+    ack.assert_not_awaited()
+    pending["payload"]["org_id"] = "org"
+    await HookOutboxDrainer()._execute({**pending, "attempts": 2})
+    ack.assert_awaited_once_with("job", attempts=2)
+    resolve.assert_awaited_once_with("user", client)
+    bind.assert_awaited_once_with("job", attempts=1, org_id="org")
+    assert [call.args for call in charge_request.await_args_list] == [
+        (client, "org", "task-usage:usage", 2.5),
+        (client, "org", "task-usage:usage", 2.5),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Decision table
 # ---------------------------------------------------------------------------

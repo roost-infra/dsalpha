@@ -580,7 +580,12 @@ async def lifespan(app: FastAPI):
     from src.server.services.report_back import command as command_report
     from src.server.services.report_back import steer_executor, subagent
     from src.server.services.report_back.handoff import core as handoff_core
-    from src.server.services import automation_settlement, idle_compaction, thread_lifecycle_feed
+    from src.server.services import (
+        automation_settlement,
+        idle_compaction,
+        task_usage_billing,
+        thread_lifecycle_feed,
+    )
     from src.server.services.features import register_feature_off_hook
     from src.server.services.hook_outbox import HookOutboxDrainer
     from src.server.services.market_targets import delivery as market_target_delivery
@@ -594,6 +599,7 @@ async def lifespan(app: FastAPI):
     steer_executor.register_outbox_executors()
     thread_lifecycle_feed.register_outbox_executors()
     automation_settlement.register_outbox_executors()
+    task_usage_billing.register_outbox_executors()
     market_target_delivery.register_outbox_executors()
     # Registered with push off too: its rows then ack as no-ops.
     push_notify.register_outbox_executors()

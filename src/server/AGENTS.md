@@ -36,6 +36,8 @@ Chat-wire SSE events are emitted from **multiple layers** — the main turn in `
 
 ## Multi-worker (review checklist)
 
+- Hosted subagent usage inserts the charge hook, usage row, and task settle stamp in one transaction. The hook survives thread deletion and binds the billing organization before its first external attempt. A retry uses the same organization and `task-usage:<usage id>` reference. A dead charge stays in `hook_outbox` for reconciliation. Apply migration 128 and stop older drainers before starting a build that enqueues `task_usage_charge`, since they do not recognize the hook.
+
 The server runs `--workers N`: a request, its SSE consumer, the outbox drainer, and the recovery scanner may each land on **different processes**. Truth lives in Postgres (run ledger + advisory-lock guards); Redis is coordination/transport; **process memory is execution context only** — no reader may treat it as truth. The failure signature of getting this wrong is always the same: *works when producer and consumer land on the same worker, breaks ~50% of the time at `--workers 2`* — one green run proves nothing.
 
 Flag any diff that introduces one of these, and require a stated cross-worker story before it merges:

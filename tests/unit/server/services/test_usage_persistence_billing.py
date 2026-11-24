@@ -28,6 +28,48 @@ def _make_service(**kwargs):
     return UsagePersistenceService(**defaults)
 
 
+@pytest.mark.asyncio
+async def test_task_usage_rolls_back_when_charge_cannot_be_enqueued(monkeypatch):
+    from src.server.database import conversation, pool
+    from src.server.database.runs import credit_ledger, outbox
+    from src.server.dependencies import usage_limits
+
+    committed = []
+    inserts = []
+    conn = MagicMock()
+
+    @asynccontextmanager
+    async def transaction():
+        yield
+        committed.extend(inserts)
+
+    @asynccontextmanager
+    async def connection():
+        yield conn
+
+    async def create_usage(data, *, conn):
+        inserts.append(data)
+
+    conn.transaction.side_effect = transaction
+    monkeypatch.setattr(pool, "get_db_connection", connection)
+    monkeypatch.setattr(conversation, "create_usage_record", create_usage)
+    monkeypatch.setattr(credit_ledger, "settle_task_run", AsyncMock())
+    monkeypatch.setattr(usage_limits, "platform_gating_active", lambda: True)
+    enqueue = AsyncMock(side_effect=RuntimeError("fixture ledger failure"))
+    monkeypatch.setattr(outbox, "enqueue_hooks", enqueue)
+
+    service = _make_service()
+    service._token_credits = Decimal("2.5")
+    assert not await service.persist_usage("response", msg_type="task", settle_task_run_id="task")
+    assert not committed
+    assert len(inserts) == 1
+    assert enqueue.await_args.args == (conn,)
+    assert enqueue.await_args.kwargs["thread_id"] is None
+    [charge] = enqueue.await_args.kwargs["jobs"]
+    assert charge.idempotency_key == f"task-usage:{inserts[0]['conversation_usage_id']}"
+    assert charge.payload == {"user_id": "user-1", "credits": 2.5}
+
+
 # ===================================================================
 # Test 3: UsagePersistenceService credit computation
 # ===================================================================

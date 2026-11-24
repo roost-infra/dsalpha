@@ -287,7 +287,9 @@ class UsagePersistenceService:
         """
         from src.server.database import conversation as qr_db
         from src.server.database import pool
-        from src.server.database.runs import credit_ledger
+        from src.server.database.runs import credit_ledger, outbox
+        from src.server.dependencies.usage_limits import platform_gating_active
+        from src.server.services.task_usage_billing import task_charge_job
 
         if timestamp is None:
             timestamp = datetime.now(timezone.utc)
@@ -331,22 +333,34 @@ class UsagePersistenceService:
                 "created_at": timestamp
             }
 
-            # Persist to database (use provided conn for transaction support)
-            if conn:
-                await qr_db.create_usage_record(usage_data, conn=conn)
+            async def write_usage(transaction_conn):
+                await qr_db.create_usage_record(usage_data, conn=transaction_conn)
                 if settle_task_run_id:
-                    await credit_ledger.settle_task_run(settle_task_run_id, conn=conn)
+                    await credit_ledger.settle_task_run(
+                        settle_task_run_id, conn=transaction_conn
+                    )
+                if (
+                    msg_type == "task"
+                    and not effective_is_byok
+                    and total_credits > 0
+                    and platform_gating_active()
+                ):
+                    await outbox.enqueue_hooks(
+                        transaction_conn,
+                        thread_id=None,
+                        jobs=[task_charge_job(
+                            usage_data["conversation_usage_id"],
+                            self.user_id,
+                            float(total_credits),
+                        )],
+                    )
+
+            if conn:
+                await write_usage(conn)
             else:
                 async with pool.get_db_connection() as new_conn:
-                    # One transaction either way. The settle stamp has to land
-                    # with the usage row or not at all, and wrapping the lone
-                    # insert when there is no stamp costs nothing.
                     async with new_conn.transaction():
-                        await qr_db.create_usage_record(usage_data, conn=new_conn)
-                        if settle_task_run_id:
-                            await credit_ledger.settle_task_run(
-                                settle_task_run_id, conn=new_conn
-                            )
+                        await write_usage(new_conn)
 
             logger.info(
                 f"[UsagePersistence] Persisted usage for response_id={response_id}, "
@@ -355,27 +369,6 @@ class UsagePersistenceService:
                 f"(tokens={float(self._token_credits):.2f}, "
                 f"infra={float(self._infrastructure_credits):.2f})"
             )
-
-            # A task row has no credit-gate lease of its own; the parent turn's
-            # release does not include it. Charge it directly, keyed by the
-            # write-once usage row id.
-            if (
-                msg_type == "task"
-                and not effective_is_byok
-                and total_credits > 0
-            ):
-                from src.server.services.task_usage_billing import charge_task_usage
-
-                charged = await charge_task_usage(
-                    self.user_id,
-                    f"task-usage:{usage_data['conversation_usage_id']}",
-                    float(total_credits),
-                )
-                if not charged:
-                    logger.warning(
-                        f"[UsagePersistence] Task usage {usage_data['conversation_usage_id']} "
-                        "was not charged to the console"
-                    )
 
             return True
 
