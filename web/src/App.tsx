@@ -341,8 +341,8 @@ function AuthenticatedShell() {
     };
   }, [sidebarWidthVar]);
 
-  // Computer access is already authenticated here and needs no model setup.
-  const needsModelSetup = section !== 'computers';
+  // Public filing calculations and computer access need no model.
+  const needsModelSetup = section !== 'computers' && section !== 'research';
   if (needsModelSetup && isLoading) {
     return <PageLoading />;
   }

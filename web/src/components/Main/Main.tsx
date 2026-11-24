@@ -20,6 +20,7 @@ type RouteSection = AppSection;
 // chat routes in place always has a page here.
 const routeChunks = {
   dashboard: () => import('../../pages/Dashboard/Dashboard'),
+  research: () => import('../../pages/Research/QuarterResearch'),
   chat: () => import('../../pages/ChatAgent/ChatAgent'),
   computers: () => import('../../pages/Computers/Computers'),
   rooms: () => import('../../pages/Rooms/Rooms'),
@@ -36,6 +37,7 @@ const routeChunks = {
 } satisfies Record<RouteSection, () => Promise<unknown>>;
 
 const Dashboard = lazyWithMotion(routeChunks.dashboard);
+const QuarterResearch = preloadableLazy(routeChunks.research);
 const ChatAgent = lazyWithMotion(routeChunks.chat);
 const Computers = lazyWithMotion(routeChunks.computers);
 // The Rooms page animates nothing, so it skips the framer download.
@@ -56,6 +58,7 @@ const Settings = lazyWithMotion(routeChunks.settings);
 // pane's spinner (see lib/lazyWithMotion).
 const routePreloads = {
   dashboard: Dashboard.preload,
+  research: QuarterResearch.preload,
   chat: ChatAgent.preload,
   computers: Computers.preload,
   rooms: Rooms.preload,
@@ -158,6 +161,7 @@ function Main() {
       <StaleBuildBoundary key={pageKey} variant="pane">
         <Routes location={location}>
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/research/:symbol" element={<QuarterResearch />} />
           <Route path="/chat" element={<ChatAgent />} />
           <Route path="/computers" element={<Computers />} />
           <Route path="/computers/:computerId/desktop" element={<Computers />} />

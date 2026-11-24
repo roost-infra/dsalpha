@@ -1,6 +1,7 @@
 /** The sections the app shell routes; `components/Main/Main.tsx` holds a chunk for each. */
 export const APP_SECTIONS = [
   'dashboard',
+  'research',
   'chat',
   'computers',
   'rooms',

@@ -1490,6 +1490,38 @@
     "cosWorksOn": "Works on",
     "cosComputerHint": "{{name}} works on your primary computer, in a Home folder beside your workspaces. Make another computer primary and it moves there."
   },
+  "research": {
+    "title": "Quarter research",
+    "ticker": "Stock ticker",
+    "tickerPlaceholder": "Stock ticker, e.g. NVDA",
+    "invalidTicker": "Enter a valid stock ticker.",
+    "period": "Reporting period",
+    "latest": "Latest quarter",
+    "periodEnd": "Quarter ended {{date}}",
+    "retrieved": "Retrieved {{time}}",
+    "comparisons": "Quarter comparison",
+    "evidence": "Filing evidence",
+    "metric": "Metric",
+    "current": "Selected quarter",
+    "previous": "Prior quarter",
+    "year_ago": "Year-ago quarter",
+    "qoq": "QoQ",
+    "yoy": "YoY",
+    "reported": "Reported quarter",
+    "difference": "Difference of cumulative values",
+    "brief": "Download brief",
+    "excel": "Download Excel",
+    "exportFailed": "Couldn't export the workbook.",
+    "loading": "Retrieving SEC filing data",
+    "notFound": "No comparable US GAAP quarter was available for this selection.",
+    "failed": "Couldn't load SEC filing data. Try again.",
+    "metrics": {
+      "revenue": "Revenue",
+      "operating_income": "Operating income",
+      "net_income": "Net income",
+      "operating_cash_flow": "Operating cash flow"
+    }
+  },
   "computer": {
     "computers": "Computers",
     "cloud": {
