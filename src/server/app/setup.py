@@ -1301,8 +1301,19 @@ def _gzip_exempt(path: str) -> bool:
     next save is checked against. A CDN in front of the server (Cloudflare
     for one) asks for gzip whatever its client asked, and decompressing for
     the daemon, which asks for no encoding, weakens or drops that tag.
+
+    The history replay is a server-sent event stream, and the gateway already
+    compresses this route (``deploy/nginx/dsalpha.roostbots.com.conf`` sets
+    ``gzip on`` for it). Compressing it here as well spends a second pass over
+    the same bytes for no further saving — and the buffering a compressor needs
+    is the last thing a stream that is meant to arrive as it is built should
+    have in front of it.
     """
-    return path.endswith("/files/download") or path.startswith(f"{LIVEFS_PREFIX}/")
+    return (
+        path.endswith("/files/download")
+        or path.startswith(f"{LIVEFS_PREFIX}/")
+        or path.endswith("/messages/replay")
+    )
 
 
 class _SelectiveGZip(GZipMiddleware):
