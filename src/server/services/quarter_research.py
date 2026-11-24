@@ -2,13 +2,15 @@
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import httpx
 from bs4 import BeautifulSoup
 
-from src.utils.cache.redis_cache import get_cache_client
+from src.utils.cache.redis_cache import RedisCacheClient, get_cache_client
 
 _DATA = "https://data.sec.gov"
 _SEC = "https://www.sec.gov"
@@ -16,6 +18,14 @@ _HEADERS = {"User-Agent": "LangAlpha Research contact@ginlix.ai"}
 _ACCESSION = re.compile(r"\d{10}-\d{2}-\d{6}")
 _DOCUMENT = re.compile(r"[a-zA-Z0-9_.-]+\.html?")
 _ANCHOR = re.compile(r"[a-zA-Z0-9_-]+")
+_COMPANY_FRESH_SECONDS = 900
+_COMPANY_STALE_SECONDS = 86400
+_SEC_RETRYABLE = {429, 500, 502, 503, 504}
+_DATA_BACKOFF_KEY = "research:sec-data-backoff:v1"
+_TICKERS_KEY = "research:sec-company-tickers:v1"
+_inflight: dict[str, asyncio.Task] = {}
+_DOT_DECIMAL = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?")
+_COMMA_DECIMAL = re.compile(r"(?:[0-9]+|[0-9]{1,3}(?:\.[0-9]{3})+)(?:,[0-9]+)?")
 _METRICS = {
     "revenue": ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax",
                 "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"),
@@ -142,7 +152,22 @@ def compare_quarter(facts: dict, filings: list[Filing], index: int) -> list[dict
     return metrics
 
 
-def _filing_anchors(html: bytes) -> dict[tuple[str, str, str], str]:
+def _filing_number(text: str, transform: str, scale: str, sign: str) -> Decimal | None:
+    transform = transform.split(":")[-1].lower()
+    if not re.fullmatch(r"[+-]?\d{1,2}", scale) or abs(int(scale)) > 24 or sign not in {"", "-"}:
+        return None
+    if transform in {"", "num-dot-decimal", "numdotdecimal"} and _DOT_DECIMAL.fullmatch(text):
+        digits = text.replace(",", "")
+    elif transform in {"num-comma-decimal", "numcommadecimal"} and _COMMA_DECIMAL.fullmatch(text):
+        digits = text.replace(".", "").replace(",", ".")
+    elif transform in {"zero-dash", "zerodash", "fixed-zero"} and text in {"-", "–", "—", "0"}:
+        digits = "0"
+    else:
+        return None
+    return Decimal(f"{sign}{digits}e{scale}")
+
+
+def _filing_anchors(html: bytes) -> dict[tuple[str, str, str, Decimal], str]:
     soup = BeautifulSoup(html, "html.parser")
     periods = {}
     for context in soup.find_all("xbrli:context", id=True):
@@ -151,13 +176,26 @@ def _filing_anchors(html: bytes) -> dict[tuple[str, str, str], str]:
         start, end = context.find("xbrli:startdate"), context.find("xbrli:enddate")
         if start and end:
             periods[context["id"]] = (start.get_text(strip=True), end.get_text(strip=True))
-    anchors: dict[tuple[str, str, str], str] = {}
+    usd_units = set()
+    for unit in soup.find_all("xbrli:unit", id=True):
+        measures = unit.find_all("xbrli:measure", recursive=False)
+        if len(measures) == 1 and measures[0].get_text(strip=True) == "iso4217:USD":
+            usd_units.add(unit["id"])
+    candidates: dict[tuple[str, str, str, Decimal], list[str]] = {}
     for node in soup.find_all("ix:nonfraction", id=True):
         name = node.get("name", "")
         period = periods.get(node.get("contextref"))
-        if name.startswith("us-gaap:") and period and _ANCHOR.fullmatch(node["id"]) and not node.find_parent("ix:hidden"):
-            anchors.setdefault((name.split(":", 1)[1], *period), node["id"])
-    return anchors
+        if not (
+            name.startswith("us-gaap:") and period and node.get("unitref") in usd_units
+            and _ANCHOR.fullmatch(node["id"]) and not node.find_parent("ix:hidden")
+        ):
+            continue
+        number = _filing_number(
+            node.get_text(strip=True), node.get("format", ""), node.get("scale", "0"), node.get("sign", ""),
+        )
+        if number is not None:
+            candidates.setdefault((name.split(":", 1)[1], *period, number), []).append(node["id"])
+    return {key: ids[0] for key, ids in candidates.items() if len(ids) == 1}
 
 
 async def _json(client: httpx.AsyncClient, url: str) -> dict:
@@ -166,53 +204,148 @@ async def _json(client: httpx.AsyncClient, url: str) -> dict:
     return result.json()
 
 
-async def load_quarter(symbol: str, period: date | None) -> dict:
-    cache = get_cache_client()
-    key = f"research:sec-quarter:v1:{symbol}:{period or 'latest'}"
-    if cached := await cache.get(key):
+async def _single_flight[T](key: str, fetch: Callable[[], Awaitable[T]]) -> T:
+    task = _inflight.get(key)
+    if task is None:
+        async def run() -> T:
+            return await fetch()
+
+        def finish(done: asyncio.Task) -> None:
+            _inflight.pop(key, None)
+            if not done.cancelled():
+                done.exception()
+
+        task = asyncio.create_task(run())
+        _inflight[key] = task
+        task.add_done_callback(finish)
+    return await asyncio.shield(task)
+
+
+async def _load_tickers(cache: RedisCacheClient) -> dict[str, int]:
+    cached = await cache.get(_TICKERS_KEY)
+    if cached is not None:
         return cached
     async with httpx.AsyncClient(headers=_HEADERS, timeout=12) as client:
-        tickers = await cache.get("research:sec-company-tickers:v1")
-        if tickers is None:
-            directory = await _json(client, f"{_SEC}/files/company_tickers.json")
-            tickers = {item["ticker"]: int(item["cik_str"]) for item in directory.values()}
-            await cache.set("research:sec-company-tickers:v1", tickers, ttl=86400)
-        cik = tickers.get(symbol)
-        if cik is None:
-            raise ResearchNotFound("Ticker not found in SEC EDGAR.")
-        company, companyfacts = await asyncio.gather(
-            _json(client, f"{_DATA}/submissions/CIK{cik:010}.json"),
-            _json(client, f"{_DATA}/api/xbrl/companyfacts/CIK{cik:010}.json"),
-        )
-        filings = _filings(cik, company)
-        index = next((i for i, filing in enumerate(filings) if period is None or filing.end == period), None)
-        if index is None:
-            raise ResearchNotFound("No corresponding 10-Q or 10-K was found.")
-        selected = filings[index]
-        metrics = compare_quarter(companyfacts.get("facts", {}).get("us-gaap", {}), filings, index)
-        if not metrics:
-            raise ResearchNotFound("No comparable US GAAP quarter facts were found.")
+        directory = await _json(client, f"{_SEC}/files/company_tickers.json")
+    tickers = {item["ticker"]: int(item["cik_str"]) for item in directory.values()}
+    await cache.set(_TICKERS_KEY, tickers, ttl=86400)
+    return tickers
+
+
+async def _fetch_company(cik: int, cache: RedisCacheClient) -> tuple[dict, bool]:
+    key = f"research:sec-company:v1:{cik}"
+    cached = await cache.get(key)
+    if cached:
+        age = (datetime.now(UTC) - datetime.fromisoformat(cached["fetched_at"])).total_seconds()
+        if age < _COMPANY_FRESH_SECONDS:
+            return cached, False
+    if await cache.get(_DATA_BACKOFF_KEY):
+        if cached:
+            return cached, True
+        raise httpx.TransportError("SEC data is temporarily rate limited")
+
+    async with httpx.AsyncClient(headers=_HEADERS, timeout=12) as client:
         try:
-            document = await client.get(selected.url, timeout=5)
+            company, facts = await asyncio.gather(
+                _json(client, f"{_DATA}/submissions/CIK{cik:010}.json"),
+                _json(client, f"{_DATA}/api/xbrl/companyfacts/CIK{cik:010}.json"),
+                return_exceptions=True,
+            )
+            for response in (company, facts):
+                if isinstance(response, BaseException):
+                    raise response
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            if status not in _SEC_RETRYABLE:
+                raise
+            if status in {429, 503}:
+                retry_after = error.response.headers.get("Retry-After", "")
+                wait = 60
+                if re.fullmatch(r"[0-9]{1,7}", retry_after):
+                    wait = min(600, max(1, int(retry_after)))
+                await cache.set(_DATA_BACKOFF_KEY, True, ttl=wait)
+            if cached:
+                return cached, True
+            raise
+        except httpx.TransportError:
+            if cached:
+                return cached, True
+            raise
+    result = {
+        "company": company,
+        "facts": facts.get("facts", {}).get("us-gaap", {}),
+        "fetched_at": datetime.now(UTC).isoformat(),
+    }
+    await cache.set(key, result, ttl=_COMPANY_STALE_SECONDS)
+    return result, False
+
+
+async def _load_anchors(
+    filing: Filing, cache: RedisCacheClient, *, allow_fetch: bool
+) -> dict:
+    key = f"research:sec-anchors:v1:{filing.accession}"
+    cached = await cache.get(key)
+    if cached is not None:
+        return {(tag, start, end, Decimal(value)): anchor for tag, start, end, value, anchor in cached}
+    if not allow_fetch:
+        return {}
+    try:
+        async with httpx.AsyncClient(headers=_HEADERS, timeout=5) as client:
+            document = await client.get(filing.url)
             document.raise_for_status()
-            anchors = await asyncio.to_thread(_filing_anchors, document.content)
-        except httpx.HTTPError:
-            anchors = {}
-        for metric in metrics:
-            for field in ("current", "previous", "year_ago"):
-                value = metric[field]
-                if value is None:
+        anchors = await asyncio.to_thread(_filing_anchors, document.content)
+    except httpx.HTTPError:
+        return {}
+    await cache.set(
+        key,
+        [[tag, start, end, str(value), anchor] for (tag, start, end, value), anchor in anchors.items()],
+        ttl=_COMPANY_STALE_SECONDS,
+    )
+    return anchors
+
+
+async def load_quarter(symbol: str, period: date | None) -> dict:
+    cache = get_cache_client()
+    key = f"research:sec-quarter:v3:{symbol}:{period or 'latest'}"
+    if cached := await cache.get(key):
+        return cached
+    tickers = await _single_flight("tickers", lambda: _load_tickers(cache))
+    cik = tickers.get(symbol)
+    if cik is None:
+        raise ResearchNotFound("Ticker not found in SEC EDGAR.")
+    data, stale = await _single_flight(f"company:{cik}", lambda: _fetch_company(cik, cache))
+    company = data["company"]
+    filings = _filings(cik, company)
+    index = next((i for i, filing in enumerate(filings) if period is None or filing.end == period), None)
+    if index is None:
+        raise ResearchNotFound("No corresponding 10-Q or 10-K was found.")
+    selected = filings[index]
+    metrics = compare_quarter(data["facts"], filings, index)
+    anchors = {}
+    if metrics:
+        anchors = await _single_flight(
+            f"anchors:{selected.accession}:{stale}",
+            lambda: _load_anchors(selected, cache, allow_fetch=not stale),
+        )
+    for metric in metrics:
+        for field in ("current", "previous", "year_ago"):
+            value = metric[field]
+            if value is None:
+                continue
+            for source in value["evidence"]:
+                if source["accession"] != selected.accession:
                     continue
-                for source in value["evidence"]:
-                    if source["accession"] != selected.accession:
-                        continue
-                    anchor = anchors.get((source["tag"], source["start"], source["end"]))
-                    if anchor:
-                        source["url"] += f"#{anchor}"
-        result = {
-            "symbol": symbol, "company": company["name"], "currency": "USD",
-            "fetched_at": datetime.now(UTC).isoformat(), "selected": selected.response(),
-            "periods": [filing.response() for filing in filings[:12]], "metrics": metrics,
-        }
-    await cache.set(key, result, ttl=900)
+                matching_fact = (source["tag"], source["start"], source["end"], Decimal(str(source["value"])))
+                anchor = anchors.get(matching_fact)
+                if anchor:
+                    source["url"] += f"#{anchor}"
+    result = {
+        "symbol": symbol, "company": company["name"], "currency": "USD",
+        "fetched_at": data["fetched_at"], "stale": stale, "selected": selected.response(),
+        "periods": [filing.response() for filing in filings[:12]], "metrics": metrics,
+    }
+    age = (datetime.now(UTC) - datetime.fromisoformat(data["fetched_at"])).total_seconds()
+    remaining_fresh = int(_COMPANY_FRESH_SECONDS - age)
+    if not stale and remaining_fresh > 0:
+        await cache.set(key, result, ttl=remaining_fresh)
     return result

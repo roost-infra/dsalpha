@@ -70,7 +70,7 @@ export default function QuarterResearch() {
   const query = useQuery({
     queryKey: ['research', 'quarter', ticker, period],
     queryFn: ({ signal }) => getQuarter(ticker, period, signal),
-    staleTime: 5 * 60_000,
+    staleTime: ({ state }) => state.data?.stale ? 60_000 : 5 * 60_000,
     retry: false,
   });
   const quarter = query.data;
@@ -113,6 +113,7 @@ export default function QuarterResearch() {
                 {quarter.selected.form} · {quarter.selected.filed}<ArrowUpRight className="size-3.5" aria-hidden="true" />
               </a>
               <span>{t('research.retrieved', { time: formatTimestamp(quarter.fetched_at, locale) })}</span>
+              {quarter.stale && <span role="status">{t('research.cachedData')}</span>}
             </div>
           )}
         </header>
@@ -128,23 +129,28 @@ export default function QuarterResearch() {
             <Button size="sm" variant="outline" onClick={() => void query.refetch()}>{t('computer.cloud.retry')}</Button>
           </div>
         )}
+        {quarter && (
+          <section className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-base font-semibold">{t('research.comparisons')}</h2>
+              <select
+                aria-label={t('research.period')}
+                className="h-9 max-w-full rounded-md border bg-page px-2 text-sm"
+                value={period ?? ''}
+                onChange={(event) => setParams(event.target.value ? { period: event.target.value } : {})}
+              >
+                <option value="">{t('research.latest')} · {quarter.periods[0]?.end}</option>
+                {quarter.periods.map((filing) => (
+                  <option value={filing.end} key={filing.accession}>{filing.end} · {filing.form}</option>
+                ))}
+              </select>
+            </div>
+            {!metric && <p role="status" className="mt-3 text-sm text-muted-foreground">{t('research.noMetrics')}</p>}
+          </section>
+        )}
         {quarter && metric && (
           <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,0.55fr)]">
             <section className="min-w-0">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-base font-semibold">{t('research.comparisons')}</h2>
-                <select
-                  aria-label={t('research.period')}
-                  className="h-9 max-w-full rounded-md border bg-page px-2 text-sm"
-                  value={period ?? ''}
-                  onChange={(event) => setParams(event.target.value ? { period: event.target.value } : {})}
-                >
-                  <option value="">{t('research.latest')} · {quarter.periods[0]?.end}</option>
-                  {quarter.periods.map((filing) => (
-                    <option value={filing.end} key={filing.accession}>{filing.end} · {filing.form}</option>
-                  ))}
-                </select>
-              </div>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[28rem] border-y text-sm">
                   <thead className="text-xs text-muted-foreground">

@@ -17,13 +17,17 @@ export function exportBrief(quarter: Quarter, t: Translate, percent: (value: num
     `# ${quarter.symbol} ${t('research.title')}`, '',
     `${quarter.company} | ${quarter.selected.end} | ${quarter.currency}`, '',
     `[${quarter.selected.form}](${quarter.selected.url}) · ${quarter.selected.filed}`, '',
+    `${t('research.retrievedAt')} · ${quarter.fetched_at}`, '',
   ];
   for (const metric of quarter.metrics) {
     lines.push(`## ${t(`research.metrics.${metric.key}`)}`, '',
       `${metric.current.value.toLocaleString('en-US')} ${quarter.currency} · ${t('research.yoy')} ${percent(metric.yoy)} · ${t('research.qoq')} ${percent(metric.qoq)}`, '');
     for (const field of comparisonFields) {
-      for (const fact of metric[field]?.evidence ?? []) {
-        lines.push(`- ${t(`research.${field}`)} · ${fact.sign < 0 ? '− ' : ''}${fact.value.toLocaleString('en-US')} · ${fact.start} to ${fact.end} · [${fact.form} ${fact.tag}](${fact.url})`);
+      const observation = metric[field];
+      if (!observation) continue;
+      lines.push(`- ${t(`research.${field}`)} · ${observation.value.toLocaleString('en-US')} ${quarter.currency} · ${t(`research.${observation.method}`)}`);
+      for (const fact of observation.evidence) {
+        lines.push(`  - ${fact.sign < 0 ? '− ' : '+ '}${fact.value.toLocaleString('en-US')} ${quarter.currency} · ${fact.start} – ${fact.end} · ${fact.filed} · ${fact.accession} · [${fact.form} ${fact.tag}](${fact.url})`);
       }
     }
     lines.push('');
@@ -36,18 +40,33 @@ export async function exportWorkbook(quarter: Quarter, t: Translate) {
   const workbook = new ExcelJS.Workbook();
   const comparisons = workbook.addWorksheet('Quarter');
   const evidence = workbook.addWorksheet('SEC Facts');
+  const metadata = workbook.addWorksheet('Source');
   comparisons.addRow([quarter.symbol, quarter.company, quarter.selected.end, quarter.currency]);
   comparisons.addRow([t('research.metric'), ...comparisonFields.map((field) => t(`research.${field}`)), t('research.qoq'), t('research.yoy')]);
-  evidence.addRow(['Metric', 'Comparison', 'Operator', 'USD', 'Tag', 'Start', 'End', 'Filed', 'Accession', 'Source']);
+  evidence.addRow(['Metric', 'Comparison', 'Operator', 'USD', 'Tag', 'Start', 'End', 'Filed', 'Accession', 'Source', 'Method']);
+  metadata.addRows([
+    ['Ticker', quarter.symbol],
+    ['Company', quarter.company],
+    ['Reporting period', quarter.selected.end],
+    ['Currency', quarter.currency],
+    ['Filed', quarter.selected.filed],
+    ['Accession', quarter.selected.accession],
+    ['Filing', { text: quarter.selected.form, hyperlink: quarter.selected.url }],
+    ['Retrieved at (UTC)', quarter.fetched_at],
+  ]);
+  metadata.getColumn(1).width = 24;
+  metadata.getColumn(2).width = 36;
 
   function evidenceFormula(metric: Metric, field: typeof comparisonFields[number], value: Observation | null) {
     if (!value) return null;
-    const terms = value.evidence.map((fact) => {
-      const row = evidence.addRow([metric.key, field, fact.sign, fact.value, fact.tag, fact.start, fact.end,
-        fact.filed, fact.accession, { text: fact.form, hyperlink: fact.url }]);
-      return `C${row.number}*D${row.number}`;
-    });
-    return { formula: `SUMPRODUCT('SEC Facts'!C${evidence.rowCount - terms.length + 1}:C${evidence.rowCount},'SEC Facts'!D${evidence.rowCount - terms.length + 1}:D${evidence.rowCount})`, result: value.value };
+    if (value.evidence.length === 0) return value.value;
+    const start = evidence.rowCount + 1;
+    for (const fact of value.evidence) {
+      evidence.addRow([metric.key, field, fact.sign, fact.value, fact.tag, fact.start, fact.end,
+        fact.filed, fact.accession, { text: fact.form, hyperlink: fact.url }, value.method]);
+    }
+    const end = evidence.rowCount;
+    return { formula: `SUMPRODUCT('SEC Facts'!C${start}:C${end},'SEC Facts'!D${start}:D${end})`, result: value.value };
   }
 
   for (const metric of quarter.metrics) {
@@ -65,7 +84,7 @@ export async function exportWorkbook(quarter: Quarter, t: Translate) {
   }
   for (const column of ['E', 'F']) comparisons.getColumn(column).numFmt = '0.0%';
   evidence.getRow(1).font = { bold: true };
-  for (const [column, width] of Object.entries({ A: 24, B: 14, D: 20, E: 66, F: 14, G: 14, H: 14, I: 24 })) {
+  for (const [column, width] of Object.entries({ A: 24, B: 14, D: 20, E: 66, F: 14, G: 14, H: 14, I: 24, K: 16 })) {
     evidence.getColumn(column).width = width;
   }
   const file = (await workbook.xlsx.writeBuffer()) as ArrayBuffer;

@@ -35,6 +35,7 @@ export interface Quarter {
   company: string;
   currency: string;
   fetched_at: string;
+  stale?: boolean;
   selected: Filing;
   periods: Filing[];
   metrics: Metric[];
