@@ -1,7 +1,7 @@
 """Fetch Roost Console's billing settings, and keep the process snapshot fresh.
 
 Two figures live on the console and nowhere else: ``fx.usd_to_credits`` (the
-USD→credit conversion for dslpha's USD-metered spend) and
+USD→credit conversion for dsalpha's USD-metered spend) and
 ``sandbox.markup_bps`` (the sandbox markup). Both are read from the public
 price book for fx and from a service-authenticated settings surface for the
 markup. Neither is allowed to be a local constant: a local rate is exactly the

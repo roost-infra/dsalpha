@@ -1,6 +1,6 @@
 """Per-model token usage for Roost Console's ``release`` payload.
 
-Console owns pricing, so dslpha only has to report *what ran*: input, output,
+Console owns pricing, so dsalpha only has to report *what ran*: input, output,
 cache-read and cache-write tokens per model, with the call count. The sources
 differ by age and by path:
 

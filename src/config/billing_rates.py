@@ -1,7 +1,7 @@
 """The deployment's billing rates, as Roost Console publishes them.
 
 Roost Console owns the only price fact source: ``settings`` carries
-``fx.usd_to_credits`` (the USD→credit conversion dslpha needs, since its own
+``fx.usd_to_credits`` (the USD→credit conversion dsalpha needs, since its own
 metering is USD) and ``sandbox.markup_bps`` (the sandbox markup). This module
 is the process-wide snapshot of those two figures plus the model names the
 public price book currently lists, so the release path can name a model the
