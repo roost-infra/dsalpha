@@ -126,7 +126,16 @@ function goToPage(navigate: NavigateFunction, params: URLSearchParams, replace: 
 function toastAbandoned(record: ConnectRecord, t: TFunction, navigate: NavigateFunction) {
   const { label } = record;
   const needsDesktop = record.desktopOnly && !canBeginMcpOAuth();
-  const place = needsDesktop ? null : landingPlace(record.retry, pageParams());
+  // Frozen here, not read again in the handler. "Try again" reopens the same
+  // form with the context of *that* attempt — the section the connect left
+  // from — and that belongs to the moment the toast appeared, not to wherever
+  // the user has since navigated. A toast outlives a route change, so reading
+  // the location on click would open the form on the section they drifted to.
+  //
+  // `landingPlace` copies what it is given (`withDetail` builds a new
+  // `URLSearchParams`), so this base survives being used twice.
+  const base = pageParams();
+  const place = needsDesktop ? null : landingPlace(record.retry, base);
   toast({
     title: t('plugins.signin.abandoned', { label }),
     description: needsDesktop ? (
@@ -145,7 +154,7 @@ function toastAbandoned(record: ConnectRecord, t: TFunction, navigate: NavigateF
         altText={t('plugins.signin.tryAgain')}
         onClick={() => {
           setConnectLanding({ owner: 'page', draft: record, outcome: 'retry' });
-          goToPage(navigate, landingPlace(record.retry, pageParams()) ?? place, false);
+          goToPage(navigate, landingPlace(record.retry, base) ?? place, false);
         }}
       >
         {t('plugins.signin.tryAgain')}

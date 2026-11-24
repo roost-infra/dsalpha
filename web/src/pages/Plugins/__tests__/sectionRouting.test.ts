@@ -40,6 +40,14 @@ const INTENTS: AddIntent[] = [
 describe('which page hosts a section', () => {
   it('sends the connectors section to /apps and everything else to /plugins', () => {
     expect(pageForSection('mcp')).toBe(APPS_PATH);
+    // `apps` is not a section `/plugins` can render, and nothing in the app
+    // passes it: the callers are `SCOPE_TAB` (plugins / connectors / skills) and
+    // `DETAIL_KIND_TAB` (server, brokerage, skill, plugin, catalog, subagent),
+    // so `apps` never arrives from a real URL. Landing on `/plugins` here is
+    // the unknown-tab fallback, which is the same answer every unrecognised
+    // section gets — not a claim that `/plugins` hosts the managed-apps section.
+    // A `?tab=apps` link on `/plugins` is therefore an anomalous input, and
+    // showing the page's default section is the intended answer to it.
     expect(pageForSection('apps')).toBe(PLUGINS_PATH);
     for (const section of ['plugins', 'skills', 'subagents', 'pages', 'brokerages', 'secrets']) {
       expect(pageForSection(section)).toBe(PLUGINS_PATH);
@@ -113,6 +121,38 @@ describe('relocating a location that names a section another page hosts', () => 
     // No tab, no detail, no default: nothing here says a section at all.
     expect(relocatedHref('?q=earnings')).toBeNull();
     expect(relocatedHref('?detail=skill:ledger')).toBeNull();
+  });
+
+  // A bare key is a param with no value, not a param that is missing. Writing
+  // the tab by appending would leave two of them, and every reader takes the
+  // first — the empty one — so the user landed on a default section instead of
+  // the connectors. Real: a hand-trimmed or callback-mangled `/connectors` URL.
+  it('rewrites a bare ?tab in place instead of appending a second one', () => {
+    expect(relocatedHref('?tab', { defaultSection: 'mcp' })).toBe('/apps?tab=mcp');
+    expect(relocatedHref('?tab&mcp_error=denied', { defaultSection: 'mcp' })).toBe(
+      '/apps?tab=mcp&mcp_error=denied',
+    );
+    expect(relocatedHref('?mcp_error=denied&tab', { defaultSection: 'mcp' })).toBe(
+      '/apps?mcp_error=denied&tab=mcp',
+    );
+    // An empty value is the same thing said with an `=`.
+    expect(relocatedHref('?tab=', { defaultSection: 'mcp' })).toBe('/apps?tab=mcp');
+  });
+
+  // The one this fix is easiest to get wrong: `taboo` starts with `tab`, and a
+  // pattern that only anchored the start would rewrite the wrong param.
+  it('does not mistake a param that starts with tab for the tab', () => {
+    expect(relocatedHref('?taboo=1&tab', { defaultSection: 'mcp' })).toBe('/apps?taboo=1&tab=mcp');
+    expect(relocatedHref('?taboo=1&tab=servers&q=x', { defaultSection: 'mcp' })).toBe(
+      '/apps?taboo=1&tab=mcp&q=x',
+    );
+  });
+
+  // ...and a value that merely looks like a tab is left alone.
+  it('keeps a value in place while setting the tab beside it', () => {
+    expect(relocatedHref('?q=tab&detail=server:srv', { impliedSection: 'mcp' })).toBe(
+      '/apps?q=tab&detail=server:srv&tab=mcp',
+    );
   });
 });
 

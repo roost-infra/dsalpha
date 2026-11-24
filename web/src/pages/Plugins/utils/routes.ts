@@ -97,7 +97,15 @@ export function relocatedHref(
 
 /** `search` with one query param set, leaving every other byte alone. */
 function withRawParam(search: string, key: string, value: string): string {
-  const pattern = new RegExp(`(^|&)${key}=[^&]*`);
+  // A bare key (`?tab&mcp_error=denied`) is a param with no `=`, not a param
+  // that is missing — matched too, and replaced in place. Without the optional
+  // group the pattern only saw `tab=`, so a bare `tab` fell through to the
+  // append below and left two `tab`s in one URL, of which readers take the
+  // first: the empty one.
+  //
+  // The lookahead is what keeps `taboo` from matching `tab` — the key has to
+  // end at a `&` or the end of the string, not merely start the same way.
+  const pattern = new RegExp(`(^|&)${key}(=[^&]*)?(?=&|$)`);
   if (pattern.test(search)) return search.replace(pattern, `$1${key}=${value}`);
   return search ? `${search}&${key}=${value}` : `${key}=${value}`;
 }

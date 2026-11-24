@@ -3,6 +3,7 @@ import { act, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import '@testing-library/jest-dom';
 import React from 'react';
 import { renderWithProviders } from '@/test/utils';
+import { CONNECTORS_HREF } from '@/pages/Plugins/utils/routes';
 import type { CatalogServerList, EffectiveServer, EffectiveServerList } from '../../../utils/api';
 
 // ---------------------------------------------------------------------------
@@ -541,5 +542,35 @@ describe('McpTab — auto-resolve pending servers', () => {
 
     await waitFor(() => expect(screen.getByTestId('row-ok')).toBeInTheDocument());
     expect(mutateAsync.discover).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The one button on this tab that leaves the page.
+ *
+ * It lives in the workspace settings' MCP tab, lists account-level connectors,
+ * and sends the user to `/apps?tab=mcp` — so it has to say so. It used to read
+ * "Extensions", naming the page for installed things rather than the one it
+ * opens: the same label-against-destination mismatch this whole change exists
+ * to remove. Pinned as an invariant rather than a snapshot, because the copy
+ * and the destination are two places that can drift apart.
+ */
+describe('McpTab: the account connectors button names where it goes', () => {
+  it('reads "Connected apps" and lands on /apps', async () => {
+    listData = makeList([makeServer('a')]);
+    catalogData = makeCatalog(1, 20);
+    renderWithProviders(<McpTab workspaceId="ws-1" />, { route: '/chat' });
+
+    const button = await screen.findByRole('button', { name: /connected apps/i });
+    expect(button).toHaveAttribute('title', expect.stringContaining('account'));
+
+    fireEvent.click(button);
+
+    // The destination, not the shape of the call: whichever way it navigates,
+    // the page the user ends up on has to be the one the label names.
+    // This suite stubs `useNavigate`, so the assertion is the destination the
+    // button asks for — which is exactly the thing that has to agree with the
+    // label. The route the app then renders is `routes.ts`'s, covered there.
+    expect(navigate).toHaveBeenCalledWith(CONNECTORS_HREF);
   });
 });

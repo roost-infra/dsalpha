@@ -69,6 +69,25 @@ describe('LegacyConnectorsRedirect', () => {
   it('gives a bare /connectors the connectors tab, since that was the page', () => {
     expect(renderConnectors('/connectors')).toBe('/apps?tab=mcp');
   });
+
+  // The fallback used to rebuild an empty query, so a `/connectors` link that
+  // names a section `/plugins` still hosts lost the section, the detail and the
+  // search — `/connectors?tab=skills&q=earnings&detail=skill:ledger` arrived as
+  // a bare `/plugins`. It is a real shape: `/connectors` is still the value in
+  // in-flight OAuth `return_to`s, and `?tab=skills` is a plausible bookmark.
+  it('keeps the whole search when the alias lands on a section /plugins hosts', () => {
+    expect(renderConnectors('/connectors?tab=skills&q=earnings&detail=skill:ledger#frag')).toBe(
+      '/plugins?tab=skills&q=earnings&detail=skill:ledger#frag',
+    );
+  });
+
+  // Why the fallback appends `search` as text rather than rebuilding it from
+  // params: a round trip through `URLSearchParams` percent-encodes the colon.
+  it('does not re-encode the search it carries over', () => {
+    expect(renderConnectors('/connectors?tab=skills&detail=skill:ledger&q=a%20b')).toBe(
+      '/plugins?tab=skills&detail=skill:ledger&q=a%20b',
+    );
+  });
 });
 
 describe('LegacyMcpTabRedirect', () => {

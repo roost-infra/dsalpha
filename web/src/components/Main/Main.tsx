@@ -11,7 +11,7 @@ import { StaleBuildBoundary } from '@/components/StaleBuildBoundary';
 import { lazyWithMotion, preloadableLazy } from '@/lib/lazyWithMotion';
 import type { AppSection } from '@/lib/appRoutes';
 import { DETAIL_KIND_TAB, parseDetail } from '@/pages/Plugins/utils/detailParam';
-import { pageHref, relocatedHref } from '@/pages/Plugins/utils/routes';
+import { PLUGINS_PATH, relocatedHref } from '@/pages/Plugins/utils/routes';
 
 type RouteSection = AppSection;
 
@@ -136,7 +136,14 @@ export function LegacyConnectorsRedirect() {
   // No tab was the old Connectors page's own list, so the connectors section
   // is the default rather than a last resort — but an explicit tab still wins,
   // since the alias was reachable with one.
-  const to = relocatedHref(search, { defaultSection: 'mcp' }) ?? pageHref(new URLSearchParams());
+  //
+  // The fallback is this page's own path with `search` appended as text, not
+  // rebuilt from params: a section that already belongs to `/plugins` keeps
+  // everything it carried. Round-tripping through `URLSearchParams` would
+  // re-encode it — `detail=skill:ledger` comes back as `skill%3Aledger` — and
+  // dropping the search entirely (the old fallback) lost the section, the
+  // detail and the search along with it.
+  const to = relocatedHref(search, { defaultSection: 'mcp' }) ?? `${PLUGINS_PATH}${search}`;
   return <Navigate to={`${to}${hash}`} replace />;
 }
 
