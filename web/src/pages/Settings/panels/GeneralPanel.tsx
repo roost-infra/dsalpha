@@ -140,6 +140,24 @@ export function GeneralPanel() {
             </Button>
           </div>
         </SettingRow>
+        <SettingRow {...copy(SETTINGS.appsLink)}>
+          <Button type="button" variant="outline" size="sm" className="h-8"
+            onClick={() => navigate('/apps')}>
+            {t('settings.openComputers', 'Open')}
+          </Button>
+        </SettingRow>
+        <SettingRow {...copy(SETTINGS.storeLink)}>
+          <Button type="button" variant="outline" size="sm" className="h-8"
+            onClick={() => navigate('/store')}>
+            {t('settings.openComputers', 'Open')}
+          </Button>
+        </SettingRow>
+        <SettingRow {...copy(SETTINGS.pagePluginsLink)}>
+          <Button type="button" variant="outline" size="sm" className="h-8"
+            onClick={() => navigate('/plugins')}>
+            {t('settings.openComputers', 'Open')}
+          </Button>
+        </SettingRow>
       </SettingsGroup>
     </>
   );
