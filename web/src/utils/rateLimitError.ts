@@ -7,6 +7,8 @@
  * sent to resolve it.
  */
 
+import { consoleUrl, ROOST_CONSOLE_URL } from '@/config/supportLinks';
+
 /** A 429's `detail`, as it comes off the wire. Only the two fields this module
  *  acts on are named: the counts the quota service also sends are already folded
  *  into `message`, so naming them here only invites reading them back out. */
@@ -135,17 +137,23 @@ export function buildRateLimitError(
   // the quota gate rejected before anything was persisted. Navigating in place
   // discards both, so the user returns from topping up to a thread that looks
   // like nothing happened.
+  // A Roost build has one console SPA whose plans/usage live behind anchors.
+  // Use that destination when configured; otherwise keep the generic
+  // path-shaped portal URL for self-hosted deployments and tests.
+  const accountUrl = (path: string): string =>
+    ROOST_CONSOLE_URL ? (consoleUrl(path) ?? `${platformUrl}/${path}`) : `${platformUrl}/${path}`;
+
   const links: ErrorLinkSpec[] | undefined =
     platformUrl && !NOT_ABOUT_THE_ACCOUNT.has(info.type as string)
       ? [
           {
-            url: `${platformUrl}/plans`,
+            url: accountUrl('plans'),
             label: 'Manage plan',
             labelKey: 'chat.errorLinkManagePlan',
             external: true,
           },
           {
-            url: `${platformUrl}/usage`,
+            url: accountUrl('usage'),
             label: 'View usage',
             labelKey: 'chat.errorLinkViewUsage',
             external: true,

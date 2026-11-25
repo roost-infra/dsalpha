@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { buildRateLimitError } from '../rateLimitError';
 
 // Deliberately not a host we operate. The portal URL is injected
@@ -114,3 +114,16 @@ describe('buildRateLimitError', () => {
     expect(result.links).toBeUndefined();
   });
 });
+
+  it('uses one-page console anchors when a Roost console URL is configured', async () => {
+    vi.stubEnv('VITE_ROOST_CONSOLE_URL', 'https://console.example.com/console/');
+    vi.resetModules();
+    const fresh = await import('../rateLimitError');
+    const result = fresh.buildRateLimitError({ type: 'credit_limit' }, '/account');
+    expect(result.links?.map((link) => link.url)).toEqual([
+      'https://console.example.com/console/#plans',
+      'https://console.example.com/console/#products',
+    ]);
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
