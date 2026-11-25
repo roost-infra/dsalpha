@@ -295,6 +295,13 @@ def select_model(
     user_fallback = model_pref.get("fallback_models")
     if user_fallback is not None:
         config.llm.fallback = user_fallback
+    elif not config.llm.fallback:
+        # A model can go dark at the gateway (no channel behind it) while the
+        # deployment is healthy; without a chain every turn names it and
+        # fails. The user's own list, even an empty one, still decides above.
+        from src.config.settings import get_default_fallback_models
+
+        config.llm.fallback = get_default_fallback_models()
     # Repeats only: the turn's own model stays, since a subagent on another
     # model may still fall back to it. The resilience middleware drops
     # whichever model a request targets.
