@@ -187,6 +187,33 @@ def is_context_overflow(exc: BaseException) -> bool:
     return False
 
 
+# What a gateway answers when it holds no channel to the model at all, under
+# whatever status it chose (a relay maps its own 503 to a 502 upstream error).
+# The same request reaches the same dead route, so a retry only costs an
+# attempt the next fallback could have used.
+_UNROUTED_CODES = frozenset({"no_eligible_upstream", "model_not_found"})
+_UNROUTED_PHRASES = (
+    "no eligible upstream",
+    "no available channel",
+    "no available route",
+)
+
+
+def is_model_unrouted(exc: BaseException) -> bool:
+    """Whether the provider has no route to this model, not a passing fault.
+
+    Read from the error codes and wordings the gateway itself sends; a plain
+    5xx stays retryable, since providers use those for overload too.
+    """
+    for current in iter_exception_chain(exc):
+        if _UNROUTED_CODES.intersection(code.lower() for code in _error_codes(current)):
+            return True
+        text = str(current).lower()
+        if any(phrase in text for phrase in _UNROUTED_PHRASES):
+            return True
+    return False
+
+
 def _error_codes(exc: BaseException) -> set[str]:
     """The codes an SDK error carries: on the exception, or in its JSON body."""
     codes = {getattr(exc, "code", None), getattr(exc, "type", None)}
@@ -209,4 +236,6 @@ def is_retryable_error(exc: BaseException, status_code: int | None = None) -> bo
         status_code = extract_status_code(exc)
     if status_code is None:
         return not is_programming_error(exc)
-    return status_code not in NON_RETRYABLE_STATUSES
+    if status_code in NON_RETRYABLE_STATUSES:
+        return False
+    return not is_model_unrouted(exc)

@@ -11,6 +11,7 @@ from src.llms.error_classification import (
     extract_status_code,
     is_context_overflow,
     is_programming_error,
+    is_model_unrouted,
     is_retryable_error,
     is_mid_stream_error,
     is_stalled_stream,
@@ -75,6 +76,45 @@ class TestExtractStatusCode:
         exc = Exception("cyclic")
         exc.__context__ = exc
         assert extract_status_code(exc) is None
+
+
+class TestUnroutedModel:
+    """A gateway with no channel to the model says so in a 5xx of its own."""
+
+    @staticmethod
+    def _relay_error(code, status=503, message="request rejected"):
+        exc = Exception(message)
+        exc.status_code = status
+        exc.body = {"error": {"code": code, "message": message}}
+        return exc
+
+    def test_a_relay_rejection_is_not_retried(self):
+        exc = self._relay_error("no_eligible_upstream")
+
+        assert is_model_unrouted(exc)
+        assert is_retryable_error(exc) is False
+
+    def test_no_available_channel_is_read_from_the_message(self):
+        exc = self._relay_error(
+            "model_not_found",
+            message="Failed to get available channel for model glm-5.3-flash",
+        )
+
+        assert is_model_unrouted(exc)
+        assert is_retryable_error(exc) is False
+
+    def test_a_plain_5xx_stays_retryable_overload(self):
+        exc = Exception("upstream returned HTTP 503; retry later")
+        exc.status_code = 503
+
+        assert not is_model_unrouted(exc)
+        assert is_retryable_error(exc) is True
+
+    def test_an_unrelated_400_is_decided_by_its_status(self):
+        exc = self._relay_error("bad_request", status=400)
+
+        assert not is_model_unrouted(exc)
+        assert is_retryable_error(exc) is False
 
 
 class TestIsRetryableError:

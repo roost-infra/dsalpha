@@ -338,6 +338,25 @@ def get_writer_pool_max() -> int:
     return _env_pool_size("POSTGRES_WRITER_POOL_MAX", default=25)
 
 
+#: What a turn falls back to when its model turns out unusable and its user
+#: saved no fallbacks of their own. Cheap first, and on different providers:
+#: one gateway losing a model must not take the whole chain with it. A name
+#: this deployment has no key for is skipped where fallbacks are resolved.
+DEFAULT_FALLBACK_MODELS = ("deepseek-flash", "claude-haiku-5-5", "gpt-6-luna")
+
+
+def get_default_fallback_models() -> list[str]:
+    """Env DEFAULT_FALLBACK_MODELS, comma separated; empty disables fallback.
+
+    Used only for turns whose user saved no fallback list: their choice, kept
+    even when empty, always wins over the deployment's.
+    """
+    raw = os.getenv("DEFAULT_FALLBACK_MODELS")
+    if raw is None:
+        return list(DEFAULT_FALLBACK_MODELS)
+    return [name.strip() for name in raw.split(",") if name.strip()]
+
+
 def get_recovery_scan_interval() -> float:
     """Env RECOVERY_SCAN_INTERVAL seconds, default 30, between recovery pages."""
     raw = os.getenv("RECOVERY_SCAN_INTERVAL", "30")
